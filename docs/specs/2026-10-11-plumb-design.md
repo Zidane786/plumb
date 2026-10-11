@@ -55,7 +55,7 @@ project can run.
 | `/plumb:create` | New project | Product interview → design interview → 2–3 directions → the design system → prototypes of key screens. |
 | `/plumb:extract` | Existing UI | Inventories every value in use → clusters → a clean token set → the same design system. |
 | `/plumb:prototype` | A new screen, tab, flow or interaction | 2–3 variants, each as a clickable prototype and an every-state screens view → you pick → written into the main prototype, the reference to build. |
-| `/plumb:tour` | A flow needs explaining or demoing | Writes or updates a walkthrough of a flow in the main prototype: guide mode (step by step) and play mode (plays like a video, with speed control). |
+| `/plumb:tour` | An extra or custom walkthrough | Writes a walkthrough script beyond the default one prototype makes (a client demo, another audience, several flows); the prototype plays it in guide mode or play mode. |
 | `/plumb:audit` | Any time | Full consistency report (HTML + terminal + exit code); offers Slate tickets. |
 | `/plumb:ux` | After building a screen or flow | UX review against the project's UX rules and its prototype; HTML report; offers Slate tickets. |
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, improve a part; regenerate; record; audit. |
@@ -234,9 +234,9 @@ working interactions, keyboard and focus, both themes, reduced motion, no generi
 
 Three things, kept apart: `/plumb:prototype` makes the **screens**; the **walkthrough player**
 (guide mode and play mode) is built into every `prototype.html` by `build-prototype.py`, so every
-prototype can play a walkthrough; `/plumb:tour` writes or updates the **script** a walkthrough
-plays (which steps, which words, for a review or a client demo). No tour file, no walkthrough; the
-prototype still works.
+prototype can play a walkthrough; a walkthrough's **script** (which steps, which words) is a tour
+file. `/plumb:prototype` writes a default one for every flow it builds; `/plumb:tour` writes extra
+or custom ones. The prototype stays fully clickable with or without them.
 
 The prototype shell has a **walkthrough player** in every project. A walkthrough is a data file,
 `docs/design/prototype/tours/<flow>.json`: an ordered list of steps, each naming a screen, a
@@ -255,9 +255,10 @@ Also in the shell: a per-screen guide panel (what this screen is for, what you c
 play mode still plays by itself and only drops the cursor glide and other animation (an OS
 setting must never turn Play into Guide). Captions are `aria-live`, and every control works by keyboard.
 
-`/plumb:prototype` asks at the end whether to add or update the walkthrough for that flow;
-`/plumb:tour <flow>` writes or updates one any time, asking which steps and words to use and
-whether you want it for review or for a client demo. `build-prototype.py --check` fails when a
+`/plumb:prototype` **always writes a default walkthrough** for each flow it builds (you review
+its steps and words together with the screens), and updates it when the flow changes.
+`/plumb:tour <flow>` is for extra or custom ones: a client demo, a different audience, or a story
+across several flows; it asks which steps, which words, and who is watching. `build-prototype.py --check` fails when a
 step names a screen, state or element that no longer exists, so walkthroughs stay in step with
 the prototype.
 
