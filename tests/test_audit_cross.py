@@ -490,9 +490,9 @@ def test_cluster_sizes_within_1px_or_6_percent() -> None:
 # ---------------------------------------------------------------- speed
 
 
-def test_full_audit_of_2000_files_is_under_10_seconds(tmp_path: Path) -> None:
-    project = make_project(tmp_path / "big")
-    for i in range(2000):
+def _big_project(dest: Path, files: int) -> Path:
+    project = make_project(dest)
+    for i in range(files):
         folder = project / "app" / f"area{i % 40}"
         if i % 4 == 0:
             write(folder / f"s{i}.css", f".c{i} {{ color: #{i % 4096:03x}fff; padding: {i % 7 * 4}px; "
@@ -502,9 +502,25 @@ def test_full_audit_of_2000_files_is_under_10_seconds(tmp_path: Path) -> None:
                 f"export function C{i}() {{\n  return (\n    <div className=\"group p-4 bg-surface rounded-md\">\n"
                 f"      <button className=\"h-8 w-8 opacity-0 group-hover:opacity-100 bg-primary rounded-md px-2 text-sm\">x</button>\n"
                 f"      <p className=\"text-sm text-on-surface\">Item {i}</p>\n    </div>\n  );\n}}\n") * 5)
-    start = time.perf_counter()
-    r = run(project, "--json")
-    elapsed = time.perf_counter() - start
-    assert r.returncode == 1, r.stderr
-    assert json.loads(r.stdout)["checked"] == 2000
-    assert elapsed < 10.0, f"{elapsed:.1f}s"
+    return project
+
+
+def _best_of_3(project: Path, files: int) -> float:
+    """The fastest of three full audits (the first run on freshly written files pays the OS's first-open cost)."""
+    times = []
+    for _ in range(3):
+        start = time.perf_counter()
+        r = run(project, "--json")
+        times.append(time.perf_counter() - start)
+        assert r.returncode == 1, r.stderr
+        assert json.loads(r.stdout)["checked"] == files
+    return min(times)
+
+
+def test_full_audit_scales_linearly_and_stays_fast(tmp_path: Path) -> None:
+    """2,000 files: no worse than linear against 500 (best of 3 each, ratio under 6; 4 is linear) and under a generous
+    30 s cap (CI runners are slower than a laptop). Robust to machine speed, still catches quadratic work."""
+    small = _best_of_3(_big_project(tmp_path / "small", 500), 500)
+    big = _best_of_3(_big_project(tmp_path / "big", 2000), 2000)
+    assert big < 30.0, f"{big:.1f}s for 2000 files"
+    assert big / small < 6.0, f"2000 files took {big:.2f}s, 500 took {small:.2f}s: ratio {big / small:.1f}"

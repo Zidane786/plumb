@@ -16,6 +16,7 @@ Token format: W3C Design Tokens (DTCG). Light values are `$value`; dark and brea
 from __future__ import annotations
 
 import bisect
+import functools
 import json
 import math
 import os
@@ -475,6 +476,7 @@ def source_ext(name: str) -> Optional[str]:
     return ext if ext in SOURCE_EXT else None
 
 
+@functools.lru_cache(maxsize=512)
 def glob_rx(glob: str) -> "re.Pattern[str]":
     """A path glob (** any folders, * within one folder, ? one character; no wildcard = the path and below) as a regex."""
     g = glob.strip().strip("`").replace("\\", "/")

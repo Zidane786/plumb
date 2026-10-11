@@ -187,12 +187,24 @@ ul[role="list"], ol[role="list"] { list-style: none; margin: 0; padding: 0; }
 .rule-msg { font-weight: 400; color: var(--pl-muted); }
 .finding { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 4px 20px; padding: 12px 0; border-bottom: 1px solid var(--pl-border); }
 .f-where { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
-.loc { overflow-wrap: anywhere; color: var(--pl-text); }
+.loc { color: var(--pl-text); overflow-wrap: break-word; }
+.loc .seg { white-space: nowrap; }
 .f-what { min-width: 0; }
 .msg { margin: 0; overflow-wrap: anywhere; }
 .fix { margin: 6px 0 0; overflow-wrap: anywhere; color: var(--pl-muted); }
 .fix-label, .why-label { display: inline-block; margin-right: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-text); }
 .fix code, .msg code { font-size: 0.9em; }
+.fix-group { margin: 0; }
+.shared-fix { margin: 0; padding: 10px 0 2px; color: var(--pl-text); }
+.shared-fix .count { font-weight: 400; }
+.finding.compact { padding: 8px 0; }
+.none-match { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 0; padding: 12px 16px;
+  background: var(--pl-sunk); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); }
+.none-match p { margin: 0; font-weight: 600; }
+.reset {
+  font: inherit; font-size: 14px; font-weight: 600; min-height: 36px; padding: 0 14px; cursor: pointer;
+  color: var(--pl-on-accent); background: var(--pl-accent); border: 1px solid transparent; border-radius: 999px;
+}
 
 /* Improvements: ranked by impact. The rank is real order, so it is numbered. */
 .improvement { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr); gap: 4px 12px; padding: 16px 0; border-top: 1px solid var(--pl-border); }
@@ -288,6 +300,10 @@ thead th { border-top: 0; background: var(--pl-sunk); font-size: 12px; text-tran
       </div>
       <p class="shown" id="shown" aria-live="polite"></p>
     </div>
+    <div class="none-match" id="none-match" hidden>
+      <p>No findings match these filters.</p>
+      <button type="button" class="reset" id="reset-filters">Show all findings</button>
+    </div>
   </section>
   <section id="issues" aria-labelledby="issues-h">
     <div class="section-head">
@@ -334,7 +350,15 @@ thead th { border-top: 0; background: var(--pl-sunk); font-size: 12px; text-tran
     });
     groups.forEach(function (g) { g.hidden = !g.querySelector("li.finding:not([hidden])"); });
     shown.textContent = "Showing " + count + " of " + rows.length + (rows.length === 1 ? " finding" : " findings");
+    none.hidden = count > 0;
   }
+  var none = document.getElementById("none-match");
+  document.getElementById("reset-filters").addEventListener("click", function () {
+    buttons.forEach(function (b) { b.setAttribute("aria-pressed", "true"); });
+    select.value = "";
+    update();
+    buttons[0].focus();
+  });
   buttons.forEach(function (b) {
     b.addEventListener("click", function () {
       b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true");

@@ -659,7 +659,7 @@ def _parse_hex(digits: str) -> Tuple[str, float]:
 
 def check_raw_colour(ctx: Ctx) -> Iterator[Hit]:
     code = ctx.code
-    for m in _HEX.finditer(code):
+    for m in (_HEX.finditer(code) if "#" in code else ()):  # literal pre-checks: the scan only runs when it can match
         pos = m.start()
         digits = m.group(1)
         if len(digits) in (3, 4) and digits.isdigit() and _is_copy(ctx, code, pos, m.end()):
@@ -670,7 +670,7 @@ def check_raw_colour(ctx: Ctx) -> Iterator[Hit]:
         prefix = _class_prefix(code, pos)
         role = _role_of_prefix(prefix) if prefix else _css_role(code, pos)
         yield Hit(pos, m.group(0), fix=_colour_fix(ctx, hexv, alpha, prefix, role))
-    for m in _CFUNC.finditer(code):
+    for m in (_CFUNC.finditer(code) if "(" in code else ()):
         close = code.find(")", m.end(), m.end() + 200)
         args = code[m.end():close if close >= 0 else m.end() + 200]
         if "var(" in args or "$" in args or "{" in args:
@@ -755,7 +755,7 @@ def _arbitrary_fix(ctx: Ctx, utility: str, value: str) -> Optional[str]:
 
 
 def check_arbitrary_value(ctx: Ctx) -> Iterator[Hit]:
-    if not ctx.tailwind:
+    if not ctx.tailwind or ("[" not in ctx.code and "(--" not in ctx.code):
         return
     code = ctx.code
     for m in _ARB.finditer(code):
@@ -809,13 +809,13 @@ def check_off_scale_type(ctx: Ctx) -> Iterator[Hit]:
     s = ctx.scales
     if s is None or not s.type:
         return
-    if ctx.tailwind:
+    if ctx.tailwind and "text-" in ctx.code:
         for m in _TYPE_CLASS.finditer(ctx.code):
             if not ctx.class_ok(m.start()):
                 continue
             if m.group(1) not in s.type:
                 yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "typography", _TW_TYPE[m.group(1)], "text"))
-    for m in _FONT_SIZE.finditer(ctx.code):
+    for m in (_FONT_SIZE.finditer(ctx.code) if "font-size" in ctx.code else ()):
         for v in _CSS_LEN.finditer(m.group(1)):
             px = float(v.group(1)) * (16 if v.group(2) == "rem" else 1)
             if px:
@@ -832,13 +832,13 @@ def check_off_scale_radius(ctx: Ctx) -> Iterator[Hit]:
     s = ctx.scales
     if s is None or not s.radius:
         return
-    if ctx.tailwind:
+    if ctx.tailwind and "rounded" in ctx.code:
         for m in _RADIUS_CLASS.finditer(ctx.code):
             if not ctx.class_ok(m.start()):
                 continue
             if m.group(2) not in s.radius:
                 yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "radius", _TW_RADIUS[m.group(2)], m.group(1)))
-    for m in _RADIUS_DECL.finditer(ctx.code):
+    for m in (_RADIUS_DECL.finditer(ctx.code) if "radius" in ctx.code else ()):
         for v in _CSS_LEN.finditer(m.group(1)):
             px = float(v.group(1)) * (16 if v.group(2) == "rem" else 1)
             if px and px < 999:  # 9999px is the pill idiom
@@ -874,14 +874,14 @@ def check_off_token_duration(ctx: Ctx) -> Iterator[Hit]:
     s = ctx.scales
     if s is None or not s.durations:
         return
-    if ctx.tailwind:
+    if ctx.tailwind and ("duration-" in ctx.code or "delay-" in ctx.code):
         for m in _DURATION_CLASS.finditer(ctx.code):
             if not ctx.class_ok(m.start()):
                 continue
             ms = float(m.group(2))
             if ms and ms not in s.duration_ms:
                 yield Hit(m.start(), m.group(0), fix=_duration_fix(ctx, ms, m.group(1)))
-    for m in _TRANSITION_DECL.finditer(ctx.code):
+    for m in (_TRANSITION_DECL.finditer(ctx.code) if "transition" in ctx.code else ()):
         if m.group(1) not in _DURATION_PROPS:
             continue
         for t in _TIME.finditer(m.group(2)):
@@ -898,14 +898,14 @@ def check_off_token_easing(ctx: Ctx) -> Iterator[Hit]:
     s = ctx.scales
     if s is None or not s.easings:
         return
-    if ctx.tailwind:
+    if ctx.tailwind and "ease-" in ctx.code:
         for m in _EASE_CLASS.finditer(ctx.code):
             if not ctx.class_ok(m.start()) or ctx.in_transition(m.start()):
                 continue  # inside a transition value the CSS check below reports it, with the CSS fix
             if m.group(1) not in s.easing_names:
                 curve = _KEYWORD_CURVES.get("linear" if m.group(1) == "linear" else f"ease-{m.group(1)}")
                 yield Hit(m.start(), m.group(0), fix=_easing_fix(ctx, curve, True))
-    for m in _TRANSITION_DECL.finditer(ctx.code):
+    for m in (_TRANSITION_DECL.finditer(ctx.code) if "transition" in ctx.code else ()):
         if m.group(1) not in _EASING_PROPS:
             continue
         value, base = m.group(2), m.start(2)
@@ -920,6 +920,8 @@ _OUTLINE_DECL = re.compile(r"(?<![\w-])outline\s*:\s*[\"']?(?:none|0)(?![\w.%-])
 
 
 def check_outline_none(ctx: Ctx) -> Iterator[Hit]:
+    if "outline" not in ctx.code:
+        return
     if ctx.styling == "tailwind-v4":  # in v3 outline-none is a transparent outline, which forced-colors still shows
         for m in _OUTLINE_CLASS.finditer(ctx.code):
             if not ctx.class_ok(m.start()):
@@ -941,7 +943,7 @@ _STYLE_PROP = re.compile(r"(?<=[\s{,;\"'])[\"']?(" + _STYLE_PROPS + r")(?![\w-])
 
 
 def check_inline_style(ctx: Ctx) -> Iterator[Hit]:
-    if ctx.stylesheet:
+    if ctx.stylesheet or "style" not in ctx.code:
         return
     code = ctx.code
     for m in _JSX_STYLE.finditer(code):
@@ -997,6 +999,8 @@ _EMOJI = re.compile("(?:(?:[\U0001F000-\U0001FAFF" + _EMOJI_PRESENTATION + "]|[\
 
 
 def check_emoji(ctx: Ctx) -> Iterator[Hit]:
+    if ctx.code.isascii():  # every emoji is outside ASCII
+        return
     for m in _EMOJI.finditer(ctx.code):
         yield Hit(m.start(), m.group(0))
 
@@ -1007,7 +1011,7 @@ _STANDALONE = frozenset("hidden block inline flex grid contents invisible visibl
 
 
 def check_dark_variant(ctx: Ctx) -> Iterator[Hit]:
-    if not ctx.tailwind:
+    if not ctx.tailwind or "dark:" not in ctx.code:
         return
     for m in _DARK.finditer(ctx.code):
         if not ctx.class_ok(m.start()):
@@ -1032,16 +1036,17 @@ def check_hand_rolled(ctx: Ctx) -> Iterator[Hit]:
     if ctx.stylesheet:
         return
     code = ctx.code
-    for m in _HANDROLLED.finditer(code):
-        yield Hit(m.start(), m.group(0).rstrip("( "))
-    for m in _CLICK_TAG.finditer(code):
+    if "role" in code or "aria-modal" in code or "createPortal" in code:
+        for m in _HANDROLLED.finditer(code):
+            yield Hit(m.start(), m.group(0).rstrip("( "))
+    for m in (_CLICK_TAG.finditer(code) if "<div" in code or "<span" in code else ()):
         end = _tag_end(code, m.end(), min(len(code), m.end() + 3000))
         if end < 0:
             continue
         if _CLICK_ATTR.search(code, m.end(), end) and not _ROLE_OR_TAB.search(code, m.end(), end):
             yield Hit(m.start(), f"<{m.group(1)}> with a click handler",
                       fix="use a <button> (or the Button primitive): it is focusable and works with Enter and Space")
-    if ctx.shadcn:
+    if ctx.shadcn and ("<select" in code or "<input" in code):
         for m in _NATIVE.finditer(code):
             kind = m.group(1) or "select"
             text = "<select>" if kind == "select" else f'<input type="{kind}">'
@@ -2664,11 +2669,41 @@ def _sev(severity: str, plural: bool = False) -> str:
     return f'<span class="sev sev-{severity}"><span class="sev-shape" aria-hidden="true"></span> {word}</span>'
 
 
-def _finding_item(f: Finding) -> str:
-    return (f'<li class="finding" data-severity="{_a(f.severity)}" data-rule="{_a(f.rule)}">'
-            f'<div class="f-where">{_sev(f.severity)}<code class="loc">{_t(f"{f.file}:{f.line}")}</code></div>'
-            f'<div class="f-what"><p class="msg">{_t(f.message)}</p>'
-            f'<p class="fix"><span class="fix-label">Fix</span>{_t(f.fix)}</p></div></li>')
+SEGMENT_NOWRAP = 32  # path parts up to this long never break inside; longer ones may (rare: a very long file name)
+
+
+def _loc(path: str, line: int) -> str:
+    """file:line that wraps only after a /: each part is unbreakable (hyphens included), with a break chance after
+    every separator."""
+    parts = f"{path}:{line}".replace("\\", "/").split("/")
+    shown = [f'<span class="seg">{_t(s)}</span>' if len(s) <= SEGMENT_NOWRAP else _t(s) for s in parts]
+    return f'<code class="loc">{"/<wbr>".join(shown)}</code>'
+
+
+def _finding_item(f: Finding, with_fix: bool = True) -> str:
+    fix = f'<p class="fix"><span class="fix-label">Fix</span>{_t(f.fix)}</p>' if with_fix else ""
+    return (f'<li class="finding{"" if with_fix else " compact"}" data-severity="{_a(f.severity)}" data-rule="{_a(f.rule)}">'
+            f'<div class="f-where">{_sev(f.severity)}{_loc(f.file, f.line)}</div>'
+            f'<div class="f-what"><p class="msg">{_t(f.message)}</p>{fix}</div></li>')
+
+
+def _findings_list(items: List[Finding], indent: str = "") -> List[str]:
+    """The rows of one rule group. A fix shared by several rows is shown once above them (the rows stay compact);
+    a fix of its own stays on its row."""
+    by_fix: Dict[str, List[Finding]] = {}
+    for f in items:
+        by_fix.setdefault(f.fix, []).append(f)
+    out, single = [], []
+    for fix, group in by_fix.items():
+        if len(group) < 2:
+            single += group
+            continue
+        out.append(f'{indent}<div class="fix-group" data-group><p class="fix shared-fix"><span class="fix-label">Fix</span>'
+                   f'{_t(fix)} <span class="count">(for the {len(group)} below)</span></p>')
+        out.append(f'{indent}  <ul class="findings" role="list">' + "".join(_finding_item(f, False) for f in group) + "</ul></div>")
+    if single:
+        out.append(f'{indent}<ul class="findings" role="list">' + "".join(_finding_item(f) for f in single) + "</ul>")
+    return out
 
 
 def _rules_by_id() -> Dict[str, Rule]:
@@ -2693,9 +2728,8 @@ def report_issues(findings: List[Finding]) -> str:
             what = rules[rule_id].message.replace("{match}", "…").strip(" :…") if rule_id in rules else ""
             out.append(f'      <div class="rule-group" data-group><h4><code>{_t(rule_id)}</code>'
                        f'<span class="rule-msg">{_t(what)}</span><span class="count">{len(group)}</span></h4>')
-            out.append('        <ul class="findings" role="list">')
-            out += [f"          {_finding_item(f)}" for f in group]
-            out.append("        </ul>\n      </div>")
+            out += _findings_list(group, "        ")
+            out.append("      </div>")
         out.append("    </div>")
     return "\n".join(out)
 
@@ -2729,7 +2763,7 @@ def report_improvements(findings: List[Finding]) -> str:
                    f'<div class="imp-head"><h3><span class="sr-only">Rank {rank}: </span><code>{_t(rule_id)}</code></h3>'
                    f'<span class="impact">impact {impact} (weight {weight} × {times})</span></div>'
                    + (f'<p class="why"><span class="why-label">Why</span>{_t(why)}</p>' if why else "")
-                   + '<ul class="findings" role="list">' + "".join(_finding_item(f) for f in items) + "</ul></div></li>")
+                   + "".join(_findings_list(items)) + "</div></li>")
     out.append("    </ol>")
     return "\n".join(out)
 

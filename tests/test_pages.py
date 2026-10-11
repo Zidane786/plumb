@@ -100,6 +100,11 @@ def today_report(project: Path) -> Path:
     return project / f"docs/design/audit-{datetime.date.today().isoformat()}.html"
 
 
+def plain_text(page: str) -> str:
+    """The page with its tags removed (what a reader sees, still HTML-escaped)."""
+    return re.sub(r"<[^>]+>", "", page)
+
+
 def assert_refusal(r, *needles: str) -> None:
     assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
     assert "error: " in r.stderr and "\nfix: " in r.stderr, r.stderr
@@ -319,7 +324,7 @@ def test_report_has_every_finding_and_the_summary(project: Path, report: Path) -
     for f in data["findings"]:
         assert html.escape(f["message"], quote=False) in text, f["message"]
         assert html.escape(f["fix"], quote=False) in text, f["fix"]
-        assert html.escape(f"{f['file']}:{f['line']}", quote=False) in text
+        assert html.escape(f"{f['file']}:{f['line']}", quote=False) in plain_text(text)
     assert P.PLUMB_VERSION in text and datetime.date.today().isoformat() in text
     for section in ("summary", "issues", "improvements"):
         assert f'id="{section}"' in text
@@ -345,6 +350,44 @@ def test_report_ranks_errors_first_and_improvements_by_impact(report: Path) -> N
         assert A.RULES[[r.id for r in A.RULES].index(rule)].why in html.unescape(improvements)
     for sev, word in (("error", "Error"), ("warn", "Warning"), ("suggest", "Suggestion")):
         assert re.search(rf'class="sev sev-{sev}"[^>]*>\s*<span class="sev-shape" aria-hidden="true"></span>\s*{word}', text), sev
+
+
+def test_report_shows_a_shared_fix_once_per_group(project: Path, report: Path) -> None:
+    data = json.loads(audit(project, "--json").stdout)
+    text = read(report)
+    issues = text[text.index('id="issues"'):text.index('id="improvements"')]
+    raw = [f for f in data["findings"] if f["rule"] == "raw-colour"]
+    assert len(raw) == 4 and len({f["fix"] for f in raw}) == 1
+    assert issues.count(html.escape(raw[0]["fix"], quote=False)) == 1
+    assert "(for the 4 below)" in issues
+    rows = re.findall(r'<li class="finding([^"]*)" data-severity="error" data-rule="raw-colour"', issues)
+    assert rows == [" compact"] * 4
+    single = re.findall(r'<li class="finding([^"]*)" data-severity="error" data-rule="palette-colour"', issues)
+    assert single == [""]  # a fix of its own stays on its row
+
+
+def test_report_paths_break_only_after_separators(project: Path, report: Path) -> None:
+    text = read(report)
+    assert '<span class="seg">.claude</span>/<wbr><span class="seg">skills</span>/<wbr>' in text
+    assert '<span class="seg">demo-design-system</span>/<wbr>' in text
+    assert '<span class="seg">demo.tokens.json:24</span>' in text or "demo.tokens.json:" in text
+
+
+def _mutate_muted(doc: dict) -> None:
+    doc["color"]["text-muted"] = {"$value": "#b8b8b8", "$extensions": {"plumb": {"dark": "#3a3d42"}}}
+
+
+def test_chrome_text_keeps_a_contrast_floor(tmp_path: Path) -> None:
+    good = make_project(tmp_path / "good")
+    assert "--pl-muted: var(--color-text-muted);" in read(good / SPECIMEN_REL)
+    p = make_project(tmp_path / "low", mutate=_mutate_muted)
+    assert audit(p, "--html").returncode == 1
+    for page in (p / SPECIMEN_REL, today_report(p)):
+        text = read(page)
+        assert "--pl-muted:" not in text.split("Plumb's page roles", 1)[1].split("</style>", 1)[0], page.name
+        assert "--pl-text: var(--color-on-surface);" in text, page.name
+    row = read(p / SPECIMEN_REL)
+    assert "#b8b8b8" in row[row.index('data-token="color.text-muted"'):]  # the token itself is still shown as it is
 
 
 def test_suggest_rules_have_a_weight_and_a_why() -> None:
@@ -483,6 +526,52 @@ def test_report_filters_and_every_finding(browser, pages) -> None:
         assert count() == len(data["findings"])
         page.click('[data-filter-severity="suggest"]')
         assert count("suggest") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_report_says_when_no_finding_matches_and_resets(browser, pages) -> None:
+    data = pages["data"]
+    ctx, page, errors, _ = _open(browser, pages["report"], 390, "dark")
+    try:
+        assert not page.is_visible("#none-match")
+        for sev in ("error", "warn", "suggest"):
+            page.click(f'[data-filter-severity="{sev}"]')
+        assert page.is_visible("#none-match")
+        assert "No findings match these filters" in page.inner_text("#none-match")
+        page.click("#reset-filters")
+        assert not page.is_visible("#none-match")
+        visible = page.evaluate("[...document.querySelectorAll('li.finding')].filter(e => e.offsetParent !== null).length")
+        assert visible == len(data["findings"])
+        assert page.evaluate("document.getElementById('rule-filter').value") == ""
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_report_paths_wrap_only_at_separators(browser, pages) -> None:
+    ctx, page, errors, _ = _open(browser, pages["report"], 390, "light")
+    try:
+        breaks = page.evaluate("""() => {
+            const out = [];
+            for (const loc of document.querySelectorAll('code.loc')) {
+                const walker = document.createTreeWalker(loc, NodeFilter.SHOW_TEXT);
+                let prevTop = null, prevChar = '';
+                for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+                    for (let i = 0; i < n.length; i++) {
+                        const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 1);
+                        const rect = r.getClientRects()[0];
+                        if (!rect) continue;
+                        if (prevTop !== null && rect.top > prevTop + 2) out.push(prevChar);
+                        prevTop = rect.top; prevChar = n.data[i];
+                    }
+                }
+            }
+            return out;
+        }""")
+        assert breaks, "the long tokens path should wrap at 390px"
+        assert set(breaks) == {"/"}, breaks
         assert errors == []
     finally:
         ctx.close()

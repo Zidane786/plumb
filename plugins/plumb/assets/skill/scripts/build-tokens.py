@@ -1408,14 +1408,38 @@ def _closest(entries: List[Tuple[str, Optional[float]]], target: float, below: f
     return min(sized)[2] if sized else None
 
 
+CHROME_TEXT_ROLES = ("text", "muted")
+CHROME_FLOOR = 4.5
+CHROME_NEUTRAL = {"bg": {"light": "#fbfbfa", "dark": "#121315"}, "surface": {"light": "#ffffff", "dark": "#1a1c1f"}}
+
+
+def _chrome_text_ok(doc: dict, path: str, picked: Dict[str, Optional[str]]) -> bool:
+    """True when the token reaches 4.5:1 on the page background and the surface (the project's, else Plumb's neutral),
+    in light and dark: the contrast floor for Plumb's own page text."""
+    for mode in ("light", "dark"):
+        for ground in ("bg", "surface"):
+            if picked.get(ground):
+                bg, alpha = P.parse_color(P.resolve(doc, picked[ground], mode))
+                bg = _blend(bg, alpha, CHROME_NEUTRAL[ground][mode])
+            else:
+                bg = CHROME_NEUTRAL[ground][mode]
+            fg, fa = P.parse_color(P.resolve(doc, path, mode))
+            if P.contrast(_blend(fg, fa, bg), bg) < CHROME_FLOOR:
+                return False
+    return True
+
+
 def page_roles(doc: dict) -> List[Tuple[str, str]]:
     """(--pl-role, value) for every page role the project's tokens can fill; the template's neutrals cover the rest."""
     out: List[Tuple[str, str]] = []
     colours = {k: p for k, p in _colour_keys(doc).items() if p.startswith("color.")}
+    picked = {role: _pick(colours, wanted) for role, wanted in PAGE_COLOUR_ROLES}
     for role, wanted in PAGE_COLOUR_ROLES:
-        path = _pick(colours, wanted)
+        path = picked[role]
         if path is None:
             continue
+        if role in CHROME_TEXT_ROLES and not _chrome_text_ok(doc, path, picked):
+            continue  # under the floor: Plumb's own page text keeps its neutral (the token still shows as-is in swatches)
         out.append((f"--pl-{role}", f"var({varname(path)})"))
         if role in ("accent", "bad"):
             key = next(w for w in wanted if colours.get(w) == path)
