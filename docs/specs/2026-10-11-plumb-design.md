@@ -542,6 +542,17 @@ reported only), platforms, check, and a token-aware fix (`#14857F` → `bg-prima
 - `extract`'s inventory uses the same scanner as inconsistency-only mode (in `_plumb.py`).
 - Exit codes: 0 no errors, 1 errors found, 2 nothing checked or bad input (with `fix:`).
 
+**Suggestions (improvements, not violations).** A third severity, `suggest`, never affects the
+exit code. It says what could be better, with a reason and a concrete fix: a missing token (the
+same raw value used 3+ times), unused or near-duplicate tokens in the system itself, components to
+consolidate into a variant, contrast headroom (a pair that only just passes, in light or dark, with
+a nearby value that passes comfortably), inconsistent spacing or radius for the same element, a
+screen missing a state that `ux.md` asks for, dark-mode polish (an elevation or boundary barely
+visible in dark), and accessibility beyond the minimum (icon-only controls without labels, weak
+focus rings). The HTML report shows them in an **Improvements** section after the issues, ranked by
+impact; each can become a Slate ticket, and `/plumb:update` can apply token suggestions with the
+user's OK.
+
 ### 6.3 `build-prototype.py`
 
 Assembles the main prototype from the screen files: `prototype.html` (an app shell with
