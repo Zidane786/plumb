@@ -622,7 +622,7 @@ Role: home                          (home = this repo owns the tokens; linked = 
 Platforms: web
 UI packages: . (Next.js · Tailwind v4 · shadcn)
 Python: `python3`
-No downloads: nothing is installed or downloaded for the design system; if something is missing, ask the user.
+No downloads: nothing is installed or downloaded; if something is missing, ask the user and wait for their decision.
 
 ## Checks
 Edit check: on
@@ -650,7 +650,9 @@ Each asked first, never silent:
 
 - a row in `AGENTS.md`/`CLAUDE.md` "read before you work": *before any UI change, read
   `<skill>/SKILL.md`; UI work is prototype first: update or create the screen with
-  `/plumb:prototype`, get the user's approval, then build it to match*;
+  `/plumb:prototype`, get the user's approval, then build it to match. Don't install or download
+  anything; if something is missing, ask the user and wait for their decision; never decide on
+  their behalf*;
 - `Makefile` targets `tokens`, `tokens-check`, `design-audit` (plain `python` commands in
   `PLUMB.md` for machines without make);
 - the generated copy at the app's path (e.g. `app/globals.css`);
@@ -691,8 +693,10 @@ system font stack is used. Every page opens offline from disk.
 **Nothing is installed or downloaded.** A rule in every Plumb skill: never install or download
 anything (no package, image, tool or file from the network); build components with what the
 project already has. If a component really seems to need a new package, the agent says so
-(`ask the user: …`) and leaves the decision to the user. There is no setting for this; `PLUMB.md`
-states it in one line so every agent working in the project sees it.
+(`ask the user: …`) and waits for the user's decision, never deciding on their behalf. There is
+no setting for this; the rule is stated in the `AGENTS.md`/`CLAUDE.md` row Plumb adds (§10) and in
+one line of `PLUMB.md`, so every agent working in the project sees it. Enforcing it is outside
+Plumb (a separate install guard can do that).
 
 **Optional, each the organisation's choice:** Effective HTML skills (else Plumb's built-in rules
 and templates), a browser tool (else audit and `/plumb:ux` review code instead of screenshots),
