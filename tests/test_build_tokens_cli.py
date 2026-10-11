@@ -136,7 +136,9 @@ def test_contrast_is_idempotent_and_default_build_refreshes_block(project: Path)
 def test_default_build_skips_a_dark_mode_file_without_markers(project: Path) -> None:
     path = skill(project) / "references/dark-mode.md"
     write(path, "# my own notes\n")
-    assert run(project).returncode == 0
+    r = run(project)
+    assert r.returncode == 0
+    assert r.stderr.startswith("note: ") and "not refreshed" in r.stderr and "--contrast" in r.stderr
     assert path.read_text(encoding="utf-8") == "# my own notes\n"
 
 
@@ -239,6 +241,64 @@ def test_contrast_without_file_or_markers_is_refused(tmp_path: Path) -> None:
     write(refs / "dark-mode.md", "# no markers\n")
     assert_refusal(run(p, "--contrast"), "plumb:contrast:start")
     assert (refs / "dark-mode.md").read_text(encoding="utf-8") == "# no markers\n"
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("pink", False), ("label-pink", False), ("blink", False), ("context-menu", False), ("textarea-border", False),
+    ("subtext", False), ("outline-input", False),
+    ("text", True), ("text-muted", True), ("ink", True), ("primary-ink", True), ("link", True), ("on-primary", True),
+])
+def test_text_names_are_whole_words(name: str, expected: bool) -> None:
+    sys.path.insert(0, str(SCRIPTS))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bt_names", SCRIPTS / "build-tokens.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod._is_text_name(name) is expected
+
+
+def test_pink_label_is_not_checked_as_text(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["label-pink"] = {"$value": "#ffc0cb"}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    assert "pink" not in block(dark_md(p))
+
+
+def test_on_surface_family_is_checked_over_every_surface(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        for n, (l, d) in {"sunk": ("#f2f4f6", "#12151b"), "column": ("#f6f7f9", "#161a21"),
+                          "on-surface-variant": ("#5e6675", "#a7afbb")}.items():
+            doc["color"][n] = {"$value": l, "$extensions": {"plumb": {"dark": d}}}
+        doc["color"]["primary-container"] = {"$value": "#e3f3f1", "$extensions": {"plumb": {"dark": "#12403d"}}}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    table = block(dark_md(p))
+    for pair in ("on-surface-variant on sunk", "on-surface-variant on column", "on-surface-variant on background",
+                 "on-surface on sunk", "on-surface on column", "on-surface on primary-container"):
+        assert f"| {pair} |" in table, pair
+    assert "| on-primary on background |" not in table
+
+
+def test_extra_pairs_list_form(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["$extensions"]["plumb"]["contrast"] = {"extra_pairs": [
+            ["on-primary", "primary", "text"], ["primary", "background", "large"], ["primary", "on-surface", "ui"]]}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    table = block(dark_md(p))
+    assert re.search(r"\| on-primary on primary \| [\d.]+ \| [\d.]+ \| 4\.5 \|", table)
+    assert re.search(r"\| primary on background \| [\d.]+ \| [\d.]+ \| 3 \|", table)
+    assert re.search(r"\| primary on on-surface \| [\d.]+ \| [\d.]+ \| 3 \|", table)
+
+
+@pytest.mark.parametrize("entry", [["primary", "background"], ["primary", "background", "huge"], ["primary", "nope", "text"],
+                                   ["primary", "background", "text", "x"], [1, 2, 3]])
+def test_bad_list_form_extra_pairs(tmp_path: Path, entry) -> None:
+    def mut(doc: dict) -> None:
+        doc["$extensions"]["plumb"]["contrast"] = {"extra_pairs": [entry]}
+    p = make_project(tmp_path, mut)
+    assert_refusal(run(p, "--contrast"), "extra_pairs")
 
 
 # ---------------------------------------------------------------- --migrate

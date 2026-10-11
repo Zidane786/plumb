@@ -14,17 +14,21 @@ mobile/android/<Project>Theme.kt for the platforms listed in $extensions.plumb.p
   --migrate    bring the tokens JSON up to the current schema (1) by adding missing settings; never removes or changes a value.
   --css-vars   print the tokens as plain CSS custom properties (:root, the md breakpoint, .dark and prefers-color-scheme).
 
+The default build prints one `note:` line to stderr when dark-mode.md exists without the markers.
 Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...).
 
 Contrast pairs (WCAG 2.x, light and dark):
   * every on-X token over X (4.5:1);
-  * every text token over every surface (4.5:1). Text tokens are colour tokens whose name starts with `on-` or contains
-    `text` or `ink`. Surfaces are background, page, sidebar, sunk, column, surface*, and *-container, or exactly the tokens
-    listed in $extensions.plumb.contrast.surfaces. An `on-X` token is also checked over every surface only when X is itself
-    a surface (on-surface, on-background); on-primary and the like are checked over their own X only, and container
-    surfaces are reached through their own on-X, text and ink tokens;
+  * every text token over every surface (4.5:1). Text tokens are colour tokens whose name starts with `on-`, is exactly
+    `link`, or has `text` or `ink` as a whole hyphen-separated word (text-muted, primary-ink; not pink or context-menu).
+    Surfaces are background, page, sidebar, sunk, column, surface*, and *-container, or exactly the tokens listed in
+    $extensions.plumb.contrast.surfaces. An `on-X` token where X is itself a surface (on-surface, on-surface-variant,
+    on-background) is checked over every surface; any other on-X (on-primary) is checked over its own X only;
   * UI boundaries (3:1): the token `outline-input` and tokens listed in contrast.ui, over every non-container surface;
-  * contrast.extra_pairs: [{"fg": token, "bg": token, "need": 4.5, "note": "..."}] ("need" defaults to 4.5; 3 for large text).
+  * contrast.extra_pairs, either form per entry:
+      ["on-primary-fill", "primary-fill", "text"]            [fg, bg, kind], kind text (4.5) | large (3) | ui (3)
+      {"fg": token, "bg": token, "need": 4.5, "note": "..."}  "need" defaults to 4.5 (3 for large text)
+--contrast exits 0 even when pairs fail: it writes the evidence, the audit is the gate.
 A failing pair lists the nearest passing foreground: its L* is stepped darker (light mode) or lighter (dark mode) until it passes.
 
 Python 3.9+, standard library only. Declarations follow the order of the tokens file
@@ -1032,7 +1036,7 @@ def _is_surface_name(key: str) -> bool:
 
 
 def _is_text_name(key: str) -> bool:
-    return key.startswith("on-") or "text" in key or "ink" in key
+    return key.startswith("on-") or key == "link" or bool({"text", "ink"} & set(key.split("-")))
 
 
 class Pair:
@@ -1144,7 +1148,7 @@ def contrast_pairs(doc: dict) -> List[Pair]:
         if k.startswith("on-"):
             base = k[3:]
             if _is_surface_name(base) and not base.endswith("-container"):
-                for s_ in plain_surfaces:
+                for s_ in surfaces:
                     add(k, s_, NEED_TEXT)
         elif _is_text_name(k):
             for s_ in surfaces:
@@ -1154,11 +1158,18 @@ def contrast_pairs(doc: dict) -> List[Pair]:
             add(k, s_, NEED_UI)
 
     extra = cfg.get("extra_pairs", [])
+    kinds = {"text": NEED_TEXT, "large": NEED_UI, "ui": NEED_UI}
     for i, entry in enumerate(extra):
         where = f"$extensions.plumb.contrast.extra_pairs[{i}]"
+        if isinstance(entry, list):
+            if len(entry) != 3 or not all(isinstance(x, str) for x in entry) or entry[2] not in kinds:
+                raise _err(f"{where} must be [fg, bg, kind] with kind text, large or ui",
+                           'write it like ["on-primary-fill", "primary-fill", "text"]')
+            add(known(entry[0], where), known(entry[1], where), kinds[entry[2]])
+            continue
         if not isinstance(entry, dict) or not isinstance(entry.get("fg"), str) or not isinstance(entry.get("bg"), str):
-            raise _err(f"{where} must be an object with \"fg\" and \"bg\" token names",
-                       'write it like {"fg": "primary", "bg": "background", "need": 3}')
+            raise _err(f"{where} must be [fg, bg, kind] or an object with \"fg\" and \"bg\" token names",
+                       'write it like ["primary", "background", "ui"] or {"fg": "primary", "bg": "background", "need": 3}')
         need = entry.get("need", NEED_TEXT)
         if isinstance(need, bool) or not isinstance(need, (int, float)) or not 1 <= need <= 21:
             raise _err(f"{where}.need must be a number from 1 to 21 (4.5 text, 3 large text or UI)", "write \"need\": 4.5 or \"need\": 3")
@@ -1259,6 +1270,8 @@ def contrast_output(doc: dict, skill_dir: Path, required: bool) -> Optional[Tupl
         if required:
             raise _err(f"{path} has no {CONTRAST_START} ... {CONTRAST_END} markers",
                        f"add the two marker lines on their own lines where the table should go in {path}")
+        print(f"note: the contrast block in {path.name} was not refreshed (no {CONTRAST_START} / {CONTRAST_END} markers); "
+              f"add those two lines where the table should go, then run build-tokens.py --contrast", file=sys.stderr)
         return None
     return path, new
 
