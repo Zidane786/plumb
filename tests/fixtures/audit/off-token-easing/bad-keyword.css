@@ -1,0 +1,2 @@
+/* expect: off-token-easing@2 */
+.a{transition: opacity 150ms ease-in-out}

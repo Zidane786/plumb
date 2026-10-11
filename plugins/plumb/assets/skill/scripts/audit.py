@@ -26,10 +26,21 @@ PLUMB.md's `Allowed raw values:` list (e.g. components/ui/**, where the primitiv
 except outline-none, icon library and emoji. Exceptions are by path only, never by a comment in the line. Comments are
 not checked.
 
-Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt. Never node_modules, build output
-(.next dist build out coverage Pods DerivedData ...), generated files (a GENERATED ... do not edit header, the platform
-outputs build-tokens.py writes) or files over 5 MB. With no PATHS the project is walked (PLUMB.md `UI files:` narrows it
-and docs/design is left to the prototype checks); PATHS given are always checked.
+Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt. Never node_modules or build output
+(.next dist build out coverage Pods DerivedData ...), never files over 5 MB. A `GENERATED ... do not edit` header exempts
+a file only on the paths Plumb's generators own: <skill>/assets/platforms/** (not starter/), the copies listed in
+$extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, screens.html,
+tours/*.html, audit-*.html); anywhere else the header is just a comment and the file is audited. With no PATHS the project
+is walked: PLUMB.md `UI files:` narrows it, the design-system skill's own folder is left out except
+assets/platforms/*/starter/, and docs/design is left to the prototype checks. PATHS given are always checked.
+
+Hooks load this file by path (it is not in a package). Register the module in sys.modules before running it, or
+its dataclasses fail:
+    spec = importlib.util.spec_from_file_location("plumb_audit", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["plumb_audit"] = mod      # required before exec_module (dataclasses look the module up)
+    spec.loader.exec_module(mod)
+Hooks pass make_settings(root, load_doc(skill_dir)) as settings; it adds "_shadcn" when the project has shadcn primitives.
 
 Exit codes: 0 no errors (warnings allowed), 1 errors found, 2 nothing checked or bad input (error: ... then fix: ...).
 
@@ -296,19 +307,24 @@ def _role_of_prefix(prefix: str) -> str:
 # ---------------------------------------------------------------- per-file context
 
 
-_BLOCK_OR_LINE_COMMENT = re.compile(r"(?<![\w.*/])/\*.*?\*/|<!--.*?-->|(?:^|(?<=[\s;{}]))//[^\n]*", re.S | re.M)
-_BLOCK_COMMENT = re.compile(r"(?<![\w.*/])/\*.*?\*/", re.S)
+_STRINGS = r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`"
+# Strings come first in each alternation, so "/*" or " //" inside a string never starts a comment.
+_STRING_OR_COMMENT = re.compile(_STRINGS + r"|(?<![\w.*/])/\*.*?\*/|<!--.*?-->|(?:^|(?<=[\s;{}]))//[^\n]*", re.S | re.M)
+_CSS_STRING_OR_COMMENT = re.compile(_STRINGS + r"|(?<![\w.*/])/\*.*?\*/", re.S)
 _NOT_NL = re.compile(r"[^\n]")
 _GENERATED = re.compile(r"do not edit", re.I)
 
 
 def _blank(m: "re.Match[str]") -> str:
-    return _NOT_NL.sub(" ", m.group(0))
+    s = m.group(0)
+    return s if s[0] in "\"'`" else _NOT_NL.sub(" ", s)
 
 
 def mask_comments(text: str, ext: str) -> str:
-    """The text with comments replaced by spaces (newlines kept, so offsets and line numbers do not move)."""
-    pattern = _BLOCK_COMMENT if ext in (".css",) else _BLOCK_OR_LINE_COMMENT
+    """The text with comments replaced by spaces (newlines kept, so offsets and line numbers do not move).
+
+    String literals are skipped over, never blanked, so a "/*" or " //" inside one cannot hide the code after it."""
+    pattern = _CSS_STRING_OR_COMMENT if ext in (".css",) else _STRING_OR_COMMENT
     return pattern.sub(_blank, text)
 
 
@@ -321,6 +337,31 @@ def normalise_text(text: str) -> str:
 def is_generated(text: str) -> bool:
     head = "\n".join(text[:1500].splitlines()[:5])
     return "GENERATED" in head and _GENERATED.search(head) is not None
+
+
+_GENERATED_PAGES = ("specimen.html", "prototype.html", "screens.html", "tours/*.html", "audit-*.html")
+_PLATFORM_OUTPUT = re.compile(r"(?:^|/)assets/platforms/")
+# Folder names that are build output wherever they appear; build, out, dist and coverage only count inside the project
+# (a relative path), because a project may itself live under a folder with one of those names.
+_ALWAYS_OUTPUT = SKIP_DIRS - {"build", "out", "dist", "coverage"}
+
+
+def generator_owned(path_name: str, settings: dict) -> bool:
+    """A path Plumb's generators write: <skill>/assets/platforms/** (not starter/), web.copies, the docs folder pages."""
+    path = path_name.replace("\\", "/")
+    if _PLATFORM_OUTPUT.search(path) and "starter" not in path.split("assets/platforms/", 1)[-1].split("/")[:-1]:
+        return True
+    web = settings.get("web") if isinstance(settings.get("web"), dict) else {}
+    copies = [c for c in (web.get("copies") or []) if isinstance(c, str)]
+    docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/")
+    return path_matches(path, copies) or path_matches(path, [f"{docs}/{page}" for page in _GENERATED_PAGES])
+
+
+def in_build_output(path_name: str) -> bool:
+    path = path_name.replace("\\", "/")
+    absolute = path.startswith("/") or re.match(r"^[A-Za-z]:/", path) is not None
+    names = _ALWAYS_OUTPUT if absolute else SKIP_DIRS
+    return any(part in names for part in path.split("/")[:-1])
 
 
 def file_ext(path_name: str) -> Optional[str]:
@@ -381,6 +422,15 @@ def _is_theme_path(path: str) -> bool:
     return any(p.lower() == "theme" for p in parts[:-1]) or re.search(r"Theme\.(swift|kt)$", parts[-1]) is not None
 
 
+_APPLY = re.compile(r"@apply\s[^;{}]*")
+_STYLE_BLOCK = re.compile(r"<style\b.*?(?:</style\s*>|\Z)", re.S | re.I)
+
+
+def _in_spans(spans: List[Tuple[int, int]], pos: int) -> bool:
+    i = bisect.bisect_right(spans, (pos, float("inf"))) - 1
+    return i >= 0 and spans[i][0] <= pos < spans[i][1]
+
+
 class Ctx:
     """One file being checked: its text (comments blanked in .code), platform, tokens and settings."""
 
@@ -406,7 +456,30 @@ class Ctx:
         self.allowed = path_matches(self.path, _split_list(self.settings.get("Allowed raw values")))
         self.theme_path = _is_theme_path(self.path)
         self.stylesheet = self.ext in (".css", ".scss")  # no markup or imports: the markup-only rules skip it
+        self.shadcn = "shadcn" in packages or self.settings.get("_shadcn") is True
+        self._apply: Optional[List[Tuple[int, int]]] = None
+        self._transitions: Optional[List[Tuple[int, int]]] = None
+        self._styles: Optional[List[Tuple[int, int]]] = None
         self._nl = [m.start() for m in re.finditer("\n", text)]
+
+    def class_ok(self, pos: int) -> bool:
+        """Tailwind classes count anywhere in markup and scripts; in a stylesheet only after @apply."""
+        if not self.stylesheet:
+            return True
+        if self._apply is None:
+            self._apply = [m.span() for m in _APPLY.finditer(self.code)]
+        return _in_spans(self._apply, pos)
+
+    def in_transition(self, pos: int) -> bool:
+        """Inside the value of a transition declaration (CSS, a style attribute or a JS style object)."""
+        if self._transitions is None:
+            self._transitions = [m.span(2) for m in _TRANSITION_DECL.finditer(self.code)]
+        return _in_spans(self._transitions, pos)
+
+    def in_style_block(self, pos: int) -> bool:
+        if self._styles is None:
+            self._styles = [m.span() for m in _STYLE_BLOCK.finditer(self.code)]
+        return _in_spans(self._styles, pos)
 
     def line_of(self, pos: int) -> int:
         return bisect.bisect_right(self._nl, pos - 1) + 1 if pos > 0 else 1
@@ -464,6 +537,9 @@ def _dimension_fix(ctx: Ctx, group: str, px: float, utility: Optional[str]) -> O
         return f"no {group} tokens yet: {ADD_TOKEN}"
     path, tokpx, dist = near
     name = "-".join(path.split(".")[1:])
+    if group == "spacing" and utility not in (None, "theme") and s.base:
+        step = tokpx / s.base  # Tailwind spacing utilities are steps of the base, whatever the token is called
+        name = num(step) if (step * 2).is_integer() else name
     if utility == "theme":
         text = f"use the {path} token ({num(tokpx)}px) from the generated theme"
     elif utility:
@@ -560,6 +636,35 @@ def _css_role(code: str, pos: int) -> str:
     return "fill"
 
 
+_WORD_BEFORE = re.compile(r"[A-Za-z]{2,}\.?\s+\Z")
+_CSS_VALUE_HINT = re.compile(r"\d(?:px|rem|em|%)|\b(?:solid|dashed|dotted|double|groove|ridge|inset|outset)\b")
+
+
+def _is_copy(ctx: Ctx, code: str, pos: int, end: int) -> bool:
+    """True for #123 in a JSX/HTML text node (between > and <) or in a string that reads as words ("Issue #456").
+
+    Class names, style values and stylesheets (including <style> blocks) are never copy."""
+    if ctx.stylesheet or ctx.in_style_block(pos):
+        return False
+    start = max(0, pos - 300)
+    gt, lt = code.rfind(">", start, pos), code.rfind("<", start, pos)
+    if gt > lt and code[gt - 1:gt] not in ("=", "-"):
+        nxt = code.find("<", end, end + 300)
+        around = code[gt + 1:pos] + code[end:nxt] if nxt >= 0 else ""
+        # apostrophes are normal in copy; quotes, ; = ? && || mean the > was code (a comparison), not a tag
+        if nxt >= 0 and not any(c in around for c in "\"`;=?") and "&&" not in around and "||" not in around:
+            return True
+    line_start = code.rfind("\n", 0, pos) + 1
+    before = code[line_start:pos]
+    q = max(before.rfind(c) for c in "\"'`")
+    if q < 0:
+        return False
+    inner = before[q + 1:]
+    eol = code.find("\n", end)
+    closes = code.find(before[q], end, eol if eol >= 0 else len(code)) >= 0
+    return closes and _WORD_BEFORE.search(inner) is not None and _CSS_VALUE_HINT.search(inner) is None
+
+
 def _parse_hex(digits: str) -> Tuple[str, float]:
     """('#rrggbb', alpha) from the digits of #rgb, #rgba, #rrggbb or #rrggbbaa."""
     d = digits.lower()
@@ -574,8 +679,8 @@ def check_raw_colour(ctx: Ctx) -> Iterator[Hit]:
     for m in _HEX.finditer(code):
         pos = m.start()
         digits = m.group(1)
-        if len(digits) == 4 and digits.isdigit():  # "#1234" is an order or issue number far more often than #rgba
-            continue
+        if len(digits) in (3, 4) and digits.isdigit() and _is_copy(ctx, code, pos, m.end()):
+            continue  # "Order #123" in a text node or a sentence-like string is a number, not a colour
         if _skip_hex_context(code, pos) or _selector_follows(code, m.end()):
             continue
         hexv, alpha = _parse_hex(digits)
@@ -671,6 +776,8 @@ def check_arbitrary_value(ctx: Ctx) -> Iterator[Hit]:
         return
     code = ctx.code
     for m in _ARB.finditer(code):
+        if not ctx.class_ok(m.start()):
+            continue
         utility, value = m.group(1), m.group(2)
         if _VAR_ONLY.match(value) or _has_colour(value):
             continue
@@ -678,6 +785,8 @@ def check_arbitrary_value(ctx: Ctx) -> Iterator[Hit]:
             continue
         yield Hit(m.start(), m.group(0), fix=_arbitrary_fix(ctx, utility, value))
     for m in _ARB_PROP.finditer(code):
+        if not ctx.class_ok(m.start()):
+            continue
         value = m.group(2)
         if _VAR_ONLY.match(value) or _has_colour(value):
             continue
@@ -727,6 +836,8 @@ def check_palette_colour(ctx: Ctx) -> Iterator[Hit]:
         return
     names = ctx.scales.colour_names if ctx.scales else set()
     for m in _PALETTE.finditer(ctx.code):
+        if not ctx.class_ok(m.start()):
+            continue
         name = m.group(2)
         if name in names:
             continue
@@ -747,6 +858,8 @@ def check_off_scale_type(ctx: Ctx) -> Iterator[Hit]:
         return
     if ctx.tailwind:
         for m in _TYPE_CLASS.finditer(ctx.code):
+            if not ctx.class_ok(m.start()):
+                continue
             if m.group(1) not in s.type:
                 yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "typography", _TW_TYPE[m.group(1)], "text"))
     for m in _FONT_SIZE.finditer(ctx.code):
@@ -768,6 +881,8 @@ def check_off_scale_radius(ctx: Ctx) -> Iterator[Hit]:
         return
     if ctx.tailwind:
         for m in _RADIUS_CLASS.finditer(ctx.code):
+            if not ctx.class_ok(m.start()):
+                continue
             if m.group(2) not in s.radius:
                 yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "radius", _TW_RADIUS[m.group(2)], m.group(1)))
     for m in _RADIUS_DECL.finditer(ctx.code):
@@ -786,9 +901,11 @@ def check_off_scale_spacing(ctx: Ctx) -> Iterator[Hit]:
     if not ctx.tailwind or s is None or not s.spacing:
         return
     for m in _SPACING_CLASS.finditer(ctx.code):
+        if not ctx.class_ok(m.start()):
+            continue
         step = m.group(2)
         px = float(step) * s.base
-        if px == 0 or step in s.spacing or px in s.spacing_px:
+        if px == 0 or px in s.spacing_px:  # the utility's px (step x base), never its name
             continue
         yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "spacing", px, m.group(1)))
 
@@ -806,6 +923,8 @@ def check_off_token_duration(ctx: Ctx) -> Iterator[Hit]:
         return
     if ctx.tailwind:
         for m in _DURATION_CLASS.finditer(ctx.code):
+            if not ctx.class_ok(m.start()):
+                continue
             ms = float(m.group(2))
             if ms and ms not in s.duration_ms:
                 yield Hit(m.start(), m.group(0), fix=_duration_fix(ctx, ms, m.group(1)))
@@ -828,6 +947,8 @@ def check_off_token_easing(ctx: Ctx) -> Iterator[Hit]:
         return
     if ctx.tailwind:
         for m in _EASE_CLASS.finditer(ctx.code):
+            if not ctx.class_ok(m.start()) or ctx.in_transition(m.start()):
+                continue  # inside a transition value the CSS check below reports it, with the CSS fix
             if m.group(1) not in s.easing_names:
                 curve = _KEYWORD_CURVES.get("linear" if m.group(1) == "linear" else f"ease-{m.group(1)}")
                 yield Hit(m.start(), m.group(0), fix=_easing_fix(ctx, curve, True))
@@ -848,6 +969,8 @@ _OUTLINE_DECL = re.compile(r"(?<![\w-])outline\s*:\s*[\"']?(?:none|0)(?![\w.%-])
 def check_outline_none(ctx: Ctx) -> Iterator[Hit]:
     if ctx.styling == "tailwind-v4":  # in v3 outline-none is a transparent outline, which forced-colors still shows
         for m in _OUTLINE_CLASS.finditer(ctx.code):
+            if not ctx.class_ok(m.start()):
+                continue
             yield Hit(m.start(), m.group(0), fix="use outline-hidden (keeps an outline in forced-colors mode) with the focus ring token")
     for m in _OUTLINE_DECL.finditer(ctx.code):
         yield Hit(m.start(), m.group(0), fix="use outline: 2px solid transparent (forced-colors still shows it) plus the focus ring token")
@@ -869,7 +992,9 @@ def check_inline_style(ctx: Ctx) -> Iterator[Hit]:
         return
     code = ctx.code
     for m in _JSX_STYLE.finditer(code):
-        end = code.find("}", m.end(), m.end() + 2000)
+        start = m.end() - 2  # the outer {
+        value = _attr_value(code, start, min(len(code), start + 5000))
+        end = start + len(value) if value else code.find("}", m.end(), m.end() + 2000)
         yield from _style_props(code, m.end(), end if end >= 0 else min(len(code), m.end() + 2000))
     for m in _ATTR_STYLE.finditer(code):
         end = code.find(m.group(1), m.end(), m.end() + 2000)
@@ -910,7 +1035,12 @@ def check_icon_library(ctx: Ctx) -> Iterator[Hit]:
             yield Hit(m.start(1), m.group(1), fix=f"use {wanted} only, through the icon map (assets/icons/icon-map.json)")
 
 
-_EMOJI = re.compile("(?:[\U0001F300-\U0001FAFF\u2600-\u27BF\U0001F000-\U0001F2FF][\ufe0f\u200d]*)+")
+# U+1F000+ are emoji. In U+2600-27BF (and the few in 2Bxx) only characters with emoji presentation count, or any
+# character followed by U+FE0F: plain text glyphs such as ✓ ✕ ★ ☰ ⚠ are fine in copy.
+_EMOJI_PRESENTATION = ("\u2614\u2615\u2648-\u2653\u267f\u2693\u26a1\u26aa\u26ab\u26bd\u26be\u26c4\u26c5\u26ce\u26d4"
+                       "\u26ea\u26f2\u26f3\u26f5\u26fa\u26fd\u2705\u270a\u270b\u2728\u274c\u274e\u2753-\u2755\u2757"
+                       "\u2795-\u2797\u27b0\u27bf\u2b1b\u2b1c\u2b50\u2b55")
+_EMOJI = re.compile("(?:(?:[\U0001F000-\U0001FAFF" + _EMOJI_PRESENTATION + "]|[\u2190-\u2bff]\ufe0f)[\ufe0f\u200d]*)+")
 
 
 def check_emoji(ctx: Ctx) -> Iterator[Hit]:
@@ -927,6 +1057,8 @@ def check_dark_variant(ctx: Ctx) -> Iterator[Hit]:
     if not ctx.tailwind:
         return
     for m in _DARK.finditer(ctx.code):
+        if not ctx.class_ok(m.start()):
+            continue
         util = m.group(1).split(":")[-1].lstrip("!")
         if "-" in util.lstrip("-") or util in _STANDALONE:
             yield Hit(m.start(), m.group(0))
@@ -934,15 +1066,33 @@ def check_dark_variant(ctx: Ctx) -> Iterator[Hit]:
 
 _ROLES = (r"alertdialog|dialog|menubar|menuitemcheckbox|menuitemradio|menuitem|menu|tooltip|tablist|tabpanel|tab|checkbox"
           r"|switch|radiogroup|radio|combobox|listbox|option|button")
-_HANDROLLED = re.compile(r"(?<![\w-])role\s*=\s*\{?\s*[\"'`]?(?:" + _ROLES + r")(?![\w-])|(?<![\w-])aria-modal(?![\w-])"
-                         r"|\bcreatePortal\s*\(")
+_HANDROLLED = re.compile(r"(?<![\w-])role\s*=\s*\{?\s*[\"'`]?(?:" + _ROLES + r")(?![\w-])[\"'`]?\}?"
+                         r"|(?<![\w-])aria-modal(?![\w-])|\bcreatePortal\s*\(")
+_CLICK_TAG = re.compile(r"<(div|span)(?![\w-])")
+_CLICK_ATTR = re.compile(r"(?<![\w-])(?:onClick|@click|v-on:click|on:click)\s*=")
+_ROLE_OR_TAB = re.compile(r"(?<![\w-])(?:role|tabIndex|tabindex)\s*=")
+_NATIVE = re.compile(r"<select(?![\w-])|<input\b[^>]{0,300}?\btype\s*=\s*\{?\s*[\"']?(checkbox|radio)(?![\w-])")
+_PRIMITIVE_FOR = {"select": "Select", "checkbox": "Checkbox", "radio": "RadioGroup"}
 
 
 def check_hand_rolled(ctx: Ctx) -> Iterator[Hit]:
     if ctx.stylesheet:
         return
-    for m in _HANDROLLED.finditer(ctx.code):
+    code = ctx.code
+    for m in _HANDROLLED.finditer(code):
         yield Hit(m.start(), m.group(0).rstrip("( "))
+    for m in _CLICK_TAG.finditer(code):
+        end = _tag_end(code, m.end(), min(len(code), m.end() + 3000))
+        if end < 0:
+            continue
+        if _CLICK_ATTR.search(code, m.end(), end) and not _ROLE_OR_TAB.search(code, m.end(), end):
+            yield Hit(m.start(), f"<{m.group(1)}> with a click handler",
+                      fix="use a <button> (or the Button primitive): it is focusable and works with Enter and Space")
+    if ctx.shadcn:
+        for m in _NATIVE.finditer(code):
+            kind = m.group(1) or "select"
+            text = "<select>" if kind == "select" else f'<input type="{kind}">'
+            yield Hit(m.start(), text, fix=f"use the {_PRIMITIVE_FOR[kind]} primitive from components/ui (shadcn)")
 
 
 PRIMITIVES = ("Button", "Badge", "Card")
@@ -1032,7 +1182,8 @@ def check_restyled_primitive(ctx: Ctx) -> Iterator[Hit]:
 
 
 _SW_COMPONENTS = re.compile(r"(?<![\w.])(?:(?:UI|NS)?Color\s*\(\s*(?:\.\w+\s*,\s*)?|#colorLiteral\s*\(\s*)(red|white|hue)\s*:")
-_SW_HEX = re.compile(r"(?<![\w.])(?:UI|NS)?Color\s*\(\s*(hex|rgb|rgba|argb|hexString)\s*:\s*\"?(?:#|0x)?([0-9A-Fa-f]{6,8})\b")
+_SW_HEX = re.compile(r"(?<![\w.])(?:UI|NS)?Color\s*\(\s*(hex|rgb|rgba|argb|hexString)\s*:\s*\"?(?:#|0x)?([0-9A-Fa-f]{6,8})\b\"?"
+                     r"(?:[^()\n]{0,60}\))?")
 _COMPONENT = {k: re.compile(k + r"\s*[:=]\s*(\d*\.?\d+)[fF]?(?:\s*/\s*(\d*\.?\d+))?") for k in ("red", "green", "blue")}
 
 
@@ -1058,16 +1209,18 @@ def check_swift_colour(ctx: Ctx) -> Iterator[Hit]:
         return
     code = ctx.code
     for m in _SW_COMPONENTS.finditer(code):
-        args = code[m.start():m.start() + 200].split(")")[0]
+        close = code.find(")", m.end(), m.end() + 200)
+        args = code[m.start():close + 1] if close >= 0 else code[m.start():m.end()]
         hexv = _components_hex(args) if m.group(1) == "red" else None
-        yield Hit(m.start(), args.strip()[:60] + ")", fix=_mobile_colour_fix(ctx, hexv))
+        yield Hit(m.start(), " ".join(args.split()), fix=_mobile_colour_fix(ctx, hexv))
     for m in _SW_HEX.finditer(code):
         yield Hit(m.start(), m.group(0), fix=_mobile_colour_fix(ctx, _hex6(m.group(2), m.group(1) == "argb")))
 
 
-_SW_FONT = re.compile(r"\.system\s*\(\s*size\s*:\s*(\d*\.?\d+)|\.custom\s*\(\s*\"[^\"\n]*\"\s*,\s*(?:fixedSize|size)\s*:\s*(\d*\.?\d+)"
-                      r"|systemFont\s*\(\s*ofSize\s*:\s*(\d*\.?\d+)|UIFont\s*\(\s*name\s*:[^,\n]*,\s*size\s*:\s*(\d*\.?\d+)")
-_SW_RADIUS = re.compile(r"(?<![\w.])cornerRadius\s*:\s*(\d*\.?\d+)(?![\w.])|\.cornerRadius\s*\(\s*(\d*\.?\d+)\s*[,)]")
+_SW_FONT = re.compile(r"(?:\.system\s*\(\s*size\s*:\s*(\d*\.?\d+)|\.custom\s*\(\s*\"[^\"\n]*\"\s*,\s*(?:fixedSize|size)\s*:\s*(\d*\.?\d+)"
+                      r"|systemFont\s*\(\s*ofSize\s*:\s*(\d*\.?\d+)|UIFont\s*\(\s*name\s*:[^,\n]*,\s*size\s*:\s*(\d*\.?\d+))"
+                      r"(?:[^()\n]{0,60}\))?")
+_SW_RADIUS = re.compile(r"(?<![\w.])cornerRadius\s*:\s*(\d*\.?\d+)(?![\w.])|\.cornerRadius\s*\(\s*(\d*\.?\d+)\s*(?=[,)])[^()\n]{0,60}\)")
 
 
 def _mobile_sizes(ctx: Ctx, rx: "re.Pattern[str]", group: str) -> Iterator[Hit]:
@@ -1092,8 +1245,8 @@ def check_swift_radius(ctx: Ctx) -> Iterator[Hit]:
 
 _KT_HEX = re.compile(r"(?<![\w.])Color\s*\(\s*0[xX]([0-9A-Fa-f]{6,8})[uUlL]*\s*\)")
 _KT_COMPONENTS = re.compile(r"(?<![\w.])Color\s*\(\s*(?:red\s*=\s*)?(\d*\.?\d+)[fF]?\s*,\s*(?:green\s*=\s*)?(\d*\.?\d+)[fF]?\s*,"
-                            r"\s*(?:blue\s*=\s*)?(\d*\.?\d+)[fF]?")
-_KT_PARSE = re.compile(r"\bparseColor\s*\(\s*\"#([0-9A-Fa-f]{6,8})\"")
+                            r"\s*(?:blue\s*=\s*)?(\d*\.?\d+)[fF]?(?:[^()\n]{0,40}\))?")
+_KT_PARSE = re.compile(r"\bparseColor\s*\(\s*\"#([0-9A-Fa-f]{6,8})\"\s*\)")
 
 
 def check_kotlin_colour(ctx: Ctx) -> Iterator[Hit]:
@@ -1106,7 +1259,7 @@ def check_kotlin_colour(ctx: Ctx) -> Iterator[Hit]:
         vals = [float(x) for x in m.groups()]
         scale = 255 if all(v <= 1 for v in vals) else 1  # 0..1 floats, else 0..255 ints
         hexv = "#" + "".join(f"{max(0, min(255, round(v * scale))):02x}" for v in vals)
-        yield Hit(m.start(), m.group(0) + ")", fix=_mobile_colour_fix(ctx, hexv))
+        yield Hit(m.start(), m.group(0), fix=_mobile_colour_fix(ctx, hexv))
     for m in _KT_PARSE.finditer(code):
         yield Hit(m.start(), m.group(0), fix=_mobile_colour_fix(ctx, _hex6(m.group(1), False)))
 
@@ -1205,10 +1358,10 @@ def audit_text(path_name: str, text: str, doc: Optional[dict], settings: dict) -
 
     Unsupported extensions and generated files give []. CRLF and Windows paths give the same result as LF and /.
     """
-    if file_ext(path_name) is None:
+    if file_ext(path_name) is None or in_build_output(path_name):
         return []
     text = normalise_text(text or "")
-    if is_generated(text):
+    if is_generated(text) and generator_owned(path_name, settings or {}):
         return []
     ctx = Ctx(path_name, text, doc, settings)
     out: List[Finding] = []
@@ -1290,8 +1443,16 @@ def load_doc(skill_dir: Path) -> Optional[dict]:
 
 
 def make_settings(root: Path, doc: Optional[dict]) -> dict:
-    """PLUMB.md's Key: value lines merged over the tokens file's $extensions.plumb settings."""
-    return {**P.plumb_settings(doc or {}), **P.read_plumb_md(root / "PLUMB.md")}
+    """PLUMB.md's Key: value lines merged over the tokens file's $extensions.plumb settings.
+
+    Adds "_shadcn": True when the project has shadcn primitives (components/ui/select or checkbox, at the root or in
+    src/), so native <select> and checkbox/radio inputs are reported as hand-rolled."""
+    settings = {**P.plumb_settings(doc or {}), **P.read_plumb_md(root / "PLUMB.md")}
+    for base in (root, root / "src"):
+        for name in ("select", "checkbox"):
+            if any((base / "components" / "ui" / f"{name}{ext}").is_file() for ext in (".tsx", ".jsx")):
+                settings["_shadcn"] = True
+    return settings
 
 
 def _ui_filter(settings: dict) -> Tuple[List[str], List[str]]:
@@ -1305,16 +1466,8 @@ def _ui_filter(settings: dict) -> Tuple[List[str], List[str]]:
     return dirs, names
 
 
-def _generated_paths(root: Path, skill_dir: Path, settings: dict) -> Tuple[Path, List[Path]]:
-    copies = []
-    for c in (settings.get("web") or {}).get("copies") or []:
-        if isinstance(c, str):
-            copies.append((root / c.replace("\\", "/")).resolve())
-    return (skill_dir / "assets" / "platforms").resolve(), copies
-
-
 def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: dict, explicit: bool) -> List[Path]:
-    platforms_dir, copies = _generated_paths(root, skill_dir, settings)
+    skill_root = Path(skill_dir).resolve()
     dirs, names = _ui_filter(settings) if not explicit else ([], [])
     docs_dir = (root / str(settings.get("docs_dir") or "docs/design")).resolve()
     out = set()
@@ -1323,11 +1476,9 @@ def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: di
         if file_ext(path.name) is None:
             return False
         resolved = path.resolve()
-        if resolved in copies:
-            return False
-        try:
-            inside = resolved.relative_to(platforms_dir).parts
-            if "starter" not in inside[:-1]:
+        try:  # the design-system skill's own files are not the app; only its starter components are audited
+            inside = resolved.relative_to(skill_root).parts
+            if inside[:2] != ("assets", "platforms") or "starter" not in inside[2:-1]:
                 return False
         except ValueError:
             pass
@@ -1405,19 +1556,20 @@ def run_quick(args: argparse.Namespace, root: Path, doc: Optional[dict], setting
     if not path.is_file():
         print(f"error: {args.quick}: file not found\nfix: pass the path of the file being edited to --quick", file=sys.stderr)
         return 2
-    if args.before == "-":
-        before: Optional[str] = _read_stdin()
-    elif args.before:
-        bpath = Path(args.before)
-        if not bpath.is_file():
-            print(f"error: {args.before}: file not found\nfix: pass --before - and send the old text on stdin", file=sys.stderr)
-            return 2
-        before = read_source(bpath)
-    else:
-        before = None
+    bpath = Path(args.before) if args.before and args.before != "-" else None
+    if bpath is not None and not bpath.is_file():
+        print(f"error: {args.before}: file not found\nfix: pass --before - and send the old text on stdin", file=sys.stderr)
+        return 2
+    try:
+        before = _read_stdin() if args.before == "-" else read_source(bpath) if bpath is not None else None
+        after = read_source(path)
+    except OSError as exc:
+        print(f"error: cannot read {exc.filename or args.quick} ({exc.strerror or exc})\n"
+              f"fix: check the file exists and is readable, then run the check again", file=sys.stderr)
+        return 2
     name = rel(path, root)
-    checked = 1 if file_ext(name) is not None else 0
-    findings = quick(name, before, read_source(path), doc, settings)
+    checked = 1 if file_ext(name) is not None and not in_build_output(name) else 0
+    findings = quick(name, before, after, doc, settings)
     return _report(findings, checked, True)
 
 
@@ -1446,8 +1598,8 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
         except OSError as exc:
             print(f"note: cannot read {name} ({exc}), skipped", file=sys.stderr)
             continue
-        if is_generated(normalise_text(text[:1500])):
-            continue
+        if is_generated(normalise_text(text[:1500])) and generator_owned(name, settings):
+            continue  # a header counts only on the paths the generators own
         checked += 1
         findings.extend(audit_text(name, text, doc, settings))
     if not checked:
