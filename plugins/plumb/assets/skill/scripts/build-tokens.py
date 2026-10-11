@@ -1967,8 +1967,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         print(f"wrote {rel(path, root)}")
     if args.check:
         if stale:
+            prototype_pages = set(prototype_page_outputs(doc, root))  # generated pages that carry the plumb:theme region
             for path in stale:
-                note = " (prototype token block)" if path.name in PROTOTYPE_PAGES and path.exists() else ""
+                note = " (prototype token block)" if path in prototype_pages else ""
                 print(f"stale: {rel(path, root)}{note}")
             print(f"fix: {command}")
             return 1

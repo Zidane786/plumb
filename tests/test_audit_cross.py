@@ -505,7 +505,8 @@ def _big_project(dest: Path, files: int) -> Path:
     return project
 
 
-RATIO_FLOOR = 0.5  # seconds
+BASELINE_MIN = 0.2  # seconds: the smallest baseline worth a ratio (below it, timer and scheduler noise dominate)
+BASELINE_FILES = (1000, 2000, 4000)  # doubled until the baseline takes BASELINE_MIN
 RATIO_LIMIT = 8.0  # between linear (4) and quadratic (16), with room for machine load
 
 
@@ -519,19 +520,27 @@ def _audit_time(project: Path, files: int) -> float:
 
 
 def test_full_audit_scales_linearly_and_stays_fast(tmp_path: Path) -> None:
-    """4,000 files: no worse than linear against 1,000 (ratio under RATIO_LIMIT: 4 is linear, n log n about 4.8,
-    quadratic 16; a loaded machine stretches the longer run to about 7) and under a
-    generous 30 s cap (CI runners are slower than a laptop). The two sizes are timed in turn (small, big, three times)
-    and the fastest of each kept, so both see the same machine load; the first run on freshly written files pays the
-    OS's first-open cost. The ratio only counts when the 1,000-file baseline takes at least RATIO_FLOOR seconds: below
-    that, timer and scheduler noise dominate. Robust to machine speed and load, still catches quadratic work."""
-    small_project = _big_project(tmp_path / "small", 1000)
-    big_project = _big_project(tmp_path / "big", 4000)
+    """4x the files take no worse than linear time (ratio under RATIO_LIMIT: 4 is linear, n log n about 4.8, quadratic
+    16) and the big run stays under a generous 30 s cap (CI runners are slower than a laptop).
+
+    The baseline sizes itself: from 1,000 files it doubles until its best of 3 takes at least BASELINE_MIN, so the
+    ratio always applies and never rests on a run too short to time. Then the baseline and 4x its files are timed in
+    turn (three times each, the fastest kept), so both see the same machine load, after one warm-up run each: the
+    first run on freshly written files pays the OS's first-open cost (and an on-access virus scanner's). Robust to
+    machine speed and load, still catches quadratic work."""
+    for n in BASELINE_FILES:
+        small_project = _big_project(tmp_path / f"small-{n}", n)
+        if min(_audit_time(small_project, n) for _ in range(3)) >= BASELINE_MIN:
+            break
+    big_n = 4 * n
+    big_project = _big_project(tmp_path / f"big-{big_n}", big_n)
+    _audit_time(big_project, big_n)  # warm-up: first opens of freshly written files (and any on-access scanner)
+    _audit_time(small_project, n)
     smalls, bigs = [], []
     for _ in range(3):
-        smalls.append(_audit_time(small_project, 1000))
-        bigs.append(_audit_time(big_project, 4000))
+        smalls.append(_audit_time(small_project, n))
+        bigs.append(_audit_time(big_project, big_n))
     small, big = min(smalls), min(bigs)
-    assert big < 30.0, f"{big:.1f}s for 4000 files"
-    if small >= RATIO_FLOOR:
-        assert big / small < RATIO_LIMIT, f"4000 files took {big:.2f}s, 1000 took {small:.2f}s: ratio {big / small:.1f}"
+    print(f"audit timing: {n} files {small:.2f}s, {big_n} files {big:.2f}s, ratio {big / small:.1f}")
+    assert big < 30.0, f"{big:.1f}s for {big_n} files"
+    assert big / small < RATIO_LIMIT, f"{big_n} files took {big:.2f}s, {n} took {small:.2f}s: ratio {big / small:.1f}"

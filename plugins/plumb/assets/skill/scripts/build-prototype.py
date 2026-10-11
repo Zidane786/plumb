@@ -14,7 +14,10 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
                                    player mount (#plumb-player) with the window.plumbPrototype API the player drives.
   <docs>/screens.html              the catalogue: a sidebar, every screen in every state in light and dark side by side,
                                    the control-state sheet (buttons, input, chip, link in default, hover, focus, pressed,
-                                   disabled, loading) drawn from the tokens, and the Decisions page.
+                                   disabled, loading) drawn from the tokens, and the Decisions page. Each copy is its
+                                   own sandboxed <iframe srcdoc> (allow-scripts, a no-network CSP), built by the page
+                                   from a <template>, sized to its content: ids, url(#id), #id selectors, scripts and
+                                   radio groups never meet another copy.
   <docs>/prototype/screens.json    the screen map. This script is its only writer: id, title, states, route, files
                                    (globs relative to the project root), files_hash, approved {by, at, hash} | null,
                                    synced_from_code, status (to-build | built).
@@ -325,7 +328,7 @@ def parse_screen(path: Path, rel: str) -> Screen:
     return screen
 
 
-# ---------------------------------------------------------------- screen CSS scope and per-copy ids
+# ---------------------------------------------------------------- screen CSS scope
 
 _CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _GROUP_AT = frozenset(("media", "container", "supports", "layer", "scope", "document", "starting-style"))
@@ -377,42 +380,6 @@ def unscoped_selectors(css: str) -> List[Tuple[int, str]]:
     return found
 
 
-_TAG = re.compile(r"<[A-Za-z][^\s/>]*(?:\s+[^\s=/>]+(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'>]+))?)*\s*/?>")
-_ATTR = re.compile(r"(\s)([^\s=/>]+)(\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s\"'>]+)")
-_ID_REFS = frozenset(("for", "form", "list", "headers", "aria-labelledby", "aria-describedby", "aria-controls",
-                      "aria-owns", "aria-activedescendant", "aria-details", "aria-errormessage", "aria-flowto",
-                      "popovertarget", "commandfor", "anchor"))
-
-
-def uniquify_ids(markup: str, suffix: str) -> str:
-    """Every id in the markup gets the suffix, and the references to it (for, aria-*, headers, href="#id", ...) follow,
-    so each copy of a screen in the catalogue has its own ids and its labels still work."""
-    ids = set()
-    for tag in _TAG.finditer(markup):
-        for m in _ATTR.finditer(tag.group(0)):
-            if m.group(2).lower() == "id":
-                ids.add(m.group(4).strip("\"'"))
-    if not ids:
-        return markup
-
-    def attr(m: "re.Match[str]") -> str:
-        name, raw = m.group(2).lower(), m.group(4)
-        quote = raw[0] if raw[:1] in ("\"", "'") else ""
-        value = raw[1:-1] if quote else raw
-        if name == "id" and value in ids:
-            value += suffix
-        elif name in _ID_REFS:
-            value = " ".join(v + suffix if v in ids else v for v in value.split())
-        elif name in ("href", "xlink:href") and value.startswith("#") and value[1:] in ids:
-            value += suffix
-        else:
-            return m.group(0)
-        q = quote or "\""
-        return f"{m.group(1)}{m.group(2)}{m.group(3)}{q}{value}{q}"
-
-    return _TAG.sub(lambda t: _ATTR.sub(attr, t.group(0)), markup)
-
-
 def load_screens(folder: Path, root: Path, rel) -> List[Screen]:
     files = sorted(p for p in folder.glob("*.html") if p.is_file())
     screens: List[Screen] = []
@@ -436,7 +403,9 @@ _FIELD = re.compile(r"^[-*]\s+([A-Za-z][A-Za-z /()-]*?):\s*(.*)$")
 _SUB = re.compile(r"^\s+(?:[-*]\s+)?(.*\S)\s*$")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _CODE = re.compile(r"`([^`]+)`")
-_BOLD = re.compile(r"\*\*([^*]+)\*\*")
+_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_ITALIC = re.compile(r"(?<![*\w])\*(?=[^\s*])([^*]+?)(?<=\S)\*(?![*\w])")
+_PLACEHOLDER = re.compile("\x00(\\d+)\x00")
 _UNSAFE_URL = re.compile(r"^\s*(?:javascript|data|vbscript):", re.I)
 WHO_KEYS = ("decided by", "who", "by")
 
@@ -481,23 +450,31 @@ def parse_decisions(text: str) -> List[dict]:
 
 
 def inline(text: str) -> str:
-    """Escaped text with `code`, **bold** and [links](url) (script URLs stay plain text). Code spans are cut out first,
-    so their content stays literal and a backtick can never put markup inside a link."""
+    """Escaped text with `code`, **bold**, *italic* and [links](url); script URLs stay plain text.
+
+    Code spans become placeholders first, so their content is never read as markup. Links come next: a label may hold a
+    code span (restored as <code> later); an href holding one gets the literal backtick text back, never markup. Then
+    bold and italic (which may span a code span), and last the placeholders turn into <code>."""
+    codes: List[str] = []
+
+    def stash(m: "re.Match[str]") -> str:
+        codes.append(m.group(1))
+        return f"\x00{len(codes) - 1}\x00"
+
+    def literal(fragment: str) -> str:
+        return _PLACEHOLDER.sub(lambda m: f"`{codes[int(m.group(1))]}`", fragment)
 
     def link(m: "re.Match[str]") -> str:
-        url = _html.unescape(m.group(2))
+        url = literal(_html.unescape(m.group(2)))
         if _UNSAFE_URL.match(url):
             return m.group(0)
         return f'<a href="{_e(url)}">{m.group(1)}</a>'
 
-    out, last = [], 0
-    for m in list(_CODE.finditer(text)) + [None]:
-        plain = text[last: m.start() if m else len(text)]
-        out.append(_BOLD.sub(lambda b: f"<strong>{b.group(1)}</strong>", _LINK.sub(link, _e(plain))))
-        if m:
-            out.append(f"<code>{_e(m.group(1))}</code>")
-            last = m.end()
-    return "".join(out)
+    out = _e(_CODE.sub(stash, text.replace("\x00", "")))
+    out = _LINK.sub(link, out)
+    out = _BOLD.sub(lambda m: f"<strong>{m.group(1)}</strong>", out)
+    out = _ITALIC.sub(lambda m: f"<em>{m.group(1)}</em>", out)
+    return _PLACEHOLDER.sub(lambda m: f"<code>{_e(codes[int(m.group(1))])}</code>", out)
 
 
 def decision_applies(entry: dict, sid: str) -> bool:
@@ -833,7 +810,6 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
     nav, body = [], []
-    copy_no = 0
     for s in screens:
         e = entries[s.id]
         appr = approval_state(e, s)
@@ -842,14 +818,17 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                    f'<ul class="sc-nav-states" role="list">{states}</ul></li>')
         blocks = []
         for st in s.states:
-            pair = []
-            for theme, label in (("light", "Light"), ("dark", "Dark")):
-                copy_no += 1
-                pair.append(f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
-                            f'<figcaption>{label}</figcaption><div class="sc-canvas">'
-                            f'{uniquify_ids(s.render(st), f"--c{copy_no}")}</div></figure>')
-            copies = "".join(pair)
             label = state_label(st)
+            pair = []
+            for theme, name in (("light", "Light"), ("dark", "Dark")):
+                # each copy is its own document (sandboxed iframe, built from the template by the page's script), so
+                # ids, url(#id), #id selectors, getElementById and radio groups never meet another copy's
+                pair.append(f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
+                            f'<figcaption>{name}</figcaption>'
+                            f'<iframe class="sc-iframe" sandbox="allow-scripts" '
+                            f'title="{_e(s.title)}: {_e(label)}, {theme} theme"></iframe>'
+                            f'<template class="sc-copy">{s.render(st)}</template></figure>')
+            copies = "".join(pair)
             code = f" <code>{_e(st)}</code>" if label.lower() != st.lower() else ""
             blocks.append(f'<div class="sc-state" id="screen-{_e(s.id)}/{_e(st)}"><h3 class="sc-state-h sc-ui">'
                           f'{_e(label)}{code}</h3><div class="sc-pair">{copies}</div></div>')
@@ -857,7 +836,10 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                     f'<header class="sc-head sc-ui"><div><h2 id="sc-h-{_e(s.id)}">{_e(s.title)}</h2>'
                     f'<p class="sc-meta">{_meta_line(e, appr)}</p></div>'
                     f'<a class="sc-open" href="prototype.html#screen-{_e(s.id)}">Open in the prototype</a></header>'
-                    + "".join(blocks) + "</section>")
+                    + "".join(blocks)
+                    + f'<template data-screen-styles="{_e(s.id)}">{screen_styles([s])}</template>'
+                    + f'<template data-screen-scripts="{_e(s.id)}">{screen_scripts([s])}</template>'
+                    + "</section>")
     count = sum(len(s.states) for s in screens)
     values = {
         "header": f"<!-- {_e(ctx['header'])} -->",
@@ -867,12 +849,10 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
         "source": _e(ctx["screens_rel"]),
         "summary": _e(f"{len(screens)} screen{'s' if len(screens) != 1 else ''}, {count} state{'s' if count != 1 else ''}"),
         "theme_css": ctx["theme_css"],
-        "screen_styles": ctx["styles"],
         "nav": "\n".join(nav),
         "catalogue": "\n".join(body),
         "controls": control_sheet(bt),
         "decisions": decisions_page(ctx["decisions"], screens, ctx["decisions_rel"], "sc-section sc-ui", hidden=False),
-        "screen_scripts": ctx["scripts"],
     }
     text = P.fill_template(template, values, CATALOGUE_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"

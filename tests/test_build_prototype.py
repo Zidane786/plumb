@@ -592,6 +592,23 @@ def test_build_tokens_refreshes_the_prototype_token_blocks(project: Path) -> Non
     assert {rel: (project / rel).read_bytes() for rel in before} == before
 
 
+def test_token_block_note_needs_the_generated_region(tmp_path: Path) -> None:
+    """A web copy that happens to be called screens.html is a plain stale output, not a prototype token block."""
+    def mutate(doc):
+        doc["$extensions"]["plumb"]["web"]["copies"] = ["public/screens.html"]
+
+    p = make_project(tmp_path / "p", mutate=mutate)
+    assert build_tokens(p).returncode == 0
+    assert (p / "public/screens.html").is_file()
+    doc = json.loads(read(p / TOKENS_REL))
+    doc["color"]["primary"]["$value"] = "#0b5a56"
+    write(p / TOKENS_REL, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    r = build_tokens(p, "--check")
+    assert r.returncode == 1
+    assert "stale: public/screens.html\n" in r.stdout
+    assert f"stale: {CATALOGUE_REL} (prototype token block)" in r.stdout
+
+
 def test_build_tokens_leaves_projects_without_a_prototype_alone(tmp_path: Path) -> None:
     p = make_project(tmp_path / "p", screens=False, build=False)
     r = build_tokens(p)
@@ -618,6 +635,21 @@ def test_inline_markup_cuts_code_spans_first() -> None:
     assert "<code>**y** [z](u)</code>" in out
     assert "<strong>bold</strong>" in out and '<a href="p.html">ok</a>' in out
     assert BP.inline("`<b>`") == "<code>&lt;b&gt;</code>"
+
+
+def test_inline_markup_tokenises_code_links_and_emphasis() -> None:
+    # a code span inside a link label stays inside the link
+    assert BP.inline("[`a.md`](p.html)") == '<a href="p.html"><code>a.md</code></a>'
+    # bold (and italic) across a code span
+    assert BP.inline("**bold `x` y**") == "<strong>bold <code>x</code> y</strong>"
+    assert BP.inline("*see `x`*") == "<em>see <code>x</code></em>"
+    # code inside an href stays literal text, never markup
+    assert BP.inline("[x](a`b`c)") == '<a href="a`b`c">x</a>'
+    # markup inside code stays literal; previous cases still hold
+    assert BP.inline("`**y** [z](u)`") == "<code>**y** [z](u)</code>"
+    assert BP.inline("[**b**](q.html) and a*b*c") == '<a href="q.html"><strong>b</strong></a> and a*b*c'
+    assert BP.inline("[a](JavaScript:alert(1)) & <i>") == "[a](JavaScript:alert(1)) &amp; &lt;i&gt;"
+    assert BP.inline("[`js`](javascript:x)") == "[<code>js</code>](javascript:x)"
 
 
 def test_globs_read_back_from_the_map_are_checked(project: Path) -> None:
@@ -655,20 +687,19 @@ SIGNUP = ('<section data-screen="signup" data-title="Sign up">\n'
           '</section>\n')
 
 
-def test_catalogue_copies_get_their_own_ids(project: Path) -> None:
+def test_catalogue_copies_are_isolated_documents(project: Path) -> None:
     write(project / SCREENS_REL / "signup.html", SIGNUP)
     assert run(project).returncode == 0
     page = read(project / CATALOGUE_REL)
-    ids = re.findall(r'\sid="([^"]+)"', page)
-    dupes = sorted({i for i in ids if ids.count(i) > 1})
-    assert dupes == [], dupes
     for theme in ("light", "dark"):
         copy = block(page, "data-copy", f"signup/ready/{theme}")
-        label = re.search(r'<label for="([^"]+)"', copy).group(1)
-        assert f'<input id="{label}" aria-describedby="email-hint{label[len("email"):]} other"' in copy
-        assert f'href="#{label}"' in copy
-    proto = read(project / PROTO_REL)
-    assert '<label for="email">' in proto and '<input id="email" aria-describedby="email-hint other">' in proto
+        assert '<iframe class="sc-iframe" sandbox="allow-scripts" title="Sign up: Ready, ' + theme + ' theme">' in copy
+        assert '<template class="sc-copy"><section data-screen="signup"' in copy
+        assert '<label for="email">' in copy and '<input id="email"' in copy  # markup untouched: ids stay as written
+    assert 'allow-same-origin' not in page
+    assert page.count('<template data-screen-scripts="booking">') == 1 and page.count('<template data-screen-styles="booking">') == 1
+    assert "default-src 'none'" in page  # the copies' CSP: nothing from the network
+    assert not re.search(r"<style>\s*\[data-screen=", page)  # screen styles live only inside the copies
 
 
 # ---------------------------------------------------------------- browser (headless)
@@ -707,6 +738,14 @@ def _open(browser, path: Path, width: int = 1280, scheme: str = "light", hash_: 
     page.goto(path.resolve().as_uri() + hash_)
     page.wait_for_load_state("load")
     return ctx, page, errors, requests
+
+
+def _copy(page, key: str):
+    return page.frame_locator(f'[data-copy="{key}"] iframe')
+
+
+def _copies_ready(page) -> None:
+    page.wait_for_function("[...document.querySelectorAll('figure[data-copy] iframe')].every(f => f.dataset.sized)")
 
 
 def _visible_screen(page) -> str:
@@ -870,21 +909,32 @@ def test_decisions_panel_and_page_in_the_browser(browser, built) -> None:
 def test_catalogue_shows_each_copy_in_its_state_and_theme(browser, built) -> None:
     ctx, page, errors, requests = _open(browser, built / CATALOGUE_REL, width=1280, scheme="light")
     try:
+        _copies_ready(page)
         for sid, states in SCREENS.items():
             for state in states:
-                shown = page.evaluate("""(key) => [...document.querySelectorAll('[data-copy="' + key + '"] [data-state]')]
-                    .filter(e => e.offsetParent !== null).map(e => e.dataset.state)""", f"{sid}/{state}/light")
-                assert shown == [state], (sid, state, shown)
-        light = page.evaluate("getComputedStyle(document.querySelector('[data-copy=\"home/ready/light\"] [data-screen]')).backgroundColor")
-        dark = page.evaluate("getComputedStyle(document.querySelector('[data-copy=\"home/ready/dark\"] [data-screen]')).backgroundColor")
-        assert (light, dark) == ("rgb(255, 255, 255)", "rgb(15, 18, 23)")
-        assert page.evaluate("document.querySelectorAll('[data-screen=\"booking\"][data-script-ran=\"yes\"]').length") == \
-            2 * len(SCREENS["booking"])
+                for theme in ("light", "dark"):
+                    shown = _copy(page, f"{sid}/{state}/{theme}").locator("[data-state]").evaluate_all(
+                        "els => els.filter(e => e.offsetParent !== null).map(e => e.dataset.state)")
+                    assert shown == [state], (sid, state, theme, shown)
+        bg = "el => getComputedStyle(el).backgroundColor"
+        assert _copy(page, "home/ready/light").locator("[data-screen]").evaluate(bg) == "rgb(255, 255, 255)"
+        assert _copy(page, "home/ready/dark").locator("[data-screen]").evaluate(bg) == "rgb(15, 18, 23)"
+        for state in SCREENS["booking"]:
+            for theme in ("light", "dark"):
+                _copy(page, f"booking/{state}/{theme}").locator('[data-screen="booking"][data-script-ran="yes"]').wait_for(state="attached")
+        heights = page.evaluate("[...document.querySelectorAll('figure[data-copy] iframe')].map(f => f.getBoundingClientRect().height)")
+        assert min(heights) >= 48 and max(heights) < 1200, heights  # each copy sized to its content
+        content = _copy(page, "home/ready/light").locator("body").evaluate("b => Math.ceil(b.getBoundingClientRect().height)")
+        frame_h = page.evaluate("document.querySelector('[data-copy=\"home/ready/light\"] iframe').getBoundingClientRect().height")
+        assert abs(frame_h - content) <= 1, (frame_h, content)
         page.click('.sc-nav a[href="#screen-menu"]')
         assert page.evaluate("location.hash") == "#screen-menu"
+        _copy(page, "home/ready/light").locator('[data-test="new-booking"]').click()  # a link to another screen
+        page.wait_for_function("location.hash === '#screen-booking'")
         assert errors == [] and requests == [], (errors, requests)
     finally:
         ctx.close()
+
 
 
 
@@ -913,10 +963,14 @@ def test_a_failing_screen_script_does_not_stop_the_others(browser, tmp_path: Pat
     write(p / SCREENS_REL / "broken.html", '<section data-screen="broken" data-order="0"><div data-state="ready">x</div>'
           '</section>\n<script data-screen-script>var = ;</script>\n')
     assert run(p).returncode == 0
-    for rel, selector in ((PROTO_REL, '#pp-frame [data-screen="booking"]'), (CATALOGUE_REL, '[data-copy] [data-screen="booking"]')):
+    for rel in (PROTO_REL, CATALOGUE_REL):
         ctx, page, errors, _ = _open(browser, p / rel)
         try:
-            assert page.get_attribute(selector, "data-script-ran") == "yes", rel
+            if rel == PROTO_REL:
+                assert page.get_attribute('#pp-frame [data-screen="booking"]', "data-script-ran") == "yes"
+            else:
+                _copies_ready(page)
+                _copy(page, "booking/ready/light").locator('[data-script-ran="yes"]').wait_for(state="attached")
             assert any("boom went the screen" in e for e in errors), errors
             assert any("SyntaxError" in e or "Unexpected" in e for e in errors), errors
             if rel == PROTO_REL:
@@ -926,16 +980,47 @@ def test_a_failing_screen_script_does_not_stop_the_others(browser, tmp_path: Pat
             ctx.close()
 
 
-def test_labels_work_in_every_catalogue_copy(browser, tmp_path: Path) -> None:
+ISO = ('<style>\n[data-screen="iso"] #swatch-label { color: rgb(1, 2, 3); }\n</style>\n'
+       '<section data-screen="iso" data-title="Isolation">\n'
+       '  <svg width="40" height="20" aria-hidden="true"><defs><linearGradient id="grad"><stop offset="0" stop-color="#c00"/>'
+       '<stop offset="1" stop-color="#c00"/></linearGradient></defs><rect id="swatch" width="40" height="20" fill="url(#grad)"/></svg>\n'
+       '  <p id="swatch-label">Swatch</p><output id="out"></output>\n'
+       '  <div data-state="ready"><label for="email">Email</label><input id="email">'
+       '<input type="radio" name="size" value="s" id="size-s" checked><label for="size-s">S</label>'
+       '<input type="radio" name="size" value="l" id="size-l"><label for="size-l">L</label></div>\n'
+       '  <div data-state="empty"><p>Nothing yet.</p></div>\n'
+       '</section>\n<script data-screen-script>\ndocument.getElementById("out").textContent = "ran " + plumb.state();\n</script>\n')
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_catalogue_copies_are_isolated(browser, tmp_path: Path, width: int) -> None:
     p = make_project(tmp_path / "p", build=False)
-    write(p / SCREENS_REL / "signup.html", SIGNUP)
+    write(p / SCREENS_REL / "iso.html", ISO)
     assert run(p).returncode == 0
-    ctx, page, errors, _ = _open(browser, p / CATALOGUE_REL)
+    ctx, page, errors, requests = _open(browser, p / CATALOGUE_REL, width=width)
     try:
+        _copies_ready(page)
+        keys = [f"iso/{state}/{theme}" for state in ("ready", "empty") for theme in ("light", "dark")]
+        for key in keys:
+            frame = _copy(page, key)
+            # url(#grad) finds its gradient: exactly one #grad in this document, and the rect paints with it
+            assert frame.locator("#swatch").evaluate("r => getComputedStyle(r).fill").startswith("url(")
+            assert frame.locator("body").evaluate("b => document.querySelectorAll('#grad').length") == 1
+            assert frame.locator("#swatch").evaluate("r => r.ownerDocument.getElementById('grad') !== null")
+            # an #id rule applies, and getElementById in the screen's script finds this copy's element
+            assert frame.locator("#swatch-label").evaluate("el => getComputedStyle(el).color") == "rgb(1, 2, 3)"
+            assert frame.locator("#out").inner_text() == "ran " + key.split("/")[1]
+        # radio groups are independent between the light and dark copies
+        _copy(page, "iso/ready/light").locator('label[for="size-l"]').click()
+        assert _copy(page, "iso/ready/light").locator("#size-l").is_checked()
+        assert _copy(page, "iso/ready/dark").locator("#size-s").is_checked()
+        # labels work in every copy
         for theme in ("light", "dark"):
-            page.click(f'[data-copy="signup/ready/{theme}"] label')
-            assert page.evaluate("document.activeElement.closest('[data-copy]').dataset.copy") == f"signup/ready/{theme}"
-        assert errors == []
+            frame = _copy(page, f"iso/ready/{theme}")
+            frame.locator('label[for="email"]').click()
+            assert frame.locator("#email").evaluate("el => el === document.activeElement")
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        assert errors == [] and requests == [], (errors, requests)
     finally:
         ctx.close()
 
