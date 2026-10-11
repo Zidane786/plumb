@@ -1,13 +1,31 @@
 #!/usr/bin/env python3
-"""build-tokens.py: turn the one tokens JSON into the web CSS and the SwiftUI / Jetpack Compose themes.
+"""build-tokens.py: turn the one tokens JSON into the web CSS, the SwiftUI / Jetpack Compose themes and the contrast evidence.
 
-Usage: build-tokens.py [--check] [--root SKILL_DIR] [--project PATH]
+Usage: build-tokens.py [--check | --contrast | --migrate | --css-vars] [--root SKILL_DIR] [--project PATH]
 
 Reads <skill>/assets/tokens/*.tokens.json (exactly one) and the web template, writes
 <skill>/assets/platforms/web/tokens.css (+ tailwind.tokens.js for tailwind-v3) and the copies listed in
 $extensions.plumb.web.copies (relative to the project root), plus assets/platforms/mobile/ios/<Project>Theme.swift and
-mobile/android/<Project>Theme.kt for the platforms listed in $extensions.plumb.platforms. --check writes nothing: it exits 1 naming every stale or
-missing file. Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...).
+mobile/android/<Project>Theme.kt for the platforms listed in $extensions.plumb.platforms, and refreshes the block between
+<!-- plumb:contrast:start --> and <!-- plumb:contrast:end --> in <skill>/references/dark-mode.md when that file has the markers.
+
+  --check      write nothing; exit 1 naming every stale or missing file.
+  --contrast   rewrite only the contrast block of references/dark-mode.md (exit 2 if the file or the markers are missing).
+  --migrate    bring the tokens JSON up to the current schema (1) by adding missing settings; never removes or changes a value.
+  --css-vars   print the tokens as plain CSS custom properties (:root, the md breakpoint, .dark and prefers-color-scheme).
+
+Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...).
+
+Contrast pairs (WCAG 2.x, light and dark):
+  * every on-X token over X (4.5:1);
+  * every text token over every surface (4.5:1). Text tokens are colour tokens whose name starts with `on-` or contains
+    `text` or `ink`. Surfaces are background, page, sidebar, sunk, column, surface*, and *-container, or exactly the tokens
+    listed in $extensions.plumb.contrast.surfaces. An `on-X` token is also checked over every surface only when X is itself
+    a surface (on-surface, on-background); on-primary and the like are checked over their own X only, and container
+    surfaces are reached through their own on-X, text and ink tokens;
+  * UI boundaries (3:1): the token `outline-input` and tokens listed in contrast.ui, over every non-container surface;
+  * contrast.extra_pairs: [{"fg": token, "bg": token, "need": 4.5, "note": "..."}] ("need" defaults to 4.5; 3 for large text).
+A failing pair lists the nearest passing foreground: its L* is stepped darker (light mode) or lighter (dark mode) until it passes.
 
 Python 3.9+, standard library only. Declarations follow the order of the tokens file
 (deterministic, keeps the file's grouping). Imports the shared core _plumb.py from its own directory.
@@ -381,35 +399,45 @@ GENERIC_FAMILIES = frozenset(
 GENERIC_FAMILIES = GENERIC_FAMILIES | {"segoe ui", "helvetica neue", "arial", "roboto"}
 SWIFT_WEIGHTS = {100: ".ultraLight", 200: ".thin", 300: ".light", 400: ".regular", 500: ".medium", 600: ".semibold",
                  700: ".bold", 800: ".heavy", 900: ".black"}
-M3_COLORS = (  # Material 3 role -> the token names (in the color group) that can fill it, first found wins
-    ("primary", ("primary-fill", "primary")),
-    ("onPrimary", ("on-primary-fill", "on-primary")),
-    ("primaryContainer", ("primary-container",)),
-    ("onPrimaryContainer", ("on-primary-container",)),
-    ("secondary", ("secondary",)),
-    ("onSecondary", ("on-secondary",)),
-    ("tertiary", ("tertiary",)),
-    ("onTertiary", ("on-tertiary",)),
-    ("background", ("background",)),
-    ("onBackground", ("on-background", "on-surface")),
-    ("surface", ("surface",)),
-    ("onSurface", ("on-surface",)),
-    ("surfaceVariant", ("surface-variant",)),
-    ("onSurfaceVariant", ("on-surface-variant",)),
-    ("surfaceContainerLowest", ("surface-container-lowest",)),
-    ("surfaceContainerLow", ("surface-container-low",)),
-    ("surfaceContainer", ("surface-container",)),
-    ("surfaceContainerHigh", ("surface-container-high",)),
-    ("surfaceContainerHighest", ("surface-container-highest",)),
-    ("inverseSurface", ("inverse-surface",)),
-    ("inverseOnSurface", ("inverse-on-surface",)),
-    ("outline", ("outline",)),
-    ("outlineVariant", ("outline-variant",)),
-    ("error", ("error", "danger")),
-    ("onError", ("on-error", "on-danger")),
-    ("errorContainer", ("error-container", "danger-container")),
-    ("onErrorContainer", ("on-error-container", "on-danger-container")),
-    ("scrim", ("scrim",)),
+_ON = ("on-surface", "on-background", "text", "ink")  # neutral text, the last resort for a foreground role
+_BG = ("surface", "background", "page")  # neutral surfaces, the last resort for a background role
+M3_COLORS = (  # Material 3 role -> the token names (in the color group) that can fill it, first found wins.
+    # Roles with no token of their own come from the closest present tokens, then from neutral surface / on-surface
+    # values, so Material's default purple never shows through.
+    ("primary", ("primary-fill", "primary", "link") + _ON),
+    ("onPrimary", ("on-primary-fill", "on-primary") + _BG),
+    ("primaryContainer", ("primary-container", "surface-variant", "sunk", "column") + _BG),
+    ("onPrimaryContainer", ("on-primary-container",) + _ON),
+    ("inversePrimary", ("primary", "primary-fill", "link") + _ON),
+    ("secondary", ("secondary", "primary-fill", "primary", "link") + _ON),
+    ("onSecondary", ("on-secondary", "on-primary-fill", "on-primary") + _BG),
+    ("secondaryContainer", ("secondary-container", "primary-container", "surface-variant", "sunk", "column") + _BG),
+    ("onSecondaryContainer", ("on-secondary-container", "on-primary-container") + _ON),
+    ("tertiary", ("tertiary", "primary-fill", "primary", "link") + _ON),
+    ("onTertiary", ("on-tertiary", "on-primary-fill", "on-primary") + _BG),
+    ("tertiaryContainer", ("tertiary-container", "primary-container", "surface-variant", "sunk", "column") + _BG),
+    ("onTertiaryContainer", ("on-tertiary-container", "on-primary-container") + _ON),
+    ("background", ("background", "page", "surface")),
+    ("onBackground", ("on-background", "on-surface", "text", "ink")),
+    ("surface", ("surface", "background", "page")),
+    ("onSurface", ("on-surface", "on-background", "text", "ink")),
+    ("surfaceVariant", ("surface-variant", "sunk", "column") + _BG),
+    ("onSurfaceVariant", ("on-surface-variant", "on-surface-soft") + _ON),
+    ("surfaceTint", ("primary-fill", "primary", "link") + _ON),
+    ("surfaceContainerLowest", ("surface-container-lowest", "surface-raised") + _BG),
+    ("surfaceContainerLow", ("surface-container-low", "column", "sunk") + _BG),
+    ("surfaceContainer", ("surface-container", "column", "sunk") + _BG),
+    ("surfaceContainerHigh", ("surface-container-high", "surface-raised", "sunk", "column") + _BG),
+    ("surfaceContainerHighest", ("surface-container-highest", "surface-raised", "sunk", "column") + _BG),
+    ("inverseSurface", ("inverse-surface",) + _ON),
+    ("inverseOnSurface", ("inverse-on-surface",) + _BG),
+    ("outline", ("outline", "outline-strong", "outline-input") + _ON),
+    ("outlineVariant", ("outline-variant", "outline", "outline-strong", "outline-input") + _ON),
+    ("error", ("error", "danger", "bad-fill", "bad") + _ON),
+    ("onError", ("on-error", "on-danger", "on-bad-fill") + _BG),
+    ("errorContainer", ("error-container", "danger-container", "bad-container") + _BG),
+    ("onErrorContainer", ("on-error-container", "on-danger-container", "on-bad-container", "error", "danger", "bad") + _ON),
+    ("scrim", ("scrim",) + _ON),
 )
 M3_TYPE_ROLES = ("displayLarge", "displayMedium", "displaySmall", "headlineLarge", "headlineMedium", "headlineSmall",
                  "titleLarge", "titleMedium", "titleSmall", "bodyLarge", "bodyMedium", "bodySmall", "labelLarge",
@@ -833,26 +861,27 @@ def build_kotlin(doc: dict, data: MobileData, project: str, header: str) -> str:
     L += [f"import {i}" for i in imports]
     L += [""]
     names = {c[0]: c for c in data.colors}
-    L += [f"/** Every {project} colour for one appearance (the Material roles cover only part of them). */", "@Immutable",
-          f"data class {project}Colors("]
-    L += [f"    val {kt(c[0])}: Color," for c in data.colors]
-    L += [")", ""]
-    for mode, lidx in (("Light", 2), ("Dark", 4)):
-        L.append(f"val {project}{mode}Colors = {project}Colors(")
-        L += [f"    {kt(c[0])} = {_kt_color(c[lidx], c[lidx + 1])}," for c in data.colors]
+    has_colors = bool(data.colors)
+    if has_colors:
+        L += [f"/** Every {project} colour for one appearance (the Material roles cover only part of them). */", "@Immutable",
+              f"data class {project}Colors("]
+        L += [f"    val {kt(c[0])}: Color," for c in data.colors]
         L += [")", ""]
-    roles = []
-    for role, candidates in M3_COLORS:
-        found = next((c for c in candidates if c in names), None)
-        if found:
-            roles.append((role, found))
-    for mode, fn in (("Light", "lightColorScheme"), ("Dark", "darkColorScheme")):
-        if roles:
-            L.append(f"val {project}{mode}ColorScheme: ColorScheme = {fn}(")
-            L += [f"    {role} = {project}{mode}Colors.{kt(name)}," for role, name in roles]
+        for mode, lidx in (("Light", 2), ("Dark", 4)):
+            L.append(f"val {project}{mode}Colors = {project}Colors(")
+            L += [f"    {kt(c[0])} = {_kt_color(c[lidx], c[lidx + 1])}," for c in data.colors]
             L += [")", ""]
-        else:
-            L += [f"val {project}{mode}ColorScheme: ColorScheme = {fn}()", ""]
+    for mode, fn, lidx in (("Light", "lightColorScheme", 2), ("Dark", "darkColorScheme", 4)):
+        L.append(f"val {project}{mode}ColorScheme: ColorScheme = {fn}(")
+        if has_colors:
+            for role, candidates in M3_COLORS:
+                found = next((c for c in candidates if c in names), data.colors[0][0])
+                L.append(f"    {role} = {project}{mode}Colors.{kt(found)},")
+        else:  # no colour tokens: neutral roles, never Material's default purple
+            bg, fg = ("Color.White", "Color.Black") if mode == "Light" else ("Color.Black", "Color.White")
+            for role, value in (("primary", fg), ("onPrimary", bg), ("background", bg), ("onBackground", fg), ("surface", bg), ("onSurface", fg)):
+                L.append(f"    {role} = {value},")
+        L += [")", ""]
     family = data.family()
     L += [(f"/** {family}, bundled in the app: pass its FontFamily in; the default falls back to the system sans. */" if family
            else "/** The system sans by default; pass a FontFamily to use another. */"),
@@ -902,33 +931,28 @@ def build_kotlin(doc: dict, data: MobileData, project: str, header: str) -> str:
         L += ["/** Material Symbols names mapped from assets/icons/icon-map.json. */", f"enum class {project}Icon(val symbol: String) {{"]
         L += [f"    {kt(i['concept'])}({_q(i['materialSymbol'])})," for i in data.icons]
         L += ["}", ""]
-    L += [
-        f"val Local{project}Colors = staticCompositionLocalOf {{ {project}LightColors }}",
-        "",
-        f"/** Wrap the app: Material 3 with {project} colours, type and shapes, plus every {project} colour through {project}Theme.colors. */",
-        "@Composable",
-        f"fun {project}Theme(",
-        "    darkTheme: Boolean = isSystemInDarkTheme(),",
-        "    fontFamily: FontFamily = FontFamily.Default,",
-        "    content: @Composable () -> Unit,",
-        ") {",
-        f"    val {low} = if (darkTheme) {project}DarkColors else {project}LightColors",
-        f"    CompositionLocalProvider(Local{project}Colors provides {low}) {{",
-        "        MaterialTheme(",
-        f"            colorScheme = if (darkTheme) {project}DarkColorScheme else {project}LightColorScheme,",
-        f"            typography = {low}Typography(fontFamily),",
-        f"            shapes = {project}Shapes,",
-        "            content = content,",
-        "        )",
-        "    }",
-        "}",
-        "",
-        f"object {project}Theme {{",
-        f"    val colors: {project}Colors",
-        f"        @Composable get() = Local{project}Colors.current",
-        "}",
-        "",
+    material = [
+        "MaterialTheme(",
+        f"    colorScheme = if (darkTheme) {project}DarkColorScheme else {project}LightColorScheme,",
+        f"    typography = {low}Typography(fontFamily),",
+        f"    shapes = {project}Shapes,",
+        "    content = content,",
+        ")",
     ]
+    if has_colors:
+        L += [f"val Local{project}Colors = staticCompositionLocalOf {{ {project}LightColors }}", "",
+              f"/** Wrap the app: Material 3 with {project} colours, type and shapes, plus every {project} colour through {project}Theme.colors. */"]
+    else:
+        L += [f"/** Wrap the app: Material 3 with {project} type and shapes (this project has no colour tokens yet). */"]
+    L += ["@Composable", f"fun {project}Theme(", "    darkTheme: Boolean = isSystemInDarkTheme(),",
+          "    fontFamily: FontFamily = FontFamily.Default,", "    content: @Composable () -> Unit,", ") {"]
+    if has_colors:
+        L += [f"    val {low} = if (darkTheme) {project}DarkColors else {project}LightColors",
+              f"    CompositionLocalProvider(Local{project}Colors provides {low}) {{"]
+        L += ["        " + m for m in material] + ["    }", "}", "",
+              f"object {project}Theme {{", f"    val colors: {project}Colors", f"        @Composable get() = Local{project}Colors.current", "}", ""]
+    else:
+        L += ["    " + m for m in material] + ["}", ""]
     return "\n".join(L)
 
 
@@ -987,7 +1011,323 @@ def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_f
     for copy in copies:
         out[safe_copy_path(root, copy)] = css
     out.update(mobile_outputs(doc, skill_dir, header))
+    dark = contrast_output(doc, skill_dir, required=False)
+    if dark:
+        out[dark[0]] = dark[1]
     return dict(sorted(out.items(), key=lambda kv: str(kv[0])))
+
+
+# ---------------------------------------------------------------- contrast evidence
+
+
+CONTRAST_START = "<!-- plumb:contrast:start -->"
+CONTRAST_END = "<!-- plumb:contrast:end -->"
+DARK_DOC_REL = "references/dark-mode.md"
+SURFACE_NAMES = frozenset(("background", "page", "sidebar", "sunk", "column"))
+NEED_TEXT, NEED_UI = 4.5, 3.0
+
+
+def _is_surface_name(key: str) -> bool:
+    return key in SURFACE_NAMES or key.startswith("surface") or key.endswith("-container")
+
+
+def _is_text_name(key: str) -> bool:
+    return key.startswith("on-") or "text" in key or "ink" in key
+
+
+class Pair:
+    def __init__(self, fg: str, bg: str, need: float) -> None:
+        self.fg, self.bg, self.need = fg, bg, need
+        self.light = 0.0
+        self.dark = 0.0
+        self.fix: Dict[str, Optional[Tuple[str, float]]] = {}
+
+    @property
+    def failed(self) -> List[str]:
+        return [m for m, v in (("light", self.light), ("dark", self.dark)) if v < self.need]
+
+
+def _contrast_settings(doc: dict) -> dict:
+    cfg = P.plumb_settings(doc)["contrast"]
+    where = "$extensions.plumb.contrast"
+    for key in ("surfaces", "ui", "extra_pairs"):
+        if key in cfg and not isinstance(cfg[key], list):
+            raise _err(f"{where}.{key} must be a list", f"write it as a list, e.g. {where}.{key}: []")
+    for key in ("surfaces", "ui"):
+        if not all(isinstance(x, str) for x in cfg.get(key, [])):
+            raise _err(f"{where}.{key} must list token names as strings", 'write it like ["surface", "sunk"]')
+    return cfg
+
+
+def _blend(fg: str, alpha: float, bg: str) -> str:
+    if alpha >= 1:
+        return fg
+    mix = [round(int(fg[i:i + 2], 16) * alpha + int(bg[i:i + 2], 16) * (1 - alpha)) for i in (1, 3, 5)]
+    return "#" + "".join(f"{c:02x}" for c in mix)
+
+
+def _lab_to_hex(lightness: float, a: float, b: float) -> str:
+    fy = (lightness + 16) / 116
+    fx, fz = fy + a / 500, fy - b / 200
+
+    def inv(t: float) -> float:
+        return t ** 3 if t > 6 / 29 else 3 * (6 / 29) ** 2 * (t - 4 / 29)
+
+    x, y, z = 0.95047 * inv(fx), 1.0 * inv(fy), 1.08883 * inv(fz)
+    lin = (3.2404542 * x - 1.5371385 * y - 0.4985314 * z,
+           -0.9692660 * x + 1.8760108 * y + 0.0415560 * z,
+           0.0556434 * x - 0.2040259 * y + 1.0572252 * z)
+
+    def enc(c: float) -> int:
+        c = min(1.0, max(0.0, c))
+        return round(255 * (12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055))
+
+    return "#" + "".join(f"{enc(c):02x}" for c in lin)
+
+
+def _walk_lightness(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tuple[str, float]]:
+    lightness, a, b = P._lab(fg)
+    lightness = min(100.0, max(0.0, lightness))
+    step = 0.5 if lighten else -0.5
+    while (lightness < 100) if lighten else (lightness > 0):
+        lightness = min(100.0, max(0.0, lightness + step))
+        cand = _lab_to_hex(lightness, a, b)
+        ratio = P.contrast(cand, bg)
+        if ratio >= need:
+            return cand, ratio
+    return None
+
+
+def nearest_passing(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tuple[str, float]]:
+    """The fg colour moved in small L* steps (hue kept) until it reaches `need` on bg: lighter when `lighten`, else
+    darker; when that direction cannot reach it (white text on a light fill), the other direction is tried."""
+    return _walk_lightness(fg, bg, need, lighten) or _walk_lightness(fg, bg, need, not lighten)
+
+
+def contrast_pairs(doc: dict) -> List[Pair]:
+    cfg = _contrast_settings(doc)
+    keys: Dict[str, str] = {}  # name -> token path, colour tokens in file order
+    for path, _tok, ttype in P.iter_tokens(doc):
+        if ttype == "color":
+            parts = path.split(".")
+            keys["-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)] = path
+
+    def known(name: object, where: str) -> str:
+        text = str(name)
+        if text in keys:
+            return text
+        if text.startswith("color."):
+            return known(text[6:].replace(".", "-"), where)
+        raise _err(f"{where}: unknown colour token {text!r}", "name a colour token from the tokens file, e.g. on-surface")
+
+    listed = cfg.get("surfaces") or []
+    surfaces = [known(n, "$extensions.plumb.contrast.surfaces") for n in listed]
+    if not listed:
+        surfaces = [k for k in keys if not _is_text_name(k) and _is_surface_name(k)]
+    plain_surfaces = [k for k in surfaces if listed or not k.endswith("-container")]
+    ui_names = [k for k in keys if k == "outline-input"] + [known(n, "$extensions.plumb.contrast.ui") for n in cfg.get("ui", [])]
+
+    pairs: List[Pair] = []
+    seen = set()
+
+    def add(fg: str, bg: str, need: float) -> None:
+        if fg != bg and (fg, bg) not in seen:
+            seen.add((fg, bg))
+            pairs.append(Pair(fg, bg, need))
+
+    for k in keys:
+        if k.startswith("on-") and k[3:] in keys:
+            add(k, k[3:], NEED_TEXT)
+    for k in keys:
+        if k in ui_names:
+            continue
+        if k.startswith("on-"):
+            base = k[3:]
+            if _is_surface_name(base) and not base.endswith("-container"):
+                for s_ in plain_surfaces:
+                    add(k, s_, NEED_TEXT)
+        elif _is_text_name(k):
+            for s_ in surfaces:
+                add(k, s_, NEED_TEXT)
+    for k in dict.fromkeys(ui_names):
+        for s_ in plain_surfaces:
+            add(k, s_, NEED_UI)
+
+    extra = cfg.get("extra_pairs", [])
+    for i, entry in enumerate(extra):
+        where = f"$extensions.plumb.contrast.extra_pairs[{i}]"
+        if not isinstance(entry, dict) or not isinstance(entry.get("fg"), str) or not isinstance(entry.get("bg"), str):
+            raise _err(f"{where} must be an object with \"fg\" and \"bg\" token names",
+                       'write it like {"fg": "primary", "bg": "background", "need": 3}')
+        need = entry.get("need", NEED_TEXT)
+        if isinstance(need, bool) or not isinstance(need, (int, float)) or not 1 <= need <= 21:
+            raise _err(f"{where}.need must be a number from 1 to 21 (4.5 text, 3 large text or UI)", "write \"need\": 4.5 or \"need\": 3")
+        add(known(entry["fg"], where), known(entry["bg"], where), float(need))
+    return pairs
+
+
+def _hex_in(doc: dict, path: str, mode: str) -> Tuple[str, float]:
+    try:
+        return P.parse_color(P.resolve(doc, path, mode))
+    except PlumbError as exc:
+        first, _, rest = str(exc).partition("\n")
+        if first.startswith(f"error: {path}"):
+            raise
+        raise PlumbError(f"error: {path}: {first[len('error: '):]}\n{rest}") from None
+
+
+def contrast_block(doc: dict) -> str:
+    """The generated text between the contrast markers (no trailing newline)."""
+    pairs = contrast_pairs(doc)
+    paths: Dict[str, str] = {}
+    for path, _tok, ttype in P.iter_tokens(doc):
+        if ttype == "color":
+            parts = path.split(".")
+            paths["-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)] = path
+    for pair in pairs:
+        for mode in ("light", "dark"):
+            fg, fa = _hex_in(doc, paths[pair.fg], mode)
+            bg, ba = _hex_in(doc, paths[pair.bg], mode)
+            if ba < 1:
+                raise _err(f"{pair.bg} is transparent, so {pair.fg} on {pair.bg} cannot be measured",
+                           "use an opaque colour for the background in $extensions.plumb.contrast")
+            fg = _blend(fg, fa, bg)
+            ratio = P.contrast(fg, bg)
+            if mode == "light":
+                pair.light = ratio
+            else:
+                pair.dark = ratio
+            if ratio < pair.need:
+                pair.fix[mode] = nearest_passing(fg, bg, pair.need, lighten=(mode == "dark"))
+    failing = [p for p in pairs if p.failed]
+    L = [
+        "Generated by `build-tokens.py --contrast` from the tokens file (WCAG 2.x relative luminance). Do not edit this block:",
+        "change the tokens, then run the command again. Text needs 4.5:1; large text and UI boundaries need 3:1.",
+        "",
+        f"{len(pairs)} pairs checked, {len(failing)} failing.",
+        "",
+        "| Pair | Light | Dark | Need | Result |",
+        "|---|---:|---:|---:|---|",
+    ]
+    for p in pairs:
+        result = "pass" if not p.failed else "fail (" + ", ".join(p.failed) + ")"
+        L.append(f"| {p.fg} on {p.bg} | {p.light:.2f} | {p.dark:.2f} | {num(p.need)} | {result} |")
+    if failing:
+        L += ["", "Nearest passing values (the foreground nudged in L*, lighter in dark mode, darker in light mode):", ""]
+        for p in failing:
+            for mode in p.failed:
+                fix = p.fix.get(mode)
+                if fix:
+                    L.append(f"- {p.fg} on {p.bg} ({mode}): nearest passing {fix[0]} ({fix[1]:.2f}:1)")
+                else:
+                    L.append(f"- {p.fg} on {p.bg} ({mode}): no value of this hue passes; change the background")
+    return "\n".join(L)
+
+
+def apply_contrast_block(text: str, block: str) -> Optional[str]:
+    """`text` with the marked block replaced (its own line endings kept), or None when the markers are missing."""
+    if text.count(CONTRAST_START) != 1 or text.count(CONTRAST_END) != 1:
+        return None
+    start = text.index(CONTRAST_START) + len(CONTRAST_START)
+    end = text.index(CONTRAST_END)
+    if end < start:
+        return None
+    nl = "\r\n" if "\r\n" in text else "\n"
+    return text[:start] + nl + block.replace("\n", nl) + nl + text[end:]
+
+
+def read_dark_doc(skill_dir: Path) -> Optional[str]:
+    path = skill_dir / DARK_DOC_REL
+    if not path.is_file():
+        return None
+    try:
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _err(f"{path}: cannot read ({exc})", "save it as UTF-8") from None
+
+
+def contrast_output(doc: dict, skill_dir: Path, required: bool) -> Optional[Tuple[Path, str]]:
+    """(path, new text) for references/dark-mode.md; None when it is absent or unmarked and not required."""
+    path = skill_dir / DARK_DOC_REL
+    text = read_dark_doc(skill_dir)
+    if text is None:
+        if required:
+            raise _err(f"{path} not found", f"copy references/dark-mode.md.tmpl from the Plumb plugin's assets/skill/ to {path}, then run --contrast again")
+        return None
+    new = apply_contrast_block(text, contrast_block(doc))
+    if new is None:
+        if required:
+            raise _err(f"{path} has no {CONTRAST_START} ... {CONTRAST_END} markers",
+                       f"add the two marker lines on their own lines where the table should go in {path}")
+        return None
+    return path, new
+
+
+# ---------------------------------------------------------------- migrate and css-vars
+
+
+def migrate(doc: dict, defaults_project: str = "") -> List[str]:
+    """Add the missing schema-1 settings to `doc` in place; returns what was added. Never removes or changes a value."""
+    added: List[str] = []
+    ext = doc.get("$extensions")
+    if ext is None:
+        ext = {}
+        doc_items = list(doc.items())
+        doc.clear()
+        doc["$extensions"] = ext
+        doc.update(doc_items)
+    elif not isinstance(ext, dict):
+        raise _err("$extensions must be an object", "write it as \"$extensions\": { \"plumb\": { ... } }")
+    plumb = ext.get(P.EXT)
+    if plumb is None:
+        plumb = ext[P.EXT] = {}
+    elif not isinstance(plumb, dict):
+        raise _err("$extensions.plumb must be an object", "write it as \"plumb\": { \"schema\": 1, ... }")
+    schema = plumb.get("schema")
+    if schema is not None and (isinstance(schema, bool) or not isinstance(schema, int) or schema < 0):
+        raise _err(f"$extensions.plumb.schema is {schema!r}", "write the schema as a whole number, e.g. 1")
+    if isinstance(schema, int) and schema > P.SCHEMA_VERSION:
+        raise _err(f"the tokens file uses schema {schema}, newer than this build-tokens.py supports ({P.SCHEMA_VERSION})",
+                   "update the Plumb plugin and the project's scripts first, then run --migrate again")
+    if schema is None or schema == 0:
+        plumb["schema"] = P.SCHEMA_VERSION
+        added.append("$extensions.plumb.schema = 1")
+    defaults = {"platforms": ["web"], "docs_dir": "docs/design"}
+    if defaults_project:
+        defaults["project"] = defaults_project
+    for key, value in defaults.items():
+        if key not in plumb:
+            plumb[key] = value
+            added.append(f"$extensions.plumb.{key} = {json.dumps(value)}")
+    for key, subdefaults in (("web", {"styling": "css", "copies": []}), ("contrast", {"extra_pairs": []})):
+        sub = plumb.get(key)
+        if sub is None:
+            sub = plumb[key] = {}
+        elif not isinstance(sub, dict):
+            raise _err(f"$extensions.plumb.{key} must be an object", f"write it as \"{key}\": {json.dumps(subdefaults)}")
+        for k, v in subdefaults.items():
+            if k not in sub:
+                sub[k] = v
+                added.append(f"$extensions.plumb.{key}.{k} = {json.dumps(v)}")
+    return added
+
+
+def css_vars(doc: dict) -> str:
+    """Plain custom properties: :root (light), the md breakpoint, .dark and the prefers-color-scheme dark block."""
+
+    def rule(selector: str, decls: List[Tuple[str, str]], indent: str = "", extra: Tuple[str, ...] = ()) -> List[str]:
+        lines = [f"{indent}{selector} {{"] + [f"{indent}  {n}: {v};" for n, v in decls] + [f"{indent}  {e}" for e in extra]
+        return lines + [f"{indent}}}"]
+
+    out = rule(":root", declarations(doc, "light"))
+    md = declarations(doc, "md")
+    if md:
+        out += ["@media (min-width: 48rem) {"] + rule(":root", md, "  ") + ["}"]
+    dark = declarations(doc, "dark")
+    if dark:
+        out += rule(".dark", dark, extra=("color-scheme: dark;",))
+        out += ["@media (prefers-color-scheme: dark) {"] + rule(":root:not(.light)", dark, "  ", ("color-scheme: dark;",)) + ["}"]
+    return "\n".join(out) + "\n"
 
 
 # ---------------------------------------------------------------- cli
@@ -995,22 +1335,36 @@ def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_f
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # shaped like every other refusal
-        self.exit(2, f"error: {message}\nfix: python3 {SCRIPT_REL} [--check] [--root SKILL_DIR] [--project PATH]\n")
+        self.exit(2, f"error: {message}\nfix: python3 {SCRIPT_REL} [--check | --contrast | --migrate | --css-vars] [--root SKILL_DIR] [--project PATH]\n")
+
+
+def _write(path: Path, text: str, root: Path) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    except OSError as exc:
+        print(f"error: cannot write {rel(path, root)} ({exc})\nfix: check the folder exists and is writable", file=sys.stderr)
+        return False
+    return True
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     P.utf8_stdio()
-    parser = _Parser(prog="build-tokens.py", description="Build the web token outputs from the tokens JSON.")
+    parser = _Parser(prog="build-tokens.py", description="Build the token outputs from the tokens JSON.")
     parser.add_argument("--check", action="store_true", help="write nothing; exit 1 when any output is stale or missing")
+    parser.add_argument("--contrast", action="store_true", help="rewrite the contrast block of references/dark-mode.md")
+    parser.add_argument("--migrate", action="store_true", help="add the missing settings to the tokens JSON (additive)")
+    parser.add_argument("--css-vars", action="store_true", help="print the tokens as plain CSS custom properties")
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     args = parser.parse_args(argv)
+    if sum(bool(x) for x in (args.check, args.contrast, args.migrate, args.css_vars)) > 1:
+        parser.error("pass only one of --check, --contrast, --migrate, --css-vars")
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     project = Path(args.project) if args.project else None
     try:
-        root = find_project_root(skill_dir, project)
-        tokens_file = find_tokens_file(skill_dir)
-        files = outputs(P.load_tokens(tokens_file), skill_dir, project, tokens_file)
+        return _run(args, skill_dir, project)
     except PlumbError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -1021,6 +1375,42 @@ def main(argv: Optional[List[str]] = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+
+def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> int:
+    root = find_project_root(skill_dir, project)
+    tokens_file = find_tokens_file(skill_dir)
+    doc = P.load_tokens(tokens_file)
+    if args.css_vars:
+        sys.stdout.write(css_vars(doc))
+        return 0
+    if args.migrate:
+        added = migrate(doc, P.read_plumb_md(root / "PLUMB.md").get("Project", ""))
+        if not added:
+            print(f"ok: {rel(tokens_file, root)} is at schema {P.SCHEMA_VERSION}, nothing to add")
+            return 0
+        text = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+        if not _write(tokens_file, text, root):
+            return 2
+        for line in added:
+            print(f"added {line}")
+        print(f"wrote {rel(tokens_file, root)}")
+        return 0
+    if args.contrast:
+        found = contrast_output(doc, skill_dir, required=True)
+        assert found is not None
+        path, text = found
+        if read_dark_doc(skill_dir) == text:
+            print(f"ok: the contrast block in {rel(path, root)} is up to date")
+        else:
+            if not _write(path, text, root):
+                return 2
+            print(f"wrote {rel(path, root)}")
+        fails = text.count("| fail (")
+        if fails:
+            print(f"{fails} pair(s) fail: see the nearest passing values in {rel(path, root)}")
+        return 0
+    files = outputs(doc, skill_dir, project, tokens_file)
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
     stale = []
     for path, text in files.items():
@@ -1033,12 +1423,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.check:
             stale.append(path)
             continue
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(text)
-        except OSError as exc:
-            print(f"error: cannot write {rel(path, root)} ({exc})\nfix: check the folder exists and is writable", file=sys.stderr)
+        if not _write(path, text, root):
             return 2
         print(f"wrote {rel(path, root)}")
     if args.check:

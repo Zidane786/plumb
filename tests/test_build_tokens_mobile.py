@@ -126,7 +126,7 @@ def test_kotlin_output(project: Path) -> None:
     assert "= lightColorScheme(" in text and "= darkColorScheme(" in text
     assert "primary = DemoLightColors.primary," in text
     assert "onBackground = DemoLightColors.onSurface," in text
-    assert "surfaceVariant" not in text  # roles are filled only from tokens that exist
+    assert "surfaceVariant = DemoLightColors.background," in text  # no sunk/column/surface token: derived, never Material purple
     assert "fun demoTypography(fontFamily: FontFamily = FontFamily.Default): Typography {" in text
     assert "val sm = TextStyle(fontFamily = fontFamily, fontSize = 16.sp, fontWeight = FontWeight.W400, lineHeight = 24.sp" in text
     assert "return Typography(" in text
