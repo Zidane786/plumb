@@ -691,6 +691,16 @@ hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE
   captures as evidence. Headless browser checks of `prototype.html` (navigation, state switcher,
   toggles, interactions, guide mode, play mode at every speed, pause, jumping to a scene, the
   reduced-motion fallback) and `screens.html` (every state rendered).
+- **What CI runs** (every PR that touches code; Ubuntu, macOS and Windows × Python 3.9 and 3.13,
+  the six required checks): the whole pytest suite above. **The hooks are tested end to end
+  there:** each hook script is run as the CLI would run it, through `run.sh` (and `run.cmd` on
+  Windows), with real hook input in both Claude Code and Copilot CLI formats, on fixture projects,
+  and the exit code, stdout JSON and stderr are asserted (refusals, passes, fail-open, timing).
+  Browser checks of the generated pages (specimen, prototype, screens, walkthrough player) run
+  in the same suite when Playwright is installed; CI installs it on the Ubuntu jobs only (a test
+  dependency, never a runtime one), and the tests skip with a reason elsewhere. What CI cannot
+  run: the two CLIs themselves (they need sign-in), so the live tmux runs below are done by hand
+  before every release and recorded in the PR.
 - **Two small sample apps, one per path:** a minimal Next.js + Tailwind v4 app and a minimal
   Angular app (plain CSS/SCSS), kept as source trees under `tests/fixtures/apps/`. Both CLIs run
   init, create or extract, prototype, tour, the hooks (edit check, prototype first, end-of-turn,
