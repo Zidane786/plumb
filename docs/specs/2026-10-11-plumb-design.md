@@ -255,6 +255,17 @@ Also in the shell: a per-screen guide panel (what this screen is for, what you c
 play mode still plays by itself and only drops the cursor glide and other animation (an OS
 setting must never turn Play into Guide). Captions are `aria-live`, and every control works by keyboard.
 
+**Custom tours** serve demos, user training, teammate onboarding, design review and "what's
+new". A tour file sets: its audience and purpose (which sets the caption tone and the mode that
+opens first); the screens and states, across one flow or several; per step the target, title,
+caption and action (click, type, choose, wait); pacing (default speed, a longer hold on a step);
+**chapters** (named groups of steps, shown as scene markers); an **intro and a closing card**
+("what you'll see", "what to try next"); and **"your turn" steps** for teaching: in guide mode
+the tour waits until the learner performs the action on the real control in the prototype (a
+wrong click gets a hint), while play mode performs it by itself, so one tour is both the demo and
+the hands-on lesson. Turning a tour into in-app onboarding in the live product is out of scope
+for 1.0.0.
+
 `/plumb:prototype` **always writes a default walkthrough** for each flow it builds (you review
 its steps and words together with the screens), and updates it when the flow changes.
 `/plumb:tour <flow>` is for extra or custom ones: a client demo, a different audience, or a story
