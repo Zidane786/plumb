@@ -626,6 +626,7 @@ Python: `python3`
 ## Checks
 Edit check: on
 End-of-turn check: on
+New dependencies: ask              (ask | never)
 UI files: app/**, components/** · *.tsx *.jsx *.css
 Allowed raw values: components/ui/**
 
@@ -675,6 +676,31 @@ Same `.claude-plugin/` manifest, skills and Claude-format `hooks.json`. Install 
 Commands are the same (`/plumb:init`, …). Skills resolve the plugin root from
 `${CLAUDE_PLUGIN_ROOT}`, falling back to the skill's base directory. Windows needs Python
 (`py -3`, `python` or `python3`). VS Code Copilot Chat is not supported.
+
+## 12a. Dependencies and enterprise control
+
+**Needed:** Python 3.9+ standard library (hooks, `build-tokens.py`, `audit.py`,
+`build-prototype.py`), and Claude Code or Copilot CLI. git is optional (repo root, "decided by",
+session snapshots); without it Plumb still works with fewer details.
+
+**Never:** npm, npx or pip installs; downloads or network calls at run time. Generated pages
+(prototype, screens, tours, specimen, reports, directions) load nothing from the network: no CDN,
+no hosted web fonts. A project font is embedded from the project's own font files; otherwise a
+system font stack is used. Every page opens offline from disk.
+
+**New dependencies in the project:** when a component the agent writes would need a package the
+project doesn't have, Plumb asks first and records the answer in the decision log. `PLUMB.md`
+`New dependencies: ask | never` (default `ask`); with `never`, components are built from what
+the project already has.
+
+**Optional, each the organisation's choice:** Effective HTML skills (else Plumb's built-in rules
+and templates), a browser tool (else audit and `/plumb:ux` review code instead of screenshots),
+`make` (else the plain commands in `PLUMB.md`), Slate (else no tickets).
+
+**Controlling the plugin:** one Git repo with no build step, so it can be mirrored or forked,
+reviewed and installed from an internal copy; releases are tagged `vX.Y.Z` and can be pinned;
+`/plumb:upgrade` never runs on its own. Test tools (pytest, Playwright) are used only by Plumb's
+own CI.
 
 ## 13. The plugin repo
 
