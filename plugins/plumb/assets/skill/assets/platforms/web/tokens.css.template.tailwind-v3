@@ -4,12 +4,14 @@
   {{@vars}}
 }
 
+{{@if-md}}
 /* Values that change from the md breakpoint (768px) up. */
 @media (min-width: 768px) {
   :root {
     {{@vars-md}}
   }
 }
+{{@end}}
 
 /* Dark scheme: only the tokens that have a dark value. */
 .dark {

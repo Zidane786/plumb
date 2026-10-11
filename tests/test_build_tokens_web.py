@@ -209,8 +209,8 @@ def test_crlf_tokens_file_is_fine(project: Path) -> None:
     assert css_out(project).read_bytes() == want
 
 
-def test_outputs_function(project: Path) -> None:
-    sys.path.insert(0, str(SCRIPTS))
+def test_outputs_function(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.syspath_prepend(str(SCRIPTS))
     import importlib.util
 
     import _plumb as P
@@ -269,7 +269,7 @@ def test_plumb_md_beats_project_flag(project: Path, tmp_path: Path) -> None:
 def assert_refusal(r, *needles: str) -> None:
     assert r.returncode == 2, r.stdout + r.stderr
     text = r.stderr
-    assert text.startswith("error:") and "\nfix:" in text or "ask the user:" in text, text
+    assert text.startswith("error:") and ("\nfix:" in text or "ask the user:" in text), text
     assert "Traceback" not in text
     for n in needles:
         assert n in text, text
@@ -349,3 +349,33 @@ def test_percent_and_seconds_filters(project: Path) -> None:
     assert run(project).returncode == 0
     css = css_out(project).read_text(encoding="utf-8")
     assert ".x { a: 12%; b: 0.15s; c: 14px; d: #4fb3c4; }" in css
+
+
+def test_v4_closes_font_and_ease_but_not_spacing_or_durations(project: Path) -> None:
+    run(project)
+    css = css_out(project).read_text(encoding="utf-8")
+    theme = css.split("@theme static {", 1)[1].split("\n}\n", 1)[0]
+    for ns in ("color", "radius", "shadow", "text", "font", "ease"):
+        assert f"--{ns}-*: initial;" in theme
+    assert "--spacing-*: initial;" not in theme and "--duration-*" not in theme
+    assert theme.index("--font-*: initial;") < theme.index("--font-sans:")
+    assert theme.index("--ease-*: initial;") < theme.index("--ease-out:")
+
+
+@pytest.mark.parametrize("mode", ["tailwind-v4", "tailwind-v3", "css"])
+def test_every_mode_has_reduced_motion_block(project: Path, mode: str) -> None:
+    set_mode(project, mode)
+    assert run(project).returncode == 0
+    css = css_out(project).read_text(encoding="utf-8")
+    assert "@media (prefers-reduced-motion: reduce)" in css and "transition-duration: 0s !important;" in css
+
+
+@pytest.mark.parametrize("mode", ["tailwind-v4", "tailwind-v3", "css"])
+def test_no_md_tokens_omits_the_media_shell(project: Path, mode: str) -> None:
+    set_mode(project, mode)
+    edit_tokens(project, lambda d: d["typography"]["sm"].pop("$extensions"))
+    assert run(project).returncode == 0
+    css = css_out(project).read_text(encoding="utf-8")
+    assert "breakpoint" not in css and "48rem" not in css and "min-width: 768px" not in css
+    assert "{{" not in css and ".dark {" in css
+    assert "\n\n\n" not in css

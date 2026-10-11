@@ -32,12 +32,35 @@ def fname(call: ast.Call) -> str:
     return f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
 
 
-@pytest.mark.parametrize("path", SCRIPTS, ids=lambda p: str(p.relative_to(REPO)))
+def _is_main_guard(node: ast.AST) -> bool:
+    if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+        return False
+    names = [node.test.left, *node.test.comparators]
+    return any(isinstance(n, ast.Name) and n.id == "__name__" for n in names) and any(
+        isinstance(n, ast.Constant) and n.value == "__main__" for n in names
+    )
+
+
+def _has_main_guard(path: Path) -> bool:
+    return any(_is_main_guard(n) for n in ast.parse(path.read_text(encoding="utf-8")).body)
+
+
+ENTRY_POINTS = [p for p in SCRIPTS if _has_main_guard(p)]
+
+
+@pytest.mark.parametrize("path", ENTRY_POINTS, ids=lambda p: str(p.relative_to(REPO)))
 def test_entry_points_reconfigure_output_to_utf8(path: Path) -> None:
-    src = path.read_text(encoding="utf-8")
-    if "__main__" not in src:
-        pytest.skip("not an entry point")
-    assert "reconfigure(" in src and "utf-8" in src, f"{path.name} must reconfigure stdout/stderr to UTF-8"
+    """The `if __name__ == "__main__"` block or main() must call x.reconfigure(...) or [mod.]utf8_stdio()."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    paths = [n for n in tree.body if _is_main_guard(n)]
+    paths += [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main"]
+    found = [c for root in paths for c in calls(root) if fname(c) in ("reconfigure", "utf8_stdio")]
+    assert found, f"{path.name}: the __main__ path must call .reconfigure( or utf8_stdio( to set UTF-8 output"
+
+
+def test_entry_point_check_sees_real_calls_only() -> None:
+    assert ENTRY_POINTS, "no entry points found"
+    assert not any(p.name == "_plumb.py" for p in ENTRY_POINTS)
 
 
 @pytest.mark.parametrize("path", SCRIPTS, ids=lambda p: str(p.relative_to(REPO)))

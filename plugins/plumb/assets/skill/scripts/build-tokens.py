@@ -8,8 +8,8 @@ Reads <skill>/assets/tokens/*.tokens.json (exactly one) and the web template, wr
 $extensions.plumb.web.copies (relative to the project root). --check writes nothing: it exits 1 naming every stale or
 missing file. Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...).
 
-Python 3.9+, standard library only. main() starts with utf8_stdio() (it calls reconfigure(encoding="utf-8") on
-stdout and stderr). Imports the shared core _plumb.py from its own directory.
+Python 3.9+, standard library only. Declarations follow the order of the tokens file
+(deterministic, keeps the file's grouping). Imports the shared core _plumb.py from its own directory.
 """
 
 from __future__ import annotations
@@ -217,6 +217,7 @@ def declarations(doc: dict, mode: str) -> List[Tuple[str, str]]:
 
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9._-]+)(@dark|@md)?(?:\|([a-z]+))?\s*\}\}")
 DIRECTIVE_LINE = re.compile(r"^([ \t]*)\{\{@([A-Za-z0-9-]+)\}\}[ \t]*$", re.M)
+IF_MD = re.compile(r"^[ \t]*\{\{@if-md\}\}[ \t]*\n.*?^[ \t]*\{\{@end\}\}[ \t]*\n\n?", re.M | re.S)
 DIRECTIVE_ANY = re.compile(r"\{\{@([A-Za-z0-9-]+)\}\}")
 
 
@@ -265,6 +266,9 @@ def build_css(doc: dict, template: str, header: str) -> str:
             return "\x00DROP\x00"
         return "\n".join(m.group(1) + line for line in lines)
 
+    if not directives["vars-md"]():  # no md tokens: drop the whole {{@if-md}} ... {{@end}} section
+        template = IF_MD.sub("", template)
+    template = re.sub(r"^[ \t]*\{\{@(?:if-md|end)\}\}[ \t]*\n", "", template, flags=re.M)
     out = DIRECTIVE_LINE.sub(block, template)
     out = re.sub(r"\x00DROP\x00\n?", "", out)
     out = DIRECTIVE_ANY.sub(lambda m: " ".join(run_directive(m.group(1))), out)
