@@ -697,6 +697,16 @@ the project already has.
 and templates), a browser tool (else audit and `/plumb:ux` review code instead of screenshots),
 `make` (else the plain commands in `PLUMB.md`), Slate (else no tickets).
 
+**No Playwright needed.** Most checks need no browser: `audit.py` reads code, CSS and prototype
+HTML directly (token rules, computed contrast, prototype fidelity, drift, prototypes using only
+the system's values). The visual extras (screenshot comparison in the audit and `/plumb:ux`) use
+the first browser available, installing nothing: (a) the agent's own browser tool, if the
+organisation allows one; (b) Chrome, Edge or Chromium already on the machine, run headless from
+the standard library (`--headless --screenshot`, `--dump-dom`); (c) none: the visual part is
+skipped and reported (`note: visual comparison skipped: no browser found` with a `fix:` line),
+and every other check still runs. Playwright is used only in Plumb's own CI; locally, browser
+tests skip with a reason when it is missing.
+
 **Controlling the plugin:** one Git repo with no build step, so it can be mirrored or forked,
 reviewed and installed from an internal copy; releases are tagged `vX.Y.Z` and can be pinned;
 `/plumb:upgrade` never runs on its own. Test tools (pytest, Playwright) are used only by Plumb's
