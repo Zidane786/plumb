@@ -277,7 +277,15 @@ Each step can **add text** and **point** in several ways, mixed freely:
 
 Annotations use the project's tokens and vocabulary, captions and callouts are announced to
 screen readers, and every control stays keyboard-reachable. `build-prototype.py --check` validates
-every target an annotation points at. Turning a tour into in-app onboarding in the live product is out of scope
+every target an annotation points at. **Every tour is also its own HTML file.** `build-prototype.py` writes
+`docs/design/tours/<tour>.html` for each tour: one self-contained file with the whole prototype
+(screens, tokens, interactions) and that tour, opening straight into it (play mode for a demo,
+guide mode for training, from the tour's audience). It opens from disk with no server and no
+network, so it can be emailed to a client or put in training material; viewers can leave the tour
+and click around the prototype. It is generated: the guard blocks hand edits, `--check` fails when
+it is stale, and it is rebuilt whenever a screen or the tour changes.
+
+Turning a tour into in-app onboarding in the live product is out of scope
 for 1.0.0.
 
 `/plumb:prototype` **always writes a default walkthrough** for each flow it builds (you review
@@ -432,7 +440,8 @@ docs/design/
 ├── screens.html                        [G] every screen × every state, control states, navigation
 ├── prototype/screens/<id>.html         [Y] one source per screen (states + interactions)
 ├── prototype/screens.json              [G] screen → route, source files, states, sync status
-├── prototype/tours/<flow>.json         [Y] walkthroughs (guide mode + play mode)
+├── prototype/tours/<flow>.json         [Y] walkthrough scripts (guide mode + play mode)
+├── tours/<tour>.html                   [G] one shareable file per tour: the prototype + that tour
 ├── prototype/proposals/<name>/         variants from /plumb:prototype (both views) + index.html
 └── audit-*.html · ux-review-*.html · extract.html
 ```
@@ -580,7 +589,7 @@ a `powershell` command on every hook for Windows Copilot. All three apply in **b
 | Script | Event · matcher | Job |
 |---|---|---|
 | `session_start.py` | SessionStart | One status line (`Plumb: caredesk-design-system 1.0.0 · tokens up to date · 3 audit issues · read the skill before UI changes`); "run /plumb:upgrade" when `PLUMB.md` is older than the plugin; a warning when a linked design system path is missing. Copilot: `{"additionalContext"}`. Takes the session snapshot (hash of every UI file already changed or untracked). Silent in projects without `PLUMB.md`. |
-| `pre_edit.py` | PreToolUse · `Edit\|Write\|MultiEdit\|Bash\|PowerShell` | **Prototype first:** refuses creating a new page or route file that has no approved screen in `screens.json` (when prototype sync is on). **Guard:** refuses hand edits to generated files (themes, copies, `specimen.html`, `prototype.html`, `screens.html`, `screens.json`), including shell writes (`sed -i`, `>`, `tee`, …, parsed as Slate parses them); running `build-tokens.py` is allowed. **Edit check** (when on): computes the file before and after the edit, runs `audit.py --quick`, refuses only errors the edit adds. |
+| `pre_edit.py` | PreToolUse · `Edit\|Write\|MultiEdit\|Bash\|PowerShell` | **Prototype first:** refuses creating a new page or route file that has no approved screen in `screens.json` (when prototype sync is on). **Guard:** refuses hand edits to generated files (themes, copies, `specimen.html`, `prototype.html`, `screens.html`, `screens.json`, `tours/*.html`), including shell writes (`sed -i`, `>`, `tee`, …, parsed as Slate parses them); running `build-tokens.py` is allowed. **Edit check** (when on): computes the file before and after the edit, runs `audit.py --quick`, refuses only errors the edit adds. |
 | `stop_check.py` | Stop | **End-of-turn check** (when on): if no UI file changed since the snapshot, silent. Otherwise `audit.py --changed`, which includes **prototype sync** (a screen whose source files changed this session while its `screens/<id>.html` did not); new errors block the stop once with the list and fixes (`{"decision": "block", "reason": …}`); with `stop_hook_active` set it only reports, so it cannot loop. A clean run prints one line. |
 
 **Copilot CLI differences** (pinned by `tests/test_copilot.py`): edits arrive as apply_patch text
