@@ -263,7 +263,21 @@ caption and action (click, type, choose, wait); pacing (default speed, a longer 
 ("what you'll see", "what to try next"); and **"your turn" steps** for teaching: in guide mode
 the tour waits until the learner performs the action on the real control in the prototype (a
 wrong click gets a hint), while play mode performs it by itself, so one tour is both the demo and
-the hands-on lesson. Turning a tour into in-app onboarding in the live product is out of scope
+the hands-on lesson.
+
+Each step can **add text** and **point** in several ways, mixed freely:
+
+- **Text:** a caption (subtitle line, play-mode narration); a callout bubble attached to an
+  element on a chosen side; labels (numbered or named tags on several elements at once); a note
+  placed anywhere; a title card between scenes (intro, chapter, closing); typed text entered into
+  a real field (letter by letter in play mode).
+- **Pointing:** spotlight (dims the rest), ring (outline, rest visible), arrow with a short
+  label, beacon (a pulsing dot; static with reduced motion), zoom (enlarges an area), the cursor
+  (moves and clicks in play mode), and several rings or labels in one step.
+
+Annotations use the project's tokens and vocabulary, captions and callouts are announced to
+screen readers, and every control stays keyboard-reachable. `build-prototype.py --check` validates
+every target an annotation points at. Turning a tour into in-app onboarding in the live product is out of scope
 for 1.0.0.
 
 `/plumb:prototype` **always writes a default walkthrough** for each flow it builds (you review
