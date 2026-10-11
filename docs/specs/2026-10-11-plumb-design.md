@@ -252,7 +252,8 @@ wait). One file drives two modes:
 Also in the shell: a per-screen guide panel (what this screen is for, what you can do here,
 "try it" buttons, and a feed of what just happened), and a link to any walkthrough or scene
 (`prototype.html#tour-<flow>` / `#tour-<flow>-<n>`) to share with a client. With reduced motion,
-play mode becomes guide mode. Captions are `aria-live`, and every control works by keyboard.
+play mode still plays by itself and only drops the cursor glide and other animation (an OS
+setting must never turn Play into Guide). Captions are `aria-live`, and every control works by keyboard.
 
 `/plumb:prototype` asks at the end whether to add or update the walkthrough for that flow;
 `/plumb:tour <flow>` writes or updates one any time, asking which steps and words to use and
