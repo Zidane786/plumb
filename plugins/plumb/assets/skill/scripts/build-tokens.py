@@ -1491,13 +1491,24 @@ def page_roles(doc: dict) -> List[Tuple[str, str]]:
     return out
 
 
-def page_theme_css(doc: Optional[dict], scopes: bool = False) -> str:
-    """The CSS a Plumb page inlines: the project's --css-vars export, the page roles mapped to its tokens, and (scopes)
-    .pl-light / .pl-dark blocks that pin one theme inside an element, so both themes can sit side by side."""
+TOKEN_BLOCK_START = "/* plumb:tokens */"
+TOKEN_BLOCK_END = "/* plumb:tokens:end */"
+
+
+def token_block(doc: dict) -> str:
+    """The --css-vars export between the token-block markers: what prototype pages inline and --check compares."""
+    return f"{TOKEN_BLOCK_START}\n{css_vars(doc)}{TOKEN_BLOCK_END}"
+
+
+def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = False) -> str:
+    """The CSS a Plumb page inlines: the project's --css-vars export (between the token-block markers with `markers`),
+    the page roles mapped to its tokens, and (scopes) .pl-light / .pl-dark blocks that pin one theme inside an element,
+    so both themes can sit side by side."""
     if doc is None:
         return "/* No tokens yet: Plumb's neutral page colours. */"
     roles = [f"  {n}: {v};" for n, v in page_roles(doc)]
-    lines = ["/* The project's tokens (build-tokens.py --css-vars). */", css_vars(doc).rstrip("\n"),
+    tokens = token_block(doc) if markers else css_vars(doc).rstrip("\n")
+    lines = ["/* The project's tokens (build-tokens.py --css-vars). */", tokens,
              "/* Plumb's page roles, mapped to the project's tokens. */", ":root {", *roles, "}"]
     if scopes:
         light, dark, md = declarations(doc, "light"), declarations(doc, "dark"), declarations(doc, "md")

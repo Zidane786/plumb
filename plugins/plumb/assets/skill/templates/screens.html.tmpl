@@ -1,0 +1,377 @@
+<!doctype html>
+{{header}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
+   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
+:where(:root), :where(.pl-light) {
+  --pl-bg: #fbfbfa;
+  --pl-surface: #ffffff;
+  --pl-sunk: #f0f0ed;
+  --pl-text: #1d1f23;
+  --pl-muted: #5b616b;
+  --pl-border: #dcdcd6;
+  --pl-border-strong: #858a93;
+  --pl-accent: #2f5d8a;
+  --pl-on-accent: #ffffff;
+  --pl-focus: #2f5d8a;
+  --pl-bad: #b42318;
+  --pl-on-bad: #ffffff;
+  --pl-warn: #8a5a00;
+  --pl-good: #067647;
+  color-scheme: light;
+}
+:where(:root[data-theme="dark"]), :where(.pl-dark) {
+  --pl-bg: #121315;
+  --pl-surface: #1a1c1f;
+  --pl-sunk: #0c0d0f;
+  --pl-text: #e8e9eb;
+  --pl-muted: #a2a7af;
+  --pl-border: #2e3136;
+  --pl-border-strong: #6f747d;
+  --pl-accent: #8db8e3;
+  --pl-on-accent: #0d1117;
+  --pl-focus: #8db8e3;
+  --pl-bad: #f97066;
+  --pl-on-bad: #1a0b0a;
+  --pl-warn: #fdb022;
+  --pl-good: #47cd89;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme="light"])) {
+    --pl-bg: #121315;
+    --pl-surface: #1a1c1f;
+    --pl-sunk: #0c0d0f;
+    --pl-text: #e8e9eb;
+    --pl-muted: #a2a7af;
+    --pl-border: #2e3136;
+    --pl-border-strong: #6f747d;
+    --pl-accent: #8db8e3;
+    --pl-on-accent: #0d1117;
+    --pl-focus: #8db8e3;
+    --pl-bad: #f97066;
+    --pl-on-bad: #1a0b0a;
+    --pl-warn: #fdb022;
+    --pl-good: #47cd89;
+    color-scheme: dark;
+  }
+}
+:where(:root) {
+  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --pl-radius: 8px;
+  --pl-radius-sm: 4px;
+  --pl-space-1: 4px;
+  --pl-space-2: 8px;
+  --pl-space-3: 12px;
+  --pl-space-4: 16px;
+  --pl-space-6: 24px;
+  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
+  --pl-duration: 150ms;
+  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --pl-text-control: 15px;
+  --pl-text-small: 13px;
+  --pl-text-title: 22px;
+}
+</style>
+<style>
+{{theme_css}}
+</style>
+<style>
+/* Plumb's screens catalogue. Chrome rules are scoped to .sc-ui (or an sc- class) so nothing leaks into the screens;
+   each copy of a screen sits in a .sc-canvas frame pinned to one theme (.pl-light / .pl-dark). */
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 12px; }
+body {
+  margin: 0;
+  background: var(--pl-bg);
+  color: var(--pl-text);
+  font-family: var(--pl-font);
+  font-size: 15px;
+  line-height: 1.5;
+}
+:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.sc-ui code { font-family: var(--pl-mono); font-size: 0.86em; }
+.sc-ui a { color: var(--pl-accent); text-underline-offset: 2px; }
+.sc-ui h1, .sc-ui h2, .sc-ui h3, .sc-ui h4, .sc-ui p { margin: 0; }
+.sc-eyebrow, .group-h { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+.note, .empty { color: var(--pl-muted); max-width: 65ch; }
+
+.sc-top { border-bottom: 1px solid var(--pl-border); background: var(--pl-surface); }
+.sc-top-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 20px; padding: 22px 16px 18px; max-width: 96rem; margin: 0 auto; }
+.sc-intro { min-width: 0; flex: 1 1 18rem; display: grid; gap: 4px; }
+.sc-top h1 { font-size: clamp(24px, 4vw, 32px); line-height: 1.15; text-wrap: balance; overflow-wrap: anywhere; }
+.sc-lede { color: var(--pl-muted); max-width: 70ch; }
+.sc-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.sc-btn {
+  font: inherit; font-size: 14px; font-weight: 600; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 14px;
+  color: var(--pl-text) !important; background: var(--pl-bg); border: 1px solid var(--pl-border-strong); border-radius: 999px; cursor: pointer;
+}
+.sc-btn:hover { background: var(--pl-sunk); }
+.theme-icon { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+
+.sc-layout { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: 0 32px; max-width: 96rem; margin: 0 auto; padding: 0 16px; }
+.sc-nav { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding: 24px 0; }
+.sc-nav > ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+.sc-nav a { display: block; padding: 5px 8px; border-radius: var(--pl-radius-sm); color: var(--pl-text); text-decoration: none; overflow-wrap: anywhere; }
+.sc-nav a:hover { background: var(--pl-sunk); }
+.sc-nav > ul > li > a { font-weight: 600; }
+.sc-nav-states { list-style: none; margin: 0 0 6px; padding: 0 0 0 12px; font-size: 13px; }
+.sc-nav-states a { padding: 2px 8px; color: var(--pl-muted); }
+.sc-nav-sep { margin-top: 10px !important; padding-top: 10px; border-top: 1px solid var(--pl-border); }
+
+.sc-main { min-width: 0; padding: 24px 0 40px; display: grid; gap: 48px; }
+.sc-screen { display: grid; gap: 20px; scroll-margin-top: 12px; }
+.sc-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; padding-bottom: 12px; border-bottom: 1px solid var(--pl-border); }
+.sc-head > div { min-width: 0; display: grid; gap: 4px; }
+.sc-head h2 { font-size: 22px; line-height: 1.25; overflow-wrap: anywhere; }
+.sc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13px; color: var(--pl-muted); }
+.sep { opacity: 0.7; }
+.sc-open { font-size: 14px; font-weight: 600; }
+.sc-state { display: grid; gap: 10px; scroll-margin-top: 12px; }
+.sc-state-h { font-size: 15px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.sc-state-h code { font-weight: 400; color: var(--pl-muted); }
+.sc-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 16px; align-items: start; }
+.sc-frame { margin: 0; min-width: 0; background: var(--pl-bg); color: var(--pl-text); border: 1px solid var(--pl-border); border-radius: 12px; overflow: hidden; box-shadow: var(--pl-shadow); }
+.sc-frame figcaption { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-muted); background: var(--pl-surface); border-bottom: 1px solid var(--pl-border); font-family: var(--pl-font); }
+.sc-frame figcaption::before { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor; }
+.sc-frame.pl-dark figcaption::before { background: currentColor; }
+/* The canvas is the screen's world: a container (its md breakpoint follows the canvas) and the containing block for
+   anything the screen fixes in place. */
+.sc-canvas { container: plumb-frame / inline-size; min-height: 10rem; overflow: hidden; }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--pl-text); }
+.badge .mark { width: 8px; height: 8px; flex: none; }
+.badge-approved .mark { border-radius: 50%; background: var(--pl-good); }
+.badge-stale .mark { background: var(--pl-warn); transform: rotate(45deg); }
+.badge-synced .mark { border-radius: 50%; border: 2px solid var(--pl-accent); }
+.badge-none .mark { border-radius: 50%; border: 1.5px dashed var(--pl-muted); }
+
+/* Controls: the basic controls drawn from the tokens alone, in every state, light and dark side by side. */
+.sc-section { display: grid; gap: 12px; scroll-margin-top: 12px; }
+.sc-section > h2 { font-size: 22px; line-height: 1.25; }
+.ctl-themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr)); gap: 16px; }
+.ctl-panel { background: var(--pl-bg); color: var(--pl-text); border: 1px solid var(--pl-border); border-radius: 12px; padding: 16px; min-width: 0; }
+.ctl-row { padding: 12px 0; border-top: 1px solid var(--pl-border); }
+.ctl-row h4 { margin: 0 0 10px; font-size: 14px; }
+.ctl-states { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 14px 16px; }
+.ctl-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; }
+.state-name { font-size: 12px; color: var(--pl-muted); }
+.spinner { display: inline-block; width: 1em; height: 1em; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: pl-spin 0.8s linear infinite; }
+@keyframes pl-spin { to { transform: rotate(360deg); } }
+.c-btn {
+  font: inherit; font-size: var(--pl-text-control); font-weight: 600; line-height: 1.2;
+  display: inline-flex; align-items: center; gap: var(--pl-space-2);
+  min-height: 40px; padding: var(--pl-space-2) var(--pl-space-4);
+  border: 1px solid transparent; border-radius: var(--pl-radius); cursor: pointer;
+  transition: background-color var(--pl-duration) var(--pl-ease), border-color var(--pl-duration) var(--pl-ease),
+    transform var(--pl-duration) var(--pl-ease);
+}
+.c-btn-primary { --fill: var(--pl-accent); --ink: var(--pl-on-accent); }
+.c-btn-danger { --fill: var(--pl-bad); --ink: var(--pl-on-bad); }
+.c-btn-primary, .c-btn-danger { background: var(--fill); color: var(--ink); }
+.c-btn-primary:hover:not(:disabled), .c-btn-danger:hover:not(:disabled), .c-btn-primary.is-hover, .c-btn-danger.is-hover { background: color-mix(in srgb, var(--fill) 86%, var(--pl-text)); }
+.c-btn-primary:active:not(:disabled), .c-btn-danger:active:not(:disabled), .c-btn-primary.is-pressed, .c-btn-danger.is-pressed { background: color-mix(in srgb, var(--fill) 72%, var(--pl-text)); transform: translateY(1px); }
+.c-btn-secondary { background: var(--pl-sunk); color: var(--pl-text); border-color: var(--pl-border); }
+.c-btn-secondary:hover:not(:disabled), .c-btn-secondary.is-hover { background: color-mix(in srgb, var(--pl-sunk) 86%, var(--pl-text)); }
+.c-btn-secondary:active:not(:disabled), .c-btn-secondary.is-pressed { background: color-mix(in srgb, var(--pl-sunk) 74%, var(--pl-text)); transform: translateY(1px); }
+.c-btn-outline { background: transparent; color: var(--pl-text); border-color: var(--pl-border-strong); }
+.c-btn-outline:hover:not(:disabled), .c-btn-outline.is-hover { background: var(--pl-sunk); }
+.c-btn-outline:active:not(:disabled), .c-btn-outline.is-pressed { background: color-mix(in srgb, var(--pl-sunk) 80%, var(--pl-text)); transform: translateY(1px); }
+.c-btn:focus-visible, .c-btn.is-focus, .c-chip:focus-visible, .c-chip.is-focus, .c-card.is-focus, .c-card:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.c-btn:disabled, .c-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.is-loading { cursor: progress; }
+
+.c-field { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
+.c-input {
+  font: inherit; font-size: var(--pl-text-control); width: 13rem; max-width: 100%; min-height: 40px;
+  padding: 0 var(--pl-space-3); color: var(--pl-text); background: var(--pl-bg);
+  border: 1px solid var(--pl-border-strong); border-radius: var(--pl-radius);
+  transition: border-color var(--pl-duration) var(--pl-ease);
+}
+.c-input:hover:not(:disabled), .c-field.is-hover .c-input { border-color: var(--pl-text); }
+.c-input:focus-visible, .c-field.is-focus .c-input { outline: 2px solid var(--pl-focus); outline-offset: 1px; border-color: var(--pl-focus); }
+.c-field.is-pressed .c-input { border-color: var(--pl-focus); background: var(--pl-sunk); }
+.c-input:disabled { opacity: 0.45; background: var(--pl-sunk); cursor: not-allowed; }
+.c-field.is-loading .c-input { padding-right: 36px; }
+.c-field .spinner { position: absolute; right: 12px; color: var(--pl-muted); }
+
+.c-chip {
+  font: inherit; font-size: var(--pl-text-small); font-weight: 600; line-height: 1.2;
+  display: inline-flex; align-items: center; gap: var(--pl-space-1);
+  min-height: 32px; padding: var(--pl-space-1) var(--pl-space-3);
+  color: var(--pl-text); background: var(--pl-sunk); border: 1px solid var(--pl-border); border-radius: 999px; cursor: pointer;
+  transition: background-color var(--pl-duration) var(--pl-ease);
+}
+.c-chip:hover:not(:disabled), .c-chip.is-hover { background: color-mix(in srgb, var(--pl-sunk) 86%, var(--pl-text)); }
+.c-chip:active:not(:disabled), .c-chip.is-pressed { background: color-mix(in srgb, var(--pl-accent) 22%, var(--pl-sunk)); border-color: var(--pl-accent); }
+
+.c-card {
+  display: flex; flex-direction: column; gap: var(--pl-space-1); width: 14rem; max-width: 100%;
+  padding: var(--pl-space-4); color: var(--pl-text); background: var(--pl-surface);
+  border: 1px solid var(--pl-border); border-radius: var(--pl-radius); box-shadow: var(--pl-shadow);
+  transition: box-shadow var(--pl-duration) var(--pl-ease), border-color var(--pl-duration) var(--pl-ease), transform var(--pl-duration) var(--pl-ease);
+}
+.c-card.is-hover { box-shadow: var(--pl-shadow-lg); border-color: var(--pl-border-strong); }
+.c-card.is-pressed { transform: translateY(1px); border-color: var(--pl-focus); }
+.c-card[aria-disabled="true"] { opacity: 0.45; box-shadow: none; }
+.c-card-title { font-weight: 600; }
+.c-card-body { font-size: var(--pl-text-small); color: var(--pl-muted); }
+.skeleton { display: block; height: 12px; width: 100%; border-radius: 4px; background: var(--pl-sunk); }
+.skeleton.short { width: 60%; }
+.c-link { display: inline-flex; align-items: center; gap: var(--pl-space-1); font-size: var(--pl-text-control); font-weight: 600; color: var(--pl-accent); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; border-radius: 2px; transition: text-decoration-thickness var(--pl-duration) var(--pl-ease); }
+.c-link:hover, .c-link.is-hover { text-decoration-thickness: 2px; }
+.c-link:focus-visible, .c-link.is-focus { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.c-link:active, .c-link.is-pressed { color: color-mix(in srgb, var(--pl-accent) 75%, var(--pl-text)); }
+.c-link[aria-disabled="true"] { color: var(--pl-muted); text-decoration: none; cursor: not-allowed; }
+
+/* Decisions */
+.dc { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.dc:focus { outline: none; }
+.dc-id code { font-size: 12px; color: var(--pl-muted); }
+.dc-title { font-size: 18px; line-height: 1.35; }
+.dc-meta { font-size: 13px; color: var(--pl-muted); }
+.dc-fields { display: grid; gap: 8px; margin: 4px 0 0; }
+.dc-fields > div { display: grid; gap: 1px; }
+.dc-fields dt { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-muted); }
+.dc-fields dd { margin: 0; font-size: 14px; max-width: 70ch; }
+.dc-fields ul { margin: 4px 0 0; padding-left: 18px; }
+.dc-notes p, .dc-screens { font-size: 14px; }
+.dc-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.dc-list > li { padding: 20px 0; border-top: 1px solid var(--pl-border); }
+.decisions { display: grid; gap: 8px; scroll-margin-top: 12px; }
+.decisions > h2 { font-size: 22px; line-height: 1.25; }
+@media (min-width: 48rem) {
+  .dc-fields > div { grid-template-columns: 8rem minmax(0, 1fr); gap: 16px; align-items: baseline; }
+}
+
+.sc-foot { border-top: 1px solid var(--pl-border); padding: 20px 16px 40px; font-size: 13px; color: var(--pl-muted); max-width: 96rem; margin: 0 auto; }
+.sc-foot code { overflow-wrap: anywhere; }
+
+@media (max-width: 56rem) {
+  .sc-layout { grid-template-columns: minmax(0, 1fr); }
+  .sc-nav { position: static; max-height: none; padding: 16px 0 0; }
+  .sc-nav > ul { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; padding-bottom: 4px; }
+  .sc-nav-states { display: none; }
+  .sc-nav-sep { margin-top: 0 !important; padding-top: 0; border-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  .spinner { animation: none; border-right-color: currentColor; opacity: 0.6; }
+}
+</style>
+{{screen_styles}}
+<script>
+/* Theme: follows the system until the toggle picks one (the copies below stay pinned to their own theme). */
+(function () {
+  var root = document.documentElement;
+  var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var chosen = null;
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    if (chosen) {
+      root.classList.toggle("dark", theme === "dark");
+      root.classList.toggle("light", theme === "light");
+    }
+    var button = document.getElementById("theme-toggle");
+    if (button) {
+      var next = theme === "dark" ? "light" : "dark";
+      button.setAttribute("aria-label", "Switch to the " + next + " theme");
+      var label = button.querySelector(".theme-label");
+      if (label) label.textContent = next === "dark" ? "Dark theme" : "Light theme";
+    }
+  }
+  apply(media && media.matches ? "dark" : "light");
+  if (media && media.addEventListener) {
+    media.addEventListener("change", function (e) { if (!chosen) apply(e.matches ? "dark" : "light"); });
+  }
+  window.plumbTheme = {
+    set: function (theme) { chosen = theme === "dark" ? "dark" : "light"; apply(chosen); return chosen; },
+    toggle: function () { return window.plumbTheme.set(root.getAttribute("data-theme") === "dark" ? "light" : "dark"); },
+    refresh: function () { apply(root.getAttribute("data-theme") || "light"); }
+  };
+  window.plumbScreens = { _defs: [], define: function (id, fn) { this._defs.push([id, fn]); } };
+})();
+</script>
+</head>
+<body>
+<header class="sc-top sc-ui">
+  <div class="sc-top-row">
+    <div class="sc-intro">
+      <p class="sc-eyebrow">Screens catalogue</p>
+      <h1>{{project}}</h1>
+      <p class="sc-lede">Every screen in every state ({{summary}}), light and dark side by side, the controls in every state, and the decisions behind them. Built from <code>{{source}}</code>: change a screen file, not this page.</p>
+    </div>
+    <div class="sc-actions">
+      <a class="sc-btn" href="prototype.html">Open the prototype</a>
+      <button type="button" id="theme-toggle" class="sc-btn"><span class="theme-icon" aria-hidden="true"></span><span class="theme-label">Dark theme</span></button>
+    </div>
+  </div>
+</header>
+<div class="sc-layout">
+  <nav class="sc-nav sc-ui" aria-label="Catalogue">
+    <p class="sc-eyebrow">Screens</p>
+    <ul role="list">
+{{nav}}
+      <li class="sc-nav-sep"><a href="#controls">Controls</a></li>
+      <li><a href="#decisions">Decisions</a></li>
+      <li><a href="prototype.html">The prototype</a></li>
+    </ul>
+  </nav>
+  <main class="sc-main">
+{{catalogue}}
+    <section class="sc-section sc-ui" id="controls" aria-labelledby="controls-h">
+      <h2 id="controls-h">Controls</h2>
+      <p class="note">Buttons, input, chip and link drawn from the tokens alone, in every state, in both themes: what the tokens give a control. The project's own components live in its code.</p>
+{{controls}}
+    </section>
+{{decisions}}
+  </main>
+</div>
+<footer class="sc-foot sc-ui">
+  <p>Generated by Plumb {{plumb_version}} from <code>{{source}}</code>. Do not edit this page: edit a screen file, then run <code>build-prototype.py</code>.</p>
+</footer>
+{{screen_scripts}}
+<script>
+/* Each copy runs its screen's script once, pinned to its state: plumb.setState does nothing here. */
+(function () {
+  "use strict";
+  window.plumbTheme.refresh();
+  document.getElementById("theme-toggle").addEventListener("click", function () { window.plumbTheme.toggle(); });
+  var defs = window.plumbScreens._defs;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-copy]"), function (copy) {
+    var section = copy.querySelector("[data-screen]");
+    if (!section) return;
+    var id = section.getAttribute("data-screen");
+    var parts = copy.getAttribute("data-copy").split("/");
+    var state = parts[parts.length - 2];
+    defs.forEach(function (def) {
+      if (def[0] !== id) return;
+      var api = {
+        catalogue: true,
+        screen: id,
+        setState: function () { return false; },
+        go: function (target) { location.hash = "screen-" + target; return true; },
+        state: function () { return state; }
+      };
+      try { def[1].call(section, section, api); } catch (err) { console.error("Plumb: the script of screen " + id + " failed:", err); }
+    });
+  });
+})();
+</script>
+</body>
+</html>
