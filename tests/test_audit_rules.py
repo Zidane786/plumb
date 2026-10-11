@@ -134,9 +134,20 @@ def test_generated_and_unknown_files_are_not_checked() -> None:
 def test_no_tokens_runs_only_the_rules_that_need_none() -> None:
     text = '<p className="text-lg duration-200 rounded-xl p-3">Saved 🎉 #14857f</p>\n'
     rules = sorted(f.rule for f in A.audit_text("app/x.tsx", text, None, {}))
-    assert rules == ["emoji", "raw-colour"]
-    found = A.audit_text("app/x.tsx", '<p className="bg-[#14857F]" />\n', None, {})
-    assert found[0].rule == "raw-colour" and "token" in found[0].fix
+    assert rules == ["emoji"]  # raw values are not errors when there are no tokens to point to (as in full mode)
+
+
+def test_no_tokens_audit_text_and_quick_skip_the_raw_value_rules() -> None:
+    text = '<p className="bg-[#14857f] text-teal-700" style={{color: "#fff"}}>x</p>\n'
+    assert A.audit_text("app/x.tsx", text, None, {}) == []
+    assert A.quick("app/x.tsx", "", text, None, {}) == []
+    assert A.quick("app/x.tsx", "", text + "<p>🎉</p>\n", None, {})[0].rule == "emoji"
+    assert {f.rule for f in A.audit_text("app/x.tsx", text, DOC, SETTINGS)} == {"raw-colour", "palette-colour", "inline-style"}
+    assert A.RAW_VALUE_RULES >= {"raw-colour", "arbitrary-value", "palette-colour", "inline-style"}
+
+
+def test_usage_lists_every_mode_flag() -> None:
+    assert "--no-tokens" in A.USAGE and "--json" in A.USAGE and "--quick" in A.USAGE
 
 
 def test_css_styling_skips_tailwind_class_rules() -> None:
@@ -389,6 +400,10 @@ def test_cli_nothing_checked_or_missing_path_exits_2(project: Path) -> None:
     (project / "empty").mkdir()
     r = run(project, "empty")
     assert r.returncode == 2 and "nothing was checked" in r.stderr and "fix:" in r.stderr
+    assert "empty" in r.stderr and ".tsx" in r.stderr  # names where it looked and what it looked for
+    write(project / "PLUMB.md", "Project: demo\nUI files: src/** · *.tsx\n")
+    r = run(project)
+    assert r.returncode == 2 and "src/**" in r.stderr and "UI files" in r.stderr, r.stderr
 
 
 def test_cli_broken_tokens_exits_2(project: Path) -> None:

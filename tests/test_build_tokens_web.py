@@ -189,6 +189,17 @@ def test_check_detects_hand_edited_copy(project: Path) -> None:
     assert r.returncode == 1 and "stale: app/globals.css" in r.stdout + r.stderr
 
 
+def test_check_accepts_a_crlf_checkout_but_a_build_rewrites_it_as_lf(project: Path) -> None:
+    run(project)
+    for path in (css_out(project), project / "app/globals.css"):
+        path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes().replace(b"\n", b"\r\n"))  # BOM + CRLF (git autocrlf)
+    r = run(project, "--check")
+    assert r.returncode == 0, r.stdout + r.stderr
+    r = run(project)
+    assert r.returncode == 0 and "wrote" in r.stdout  # plain build stays byte-exact: it rewrites the CRLF files
+    assert b"\r" not in css_out(project).read_bytes() and not css_out(project).read_bytes().startswith(b"\xef")
+
+
 def test_crlf_template_gives_identical_output(project: Path) -> None:
     run(project)
     want = css_out(project).read_bytes()

@@ -1,0 +1,8 @@
+{
+  "expect": [
+    [
+      "components/ui/select.tsx",
+      2
+    ]
+  ]
+}

@@ -539,6 +539,26 @@ TAILWIND_EASE = {"linear": "linear", "in": "cubic-bezier(0.4, 0, 1, 1)", "out": 
 _TAILWIND_MARK = re.compile(r"@tailwind\b|@import\s+[\"']tailwindcss|cdn\.tailwindcss\.com|@tailwindcss/browser|[\"']tailwindcss[\"']")
 
 
+def tailwind_project(folder: Path) -> bool:
+    """The folder has a tailwind.config.* or a package.json that names tailwindcss."""
+    folder = Path(folder)
+    for marker in ("tailwind.config.js", "tailwind.config.ts", "tailwind.config.cjs", "tailwind.config.mjs"):
+        if (folder / marker).is_file():
+            return True
+    pkg = folder / "package.json"
+    if pkg.is_file():
+        try:
+            return uses_tailwind(pkg.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return False
+    return False
+
+
+def is_text_name(key: str) -> bool:
+    """A colour token name (without "color.") for text: on-*, link, or text/ink as a whole hyphen word."""
+    return key.startswith("on-") or key == "link" or bool({"text", "ink"} & set(key.split("-")))
+
+
 def uses_tailwind(text: str) -> bool:
     """The text loads Tailwind (@tailwind, @import "tailwindcss", the browser build, or "tailwindcss" in package.json)."""
     return _TAILWIND_MARK.search(text) is not None
@@ -1010,15 +1030,7 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
     found = []
     detected = False
     for root in roots:
-        top = root if root.is_dir() else root.parent
-        for marker in ("tailwind.config.js", "tailwind.config.ts", "tailwind.config.cjs", "tailwind.config.mjs"):
-            detected = detected or (top / marker).is_file()
-        pkg = top / "package.json"
-        if pkg.is_file():
-            try:
-                detected = detected or uses_tailwind(pkg.read_text(encoding="utf-8", errors="replace"))
-            except OSError:
-                pass
+        detected = detected or tailwind_project(root if root.is_dir() else root.parent)
         if root.is_file():
             paths = [root]
         elif root.is_dir():

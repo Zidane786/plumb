@@ -260,6 +260,41 @@ def test_suggestions_never_change_the_exit_code_and_are_counted_apart(tmp_path: 
     assert "radius.md" in r.stdout
 
 
+def test_unused_tokens_are_one_suggestion_per_group(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", CROSS / "unused-token/bad")
+    found = [f for f in audit_json(project)["findings"] if f["rule"] == "unused-token"]
+    colour = next(f for f in found if "colour" in f["message"])
+    assert colour["message"].startswith("2 colour tokens are never used")
+    assert "color.surface" in colour["message"] and "color.text-muted" in colour["message"]
+    assert next(f for f in found if "radius" in f["message"])["message"].startswith("1 radius token is never used")
+
+
+def test_unused_tokens_are_not_reported_for_an_early_project(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", CROSS / "unused-token/bad")
+    for i in range(1, 5):
+        (project / f"app/part{i}.tsx").unlink()
+    assert not [f for f in audit_json(project)["findings"] if f["rule"] == "unused-token"]
+
+
+def test_focus_inconsistency_names_the_majority(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", CROSS / "focus-state/bad-inconsistent")
+    found = [f for f in audit_json(project)["findings"] if f["rule"] == "focus-state"]
+    assert "outline" in found[0]["message"] and "ring" in found[0]["message"] and "inconsistent" in found[0]["message"]
+
+
+def test_mobile_touch_targets_name_points_and_dp(tmp_path: Path) -> None:
+    for case, unit in (("bad-ios", "44pt"), ("bad-android", "48dp")):
+        project = make_project(tmp_path / case, CROSS / f"touch-target/{case}")
+        found = [f for f in audit_json(project)["findings"] if f["rule"] == "touch-target"]
+        assert found and all(unit in f["message"] and f["severity"] == "warn" for f in found), found
+
+
+def test_review_duplications_are_gone() -> None:
+    for name in ("_px_len", "_fmt_need", "_is_text_role"):
+        assert not hasattr(A, name), name
+    assert BT._is_text_name is P.is_text_name and callable(P.tailwind_project) and callable(P._px_len)
+
+
 def test_missing_token_proposes_a_name(tmp_path: Path) -> None:
     project = make_project(tmp_path / "p", CROSS / "missing-token/bad")
     found = [f for f in audit_json(project)["findings"] if f["rule"] == "missing-token"]

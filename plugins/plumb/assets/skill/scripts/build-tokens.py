@@ -1035,8 +1035,7 @@ def _is_surface_name(key: str) -> bool:
     return key in SURFACE_NAMES or key.startswith("surface") or key.endswith("-container")
 
 
-def _is_text_name(key: str) -> bool:
-    return key.startswith("on-") or key == "link" or bool({"text", "ink"} & set(key.split("-")))
+_is_text_name = P.is_text_name
 
 
 class Pair:
@@ -1445,7 +1444,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         if current == text.encode("utf-8"):
             continue
         if args.check:
-            stale.append(path)
+            # a checkout with CRLF line endings or a BOM (git autocrlf) is not stale; a plain build still rewrites it
+            if current is None or P.normalise_text(current.decode("utf-8", errors="replace")) != text:
+                stale.append(path)
             continue
         if not _write(path, text, root):
             return 2
