@@ -55,6 +55,7 @@ project can run.
 | `/plumb:create` | New project | Product interview → design interview → 2–3 directions → the design system → prototypes of key screens. |
 | `/plumb:extract` | Existing UI | Inventories every value in use → clusters → a clean token set → the same design system. |
 | `/plumb:prototype` | A new screen, tab, flow or interaction | 2–3 variants, each as a clickable prototype and an every-state screens view → you pick → written into the main prototype, the reference to build. |
+| `/plumb:tour` | A flow needs explaining or demoing | Writes or updates a walkthrough of a flow in the main prototype: guide mode (step by step) and play mode (plays like a video, with speed control). |
 | `/plumb:audit` | Any time | Full consistency report (HTML + terminal + exit code); offers Slate tickets. |
 | `/plumb:ux` | After building a screen or flow | UX review against the project's UX rules and its prototype; HTML report; offers Slate tickets. |
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, improve a part; regenerate; record; audit. |
@@ -224,6 +225,41 @@ you to confirm, without blocking.
 from the existing app (every route, at the same level of interaction). When tokens change,
 `/plumb:update` rebuilds the token blocks and the drift check covers them.
 
+**Effective HTML is the reference for every prototype.** Variants, screen files and the shell
+follow the `html-prototype` and `design-artifact` skills when installed; when they are not,
+`reference/prototypes.md` carries the rules Plumb needs from them (real content, every state,
+working interactions, keyboard and focus, both themes, reduced motion, no generic look).
+
+### 3.4.1 Walkthroughs and `/plumb:tour`
+
+Three things, kept apart: `/plumb:prototype` makes the **screens**; the **walkthrough player**
+(guide mode and play mode) is built into every `prototype.html` by `build-prototype.py`, so every
+prototype can play a walkthrough; `/plumb:tour` writes or updates the **script** a walkthrough
+plays (which steps, which words, for a review or a client demo). No tour file, no walkthrough; the
+prototype still works.
+
+The prototype shell has a **walkthrough player** in every project. A walkthrough is a data file,
+`docs/design/prototype/tours/<flow>.json`: an ordered list of steps, each naming a screen, a
+state, the element to spotlight, a title, a caption, and an optional action (click, type, choose,
+wait). One file drives two modes:
+
+- **Guide mode:** step by step with Next and Back (arrow keys, Esc to leave), a spotlight and a
+  coach mark on each step's element. For a reviewer or a new teammate.
+- **Play mode:** plays the flow like a video for a client or a demo: the actions run by
+  themselves, captions show what is happening, a progress bar has a marker per scene that you can
+  jump to, and controls for pause and resume (Space), restart, and **speed (0.5×, 1×, 1.5×, 2×)**.
+
+Also in the shell: a per-screen guide panel (what this screen is for, what you can do here,
+"try it" buttons, and a feed of what just happened), and a link to any walkthrough or scene
+(`prototype.html#tour-<flow>` / `#tour-<flow>-<n>`) to share with a client. With reduced motion,
+play mode becomes guide mode. Captions are `aria-live`, and every control works by keyboard.
+
+`/plumb:prototype` asks at the end whether to add or update the walkthrough for that flow;
+`/plumb:tour <flow>` writes or updates one any time, asking which steps and words to use and
+whether you want it for review or for a client demo. `build-prototype.py --check` fails when a
+step names a screen, state or element that no longer exists, so walkthroughs stay in step with
+the prototype.
+
 **Figma:** for this workflow Plumb replaces Figma for screens, flows, states and handoff (real
 HTML, real tokens, audited, clickable, kept in step with the code). Figma remains better for
 freehand visual exploration and illustration, designers editing together on one canvas, and
@@ -369,6 +405,7 @@ docs/design/
 ├── screens.html                        [G] every screen × every state, control states, navigation
 ├── prototype/screens/<id>.html         [Y] one source per screen (states + interactions)
 ├── prototype/screens.json              [G] screen → route, source files, states, sync status
+├── prototype/tours/<flow>.json         [Y] walkthroughs (guide mode + play mode)
 ├── prototype/proposals/<name>/         variants from /plumb:prototype (both views) + index.html
 └── audit-*.html · ux-review-*.html · extract.html
 ```
@@ -473,8 +510,9 @@ reported only), platforms, check, and a token-aware fix (`#14857F` → `bg-prima
 
 Assembles the main prototype from the screen files: `prototype.html` (an app shell with
 navigation, hash routing between screens, a state switcher, phone/desktop and light/dark toggles,
-each screen's own interactions, and the per-screen decisions panel plus a Decisions page from
-`docs/design/decisions.md`) and `screens.html` (sidebar navigation, every screen × every
+each screen's own interactions, the per-screen decisions panel plus a Decisions page from
+`docs/design/decisions.md`, the per-screen guide panel, and the walkthrough player for every file
+in `tours/`) and `screens.html` (sidebar navigation, every screen × every
 `data-state`, and the control-state sheet generated from the tokens and components). It inlines
 `build-tokens.py --css-vars`, a small dependency-free runtime, and each screen's scripts, so both
 pages are single files that open from disk.
@@ -483,7 +521,8 @@ It is the **only writer of `screens.json`** (as Slate's `board.py` is of `ticket
 change it through commands, never by editing it. `--map <id> --route <route> --files <globs>`
 sets a screen's route and source files (confirmed with you); `--approve <id>` records your
 approval (git `user.name`, date, hash of the screen file); `--synced <id>` marks a screen updated
-from already-built code. `--check` exits 1 when either page or the token blocks are stale. Same exit-code and error conventions as §6.1.
+from already-built code. `--check` exits 1 when either page or the token blocks are stale, or a
+walkthrough step names a screen, state or element that does not exist. Same exit-code and error conventions as §6.1.
 
 ## 7. UX layer
 
@@ -607,7 +646,7 @@ Commands are the same (`/plumb:init`, …). Skills resolve the plugin root from
 .claude-plugin/marketplace.json           marketplace "plumb" → plugins/plumb
 plugins/plumb/
   .claude-plugin/plugin.json               version 1.0.0
-  skills/{init,create,extract,prototype,audit,ux,update,upgrade,status}/SKILL.md   lean
+  skills/{init,create,extract,prototype,tour,audit,ux,update,upgrade,status}/SKILL.md   lean
   reference/   interview.md · rules.md · tokens-format.md · placement.md · scripts.md ·
                prototypes.md · ux.md · copilot.md
   assets/skill/   the design-system template: SKILL.md, design.md and references/* skeletons;
@@ -620,7 +659,9 @@ plugins/plumb/
 examples/caredesk/        the golden output of create on CareDesk Lite, with its input brief
 tests/                    see §14
 docs/specs · docs/plans · docs/what-you-get.html
-TEST.md · README.md · AGENTS.md (+ CLAUDE.md) · SECURITY.md · CHANGELOG link
+TEST.md · README.md (like Slate's: what Plumb does, install in both tools, updating, a table
+explaining what every command does and when to use it, how it flows, what a project gets, the
+hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE.md) · SECURITY.md
 .github/workflows/{test.yml, release.yml} · .github/dependabot.yml · scripts/
 ```
 
@@ -638,7 +679,7 @@ TEST.md · README.md · AGENTS.md (+ CLAUDE.md) · SECURITY.md · CHANGELOG link
 - `test_placement.py`: every layout in §4 on fixture trees.
 - `test_build_prototype.py`: assembling both pages from screen files, every state present in
   `screens.html`, the decisions panel, `--map` / `--approve` / `--synced`, `--check` drift, token
-  blocks.
+  blocks, walkthrough validation (missing screen, state or element).
 - `test_example.py`: regenerating `examples/caredesk` reproduces the committed generated files
   (including its main prototype).
 - `test_docs_consistency.py`, `test_portability.py`, `test_release_notes.py` (as in Slate).
@@ -648,8 +689,21 @@ TEST.md · README.md · AGENTS.md (+ CLAUDE.md) · SECURITY.md · CHANGELOG link
   prototype a new screen and choose it → change a built screen without its prototype and see the
   end-of-turn check stop → update adds iOS → upgrade from a fake older version), with pane
   captures as evidence. Headless browser checks of `prototype.html` (navigation, state switcher,
-  toggles, interactions) and `screens.html` (every state rendered).
-- **Proof before the 1.0.0 PR:** create on CareDesk Lite (committed as `examples/caredesk/`);
+  toggles, interactions, guide mode, play mode at every speed, pause, jumping to a scene, the
+  reduced-motion fallback) and `screens.html` (every state rendered).
+- **Two small sample apps, one per path:** a minimal Next.js + Tailwind v4 app and a minimal
+  Angular app (plain CSS/SCSS), kept as source trees under `tests/fixtures/apps/`. Both CLIs run
+  init, create or extract, prototype, tour, the hooks (edit check, prototype first, end-of-turn,
+  guard) and audit on each, in tmux. If npm is reachable on the test machine, the apps are also
+  run so the audit's screenshot comparison and `/plumb:ux` are exercised against the real pages;
+  Plumb itself never needs npm.
+- **Prototype checks in a browser** (headless script, or Playwright MCP where it helps): every
+  screen and state renders, interactions and the walkthrough work, and the page uses only the
+  design system's tokens (no colour, size or radius outside them).
+- **Validate, then publish:** nothing is pushed for release until these runs pass in both tools.
+- **Proof before the 1.0.0 PR:** create on CareDesk Lite, with the owner answering the interview
+  and validating the directions, decisions, prototype and walkthrough as a real user would; only
+  then is it committed as `examples/caredesk/`;
   extract on a temporary copy of the reference project, compared with its real system (accent
   `#14857F`; type scale `display, h1, h2, h3, body-lg, body-md, label-sm, sm, xs`); audit on that
   copy and on the two practice-week prototypes, with the HTML reports shown.
