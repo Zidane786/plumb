@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""build-tokens.py: turn the one tokens JSON into the web CSS (and, in later versions, mobile themes and evidence).
+"""build-tokens.py: turn the one tokens JSON into the web CSS and the SwiftUI / Jetpack Compose themes.
 
 Usage: build-tokens.py [--check] [--root SKILL_DIR] [--project PATH]
 
 Reads <skill>/assets/tokens/*.tokens.json (exactly one) and the web template, writes
 <skill>/assets/platforms/web/tokens.css (+ tailwind.tokens.js for tailwind-v3) and the copies listed in
-$extensions.plumb.web.copies (relative to the project root). --check writes nothing: it exits 1 naming every stale or
+$extensions.plumb.web.copies (relative to the project root), plus assets/platforms/mobile/ios/<Project>Theme.swift and
+mobile/android/<Project>Theme.kt for the platforms listed in $extensions.plumb.platforms. --check writes nothing: it exits 1 naming every stale or
 missing file. Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...).
 
 Python 3.9+, standard library only. Declarations follow the order of the tokens file
@@ -18,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -359,6 +361,595 @@ def build_tailwind_js(doc: dict, header: str) -> str:
     )
 
 
+# ---------------------------------------------------------------- mobile themes (SwiftUI, Jetpack Compose)
+
+
+MOBILE_PLATFORMS = ("ios", "android")
+SWIFT_KEYWORDS = frozenset(
+    "associatedtype class deinit enum extension fileprivate func import init inout internal let open operator private "
+    "protocol public rethrows static struct subscript typealias var break case continue default defer do else fallthrough "
+    "for guard if in repeat return switch where while as false is nil self super throw throws true try Any Self".split()
+)
+KOTLIN_KEYWORDS = frozenset(
+    "as break class continue do else false for fun if in interface is null object package return super this throw true "
+    "try typealias typeof val var when while".split()
+)
+GENERIC_FAMILIES = frozenset(
+    "system-ui ui-sans-serif ui-serif ui-monospace ui-rounded sans-serif serif monospace cursive fantasy "
+    "-apple-system blinkmacsystemfont segoe-ui".split()
+)
+GENERIC_FAMILIES = GENERIC_FAMILIES | {"segoe ui", "helvetica neue", "arial", "roboto"}
+SWIFT_WEIGHTS = {100: ".ultraLight", 200: ".thin", 300: ".light", 400: ".regular", 500: ".medium", 600: ".semibold",
+                 700: ".bold", 800: ".heavy", 900: ".black"}
+M3_COLORS = (  # Material 3 role -> the token names (in the color group) that can fill it, first found wins
+    ("primary", ("primary-fill", "primary")),
+    ("onPrimary", ("on-primary-fill", "on-primary")),
+    ("primaryContainer", ("primary-container",)),
+    ("onPrimaryContainer", ("on-primary-container",)),
+    ("secondary", ("secondary",)),
+    ("onSecondary", ("on-secondary",)),
+    ("tertiary", ("tertiary",)),
+    ("onTertiary", ("on-tertiary",)),
+    ("background", ("background",)),
+    ("onBackground", ("on-background", "on-surface")),
+    ("surface", ("surface",)),
+    ("onSurface", ("on-surface",)),
+    ("surfaceVariant", ("surface-variant",)),
+    ("onSurfaceVariant", ("on-surface-variant",)),
+    ("surfaceContainerLowest", ("surface-container-lowest",)),
+    ("surfaceContainerLow", ("surface-container-low",)),
+    ("surfaceContainer", ("surface-container",)),
+    ("surfaceContainerHigh", ("surface-container-high",)),
+    ("surfaceContainerHighest", ("surface-container-highest",)),
+    ("inverseSurface", ("inverse-surface",)),
+    ("inverseOnSurface", ("inverse-on-surface",)),
+    ("outline", ("outline",)),
+    ("outlineVariant", ("outline-variant",)),
+    ("error", ("error", "danger")),
+    ("onError", ("on-error", "on-danger")),
+    ("errorContainer", ("error-container", "danger-container")),
+    ("onErrorContainer", ("on-error-container", "on-danger-container")),
+    ("scrim", ("scrim",)),
+)
+M3_TYPE_ROLES = ("displayLarge", "displayMedium", "displaySmall", "headlineLarge", "headlineMedium", "headlineSmall",
+                 "titleLarge", "titleMedium", "titleSmall", "bodyLarge", "bodyMedium", "bodySmall", "labelLarge",
+                 "labelMedium", "labelSmall")
+M3_SHAPES = ("extraSmall", "small", "medium", "large", "extraLarge")
+DIMENSION_GROUPS = (("radius", "Radius", ""), ("spacing", "Spacing", "s"), ("size", "Size", ""), ("border", "Border", ""))
+
+
+def pascal(name: str) -> str:
+    """'café-ünïcode' -> 'CafeUnicode': diacritics stripped, non-alphanumerics dropped, words capitalised."""
+    plain = "".join(c for c in unicodedata.normalize("NFKD", str(name)) if not unicodedata.combining(c))
+    return "".join(w[:1].upper() + w[1:] for w in re.split(r"[^A-Za-z0-9]+", plain) if w)
+
+
+def camel(name: str, keywords: frozenset = frozenset()) -> str:
+    words = [w for w in re.split(r"[^A-Za-z0-9]+", str(name)) if w]
+    out = (words[0][:1].lower() + words[0][1:] if words else "") + "".join(w[:1].upper() + w[1:] for w in words[1:])
+    if out[:1].isdigit() or not out:
+        out = "n" + out
+    return f"`{out}`" if out in keywords else out
+
+
+def _q(text: object) -> str:
+    return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _one_line(text: object) -> str:
+    return " ".join(str(text).split())
+
+
+def _dim(path: str, v: object) -> float:
+    """A dimension in px (rem and em count 16px)."""
+    if isinstance(v, dict) and "value" in v:
+        number, unit = v["value"], str(v.get("unit", "px"))
+    elif isinstance(v, (int, float)) and not isinstance(v, bool):
+        number, unit = v, "px"
+    elif isinstance(v, str):
+        m = re.fullmatch(r"\s*(-?[\d.]+)\s*(px|rem|em)?\s*", v)
+        if not m:
+            raise _err(f"{path}: not a dimension for the mobile themes: {v!r}", 'write it as "16px" or {"value": 16, "unit": "px"}')
+        number, unit = m.group(1), m.group(2) or "px"
+    else:
+        raise _err(f"{path}: not a dimension for the mobile themes: {v!r}", 'write it as "16px" or {"value": 16, "unit": "px"}')
+    try:
+        n = float(number)
+    except (TypeError, ValueError):
+        raise _err(f"{path}: not a dimension for the mobile themes: {v!r}", 'write it as "16px"') from None
+    if unit in ("rem", "em"):
+        return n * 16
+    if unit != "px":
+        raise _err(f"{path}: unit {unit!r} has no mobile equivalent", "use px (or rem, counted as 16px)")
+    return n
+
+
+def _ms(path: str, v: object) -> float:
+    if isinstance(v, dict) and "value" in v:
+        number, unit = v["value"], str(v.get("unit", "ms"))
+    elif isinstance(v, str):
+        m = re.fullmatch(r"\s*([\d.]+)\s*(ms|s)\s*", v)
+        if not m:
+            raise _err(f"{path}: not a duration: {v!r}", 'write it as "150ms"')
+        number, unit = m.group(1), m.group(2)
+    else:
+        raise _err(f"{path}: not a duration: {v!r}", 'write it as "150ms"')
+    try:
+        n = float(number)
+    except (TypeError, ValueError):
+        raise _err(f"{path}: not a duration: {v!r}", 'write it as "150ms"') from None
+    return n * 1000 if unit == "s" else n
+
+
+def _number(path: str, v: object) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise _err(f"{path}: expected a number, got {v!r}", "write it as a plain number")
+    return float(v)
+
+
+def _color_pair(doc: dict, path: str) -> Tuple[str, float, str, float]:
+    lh, la = P.parse_color(P.resolve(doc, path, "light"))
+    dh, da = P.parse_color(P.resolve(doc, path, "dark"))
+    return lh, la, dh, da
+
+
+def _rgb_int(hexv: str) -> str:
+    return "0x" + hexv[1:].upper()
+
+
+def _check_unique(kind: str, names: List[str]) -> None:
+    seen = set()
+    for n in names:
+        if n in seen:
+            raise _err(f"two {kind} tokens produce the same mobile name {n.strip('`')!r}", "rename one of them in the tokens file")
+        seen.add(n)
+
+
+def _entries(doc: dict, group: str) -> List[Tuple[str, str, dict, Optional[str]]]:
+    """(name parts joined by '-', path, token, $type) for the tokens under one top-level group."""
+    return [("-".join(p.split(".")[1:]), p, t, ty) for p, t, ty in P.iter_tokens(doc) if p.split(".")[0] == group and "." in p]
+
+
+class MobileData:
+    """Everything the two themes are written from, read once from the tokens (only what is present)."""
+
+    def __init__(self, doc: dict, icons: Optional[List[dict]]) -> None:
+        self.icons = icons
+        self.colors: List[Tuple[str, str, str, float, str, float, str]] = []  # key, name, light, a, dark, a, description
+        for path, token, ttype in P.iter_tokens(doc):
+            if ttype != "color":
+                continue
+            parts = path.split(".")
+            key = "-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)
+            lh, la, dh, da = _color_pair(doc, path)
+            self.colors.append((key, key, lh, la, dh, da, _one_line(token.get("$description", ""))))
+        _check_unique("colour", [camel(c[0]) for c in self.colors])
+        self.families = self._families(doc)
+        self.type_scale = self._type_scale(doc)
+        self.dims: List[Tuple[str, str, str, List[Tuple[str, float]]]] = []  # group, swift/kotlin suffix, prefix, entries
+        for group, suffix, prefix in DIMENSION_GROUPS:
+            ents = [(prefix + name, _dim(path, P.resolve(doc, path))) for name, path, _t, ty in _entries(doc, group)
+                    if ty == "dimension"]
+            if ents:
+                _check_unique(group, [camel(n) for n, _ in ents])
+                self.dims.append((group, suffix, prefix, ents))
+        self.shadows = self._shadows(doc)
+        self.durations: List[Tuple[str, float]] = []
+        self.beziers: List[Tuple[str, List[float]]] = []
+        self.motion_dims: List[Tuple[str, float]] = []
+        self.motion_numbers: List[Tuple[str, float]] = []
+        for name, path, _tok, ttype in _entries(doc, "motion"):
+            sub = name.split("-", 1)[1] if name.split("-")[0] in ("duration", "easing") and "-" in name else name
+            value = P.resolve(doc, path)
+            if ttype == "duration":
+                self.durations.append((sub, _ms(path, value)))
+            elif ttype == "cubicBezier":
+                if not (isinstance(value, list) and len(value) == 4):
+                    raise _err(f"{path}: a cubic bezier needs four numbers", "write it as [0.2, 0.8, 0.2, 1]")
+                self.beziers.append((sub, [_number(path, x) for x in value]))
+            elif ttype == "dimension":
+                self.motion_dims.append((name, _dim(path, value)))
+            elif ttype == "number":
+                self.motion_numbers.append((name, _number(path, value)))
+        _check_unique("motion", [camel(n) for n, _ in self.durations] + ["ease" + pascal(n) for n, _ in self.beziers]
+                      + [camel(n) for n, _ in self.motion_dims + self.motion_numbers])
+
+    @staticmethod
+    def _families(doc: dict) -> List[str]:
+        for path, _tok, ttype in P.iter_tokens(doc):
+            if ttype == "fontFamily":
+                value = P.resolve(doc, path)
+                names = value if isinstance(value, list) else [value]
+                return [str(n) for n in names if isinstance(n, str)]
+        return []
+
+    def family(self) -> Optional[str]:
+        """The first named (non-generic) family, which the app must bundle; None means the system font."""
+        for name in self.families:
+            if name.strip().lower() not in GENERIC_FAMILIES:
+                return name
+        return None
+
+    @staticmethod
+    def _type_scale(doc: dict) -> List[Tuple[str, float, int, float, float]]:
+        """(name, size px, weight, line height multiplier, letter spacing em), in the file's order."""
+        out = []
+        for path, _tok, ttype in P.iter_tokens(doc):
+            if ttype != "typography":
+                continue
+            parts = path.split(".")
+            name = "-".join(parts[1:]) if parts[0] == "typography" and len(parts) > 1 else "-".join(parts)
+            t = P.resolve(doc, path)
+            if not isinstance(t, dict) or "fontSize" not in t:
+                raise _err(f"{path}: a typography token needs a fontSize", "add fontSize, e.g. \"16px\"")
+            size = _dim(f"{path}.fontSize", t["fontSize"])
+            try:
+                weight = int(t.get("fontWeight", 400))
+            except (TypeError, ValueError):
+                raise _err(f"{path}.fontWeight must be a number such as 400", "write fontWeight as an integer") from None
+            weight = min(900, max(100, int(round(weight / 100.0)) * 100))
+            lh = t.get("lineHeight")
+            if lh is None or size == 0:
+                line = 1.0
+            elif isinstance(lh, (int, float)) and not isinstance(lh, bool):
+                line = float(lh)
+            else:
+                line = _dim(f"{path}.lineHeight", lh) / size
+            ls = t.get("letterSpacing")
+            if ls is None:
+                spacing = 0.0
+            elif isinstance(ls, str) and ls.strip().endswith("em"):
+                spacing = _number(f"{path}.letterSpacing", float(ls.strip()[:-2]))
+            else:
+                spacing = _dim(f"{path}.letterSpacing", ls) / size if size else 0.0
+            out.append((name, size, weight, round(line, 4), round(spacing, 4)))
+        _check_unique("typography", [camel(n[0]) for n in out])
+        return out
+
+    @staticmethod
+    def _shadows(doc: dict) -> List[Tuple[str, float, float, float, str, float, str, float]]:
+        """(name, x, y, blur/2, light hex, light alpha, dark hex, dark alpha) from each shadow's largest-blur layer."""
+        out = []
+        for name, path, _tok, ttype in _entries(doc, "shadow"):
+            if ttype != "shadow":
+                continue
+            picked = []
+            for mode in ("light", "dark"):
+                value = P.resolve(doc, path, mode)
+                layers = value if isinstance(value, list) else [value]
+                if not layers or not all(isinstance(layer, dict) for layer in layers):
+                    raise _err(f"{path}: the mobile themes need shadow layers written as objects", "use {offsetX, offsetY, blur, spread, color} objects")
+                layer = max(layers, key=lambda ly: _dim(path, ly.get("blur", "0px")))
+                hexv, alpha = P.parse_color(layer.get("color", "#000000"))
+                picked.append((_dim(path, layer.get("offsetX", "0px")), _dim(path, layer.get("offsetY", "0px")),
+                               _dim(path, layer.get("blur", "0px")) / 2, hexv, alpha))
+            (x, y, r, lh, la), (_x, _y, _r, dh, da) = picked
+            out.append((name, x, y, r, lh, la, dh, da))
+        _check_unique("shadow", [camel(s[0]) for s in out])
+        return out
+
+
+def load_icon_map(skill_dir: Path) -> Optional[List[dict]]:
+    path = skill_dir / "assets" / "icons" / "icon-map.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _err(f"{path}: cannot read the icon map ({exc})", "fix the JSON or delete the file to leave icons out") from None
+    icons = data.get("icons") if isinstance(data, dict) else None
+    if not isinstance(icons, list) or not icons:
+        raise _err(f"{path}: needs a non-empty 'icons' list", "add entries like {\"concept\": \"home\", \"sfSymbol\": \"house\", \"materialSymbol\": \"home\"}")
+    for entry in icons:
+        for key in ("concept", "sfSymbol", "materialSymbol"):
+            if not isinstance(entry, dict) or not isinstance(entry.get(key), str) or not entry[key]:
+                label = entry.get("concept", "?") if isinstance(entry, dict) else "?"
+                raise _err(f"{path}: entry {label!r} is missing {key}", f"add {key} to that entry")
+    for key in ("concept", "sfSymbol", "materialSymbol"):
+        seen: Dict[str, str] = {}
+        for entry in icons:
+            if entry[key] in seen:
+                raise _err(f"{path}: {key} {entry[key]!r} is used by both {seen[entry[key]]!r} and {entry['concept']!r}",
+                           "give each concept its own name, SF Symbol and Material symbol")
+            seen[entry[key]] = entry["concept"]
+    return icons
+
+
+def _project_name(doc: dict) -> str:
+    project = P.plumb_settings(doc).get("project")
+    name = pascal(project) if isinstance(project, str) else ""
+    if not name:
+        raise _err("the tokens file has no project name for the mobile themes", "set $extensions.plumb.project in the tokens file (letters or digits)")
+    return name if not name[0].isdigit() else "P" + name
+
+
+def _swift_relative_to(size: float) -> str:
+    for limit, style in ((34, ".largeTitle"), (28, ".title"), (22, ".title2"), (20, ".title3"), (17, ".body"),
+                         (15, ".subheadline"), (13, ".footnote")):
+        if size >= limit:
+            return style
+    return ".caption"
+
+
+def build_swift(doc: dict, data: MobileData, project: str, header: str) -> str:
+    sw = lambda n: camel(n, SWIFT_KEYWORDS)  # noqa: E731
+    low = project[:1].lower() + project[1:]
+    init_light, init_dark = f"{low}Light", "dark"
+    L = [
+        f"// {header}",
+        f"// {project} design system for SwiftUI (iOS 17+).",
+        "",
+        "import SwiftUI",
+        "#if canImport(UIKit)",
+        "import UIKit",
+        "#endif",
+        "",
+        "// MARK: - Colours (light and dark resolve automatically through the trait collection)",
+        "",
+        "public extension Color {",
+        "    /// A colour that follows the system appearance: `light` in light mode, `dark` in dark mode.",
+        f"    init({init_light} light: UInt32, lightAlpha: Double = 1, {init_dark}: UInt32, darkAlpha: Double = 1) {{",
+        "        #if canImport(UIKit)",
+        "        self.init(uiColor: UIColor { traits in",
+        "            let (hex, alpha) = traits.userInterfaceStyle == .dark ? (dark, darkAlpha) : (light, lightAlpha)",
+        "            return UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,",
+        "                           blue: CGFloat(hex & 0xFF) / 255, alpha: CGFloat(alpha))",
+        "        })",
+        "        #else",
+        "        self.init(.sRGB, red: Double((light >> 16) & 0xFF) / 255, green: Double((light >> 8) & 0xFF) / 255,",
+        "                  blue: Double(light & 0xFF) / 255, opacity: lightAlpha)",
+        "        #endif",
+        "    }",
+        "}",
+        "",
+    ]
+    if data.colors:
+        L.append(f"public enum {project}Color {{")
+        for key, _n, lh, la, dh, da, desc in data.colors:
+            if desc:
+                L.append(f"    /// {desc}")
+            args = f"{init_light}: {_rgb_int(lh)}" + (f", lightAlpha: {num(round(la, 4))}" if la != 1 else "")
+            args += f", {init_dark}: {_rgb_int(dh)}" + (f", darkAlpha: {num(round(da, 4))}" if da != 1 else "")
+            L.append(f"    public static let {sw(key)} = Color({args})")
+        L += ["}", ""]
+    if data.type_scale:
+        family = data.family()
+        font = (f"{{ .custom({_q(family)}, size: size, relativeTo: relativeTo).weight(weight) }}" if family
+                else "{ .system(size: size, weight: weight) }")
+        note = (f"/// The font. Bundle {family} and register it in the app's Info.plist (UIAppFonts)." if family
+                else "/// The font: the system font, scaled with Dynamic Type where the system supports it.")
+        L += [
+            "// MARK: - Type scale",
+            "",
+            f"public struct {project}TextStyle: Sendable {{",
+            "    public let size: CGFloat",
+            "    public let weight: Font.Weight",
+            "    public let lineHeight: CGFloat   // multiplier of size",
+            "    public let tracking: CGFloat     // em",
+            "    public let relativeTo: Font.TextStyle",
+            f"    {note}",
+            f"    public var font: Font {font}",
+            "    /// Extra space between lines, for `.lineSpacing(...)`.",
+            "    public var lineSpacing: CGFloat { size * (lineHeight - 1) }",
+            "    /// Letter spacing in points, for `.tracking(...)`.",
+            "    public var trackingPoints: CGFloat { size * tracking }",
+            "}",
+            "",
+            f"public enum {project}Type {{",
+        ]
+        for name, size, weight, lh, ls in data.type_scale:
+            L.append(f"    public static let {sw(name)} = {project}TextStyle(size: {num(size)}, weight: {SWIFT_WEIGHTS[weight]}, "
+                     f"lineHeight: {num(lh)}, tracking: {num(ls)}, relativeTo: {_swift_relative_to(size)})")
+        L += [
+            "}",
+            "",
+            "public extension View {",
+            f"    /// Apply a {project} text style: font, line spacing and tracking.",
+            f"    func {low}Text(_ style: {project}TextStyle) -> some View {{",
+            "        font(style.font).lineSpacing(style.lineSpacing).tracking(style.trackingPoints)",
+            "    }",
+            "}",
+            "",
+        ]
+    for group, suffix, _prefix, ents in data.dims:
+        L += [f"// MARK: - {suffix} (points)", "", f"public enum {project}{suffix} {{"]
+        L += [f"    public static let {sw(n)}: CGFloat = {num(v)}" for n, v in ents]
+        L += ["}", ""]
+    if data.shadows:
+        L += [
+            "// MARK: - Elevation (each shadow's largest layer)",
+            "",
+            f"public struct {project}Shadow: Sendable {{",
+            "    public let x: CGFloat, y: CGFloat, radius: CGFloat",
+            "    public let lightColor: UInt32, lightAlpha: Double, darkColor: UInt32, darkAlpha: Double",
+            f"    public var color: Color {{ Color({init_light}: lightColor, lightAlpha: lightAlpha, {init_dark}: darkColor, darkAlpha: darkAlpha) }}",
+            "}",
+            "",
+            f"public enum {project}Elevation {{",
+        ]
+        for name, x, y, r, lh, la, dh, da in data.shadows:
+            L.append(f"    public static let {sw(name)} = {project}Shadow(x: {num(x)}, y: {num(y)}, radius: {num(r)}, "
+                     f"lightColor: {_rgb_int(lh)}, lightAlpha: {num(round(la, 4))}, darkColor: {_rgb_int(dh)}, "
+                     f"darkAlpha: {num(round(da, 4))})")
+        L += [
+            "}",
+            "",
+            "public extension View {",
+            f"    func {low}Shadow(_ s: {project}Shadow) -> some View {{ shadow(color: s.color, radius: s.radius, x: s.x, y: s.y) }}",
+            "}",
+            "",
+        ]
+    if data.durations or data.beziers or data.motion_dims or data.motion_numbers:
+        L += ["// MARK: - Motion (use `nil` animations when @Environment(\\.accessibilityReduceMotion) is on)", "",
+              f"public enum {project}Motion {{"]
+        L += [f"    public static let {sw(n)}: Double = {num(v / 1000)}  // seconds" for n, v in data.durations]
+        for n, pts in data.beziers:
+            L.append(f"    public static func ease{pascal(n)}(_ duration: Double) -> Animation "
+                     f"{{ .timingCurve({', '.join(num(x) for x in pts)}, duration: duration) }}")
+        L += [f"    public static let {sw(n)}: CGFloat = {num(v)}" for n, v in data.motion_dims + data.motion_numbers]
+        L += [
+            "    /// The animation to use, or nil (instant) when Reduce Motion is on.",
+            "    public static func animation(_ animation: Animation, reduceMotion: Bool) -> Animation? "
+            "{ reduceMotion ? nil : animation }",
+            "}",
+            "",
+        ]
+    if data.icons:
+        L += ["// MARK: - Icons (SF Symbols mapped from assets/icons/icon-map.json)", "",
+              f"public enum {project}Icon: String, CaseIterable, Sendable {{"]
+        L += [f"    case {sw(i['concept'])} = {_q(i['sfSymbol'])}" for i in data.icons]
+        L += ["    public var image: Image { Image(systemName: rawValue) }", "}", ""]
+    return "\n".join(L)
+
+
+def _kt_color(hexv: str, alpha: float) -> str:
+    return f"Color(0x{round(alpha * 255):02X}{hexv[1:].upper()})"
+
+
+def _spread(count: int, slots: int) -> List[int]:
+    """slots indexes into a list of `count`, spread from the first to the last entry."""
+    if count == 0:
+        return []
+    return [int(round(i * (count - 1) / float(slots - 1))) for i in range(slots)]
+
+
+def build_kotlin(doc: dict, data: MobileData, project: str, header: str) -> str:
+    kt = lambda n: camel(n, KOTLIN_KEYWORDS)  # noqa: E731
+    low = project[:1].lower() + project[1:]
+    package = "app." + (re.sub(r"[^a-z0-9]", "", project.lower()) if not project[0].isdigit() else "p" + project.lower()) + ".designsystem"
+    imports = [
+        "androidx.compose.animation.core.CubicBezierEasing", "androidx.compose.foundation.isSystemInDarkTheme",
+        "androidx.compose.foundation.shape.RoundedCornerShape", "androidx.compose.material3.ColorScheme",
+        "androidx.compose.material3.MaterialTheme", "androidx.compose.material3.Shapes",
+        "androidx.compose.material3.Typography", "androidx.compose.material3.darkColorScheme",
+        "androidx.compose.material3.lightColorScheme", "androidx.compose.runtime.Composable",
+        "androidx.compose.runtime.CompositionLocalProvider", "androidx.compose.runtime.Immutable",
+        "androidx.compose.runtime.staticCompositionLocalOf", "androidx.compose.ui.graphics.Color",
+        "androidx.compose.ui.text.TextStyle", "androidx.compose.ui.text.font.FontFamily",
+        "androidx.compose.ui.text.font.FontWeight", "androidx.compose.ui.unit.dp", "androidx.compose.ui.unit.em",
+        "androidx.compose.ui.unit.sp",
+    ]
+    L = [f"// {header}", f"// {project} design system for Jetpack Compose (Material 3).", f"package {package}", ""]
+    L += [f"import {i}" for i in imports]
+    L += [""]
+    names = {c[0]: c for c in data.colors}
+    L += [f"/** Every {project} colour for one appearance (the Material roles cover only part of them). */", "@Immutable",
+          f"data class {project}Colors("]
+    L += [f"    val {kt(c[0])}: Color," for c in data.colors]
+    L += [")", ""]
+    for mode, lidx in (("Light", 2), ("Dark", 4)):
+        L.append(f"val {project}{mode}Colors = {project}Colors(")
+        L += [f"    {kt(c[0])} = {_kt_color(c[lidx], c[lidx + 1])}," for c in data.colors]
+        L += [")", ""]
+    roles = []
+    for role, candidates in M3_COLORS:
+        found = next((c for c in candidates if c in names), None)
+        if found:
+            roles.append((role, found))
+    for mode, fn in (("Light", "lightColorScheme"), ("Dark", "darkColorScheme")):
+        if roles:
+            L.append(f"val {project}{mode}ColorScheme: ColorScheme = {fn}(")
+            L += [f"    {role} = {project}{mode}Colors.{kt(name)}," for role, name in roles]
+            L += [")", ""]
+        else:
+            L += [f"val {project}{mode}ColorScheme: ColorScheme = {fn}()", ""]
+    family = data.family()
+    L += [(f"/** {family}, bundled in the app: pass its FontFamily in; the default falls back to the system sans. */" if family
+           else "/** The system sans by default; pass a FontFamily to use another. */"),
+          f"fun {low}Typography(fontFamily: FontFamily = FontFamily.Default): Typography {{"]
+    styles = {}
+    for name, size, weight, lh, ls in data.type_scale:
+        styles[name] = (size, weight, lh, ls)
+    for name, (size, weight, lh, ls) in styles.items():
+        L.append(f"    val {kt(name)} = TextStyle(fontFamily = fontFamily, fontSize = {num(size)}.sp, fontWeight = "
+                 f"FontWeight.W{weight}, lineHeight = {num(round(size * lh, 2))}.sp, letterSpacing = {num(ls)}.em)")
+    if styles:
+        by_size = sorted(styles, key=lambda n: -styles[n][0])
+        L.append("    return Typography(")
+        L += [f"        {role} = {kt(by_size[idx])}," for role, idx in zip(M3_TYPE_ROLES, _spread(len(by_size), len(M3_TYPE_ROLES)))]
+        L += ["    )", "}", "",
+              f"/** The {project} type scale by its own names, for when a Material role does not fit. */",
+              f"object {project}Type {{"]
+        for name, (size, weight, lh, ls) in styles.items():
+            L.append(f"    val {kt(name)} = TextStyle(fontSize = {num(size)}.sp, fontWeight = FontWeight.W{weight}, "
+                     f"lineHeight = {num(round(size * lh, 2))}.sp, letterSpacing = {num(ls)}.em)")
+        L += ["}", ""]
+    else:
+        L += ["    return Typography()", "}", ""]
+    radii = next((ents for group, _s, _p, ents in data.dims if group == "radius"), [])
+    ordered = sorted(radii, key=lambda e: e[1])
+    L += [f"val {project}Shapes = Shapes("]
+    L += [f"    {slot} = RoundedCornerShape({num(ordered[idx][1])}.dp)," for slot, idx in zip(M3_SHAPES, _spread(len(ordered), 5))]
+    L += [")", ""]
+    for group, suffix, _prefix, ents in data.dims:
+        L.append(f"object {project}{suffix} {{")
+        L += [f"    val {kt(n)} = {num(v)}.dp" for n, v in ents]
+        L += ["}", ""]
+    if data.shadows:
+        L += ["/** Shadow elevation approximating each shadow (the largest layer's blur / 2). */",
+              f"object {project}Elevation {{"]
+        L += [f"    val {kt(s[0])} = {num(s[3])}.dp" for s in data.shadows]
+        L += ["}", ""]
+    if data.durations or data.beziers or data.motion_dims or data.motion_numbers:
+        L += ["/** Motion. Skip animations when the system animation scale is 0 (reduced motion). */",
+              f"object {project}Motion {{"]
+        L += [f"    const val {camel(n, KOTLIN_KEYWORDS).strip('`')}Millis = {num(v)}" for n, v in data.durations]
+        L += [f"    val Ease{pascal(n)} = CubicBezierEasing({', '.join(num(x) + 'f' for x in pts)})" for n, pts in data.beziers]
+        L += [f"    val {kt(n)} = {num(v)}.dp" for n, v in data.motion_dims]
+        L += [f"    const val {kt(n)} = {num(v)}f" for n, v in data.motion_numbers]
+        L += ["}", ""]
+    if data.icons:
+        L += ["/** Material Symbols names mapped from assets/icons/icon-map.json. */", f"enum class {project}Icon(val symbol: String) {{"]
+        L += [f"    {kt(i['concept'])}({_q(i['materialSymbol'])})," for i in data.icons]
+        L += ["}", ""]
+    L += [
+        f"val Local{project}Colors = staticCompositionLocalOf {{ {project}LightColors }}",
+        "",
+        f"/** Wrap the app: Material 3 with {project} colours, type and shapes, plus every {project} colour through {project}Theme.colors. */",
+        "@Composable",
+        f"fun {project}Theme(",
+        "    darkTheme: Boolean = isSystemInDarkTheme(),",
+        "    fontFamily: FontFamily = FontFamily.Default,",
+        "    content: @Composable () -> Unit,",
+        ") {",
+        f"    val {low} = if (darkTheme) {project}DarkColors else {project}LightColors",
+        f"    CompositionLocalProvider(Local{project}Colors provides {low}) {{",
+        "        MaterialTheme(",
+        f"            colorScheme = if (darkTheme) {project}DarkColorScheme else {project}LightColorScheme,",
+        f"            typography = {low}Typography(fontFamily),",
+        f"            shapes = {project}Shapes,",
+        "            content = content,",
+        "        )",
+        "    }",
+        "}",
+        "",
+        f"object {project}Theme {{",
+        f"    val colors: {project}Colors",
+        f"        @Composable get() = Local{project}Colors.current",
+        "}",
+        "",
+    ]
+    return "\n".join(L)
+
+
+def mobile_outputs(doc: dict, skill_dir: Path, header: str) -> Dict[Path, str]:
+    platforms = P.plumb_settings(doc)["platforms"]
+    if not isinstance(platforms, list):
+        raise _err("platforms must be a list in the tokens file", 'write it as ["web", "ios", "android"]')
+    wanted = [p for p in MOBILE_PLATFORMS if p in platforms]
+    if not wanted:
+        return {}
+    project = _project_name(doc)
+    data = MobileData(doc, load_icon_map(skill_dir))
+    mobile = skill_dir / "assets" / "platforms" / "mobile"
+    out: Dict[Path, str] = {}
+    if "ios" in wanted:
+        out[mobile / "ios" / f"{project}Theme.swift"] = build_swift(doc, data, project, header)
+    if "android" in wanted:
+        out[mobile / "android" / f"{project}Theme.kt"] = build_kotlin(doc, data, project, header)
+    return out
+
+
 # ---------------------------------------------------------------- outputs
 
 
@@ -375,7 +966,7 @@ def safe_copy_path(root: Path, copy: object) -> Path:
 
 
 def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_file: Optional[Path] = None) -> Dict[Path, str]:
-    """Every generated file as {absolute path: content}. Later tasks extend this with mobile themes and evidence."""
+    """Every generated file as {absolute path: content}: web CSS, copies, and the mobile themes for the listed platforms."""
     skill_dir = Path(skill_dir).resolve()
     root = find_project_root(skill_dir, project)
     tokens_file = tokens_file or find_tokens_file(skill_dir)
@@ -395,6 +986,7 @@ def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_f
         raise _err("web.copies must be a list of paths", "write it as [\"app/globals.css\"]")
     for copy in copies:
         out[safe_copy_path(root, copy)] = css
+    out.update(mobile_outputs(doc, skill_dir, header))
     return dict(sorted(out.items(), key=lambda kv: str(kv[0])))
 
 
