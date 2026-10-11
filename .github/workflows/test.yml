@@ -9,6 +9,7 @@ name: test
 # Files that trigger the full suite (keep in sync with CLAUDE.md / AGENTS.md "Develop and test"):
 #   plugins/**            the shipped plugin (skills, hooks, templates, generator, audit, ...)
 #   tests/**              the tests themselves
+#   examples/**           the golden example the tests compare against
 #   scripts/**            release tooling
 #   .github/workflows/**  CI and release workflows
 #   .claude-plugin/**     the marketplace manifest
@@ -63,7 +64,7 @@ jobs:
           fi
           CHANGED=$(git diff --name-only "$RANGE")
           echo "Changed files ($RANGE):"; echo "$CHANGED" | sed 's/^/  /'
-          if echo "$CHANGED" | grep -Eq '^(plugins/|tests/|scripts/|\.github/workflows/|\.claude-plugin/|\.gitattributes$)'; then
+          if echo "$CHANGED" | grep -Eq '^(plugins/|tests/|examples/|scripts/|\.github/workflows/|\.claude-plugin/|\.gitattributes$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "Only docs changed: skipping the test suite."
