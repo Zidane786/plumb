@@ -56,7 +56,7 @@ project can run.
 | `/plumb:extract` | Existing UI | Inventories every value in use → clusters → a clean token set → the same design system. |
 | `/plumb:prototype` | A new screen, tab, flow or interaction | 2–3 variants, each as a clickable prototype and an every-state screens view → you pick → written into the main prototype, the reference to build. |
 | `/plumb:tour` | An extra or custom walkthrough | Writes a walkthrough script beyond the default one prototype makes (a client demo, another audience, several flows); the prototype plays it in guide mode or play mode. |
-| `/plumb:audit` | Any time | Full consistency report (HTML + terminal + exit code); offers Slate tickets. |
+| `/plumb:audit [fix\|improve]` | Any time | Report (HTML + terminal + exit code); `fix` repairs issues with your OK; `improve` finds and, with your OK, makes the system and screens better (prototype first). Offers Slate tickets. |
 | `/plumb:ux` | After building a screen or flow | UX review against the project's UX rules and its prototype; HTML report; offers Slate tickets. |
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, improve a part; regenerate; record; audit. |
 | `/plumb:upgrade` | The plugin has a new version | Brings the project's copied files, tokens format and `PLUMB.md` up to the plugin's version. |
@@ -315,6 +315,17 @@ with `file:line`, what's wrong, the token or component to use, the fix), prints 
 and exits 0 when there are no errors. When Slate is set up, it offers to create tickets for the
 fixes, grouped by area, written only through `board.py`. With no design system yet (a prototype or
 a project before extract) it runs in inconsistency-only mode.
+
+**Three modes.** `/plumb:audit` reports only (errors, warnings, and the Improvements list).
+`/plumb:audit fix` fixes errors and warnings: it groups them (e.g. "12 raw colours → tokens"), shows
+each group, asks, applies it, and re-runs until clean; anything that changes how a screen looks goes
+through the prototype first. `/plumb:audit improve` is for a project that already passes (or after
+`fix`): it goes beyond the rules with the suggestions plus a design pass across the product
+(hierarchy, spacing rhythm, consistency between screens, states, dark-mode polish, accessibility
+beyond AA), produces a ranked improvement plan, and for each item the user picks: prototype first →
+approval → build; token changes go through `/plumb:update`. Every change is recorded in the decision
+log; any item can become a Slate ticket instead. `/plumb:ux` remains the deep review of one screen
+or flow; `audit improve` looks across the whole product and the system.
 
 ### 3.6 `/plumb:ux`
 
