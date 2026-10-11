@@ -12,6 +12,9 @@ and the specimen page <project>/<docs_dir>/specimen.html (docs_dir from $extensi
 templates/specimen.html.tmpl: every token (colours light and dark side by side with their contrast pairs, type, spacing,
 radii, shadows in both themes, motion, the rest) and the basic controls in every state in both themes, styled with the
 project's own tokens, offline, no timestamps. --check covers it; with no template the build notes it and skips the page.
+It also refreshes the token-derived region (between /* plumb:theme */ and /* plumb:theme:end */: the --css-vars token
+block, the page roles, the frame breakpoint) inside <docs_dir>/prototype.html and screens.html when build-prototype.py
+has written them, so one tokens build keeps every page in step; --check names a stale one as a prototype token block.
 
   --check      write nothing; exit 1 naming every stale or missing file.
   --contrast   rewrite only the contrast block of references/dark-mode.md (exit 2 if the file or the markers are missing).
@@ -1027,6 +1030,7 @@ def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_f
     specimen = specimen_output(doc, skill_dir, root, tokens_file, header)
     if specimen:
         out[specimen[0]] = specimen[1]
+    out.update(prototype_page_outputs(doc, root))
     return dict(sorted(out.items(), key=lambda kv: str(kv[0])))
 
 
@@ -1521,6 +1525,63 @@ def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = Fa
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- the prototype pages' theme (build-prototype.py)
+
+THEME_START = "/* plumb:theme */"
+THEME_START_SCOPED = "/* plumb:theme scoped */"
+THEME_END = "/* plumb:theme:end */"
+PROTOTYPE_PAGES = ("prototype.html", "screens.html")
+_THEME_REGION = re.compile(r"/\* plumb:theme( scoped)? \*/.*?/\* plumb:theme:end \*/", re.S)
+
+
+def frame_md_css(doc: dict) -> str:
+    """The md breakpoint values follow the frame a screen sits in (container plumb-frame), not the window, so the
+    phone/desktop toggle and the side-by-side copies show the layout and type the screen would have at that width."""
+    md = declarations(doc, "md")
+    if not md:
+        return ""
+    names = {n for n, _v in md}
+    base = [(n, v) for n, v in declarations(doc, "light") if n in names]
+    lines = ["/* The md breakpoint follows the frame a screen sits in, not the window. */",
+             "@container plumb-frame (max-width: 47.99rem) {", "  [data-screen] {"]
+    lines += [f"    {n}: {v};" for n, v in base] + ["  }", "}", "@container plumb-frame (min-width: 48rem) {", "  [data-screen] {"]
+    lines += [f"    {n}: {v};" for n, v in md] + ["  }", "}"]
+    return "\n".join(lines)
+
+
+def prototype_theme_css(doc: dict, scoped: bool) -> str:
+    """Everything token-derived in a prototype page (prototype.html; screens.html is `scoped`, with .pl-light/.pl-dark):
+    the token block, the page roles and the frame's md breakpoint, between the plumb:theme markers. build-prototype.py
+    writes it; build-tokens.py refreshes it in place, so one tokens build keeps every page in step."""
+    md = frame_md_css(doc)
+    parts = [THEME_START_SCOPED if scoped else THEME_START, page_theme_css(doc, scopes=scoped, markers=True)]
+    return "\n".join(parts + ([md] if md else []) + [THEME_END])
+
+
+def refresh_prototype_theme(text: str, doc: dict) -> Optional[str]:
+    """The page with its plumb:theme region rebuilt from the tokens, or None when it has no such region."""
+    m = _THEME_REGION.search(text)
+    if not m:
+        return None
+    return text[: m.start()] + prototype_theme_css(doc, bool(m.group(1))) + text[m.end():]
+
+
+def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
+    """prototype.html and screens.html (when build-prototype.py has written them) with their theme refreshed."""
+    docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
+    out: Dict[Path, str] = {}
+    for name in PROTOTYPE_PAGES:
+        path = safe_copy_path(root, f"{str(docs).rstrip('/')}/{name}", "$extensions.plumb.docs_dir")
+        try:
+            text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
+        except (OSError, UnicodeDecodeError):
+            text = None  # build-prototype.py --check reports an unreadable page
+        refreshed = refresh_prototype_theme(text, doc) if text is not None else None
+        if refreshed is not None:
+            out[path] = refreshed
+    return out
+
+
 def specimen_path(doc: dict, root: Path) -> Path:
     docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
     return safe_copy_path(root, f"{str(docs).rstrip('/')}/specimen.html", "$extensions.plumb.docs_dir")
@@ -1907,7 +1968,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if args.check:
         if stale:
             for path in stale:
-                print(f"stale: {rel(path, root)}")
+                note = " (prototype token block)" if path.name in PROTOTYPE_PAGES and path.exists() else ""
+                print(f"stale: {rel(path, root)}{note}")
             print(f"fix: {command}")
             return 1
         print(f"ok: {len(files)} generated files are up to date")

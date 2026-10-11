@@ -505,22 +505,33 @@ def _big_project(dest: Path, files: int) -> Path:
     return project
 
 
-def _best_of_3(project: Path, files: int) -> float:
-    """The fastest of three full audits (the first run on freshly written files pays the OS's first-open cost)."""
-    times = []
-    for _ in range(3):
-        start = time.perf_counter()
-        r = run(project, "--json")
-        times.append(time.perf_counter() - start)
-        assert r.returncode == 1, r.stderr
-        assert json.loads(r.stdout)["checked"] == files
-    return min(times)
+RATIO_FLOOR = 0.5  # seconds
+RATIO_LIMIT = 8.0  # between linear (4) and quadratic (16), with room for machine load
+
+
+def _audit_time(project: Path, files: int) -> float:
+    start = time.perf_counter()
+    r = run(project, "--json")
+    elapsed = time.perf_counter() - start
+    assert r.returncode == 1, r.stderr
+    assert json.loads(r.stdout)["checked"] == files
+    return elapsed
 
 
 def test_full_audit_scales_linearly_and_stays_fast(tmp_path: Path) -> None:
-    """2,000 files: no worse than linear against 500 (best of 3 each, ratio under 6; 4 is linear) and under a generous
-    30 s cap (CI runners are slower than a laptop). Robust to machine speed, still catches quadratic work."""
-    small = _best_of_3(_big_project(tmp_path / "small", 500), 500)
-    big = _best_of_3(_big_project(tmp_path / "big", 2000), 2000)
-    assert big < 30.0, f"{big:.1f}s for 2000 files"
-    assert big / small < 6.0, f"2000 files took {big:.2f}s, 500 took {small:.2f}s: ratio {big / small:.1f}"
+    """4,000 files: no worse than linear against 1,000 (ratio under RATIO_LIMIT: 4 is linear, n log n about 4.8,
+    quadratic 16; a loaded machine stretches the longer run to about 7) and under a
+    generous 30 s cap (CI runners are slower than a laptop). The two sizes are timed in turn (small, big, three times)
+    and the fastest of each kept, so both see the same machine load; the first run on freshly written files pays the
+    OS's first-open cost. The ratio only counts when the 1,000-file baseline takes at least RATIO_FLOOR seconds: below
+    that, timer and scheduler noise dominate. Robust to machine speed and load, still catches quadratic work."""
+    small_project = _big_project(tmp_path / "small", 1000)
+    big_project = _big_project(tmp_path / "big", 4000)
+    smalls, bigs = [], []
+    for _ in range(3):
+        smalls.append(_audit_time(small_project, 1000))
+        bigs.append(_audit_time(big_project, 4000))
+    small, big = min(smalls), min(bigs)
+    assert big < 30.0, f"{big:.1f}s for 4000 files"
+    if small >= RATIO_FLOOR:
+        assert big / small < RATIO_LIMIT, f"4000 files took {big:.2f}s, 1000 took {small:.2f}s: ratio {big / small:.1f}"

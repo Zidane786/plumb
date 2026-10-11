@@ -53,6 +53,7 @@ def _load(name: str, file: str):
 
 
 BT = _load("plumb_build_tokens_for_proto", "build-tokens.py")
+BP = _load("plumb_build_prototype", "build-prototype.py")
 
 
 def write(path: Path, text: str) -> None:
@@ -102,6 +103,11 @@ def clean_env(tmp: Path, **extra: str) -> dict:
 def run(project: Path, *args: str, env: dict = None):
     return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-prototype.py"), *args],
                           cwd=str(project), capture_output=True, text=True, encoding="utf-8", env=env)
+
+
+def build_tokens(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-tokens.py"), *args],
+                          cwd=str(project), capture_output=True, text=True, encoding="utf-8")
 
 
 def screens_json(project: Path) -> dict:
@@ -553,6 +559,118 @@ def test_bad_arguments_are_shaped(project: Path) -> None:
     assert_refusal(run(project, "--nope"))
 
 
+# ---------------------------------------------------------------- review fixes (round 1)
+
+
+def test_screens_link_points_at_the_first_screen(project: Path) -> None:
+    page = read(project / PROTO_REL)
+    assert 'id="pp-screens-link" href="#screen-home"' in page
+
+
+def test_build_tokens_refreshes_the_prototype_token_blocks(project: Path) -> None:
+    doc = json.loads(read(project / TOKENS_REL))
+    doc["color"]["primary"]["$value"] = "#0b5a56"
+    doc["typography"]["base"]["$extensions"]["plumb"]["md"]["fontSize"] = "17px"
+    write(project / TOKENS_REL, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    r = build_tokens(project, "--check")
+    assert r.returncode == 1
+    assert f"stale: {PROTO_REL} (prototype token block)" in r.stdout
+    assert f"stale: {CATALOGUE_REL} (prototype token block)" in r.stdout
+    r = build_tokens(project)
+    assert r.returncode == 0, r.stderr
+    assert f"wrote {PROTO_REL}" in r.stdout and f"wrote {CATALOGUE_REL}" in r.stdout
+    for rel in (PROTO_REL, CATALOGUE_REL):
+        page = read(project / rel)
+        assert "--color-primary: #0b5a56;" in page
+        container = page[page.index("@container plumb-frame (min-width: 48rem)"):]
+        assert "--text-base: 17px;" in container[:400]
+    # one tokens build leaves nothing for build-prototype to do, and both checks agree
+    assert run(project, "--check").returncode == 0, run(project, "--check").stdout
+    assert build_tokens(project, "--check").returncode == 0
+    before = {rel: (project / rel).read_bytes() for rel in (PROTO_REL, CATALOGUE_REL)}
+    assert "wrote" not in run(project).stdout
+    assert {rel: (project / rel).read_bytes() for rel in before} == before
+
+
+def test_build_tokens_leaves_projects_without_a_prototype_alone(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", screens=False, build=False)
+    r = build_tokens(p)
+    assert r.returncode == 0, r.stderr
+    assert not (p / PROTO_REL).exists() and not (p / CATALOGUE_REL).exists()
+
+
+def test_unsafe_decision_urls_stay_plain_text(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", decisions=False, build=False)
+    write(p / DOCS / "decisions.md", "## DS-20261010-urls · Links\n"
+          "- Why: [a](javascript:alert(1)) [b](JAVASCRIPT:alert(2)) [c](data:text/html,hi) [d](VbScript:msgbox)\n"
+          "- Options: [e]( javascript:alert(3)) and [ok](prototype/proposals/x/index.html)\n- Screens: home\n")
+    assert run(p).returncode == 0
+    for rel in (PROTO_REL, CATALOGUE_REL):
+        page = read(p / rel)
+        assert not re.search(r"href\s*=\s*[\"']\s*(?:javascript|data|vbscript):", page, re.I), rel
+        assert "[a](javascript:alert(1))" in page and "[d](VbScript:msgbox)" in page
+        assert 'href="prototype/proposals/x/index.html"' in page
+
+
+def test_inline_markup_cuts_code_spans_first() -> None:
+    out = BP.inline("see [x](a`b`c) and `**y** [z](u)` then **bold** and [ok](p.html)")
+    assert "<code>" not in "".join(re.findall(r'href="[^"]*"', out))
+    assert "<code>**y** [z](u)</code>" in out
+    assert "<strong>bold</strong>" in out and '<a href="p.html">ok</a>' in out
+    assert BP.inline("`<b>`") == "<code>&lt;b&gt;</code>"
+
+
+def test_globs_read_back_from_the_map_are_checked(project: Path) -> None:
+    data = screens_json(project)
+    data["screens"][0]["files"] = ["../outside/**"]
+    write(project / JSON_REL, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    for args in ((), ("--check",)):
+        assert_refusal(run(project, *args), "screens.json", "../outside/**", "--map")
+
+
+def test_argument_errors_name_the_project_relative_script(project: Path) -> None:
+    r = run(project, "--nope")
+    assert_refusal(r, f"fix: python3 {SKILL_REL}/scripts/build-prototype.py ")
+
+
+def test_unscoped_screen_styles_warn_with_file_and_line(project: Path) -> None:
+    write(project / SCREENS_REL / "loose.html", '<style>\n[data-screen="loose"] p { margin: 0; }\n.loose, '
+          '[data-screen="loose"] h2 { color: red; }\n@media (min-width: 1px) {\n  body { margin: 0; }\n}\n'
+          '@keyframes k { from { opacity: 0; } to { opacity: 1; } }\n/* .commented { } */\n</style>\n'
+          '<section data-screen="loose"><div data-state="ready">Hi</div></section>\n')
+    r = run(project)
+    assert r.returncode == 0, r.stderr
+    assert f'{SCREENS_REL}/loose.html:3: the style rule ".loose"' in r.stderr
+    assert f'{SCREENS_REL}/loose.html:5: the style rule "body"' in r.stderr
+    assert r.stderr.count("warning: ") == 2, r.stderr
+    assert 'fix: start each selector' in r.stderr
+    clean = make_project(project.parent / "clean", build=False)
+    assert "warning" not in run(clean).stderr
+
+
+SIGNUP = ('<section data-screen="signup" data-title="Sign up">\n'
+          '  <div data-state="ready"><label for="email">Email</label><input id="email" aria-describedby="email-hint '
+          'other"><p id="email-hint">We never share it.</p><a href="#email">Jump</a></div>\n'
+          '  <div data-state="error"><label for="email2">Email</label><input id="email2"></div>\n'
+          '</section>\n')
+
+
+def test_catalogue_copies_get_their_own_ids(project: Path) -> None:
+    write(project / SCREENS_REL / "signup.html", SIGNUP)
+    assert run(project).returncode == 0
+    page = read(project / CATALOGUE_REL)
+    ids = re.findall(r'\sid="([^"]+)"', page)
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    assert dupes == [], dupes
+    for theme in ("light", "dark"):
+        copy = block(page, "data-copy", f"signup/ready/{theme}")
+        label = re.search(r'<label for="([^"]+)"', copy).group(1)
+        assert f'<input id="{label}" aria-describedby="email-hint{label[len("email"):]} other"' in copy
+        assert f'href="#{label}"' in copy
+    proto = read(project / PROTO_REL)
+    assert '<label for="email">' in proto and '<input id="email" aria-describedby="email-hint other">' in proto
+
+
 # ---------------------------------------------------------------- browser (headless)
 
 
@@ -765,5 +883,73 @@ def test_catalogue_shows_each_copy_in_its_state_and_theme(browser, built) -> Non
         page.click('.sc-nav a[href="#screen-menu"]')
         assert page.evaluate("location.hash") == "#screen-menu"
         assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+
+def test_screens_link_works_after_a_deep_link_to_decisions(browser, built) -> None:
+    for hash_ in ("#decisions", "#decision-DS-20261005-booking-form"):
+        ctx, page, errors, _ = _open(browser, built / PROTO_REL, hash_=hash_)
+        try:
+            assert page.is_visible("#decisions") and not page.is_visible("#pp-frame")
+            page.click("#pp-screens-link")
+            assert _visible_screen(page) == "home", hash_
+            assert page.evaluate("location.hash") == "#screen-home"
+            page.click('.pp-nav [data-nav="menu"]')
+            page.click("#pp-decisions-link")
+            page.evaluate("location.hash = 'screen'")
+            page.wait_for_function("!document.getElementById('pp-frame').closest('[hidden]')")
+            assert _visible_screen(page) == "menu"  # #screen goes back to the current screen
+            assert errors == []
+        finally:
+            ctx.close()
+
+
+def test_a_failing_screen_script_does_not_stop_the_others(browser, tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", build=False)
+    write(p / SCREENS_REL / "boom.html", '<section data-screen="boom" data-order="0"><div data-state="ready">x</div>'
+          '</section>\n<script data-screen-script>throw new Error("boom went the screen");</script>\n')
+    write(p / SCREENS_REL / "broken.html", '<section data-screen="broken" data-order="0"><div data-state="ready">x</div>'
+          '</section>\n<script data-screen-script>var = ;</script>\n')
+    assert run(p).returncode == 0
+    for rel, selector in ((PROTO_REL, '#pp-frame [data-screen="booking"]'), (CATALOGUE_REL, '[data-copy] [data-screen="booking"]')):
+        ctx, page, errors, _ = _open(browser, p / rel)
+        try:
+            assert page.get_attribute(selector, "data-script-ran") == "yes", rel
+            assert any("boom went the screen" in e for e in errors), errors
+            assert any("SyntaxError" in e or "Unexpected" in e for e in errors), errors
+            if rel == PROTO_REL:
+                page.click('.pp-nav [data-nav="menu"]')
+                assert _visible_screen(page) == "menu"
+        finally:
+            ctx.close()
+
+
+def test_labels_work_in_every_catalogue_copy(browser, tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", build=False)
+    write(p / SCREENS_REL / "signup.html", SIGNUP)
+    assert run(p).returncode == 0
+    ctx, page, errors, _ = _open(browser, p / CATALOGUE_REL)
+    try:
+        for theme in ("light", "dark"):
+            page.click(f'[data-copy="signup/ready/{theme}"] label')
+            assert page.evaluate("document.activeElement.closest('[data-copy]').dataset.copy") == f"signup/ready/{theme}"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_narrow_screen_strip_cards_line_up(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=390)
+    try:
+        heights = page.evaluate("[...document.querySelectorAll('.pp-nav a')].map(a => Math.round(a.getBoundingClientRect().height))")
+        assert len(set(heights)) == 1, heights
+        clamp = page.evaluate("""(() => { const t = document.querySelector('.pp-nav [data-nav="menu"] .nav-title');
+            return [t.getBoundingClientRect().height, parseFloat(getComputedStyle(t).lineHeight)]; })()""")
+        assert clamp[0] <= clamp[1] * 2 + 1, clamp
+        assert page.get_attribute('.pp-nav [data-nav="menu"]', "title") == TITLES["menu"]
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        assert errors == []
     finally:
         ctx.close()

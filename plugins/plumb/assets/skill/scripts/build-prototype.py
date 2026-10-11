@@ -79,8 +79,8 @@ SCRIPT_REL = "scripts/build-prototype.py"
 SHELL_TEMPLATE = "prototype-shell.html.tmpl"
 CATALOGUE_TEMPLATE = "screens.html.tmpl"
 SCHEMA = 1
-USAGE = ("python3 scripts/build-prototype.py [--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] "
-         "[--synced ID] [--root SKILL_DIR] [--project PATH]")
+USAGE = ("[--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--root SKILL_DIR] "
+         "[--project PATH]")
 _ID = re.compile(r"^\w[\w-]*\Z")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 _OUTSIDE_OK = frozenset(("html", "head", "body", "meta", "title"))
@@ -137,6 +137,7 @@ class Screen:
         self.state_marks: List[Tuple[int, str]] = []
         self.styles: List[str] = []
         self.scripts: List[str] = []
+        self.warnings: List[str] = []
 
     def render(self, state: Optional[str], hide_section: bool = False) -> str:
         """The section with every state block but `state` hidden (and the section itself, when asked)."""
@@ -291,6 +292,10 @@ def parse_screen(path: Path, rel: str) -> Screen:
         body = text[blk["body"]: blk["body_end"]]
         if blk["tag"] == "style":
             screen.styles.append(body.strip("\n"))
+            for off, sel in unscoped_selectors(body):
+                line = text.count("\n", 0, blk["body"] + off) + 1
+                screen.warnings.append(f"{rel}:{line}: the style rule \"{sel}\" does not start with "
+                                       f"[data-screen=\"{sid}\"], so it also styles the shell and every other screen")
         else:
             if "data-screen-script" not in blk["attrs"]:
                 raise _err(f"{rel}:{blk['line']}: a <script> without data-screen-script",
@@ -318,6 +323,94 @@ def parse_screen(path: Path, rel: str) -> Screen:
         marks.append((moved(off), name.strip()))
     screen.state_marks = marks
     return screen
+
+
+# ---------------------------------------------------------------- screen CSS scope and per-copy ids
+
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_GROUP_AT = frozenset(("media", "container", "supports", "layer", "scope", "document", "starting-style"))
+_SCOPED = re.compile(r"\[\s*data-screen\s*[~|^$*]?=")
+
+
+def _close_brace(css: str, open_at: int) -> int:
+    depth = 0
+    for i in range(open_at, len(css)):
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(css)
+
+
+def unscoped_selectors(css: str) -> List[Tuple[int, str]]:
+    """(offset, selector) for every style rule selector that does not start with [data-screen=...]. Rules inside
+    @media, @container, @supports and @layer are checked; @keyframes, @font-face and the like are not style rules."""
+    css = _CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), css)
+    found: List[Tuple[int, str]] = []
+
+    def walk(pos: int, end: int) -> None:
+        while pos < end:
+            brace = css.find("{", pos, end)
+            if brace == -1:
+                return
+            semi = css.rfind(";", pos, brace)
+            if semi != -1:
+                pos = semi + 1
+            prelude = css[pos:brace]
+            close = _close_brace(css, brace)
+            head = prelude.strip()
+            if head.startswith("@"):
+                if head[1:].split(None, 1)[0].lower().split("(")[0] in _GROUP_AT:
+                    walk(brace + 1, close)
+            else:
+                offset = pos
+                for part in prelude.split(","):
+                    sel = part.strip()
+                    if sel and not _SCOPED.match(sel):
+                        found.append((offset + len(part) - len(part.lstrip()), " ".join(sel.split())))
+                    offset += len(part) + 1
+            pos = close + 1
+
+    walk(0, len(css))
+    return found
+
+
+_TAG = re.compile(r"<[A-Za-z][^\s/>]*(?:\s+[^\s=/>]+(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s\"'>]+))?)*\s*/?>")
+_ATTR = re.compile(r"(\s)([^\s=/>]+)(\s*=\s*)(\"[^\"]*\"|'[^']*'|[^\s\"'>]+)")
+_ID_REFS = frozenset(("for", "form", "list", "headers", "aria-labelledby", "aria-describedby", "aria-controls",
+                      "aria-owns", "aria-activedescendant", "aria-details", "aria-errormessage", "aria-flowto",
+                      "popovertarget", "commandfor", "anchor"))
+
+
+def uniquify_ids(markup: str, suffix: str) -> str:
+    """Every id in the markup gets the suffix, and the references to it (for, aria-*, headers, href="#id", ...) follow,
+    so each copy of a screen in the catalogue has its own ids and its labels still work."""
+    ids = set()
+    for tag in _TAG.finditer(markup):
+        for m in _ATTR.finditer(tag.group(0)):
+            if m.group(2).lower() == "id":
+                ids.add(m.group(4).strip("\"'"))
+    if not ids:
+        return markup
+
+    def attr(m: "re.Match[str]") -> str:
+        name, raw = m.group(2).lower(), m.group(4)
+        quote = raw[0] if raw[:1] in ("\"", "'") else ""
+        value = raw[1:-1] if quote else raw
+        if name == "id" and value in ids:
+            value += suffix
+        elif name in _ID_REFS:
+            value = " ".join(v + suffix if v in ids else v for v in value.split())
+        elif name in ("href", "xlink:href") and value.startswith("#") and value[1:] in ids:
+            value += suffix
+        else:
+            return m.group(0)
+        q = quote or "\""
+        return f"{m.group(1)}{m.group(2)}{m.group(3)}{q}{value}{q}"
+
+    return _TAG.sub(lambda t: _ATTR.sub(attr, t.group(0)), markup)
 
 
 def load_screens(folder: Path, root: Path, rel) -> List[Screen]:
@@ -388,8 +481,8 @@ def parse_decisions(text: str) -> List[dict]:
 
 
 def inline(text: str) -> str:
-    """Escaped text with `code`, **bold** and [links](url) (no script URLs)."""
-    out = _e(text)
+    """Escaped text with `code`, **bold** and [links](url) (script URLs stay plain text). Code spans are cut out first,
+    so their content stays literal and a backtick can never put markup inside a link."""
 
     def link(m: "re.Match[str]") -> str:
         url = _html.unescape(m.group(2))
@@ -397,9 +490,14 @@ def inline(text: str) -> str:
             return m.group(0)
         return f'<a href="{_e(url)}">{m.group(1)}</a>'
 
-    out = _LINK.sub(link, out)
-    out = _CODE.sub(lambda m: f"<code>{m.group(1)}</code>", out)
-    return _BOLD.sub(lambda m: f"<strong>{m.group(1)}</strong>", out)
+    out, last = [], 0
+    for m in list(_CODE.finditer(text)) + [None]:
+        plain = text[last: m.start() if m else len(text)]
+        out.append(_BOLD.sub(lambda b: f"<strong>{b.group(1)}</strong>", _LINK.sub(link, _e(plain))))
+        if m:
+            out.append(f"<code>{_e(m.group(1))}</code>")
+            last = m.end()
+    return "".join(out)
 
 
 def decision_applies(entry: dict, sid: str) -> bool:
@@ -409,11 +507,16 @@ def decision_applies(entry: dict, sid: str) -> bool:
 # ---------------------------------------------------------------- source files (--map, status)
 
 
-def safe_glob(glob: str) -> str:
+def safe_glob(glob: str, where: str = "") -> str:
+    """A glob relative to the project root; an absolute path, a drive or `..` is refused (never walked)."""
     g = glob.strip().strip("`").replace("\\", "/")
     while g.startswith("./"):
         g = g[2:]
     bad = (not g or g.startswith("/") or re.match(r"^[A-Za-z]:", g) is not None or ".." in g.split("/"))
+    if bad and where:
+        raise _err(f"{where} has the source glob \"{glob}\", which is not a path inside the project",
+                   "re-map the screen with globs relative to the project root: build-prototype.py --map ID --route R "
+                   "--files \"app/billing/**\" (or restore the file with git)")
     if bad:
         raise _err(f"--files \"{glob}\" is not a path inside the project",
                    "write globs relative to the project root, e.g. --files \"app/billing/**\" components/billing-form.tsx")
@@ -515,9 +618,10 @@ def read_map(path: Path, rel_path: str) -> Dict[str, dict]:
     return {s["id"]: s for s in screens if isinstance(s, dict) and isinstance(s.get("id"), str)}
 
 
-def map_entry(screen: Screen, old: Optional[dict], root: Path) -> dict:
+def map_entry(screen: Screen, old: Optional[dict], root: Path, map_rel: str = "screens.json") -> dict:
     old = old or {}
-    files = [f for f in old.get("files") or [] if isinstance(f, str)]
+    where = f"{map_rel} (screen {screen.id})"
+    files = [safe_glob(f, where) for f in old.get("files") or [] if isinstance(f, str)]
     approved = old.get("approved")
     if isinstance(approved, dict):
         approved = {"by": str(approved.get("by", "")), "at": str(approved.get("at", "")), "hash": str(approved.get("hash", ""))}
@@ -544,21 +648,6 @@ def map_text(entries: List[dict], header: str) -> str:
 
 
 # ---------------------------------------------------------------- pages
-
-
-def frame_md_css(bt, doc: dict) -> str:
-    """The md breakpoint values follow the frame (container plumb-frame), so the phone/desktop toggle and the
-    side-by-side copies show the layout and type the screen would really have at that width."""
-    md = bt.declarations(doc, "md")
-    if not md:
-        return ""
-    names = {n for n, _v in md}
-    base = [(n, v) for n, v in bt.declarations(doc, "light") if n in names]
-    lines = ["/* The md breakpoint follows the frame a screen sits in, not the window. */",
-             "@container plumb-frame (max-width: 47.99rem) {", "  [data-screen] {"]
-    lines += [f"    {n}: {v};" for n, v in base] + ["  }", "}", "@container plumb-frame (min-width: 48rem) {", "  [data-screen] {"]
-    lines += [f"    {n}: {v};" for n, v in md] + ["  }", "}"]
-    return "\n".join(lines)
 
 
 def screen_styles(screens: List[Screen]) -> str:
@@ -701,7 +790,7 @@ def build_prototype(ctx: dict, template: str) -> str:
         e = entries[s.id]
         appr = approval_state(e, s)
         current = ' aria-current="page"' if i == 0 else ""
-        nav.append(f'<li><a href="#screen-{_e(s.id)}" data-nav="{_e(s.id)}" data-approval="{appr}" '
+        nav.append(f'<li><a href="#screen-{_e(s.id)}" data-nav="{_e(s.id)}" title="{_e(s.title)}" data-approval="{appr}" '
                    f'data-status="{e["status"]}"{current}><span class="nav-title">{_e(s.title)}</span>'
                    f'<span class="nav-meta">{_badge(appr)}<span class="nav-status">{_e(STATUS_TEXT[e["status"]])}</span>'
                    f'</span></a></li>')
@@ -725,6 +814,7 @@ def build_prototype(ctx: dict, template: str) -> str:
         "screen_styles": ctx["styles"],
         "nav": "\n".join(nav),
         "screen_title": _e(first.title),
+        "first_screen_href": f"#screen-{_e(first.id)}",
         "screen_meta": _meta_line(entries[first.id], approval_state(entries[first.id], first)),
         "state_groups": "\n".join(groups),
         "frame": "\n".join(frame),
@@ -743,6 +833,7 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
     nav, body = [], []
+    copy_no = 0
     for s in screens:
         e = entries[s.id]
         appr = approval_state(e, s)
@@ -751,10 +842,13 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                    f'<ul class="sc-nav-states" role="list">{states}</ul></li>')
         blocks = []
         for st in s.states:
-            copies = "".join(
-                f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
-                f'<figcaption>{label}</figcaption><div class="sc-canvas">{s.render(st)}</div></figure>'
-                for theme, label in (("light", "Light"), ("dark", "Dark")))
+            pair = []
+            for theme, label in (("light", "Light"), ("dark", "Dark")):
+                copy_no += 1
+                pair.append(f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
+                            f'<figcaption>{label}</figcaption><div class="sc-canvas">'
+                            f'{uniquify_ids(s.render(st), f"--c{copy_no}")}</div></figure>')
+            copies = "".join(pair)
             label = state_label(st)
             code = f" <code>{_e(st)}</code>" if label.lower() != st.lower() else ""
             blocks.append(f'<div class="sc-state" id="screen-{_e(s.id)}/{_e(st)}"><h3 class="sc-state-h sc-ui">'
@@ -804,9 +898,19 @@ def token_region(text: str, bt) -> Optional[str]:
 # ---------------------------------------------------------------- cli
 
 
+def _script_command() -> str:
+    """python3 <this script, relative to the project root>, as the other refusals name it."""
+    skill_dir = Path(__file__).resolve().parents[1]
+    try:
+        bt = _load_build_tokens()
+        return f"python3 {bt.rel(skill_dir / SCRIPT_REL, bt.find_project_root(skill_dir))}"
+    except Exception:  # noqa: BLE001 - only the wording of a usage line depends on it
+        return f"python3 {SCRIPT_REL}"
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # shaped like every other refusal
-        self.exit(2, f"error: {message}\nfix: {USAGE}\n")
+        self.exit(2, f"error: {message}\nfix: {_script_command()} {USAGE}\n")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -871,7 +975,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             known = ", ".join(s.id for s in screens)
             raise _err(f"--{flag} {sid}: no such screen (screens: {known})",
                        f"write {rel(folder, root)}/{sid}.html first (/plumb:prototype {sid}), or use one of the ids listed")
-    entries = {s.id: map_entry(s, old.get(s.id), root) for s in screens}
+    entries = {s.id: map_entry(s, old.get(s.id), root, rel(map_path, root)) for s in screens}
     done: List[str] = []
     if args.map:
         globs = []
@@ -910,15 +1014,14 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     header = (f"GENERATED by {rel(skill_dir / SCRIPT_REL, root)} from {rel(folder, root)}/*.html, "
               f"{rel(decisions_path, root)} and {tokens_rel}. Do not edit: edit the screen files, then run build-prototype.py.")
     project_name = str(settings.get("project") or "").strip() or "Product"
-    md = frame_md_css(bt, doc)
     ctx = {
         "screens": screens, "entries": entries, "decisions": decisions, "header": header, "project": project_name,
         "screens_rel": rel(folder, root) + "/", "decisions_rel": rel(decisions_path, root),
         "styles": screen_styles(screens), "scripts": screen_scripts(screens),
     }
-    ctx["theme_css"] = bt.page_theme_css(doc, scopes=False, markers=True) + ("\n" + md if md else "")
+    ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
     proto = build_prototype(ctx, read_template(skill_dir, SHELL_TEMPLATE))
-    ctx["theme_css"] = bt.page_theme_css(doc, scopes=True, markers=True) + ("\n" + md if md else "")
+    ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=True)
     catalogue = build_catalogue(ctx, read_template(skill_dir, CATALOGUE_TEMPLATE), bt)
     files = {proto_path: proto, cat_path: catalogue,
              map_path: map_text([entries[s.id] for s in screens], header)}
@@ -945,6 +1048,13 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         print(f"ok: {len(files)} generated files are up to date ({len(screens)} screens)")
         return 0
 
+    for s in screens:
+        for line in s.warnings[:5]:
+            print(f"warning: {line}", file=sys.stderr)
+        if len(s.warnings) > 5:
+            print(f"warning: {s.rel}: {len(s.warnings) - 5} more style rules like these", file=sys.stderr)
+        if s.warnings:
+            print(f"fix: start each selector in {s.rel} with [data-screen=\"{s.id}\"]", file=sys.stderr)
     removed = sorted(set(old) - set(by_id))
     for sid in removed:
         print(f"note: screen {sid} has no file any more: removed from {rel(map_path, root)}")
