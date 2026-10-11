@@ -1,0 +1,400 @@
+"""audit.py: per-file rules (fixtures), --quick (only what the edit adds), token-aware fixes, speed, the CLI.
+
+Every folder in tests/fixtures/audit/ is a rule id. Each file there starts with a comment naming what it expects:
+`expect: <rule>@<line>` (exactly one finding, that rule, that line) or `expect: none` (no findings at all), and
+optionally `path: <virtual path>` (the path the rule sees, e.g. components/ui/button.tsx for the allow list).
+Every fixture also runs with CRLF line endings and a Windows-style path and must give the same result.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import re
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPTS = REPO / "plugins/plumb/assets/skill/scripts"
+FIXTURES = REPO / "tests/fixtures/audit"
+PROJECT = REPO / "tests/fixtures/projects/web-v4"
+SKILL_REL = ".claude/skills/demo-design-system"
+TOKENS = PROJECT / SKILL_REL / "assets/tokens/demo.tokens.json"
+
+sys.path.insert(0, str(SCRIPTS))
+import _plumb as P  # noqa: E402
+
+
+def _load_audit():
+    spec = importlib.util.spec_from_file_location("plumb_audit", SCRIPTS / "audit.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["plumb_audit"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+A = _load_audit()
+DOC = P.load_tokens(TOKENS)
+SETTINGS = {**P.plumb_settings(DOC), "Allowed raw values": "components/ui/**"}
+HEADER = re.compile(r"expect:\s*(none|([a-z0-9-]+)@(\d+))(?:\s+path:\s*(\S+))?")
+WARN_RULES = {"dark-variant", "hand-rolled-primitive", "restyled-primitive"}
+
+
+def fixture_files():
+    return sorted(p for p in FIXTURES.glob("*/*") if p.is_file())
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def expectation(path: Path):
+    first = read(path).splitlines()[0]
+    m = HEADER.search(first)
+    assert m, f"{path}: first line must say expect: none | expect: <rule>@<line>"
+    vpath = m.group(4) or f"app/{path.name}"
+    if m.group(1) == "none":
+        return None, vpath
+    return (m.group(2), int(m.group(3))), vpath
+
+
+# ---------------------------------------------------------------- the rule table
+
+
+def test_every_rule_has_a_bad_and_a_good_fixture() -> None:
+    ids = {r.id for r in A.RULES}
+    dirs = {p.name for p in FIXTURES.iterdir() if p.is_dir()}
+    assert dirs == ids, f"fixture folders and rules differ: {sorted(dirs ^ ids)}"
+    for rule_id in ids:
+        names = [p.name for p in (FIXTURES / rule_id).iterdir()]
+        assert any(n.startswith("bad") for n in names), f"{rule_id}: no bad fixture"
+        assert any(n.startswith("good") for n in names), f"{rule_id}: no good fixture"
+
+
+def test_fixtures_cover_vue_svelte_and_the_allow_list() -> None:
+    names = [p.name for p in fixture_files()]
+    assert any(n.endswith(".vue") and n.startswith("good") for n in names)
+    assert any(n.endswith(".svelte") and n.startswith("good") for n in names)
+    assert any(expectation(p)[1].startswith("components/ui/") for p in fixture_files())
+
+
+def test_rule_table_shape_and_severities() -> None:
+    seen = set()
+    for r in A.RULES:
+        assert r.id not in seen
+        seen.add(r.id)
+        assert r.severity in ("error", "warn"), r.id
+        assert r.kind == "file" and callable(r.check) and r.message and r.fix, r.id
+        assert set(r.platforms) <= {"web", "ios", "android"} and r.platforms, r.id
+    assert {r.id for r in A.RULES if r.severity == "warn"} == WARN_RULES
+
+
+@pytest.mark.parametrize("variant", ["lf", "crlf"])
+@pytest.mark.parametrize("path", fixture_files(), ids=lambda p: f"{p.parent.name}/{p.name}")
+def test_fixture(path: Path, variant: str) -> None:
+    expected, vpath = expectation(path)
+    text = read(path)
+    if variant == "crlf":
+        text = text.replace("\n", "\r\n")
+        vpath = vpath.replace("/", "\\")
+    found = A.audit_text(vpath, text, DOC, SETTINGS)
+    got = [(f.rule, f.line) for f in found]
+    if expected is None:
+        assert got == [], f"{path.name} should be clean, got {[(f.rule, f.line, f.message) for f in found]}"
+    else:
+        assert expected[0] == path.parent.name, f"{path}: the bad fixture must expect its own folder's rule"
+        assert got == [expected], f"{path.name}: expected {expected}, got {[(f.rule, f.line, f.message) for f in found]}"
+        f = found[0]
+        assert f.severity == ("warn" if f.rule in WARN_RULES else "error")
+        assert f.message and f.fix
+
+
+def test_finding_json_has_exactly_the_public_keys() -> None:
+    f = A.audit_text("app/x.tsx", '<p className="bg-[#14857F]" />\n', DOC, SETTINGS)[0]
+    assert f.to_json() == {"rule": "raw-colour", "severity": "error", "file": "app/x.tsx", "line": 1,
+                           "message": f.message, "fix": f.fix}
+
+
+def test_generated_and_unknown_files_are_not_checked() -> None:
+    gen = "/* GENERATED by scripts/build-tokens.py from tokens.json. Do not edit: edit the tokens JSON. */\n.a{color:#123456}\n"
+    assert A.audit_text("app/globals.css", gen, DOC, SETTINGS) == []
+    assert A.audit_text("app/notes.md", "color #123456 🎉\n", DOC, SETTINGS) == []
+    assert A.audit_text("app/x.py", "c = '#123456'\n", DOC, SETTINGS) == []
+
+
+def test_no_tokens_runs_only_the_rules_that_need_none() -> None:
+    text = '<p className="text-lg duration-200 rounded-xl p-3">Saved 🎉 #14857f</p>\n'
+    rules = sorted(f.rule for f in A.audit_text("app/x.tsx", text, None, {}))
+    assert rules == ["emoji", "raw-colour"]
+    found = A.audit_text("app/x.tsx", '<p className="bg-[#14857F]" />\n', None, {})
+    assert found[0].rule == "raw-colour" and "token" in found[0].fix
+
+
+def test_css_styling_skips_tailwind_class_rules() -> None:
+    settings = {**SETTINGS, "web": {**SETTINGS["web"], "styling": "css"}}
+    text = '<p class="p-3 text-white rounded-3 text-lg">x</p>\n'  # Bootstrap-style classes, not Tailwind
+    assert A.audit_text("app/x.html", text, DOC, settings) == []
+
+
+def test_allow_list_matches_windows_and_absolute_paths() -> None:
+    text = '<p className="bg-[#14857F]" />\n'
+    for vpath in ("components\\ui\\button.tsx", "C:\\work\\proj\\components\\ui\\button.tsx",
+                  "/home/me/proj/components/ui/button.tsx"):
+        assert A.audit_text(vpath, text, DOC, SETTINGS) == [], vpath
+    assert A.audit_text("app/components-ui.tsx", text, DOC, SETTINGS)
+
+
+def test_inline_style_props_right_after_the_quote() -> None:
+    for text in ('<p style="color: red">x</p>\n', "<p style='font-size:2em'>x</p>\n", '<p :style="{color: c}">x</p>\n',
+                 "<p style={{color: c}}>x</p>\n"):
+        assert [f.rule for f in A.audit_text("app/x.vue", text, DOC, SETTINGS)] == ["inline-style"], text
+
+
+def test_kotlin_float_components() -> None:
+    fix = fix_of("val c = Color(0.08f, 0.52f, 0.5f)\n", "android/A.kt")
+    assert "color.primary" in fix
+
+
+def test_outline_none_class_is_safe_in_tailwind_v3() -> None:
+    settings = {**SETTINGS, "web": {**SETTINGS["web"], "styling": "tailwind-v3"}}
+    assert A.audit_text("app/x.tsx", '<input className="focus:outline-none" />\n', DOC, settings) == []
+    assert [f.rule for f in A.audit_text("app/x.css", ".a:focus { outline: 0; }\n", DOC, settings)] == ["outline-none"]
+
+
+# ---------------------------------------------------------------- token-aware fixes
+
+
+def fix_of(text: str, path: str = "app/x.tsx") -> str:
+    found = A.audit_text(path, text, DOC, SETTINGS)
+    assert len(found) == 1, [(f.rule, f.message) for f in found]
+    return found[0].fix
+
+
+def test_fix_names_the_matching_colour_utility() -> None:
+    assert fix_of('<p className="bg-[#14857F]" />\n').startswith("bg-primary (color.primary = #14857f)")
+    assert fix_of('<p className="hover:border-[#13867f]" />\n').startswith("border-primary (color.primary = #14857f)")
+    assert fix_of(".a { color: #14857F; }\n", "app/x.css").startswith("var(--color-primary) (color.primary = #14857f)")
+
+
+def test_fix_prefers_the_token_whose_role_fits_the_utility() -> None:
+    # background and on-primary are both #ffffff: text- wants the on- token, bg- wants the surface.
+    assert fix_of('<p className="text-[#ffffff]" />\n').startswith("text-on-primary")
+    assert fix_of('<p className="bg-[#fff]" />\n').startswith("bg-background")
+
+
+def test_fix_for_a_far_colour_asks_for_a_new_token() -> None:
+    fix = fix_of('<p className="bg-[#ff00ff]" />\n')
+    assert "/plumb:update" in fix and "ΔE" in fix
+
+
+def test_fix_for_palette_colour_uses_the_palette_value() -> None:
+    assert fix_of('<p className="bg-teal-700" />\n').startswith("bg-primary (color.primary = #14857f)")
+
+
+def test_fix_for_sizes_radius_spacing_motion() -> None:
+    assert fix_of('<p className="text-[15px]" />\n').startswith("text-sm (typography.sm = 16px)")
+    assert fix_of('<p className="text-lg" />\n').startswith("text-sm (typography.sm = 16px)")
+    assert fix_of('<p className="rounded-[7px]" />\n').startswith("rounded-md (radius.md = 6px)")
+    assert fix_of('<p className="rounded-xl" />\n').startswith("rounded-lg (radius.lg = 10px)")
+    assert fix_of('<p className="p-5" />\n').startswith("p-4 (spacing.4 = 16px)")
+    assert fix_of('<p className="mt-[13px]" />\n').startswith("mt-4 (spacing.4 = 16px)")
+    assert fix_of('<p className="duration-200" />\n').startswith("duration-180 (motion.duration.mid = 180ms)")
+    assert fix_of('<p className="ease-in-out" />\n').startswith("ease-out (motion.easing.out)")
+    assert fix_of(".a { font-size: 15px; }\n", "app/x.css").startswith("var(--text-sm) (typography.sm = 16px)")
+    assert fix_of(".a { transition: opacity 0.2s; }\n", "app/x.css").startswith("var(--duration-mid) (motion.duration.mid = 180ms)")
+
+
+def test_fix_for_mobile_names_the_token() -> None:
+    assert "color.primary" in fix_of("let c = Color(red: 0.078, green: 0.522, blue: 0.498)\n", "ios/A.swift")
+    assert "color.primary" in fix_of("val c = Color(0xFF14857F)\n", "android/A.kt")
+    assert "typography.sm" in fix_of("Text(\"x\").font(.system(size: 15))\n", "ios/A.swift")
+    assert "radius.lg" in fix_of("Box(Modifier.clip(RoundedCornerShape(11.dp)))\n", "android/A.kt")
+
+
+def test_nearest_token_reads_object_dimensions_and_rem() -> None:
+    assert P.nearest_token(DOC, "radius", "11px")[0] == "radius.lg"  # {"value": 10, "unit": "px"}
+    doc = {"radius": {"$type": "dimension", "lg": {"$value": "0.75rem"}, "sm": {"$value": "4px"}}}
+    assert P.nearest_token(doc, "radius", "13px") == ("radius.lg", 1.0)
+
+
+# ---------------------------------------------------------------- --quick
+
+
+OLD = (
+    "export const A = () => (\n"
+    '  <div className="bg-[#111111]">\n'
+    '    <p className="bg-[#222222]">a</p>\n'
+    '    <p className="bg-[#333333]">b</p>\n'
+    "  </div>\n"
+    ");\n"
+)
+
+
+def test_quick_reports_only_what_the_edit_adds() -> None:
+    after = OLD.replace("  </div>\n", '    <p className="bg-[#444444]">new</p>\n  </div>\n')
+    assert len(A.audit_text("app/a.tsx", after, DOC, SETTINGS)) == 4
+    new = A.quick("app/a.tsx", OLD, after, DOC, SETTINGS)
+    assert [(f.rule, f.line) for f in new] == [("raw-colour", 5)]
+
+
+def test_quick_ignores_moved_lines_and_counts_duplicates() -> None:
+    lines = OLD.splitlines(keepends=True)
+    moved = "".join([lines[0], lines[1], lines[3], lines[2], *lines[4:]])
+    assert A.quick("app/a.tsx", OLD, moved, DOC, SETTINGS) == []
+    crlf = moved.replace("\n", "\r\n")
+    assert A.quick("app\\a.tsx", OLD, crlf, DOC, SETTINGS) == []
+    dup = OLD.replace("  </div>\n", '    <p className="bg-[#333333]">again</p>\n  </div>\n')
+    assert [(f.rule, f.line) for f in A.quick("app/a.tsx", OLD, dup, DOC, SETTINGS)] == [("raw-colour", 5)]
+    assert A.quick("app/a.tsx", OLD, OLD.replace("#333333", "var(--color-primary)"), DOC, SETTINGS) == []
+    assert len(A.quick("app/a.tsx", None, OLD, DOC, SETTINGS)) == 3
+
+
+# ---------------------------------------------------------------- speed and exclusions
+
+
+def test_two_megabyte_minified_css_is_fast() -> None:
+    parts, size, i = [], 0, 0
+    while size < 2_000_000:
+        parts.append(f".c{i}{{color:var(--color-primary);padding:4px;transition:opacity 150ms var(--ease-out)}}"
+                     f".d{i}:hover{{background:#{i % 4096:03x}fff;border-radius:6px}}#x{i % 97}{{outline:0}}")
+        size += len(parts[-1])
+        i += 1
+    css = "".join(parts)
+    assert "\n" not in css and len(css) >= 2_000_000
+    start = time.perf_counter()
+    found = A.audit_text("dist-free/app.min.css", css, DOC, SETTINGS)
+    elapsed = time.perf_counter() - start
+    assert elapsed < 2.0, f"{elapsed:.2f}s"
+    assert found and all(f.line == 1 for f in found)
+
+
+def test_minified_one_line_js_is_fast() -> None:
+    js = ";".join(f'var a{i}=e("div",{{className:"p-4 bg-primary text-sm",style:{{width:{i}}}}})' for i in range(30000))
+    start = time.perf_counter()
+    A.audit_text("app/bundle.js", js, DOC, SETTINGS)
+    assert time.perf_counter() - start < 2.0
+
+
+# ---------------------------------------------------------------- CLI
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+@pytest.fixture()
+def project(tmp_path: Path) -> Path:
+    dest = tmp_path / "Café Ünïcode"
+    shutil.copytree(PROJECT, dest)
+    for name in ("_plumb.py", "audit.py"):
+        shutil.copy(SCRIPTS / name, dest / SKILL_REL / "scripts" / name)
+    write(dest / "PLUMB.md", "Project: demo\n\n## Checks\nAllowed raw values: components/ui/**\n")
+    write(dest / "app/page.tsx", 'export const Page = () => <main className="bg-background p-4">Hi</main>;\n')
+    return dest
+
+
+def run(p: Path, *args: str, stdin: str | None = None):
+    return subprocess.run(
+        [sys.executable, str(p / SKILL_REL / "scripts/audit.py"), *args],
+        cwd=str(p), capture_output=True, text=True, encoding="utf-8", input=stdin,
+    )
+
+
+def test_cli_clean_project_exits_0(project: Path) -> None:
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no design-system issues" in r.stdout and "Traceback" not in r.stderr
+
+
+def test_cli_errors_exit_1_with_file_line_and_fix(project: Path) -> None:
+    write(project / "app/ünï/card.tsx", '// x\nexport const C = () => <div className="bg-[#14857F]">🎉</div>;\n')
+    r = run(project)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "app/ünï/card.tsx:2: error raw-colour" in r.stdout
+    assert "fix: bg-primary (color.primary = #14857f)" in r.stdout
+    assert "2 errors" in r.stdout
+
+
+def test_cli_warnings_only_exit_0(project: Path) -> None:
+    write(project / "app/panel.tsx", 'export const C = () => <div className="dark:bg-background">x</div>;\n')
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "warn dark-variant" in r.stdout and "1 warning" in r.stdout
+
+
+def test_cli_json(project: Path) -> None:
+    write(project / "app/card.tsx", 'export const C = () => <div className="bg-[#14857F]" />;\n')
+    r = run(project, "--json")
+    assert r.returncode == 1, r.stderr
+    out = json.loads(r.stdout)
+    assert out["errors"] == 1 and out["warnings"] == 0 and out["checked"] >= 2
+    assert out["findings"] == [{"rule": "raw-colour", "severity": "error", "file": "app/card.tsx", "line": 1,
+                                "message": out["findings"][0]["message"], "fix": out["findings"][0]["fix"]}]
+
+
+def test_cli_skips_build_output_dependencies_and_generated_files(project: Path) -> None:
+    bad = 'export const C = () => <div className="bg-[#14857F]" />;\n'
+    for d in ("node_modules/pkg", ".next/server", "dist", "build", "out", "coverage", ".git"):
+        write(project / d / "x.tsx", bad)
+    write(project / "app/gen.css", "/* GENERATED by build-tokens.py. Do not edit. */\n.a{color:#123456}\n")
+    write(project / "app/huge.css", "/* big */\n" + ".a{color:var(--color-primary)}" * 180_000)
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "huge.css" in r.stderr and "5 MB" in r.stderr
+
+
+def test_cli_paths_and_ui_files_setting(project: Path) -> None:
+    write(project / "lib/x.ts", 'export const c = "#14857f";\n')
+    assert run(project).returncode == 1  # default: the whole project
+    write(project / "PLUMB.md", "Project: demo\nUI files: app/**, components/** · *.tsx *.css\n")
+    assert run(project).returncode == 0  # lib/ is not a UI folder
+    assert run(project, "lib").returncode == 1  # an explicit path is always checked
+
+
+def test_cli_nothing_checked_or_missing_path_exits_2(project: Path) -> None:
+    r = run(project, "nope")
+    assert r.returncode == 2 and "error:" in r.stderr and "fix:" in r.stderr
+    (project / "empty").mkdir()
+    r = run(project, "empty")
+    assert r.returncode == 2 and "nothing was checked" in r.stderr and "fix:" in r.stderr
+
+
+def test_cli_broken_tokens_exits_2(project: Path) -> None:
+    write(project / SKILL_REL / "assets/tokens/demo.tokens.json", '{"color": {,}}')
+    r = run(project)
+    assert r.returncode == 2 and "error:" in r.stderr and "fix:" in r.stderr and "Traceback" not in r.stderr
+
+
+def test_cli_bad_arguments_exit_2(project: Path) -> None:
+    r = run(project, "--before", "-")
+    assert r.returncode == 2 and "error:" in r.stderr and "fix:" in r.stderr
+    r = run(project, "--quick", "app/page.tsx", "app")
+    assert r.returncode == 2 and "error:" in r.stderr
+
+
+def test_cli_quick_reads_before_from_stdin(project: Path) -> None:
+    after = OLD.replace("  </div>\n", '    <p className="bg-[#444444]">new</p>\n  </div>\n')
+    write(project / "app/a.tsx", after)
+    r = run(project, "--quick", "app/a.tsx", "--before", "-", stdin=OLD.replace("\n", "\r\n"))
+    assert r.returncode == 1, r.stdout + r.stderr
+    out = json.loads(r.stdout)
+    assert [(f["rule"], f["file"], f["line"]) for f in out["findings"]] == [("raw-colour", "app/a.tsx", 5)]
+    r = run(project, "--quick", "app/a.tsx", "--before", "-", stdin=after)
+    assert r.returncode == 0 and json.loads(r.stdout)["findings"] == []
+    r = run(project, "--quick", "app/missing.tsx", "--before", "-", stdin="")
+    assert r.returncode == 2 and "error:" in r.stderr
+
+
+def test_cli_without_tokens_still_checks(project: Path) -> None:
+    (project / SKILL_REL / "assets/tokens/demo.tokens.json").unlink()
+    write(project / "app/x.tsx", '<p className="text-lg">Saved 🎉</p>\n')
+    r = run(project)
+    assert r.returncode == 1 and "emoji" in r.stdout and "off-scale-type" not in r.stdout
+    assert "note:" in r.stderr and "tokens" in r.stderr

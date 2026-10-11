@@ -1,0 +1,5 @@
+/* expect: raw-colour@3 */
+.notice {
+  color: #14857f;
+  padding: 4px;
+}

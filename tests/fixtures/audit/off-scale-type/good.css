@@ -1,0 +1,4 @@
+/* expect: none */
+.text-lg { font-size: var(--text-sm); }
+.small { font-size: 0.875em; }
+.inherit { font-size: inherit; }

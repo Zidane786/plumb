@@ -291,12 +291,17 @@ def delta_e(a_hex: str, b_hex: str) -> float:
 # ---------------------------------------------------------------- nearest token
 
 
-_PX = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*(px|pt|dp|sp)?\s*$")
+_PX = re.compile(r"^\s*(-?\d*\.?\d+)\s*(px|pt|dp|sp|rem)?\s*$")
 
 
 def _px(v: object) -> Optional[float]:
+    """A size in px from '16px', '1rem' (16px), 16, or the DTCG object form {"value": 16, "unit": "px"}."""
+    if isinstance(v, dict) and "value" in v:
+        v = f"{v['value']}{v.get('unit', '')}" if isinstance(v["value"], (int, float)) else None
     m = _PX.match(str(v)) if isinstance(v, (str, int, float)) and not isinstance(v, bool) else None
-    return float(m.group(1)) if m else None
+    if not m:
+        return None
+    return float(m.group(1)) * (16 if m.group(2) == "rem" else 1)
 
 
 def nearest_token(doc: dict, kind: str, value: str) -> Optional[Tuple[str, float]]:

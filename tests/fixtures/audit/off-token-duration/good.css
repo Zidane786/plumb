@@ -1,0 +1,4 @@
+/* expect: none */
+.fade { transition: opacity var(--duration-fast) var(--ease-out); }
+.slow { transition: transform 180ms var(--ease-out), opacity 0.15s var(--ease-out); }
+.spin { animation: spin 1s linear infinite; }

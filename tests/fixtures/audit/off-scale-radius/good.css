@@ -1,0 +1,4 @@
+/* expect: none */
+.chip { border-radius: 9999px; }
+.dot { border-radius: 50%; }
+.card { border-radius: var(--radius-md); }
