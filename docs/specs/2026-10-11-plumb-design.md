@@ -581,6 +581,26 @@ UX is checked while building, not only after:
 4. **After:** `/plumb:ux` (§3.6) reviews the screen against `ux.md`, the prototype and usability
    heuristics, with screenshots when a browser is available.
 
+## 7a. Light and dark, everywhere
+
+Every design system Plumb makes works in **both themes** by default; a light-only project is an
+explicit decision recorded in the decision log and in `PLUMB.md` (`Themes: light-only`), which
+turns the dark rules off.
+
+- **Tokens:** every colour token has a dark value (`$extensions.plumb.dark`); a missing one is an
+  audit **error**, unless the token is marked `"same-in-dark": true` (a deliberate constant).
+- **Contrast:** every pair is computed in light and dark; the evidence table in `dark-mode.md`
+  shows both.
+- **Components:** built only from tokens, so they switch automatically; pages never write `dark:`
+  overrides; raw colours are errors because they don't switch.
+- **create / extract:** dark mode is part of the interview's design decisions by default;
+  directions show each direction in light and dark.
+- **Prototype:** `prototype.html` and every variant have a light/dark toggle; `screens.html`
+  shows every screen in every state in **both themes side by side**; tours play in either theme.
+- **Specimen, audit fidelity, `/plumb:ux`:** both themes (screenshots and checks in light and
+  dark when a browser is available).
+- **Tests:** browser checks render every generated page in light and dark.
+
 ## 8. Hooks
 
 Three scripts behind Slate's launchers: `run.sh` (python3 / python / py -3, 3.9+), `run.cmd` and
@@ -627,6 +647,7 @@ No downloads: nothing is installed or downloaded; if something is missing, ask t
 ## Checks
 Edit check: on
 End-of-turn check: on
+Themes: light-and-dark          (light-and-dark | light-only: an explicit decision)
 UI files: app/**, components/** · *.tsx *.jsx *.css
 Allowed raw values: components/ui/**
 
