@@ -679,6 +679,27 @@ Commands are the same (`/plumb:init`, …). Skills resolve the plugin root from
 `${CLAUDE_PLUGIN_ROOT}`, falling back to the skill's base directory. Windows needs Python
 (`py -3`, `python` or `python3`). VS Code Copilot Chat is not supported.
 
+## 12b. Kiro
+
+Plumb also works in **Kiro** (IDE and CLI v3+), from the same files:
+
+- **Skills:** Kiro follows the Agent Skills standard (`SKILL.md`). Kiro has no plugin marketplace,
+  so `python3 <plumb>/scripts/kiro.py install [--project P]` copies Plumb's skills into
+  `~/.kiro/skills/plumb-<name>/` (global, IDE) or `<project>/.kiro/skills/plumb-<name>/`
+  (workspace, IDE and CLI), with `${CLAUDE_PLUGIN_ROOT}` replaced by the absolute plugin path;
+  commands are `/plumb-init`, `/plumb-create`, …. `kiro.py uninstall` removes them.
+- **Instructions:** Kiro loads `AGENTS.md` as steering, so Plumb's row applies; init can also write
+  `.kiro/steering/plumb.md` (always included) pointing to the design-system skill, which stays in
+  one place (no copy into `.kiro/skills/`).
+- **Hooks:** `kiro.py install` writes `~/.kiro/hooks/plumb.json` (CLI) and, per project,
+  `.kiro/hooks/plumb.json` (the IDE reads workspace hooks): `SessionStart` → `session_start.py`,
+  `PreToolUse` (`write`, `shell`) → `pre_edit.py`, `Stop` → `stop_check.py`. A Kiro adapter in
+  `_hooklib.py` reads `hook_event_name`, `tool_name`, `tool_input` (`fs_write`, `execute_bash`)
+  and refuses with exit 2 + stderr; `Stop` blocks with `{"decision":"block","reason":…}`.
+- **Verification:** built and CI-tested from Kiro's documented formats; the live Kiro run waits
+  until Kiro can be installed on the test machine (which exit code blocks and the exact stdin
+  fields are confirmed then).
+
 ## 12a. Dependencies and enterprise control
 
 **Needed:** Python 3.9+ standard library (hooks, `build-tokens.py`, `audit.py`,
