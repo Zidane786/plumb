@@ -1,0 +1,17 @@
+/* {{@header}} */
+:root {
+  {{@vars}}
+}
+
+/* Values that change from the md breakpoint (768px) up. */
+@media (min-width: 768px) {
+  :root {
+    {{@vars-md}}
+  }
+}
+
+/* Dark scheme: only the tokens that have a dark value. */
+.dark {
+  {{@vars-dark}}
+  color-scheme: dark;
+}

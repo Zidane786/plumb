@@ -1,0 +1,42 @@
+/* {{@header}} */
+@import "tailwindcss";
+
+/* The theme class goes on <html> (class strategy). Tokens switch by themselves, so components rarely need dark:. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Closed scales: Tailwind's default colours, radii, shadows and text sizes do not exist here. */
+@theme static {
+  --color-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --text-*: initial;
+
+  {{@vars}}
+}
+
+/* Values that change from the md breakpoint (768px) up. */
+@media (width >= 48rem) {
+  :root {
+    {{@vars-md}}
+  }
+}
+
+/* Dark scheme: only the tokens that have a dark value. */
+.dark {
+  {{@vars-dark}}
+  color-scheme: dark;
+}
+
+/* Tabular figures: required on every number. */
+@utility tnum { font-variant-numeric: tabular-nums lining-nums; }
+
+/* Motion is an enhancement. If the user asked for less, give them none. Never override this block. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
