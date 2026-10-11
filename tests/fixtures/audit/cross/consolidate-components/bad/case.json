@@ -1,0 +1,12 @@
+{
+  "expect": [
+    [
+      "components/InfoCard.tsx",
+      3
+    ],
+    [
+      "components/StatCard.tsx",
+      3
+    ]
+  ]
+}

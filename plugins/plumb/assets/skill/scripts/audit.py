@@ -2,24 +2,53 @@
 """audit.py: check UI source against the project's design tokens.
 
 Usage:
-  audit.py [PATHS...] [--json] [--root SKILL_DIR] [--project PATH]     full audit (default: the whole project)
-  audit.py --quick FILE [--before -|PATH] [--root SKILL_DIR]            one file, only what an edit adds (JSON)
+  audit.py [PATHS...] [--json] [--no-tokens] [--root SKILL_DIR] [--project PATH]   full audit (default: the whole project)
+  audit.py --quick FILE [--before -|PATH] [--root SKILL_DIR]                        one file, only what an edit adds (JSON)
 
-Full mode prints every finding as `file:line: <severity> <rule>: <message>` and `  fix: <fix>`, then a summary.
---quick reads the file's text before the edit from stdin (`--before -`) or a file, audits FILE as it is now, and prints
-JSON with only the findings the edit adds (compared by rule and matched text, not by line, so moved lines are not new).
---json prints {"version", "checked", "errors", "warnings", "findings": [{"rule","severity","file","line","message","fix"}]}.
+Full mode prints every finding as `file:line: <severity> <rule>: <message>` and `  fix: <fix>`, then a summary
+("N errors, N warnings" and, on its own line, "N suggestions"). It runs the per-file rules and then the cross-file
+rules. --quick reads the file's text before the edit from stdin (`--before -`) or a file, audits FILE as it is now, and
+prints JSON with only the findings the edit adds (compared by rule and matched text, not by line, so moved lines are not
+new); --quick never runs the cross-file rules.
+--json prints {"version", "mode", "checked", "errors", "warnings", "suggestions",
+"findings": [{"rule","severity","file","line","message","fix"}]} (+ "scales" in inconsistency-only mode).
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
-emoji in UI source, and the Swift / Kotlin raw values. Errors fail the audit (exit 1) and the edit check refuses them.
+emoji in UI source, the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values and stale
+generated files. Errors fail the audit (exit 1) and the edit check refuses them.
 **warn** is softer and only reported: `dark:` outside the primitives, a hand-rolled accessibility primitive, a primitive
-restyled from outside.
+restyled from outside, and the cross-file warnings below.
+**suggest** is an improvement, never a failure (it does not change the exit code); each says why and gives a concrete fix.
+
+Cross-file rules (full mode only; one table with the per-file rules, kind "cross"):
+  generated-drift (error)   build-tokens.py's outputs() differ from the files on disk (line endings ignored); the fix is
+                            `python3 <skill>/scripts/build-tokens.py`.
+  contrast (error)          build-tokens.py's contrast pairs (measure_pairs) below 4.5:1 text / 3:1 large and UI, checked
+                            in light AND dark, with the nearest passing value.
+  missing-dark-value (error) every colour token needs $extensions.plumb.dark, except one marked
+                            "$extensions": {"plumb": {"same-in-dark": true}} (a deliberate constant, e.g. a brand fill);
+                            an alias takes its target's dark value. `Themes: light-only` in PLUMB.md (a recorded decision)
+                            turns the dark rules off: no missing-dark-value, and contrast in light mode only.
+  duplicate-component, focus-state, hover-only, touch-target (< 44px without pointer-coarse:), reduced-motion (warn).
+  near-duplicate-colour, near-duplicate-size, outlier-value (warn): inconsistency-only mode (below).
+  Suggestions: missing-token (a raw value used 3+ times with no close token: add one, name proposed), unused-token (never
+  referenced in the code walked; not run for explicit PATHS), duplicate-tokens (two tokens of one kind within ΔE 3 in
+  every theme, or within 1px: merge?), consolidate-components (components differing only in padding/radius: a variant),
+  contrast-headroom (a pair passing by less than 0.3: a value with 0.5 to spare), consistency (the same component or
+  control with different padding or radius across files: pick the majority).
+
+Inconsistency-only mode: when there is no tokens file (a prototype, code before /plumb:extract) or with --no-tokens. The
+de-facto scales are inferred from the inventory (_plumb.scan_inventory's scanner, the one /plumb:extract uses) and
+printed; near-duplicate groups (CIEDE2000 below 3, sizes within 1px or 6%) and one-off values (used once while a
+near-duplicate is used 5+ times) are warnings. Raw values are not errors in this mode (there are no tokens to point to),
+so it exits 1 only for the rules that need no tokens (emoji, outline-none, ...). A single HTML prototype works: inline
+<style> blocks and style attributes are read.
 
 Every allowed value comes from the project's tokens (assets/tokens/*.tokens.json): durations are the motion.duration
 tokens, the type scale is the typography token names, radii the radius tokens, spacing the spacing tokens. Fixes are
 token-aware: `bg-[#14857F]` -> `bg-primary (color.primary = #14857f)`; a value with no close token says to add one with
-/plumb:update. Without a tokens file only the rules that need no tokens run.
+/plumb:update.
 
 Always allowed: arbitrary values for layout geometry (width, height, top/left, grid templates, z-index); files on
 PLUMB.md's `Allowed raw values:` list (e.g. components/ui/**, where the primitives live) are exempt from every rule
@@ -52,6 +81,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import importlib.util
 import json
 import os
 import re
@@ -70,11 +100,7 @@ SCRIPT_REL = "scripts/audit.py"
 USAGE = f"python3 {SCRIPT_REL} [PATHS...] [--json] [--root SKILL_DIR] | --quick FILE --before -"
 WEB_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss"))
 PLATFORM_OF = {**{e: "web" for e in WEB_EXT}, ".swift": "ios", ".kt": "android"}
-SKIP_DIRS = frozenset((
-    "node_modules", ".next", "dist", "build", "out", ".git", "coverage", "Pods", "DerivedData",
-    ".nuxt", ".output", ".svelte-kit", ".turbo", ".vercel", ".parcel-cache", ".cache", ".gradle", ".expo",
-    "__pycache__", ".venv", "venv",
-))
+SKIP_DIRS = P.SKIP_DIRS
 MAX_BYTES = 5 * 1024 * 1024
 FAR_COLOUR = 10.0  # CIEDE2000: at or above this no token is "close"
 ADD_TOKEN = "add a token with /plumb:update, then use it"
@@ -95,9 +121,9 @@ class Hit:
 
 @dataclass
 class Rule:
-    """One row of the rule table. kind: "file" (per file: hooks + full); cross-file rules come later as "cross".
-
-    check(ctx) yields Hits; message is a template with {match}; fix is the default (non token-aware) fix.
+    """One row of the rule table. kind "file": per file (hooks + full), check(Ctx) yields Hits; kind "cross": full mode
+    only, check(Project) yields XHits. severity: error | warn | suggest. message is a template with {match}; fix is the
+    default (non token-aware) fix.
     skip_allowed: the rule does not apply to paths on PLUMB.md's `Allowed raw values:` list.
     """
 
@@ -105,7 +131,7 @@ class Rule:
     severity: str
     platforms: Tuple[str, ...]
     kind: str
-    check: Callable[["Ctx"], Iterable[Hit]]
+    check: Callable[..., Iterable]
     message: str
     fix: str
     skip_allowed: bool = True
@@ -307,36 +333,14 @@ def _role_of_prefix(prefix: str) -> str:
 # ---------------------------------------------------------------- per-file context
 
 
-_STRINGS = r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`"
-# Strings come first in each alternation, so "/*" or " //" inside a string never starts a comment.
-_STRING_OR_COMMENT = re.compile(_STRINGS + r"|(?<![\w.*/])/\*.*?\*/|<!--.*?-->|(?:^|(?<=[\s;{}]))//[^\n]*", re.S | re.M)
-_CSS_STRING_OR_COMMENT = re.compile(_STRINGS + r"|(?<![\w.*/])/\*.*?\*/", re.S)
-_NOT_NL = re.compile(r"[^\n]")
-_GENERATED = re.compile(r"do not edit", re.I)
 
 
-def _blank(m: "re.Match[str]") -> str:
-    s = m.group(0)
-    return s if s[0] in "\"'`" else _NOT_NL.sub(" ", s)
-
-
-def mask_comments(text: str, ext: str) -> str:
-    """The text with comments replaced by spaces (newlines kept, so offsets and line numbers do not move).
-
-    String literals are skipped over, never blanked, so a "/*" or " //" inside one cannot hide the code after it."""
-    pattern = _CSS_STRING_OR_COMMENT if ext in (".css",) else _STRING_OR_COMMENT
-    return pattern.sub(_blank, text)
-
-
-def normalise_text(text: str) -> str:
-    if text.startswith("\ufeff"):
-        text = text[1:]
-    return text.replace("\r\n", "\n").replace("\r", "\n")
+mask_comments = P.mask_comments
+normalise_text = P.normalise_text
 
 
 def is_generated(text: str) -> bool:
-    head = "\n".join(text[:1500].splitlines()[:5])
-    return "GENERATED" in head and _GENERATED.search(head) is not None
+    return P.is_generated_text(text)
 
 
 _GENERATED_PAGES = ("specimen.html", "prototype.html", "screens.html", "tours/*.html", "audit-*.html")
@@ -377,44 +381,8 @@ def _split_list(value: object) -> List[str]:
     return [g for g in re.split(r"[,\s]+", str(value or "")) if g and g not in ("·", "-")]
 
 
-def _glob_rx(glob: str) -> "re.Pattern[str]":
-    g = glob.strip().strip("`").replace("\\", "/")
-    if g.startswith("./"):
-        g = g[2:]
-    out, i = [], 0
-    while i < len(g):
-        if g.startswith("**/", i):
-            out.append("(?:.*/)?")
-            i += 3
-        elif g.startswith("**", i):
-            out.append(".*")
-            i += 2
-        elif g[i] == "*":
-            out.append("[^/]*")
-            i += 1
-        elif g[i] == "?":
-            out.append("[^/]")
-            i += 1
-        else:
-            out.append(re.escape(g[i]))
-            i += 1
-    body = "".join(out)
-    if "*" not in g and "?" not in g:
-        body = body.rstrip("/") + "(?:/.*)?"
-    return re.compile(body + r"\Z")
-
-
-def path_matches(path: str, globs: Sequence[str]) -> bool:
-    """True when the path, or any trailing part of it (so absolute and Windows paths work), matches a glob."""
-    if not globs:
-        return False
-    rxs = [_glob_rx(g) for g in globs]
-    parts = path.replace("\\", "/").split("/")
-    for i in range(len(parts)):
-        sub = "/".join(parts[i:])
-        if sub and any(rx.match(sub) for rx in rxs):
-            return True
-    return False
+_glob_rx = P.glob_rx
+path_matches = P.path_matches
 
 
 def _is_theme_path(path: str) -> bool:
@@ -793,37 +761,8 @@ def check_arbitrary_value(ctx: Ctx) -> Iterator[Hit]:
         yield Hit(m.start(), m.group(0))
 
 
-_FAMILIES = ("slate gray zinc neutral stone red orange amber yellow lime green emerald teal cyan sky blue indigo violet "
-             "purple fuchsia pink rose").split()
-_SHADES = ("50", "100", "200", "300", "400", "500", "600", "700", "800", "900", "950")
-_PALETTE_HEX = """
-slate f8fafc f1f5f9 e2e8f0 cbd5e1 94a3b8 64748b 475569 334155 1e293b 0f172a 020617
-gray f9fafb f3f4f6 e5e7eb d1d5db 9ca3af 6b7280 4b5563 374151 1f2937 111827 030712
-zinc fafafa f4f4f5 e4e4e7 d4d4d8 a1a1aa 71717a 52525b 3f3f46 27272a 18181b 09090b
-neutral fafafa f5f5f5 e5e5e5 d4d4d4 a3a3a3 737373 525252 404040 262626 171717 0a0a0a
-stone fafaf9 f5f5f4 e7e5e4 d6d3d1 a8a29e 78716c 57534e 44403c 292524 1c1917 0c0a09
-red fef2f2 fee2e2 fecaca fca5a5 f87171 ef4444 dc2626 b91c1c 991b1b 7f1d1d 450a0a
-orange fff7ed ffedd5 fed7aa fdba74 fb923c f97316 ea580c c2410c 9a3412 7c2d12 431407
-amber fffbeb fef3c7 fde68a fcd34d fbbf24 f59e0b d97706 b45309 92400e 78350f 451a03
-yellow fefce8 fef9c3 fef08a fde047 facc15 eab308 ca8a04 a16207 854d0e 713f12 422006
-lime f7fee7 ecfccb d9f99d bef264 a3e635 84cc16 65a30d 4d7c0f 3f6212 365314 1a2e05
-green f0fdf4 dcfce7 bbf7d0 86efac 4ade80 22c55e 16a34a 15803d 166534 14532d 052e16
-emerald ecfdf5 d1fae5 a7f3d0 6ee7b7 34d399 10b981 059669 047857 065f46 064e3b 022c22
-teal f0fdfa ccfbf1 99f6e4 5eead4 2dd4bf 14b8a6 0d9488 0f766e 115e59 134e4a 042f2e
-cyan ecfeff cffafe a5f3fc 67e8f9 22d3ee 06b6d4 0891b2 0e7490 155e75 164e63 083344
-sky f0f9ff e0f2fe bae6fd 7dd3fc 38bdf8 0ea5e9 0284c7 0369a1 075985 0c4a6e 082f49
-blue eff6ff dbeafe bfdbfe 93c5fd 60a5fa 3b82f6 2563eb 1d4ed8 1e40af 1e3a8a 172554
-indigo eef2ff e0e7ff c7d2fe a5b4fc 818cf8 6366f1 4f46e5 4338ca 3730a3 312e81 1e1b4b
-violet f5f3ff ede9fe ddd6fe c4b5fd a78bfa 8b5cf6 7c3aed 6d28d9 5b21b6 4c1d95 2e1065
-purple faf5ff f3e8ff e9d5ff d8b4fe c084fc a855f7 9333ea 7e22ce 6b21a8 581c87 3b0764
-fuchsia fdf4ff fae8ff f5d0fe f0abfc e879f9 d946ef c026d3 a21caf 86198f 701a75 4a044e
-pink fdf2f8 fce7f3 fbcfe8 f9a8d4 f472b6 ec4899 db2777 be185d 9d174d 831843 500724
-rose fff1f2 ffe4e6 fecdd3 fda4af fb7185 f43f5e e11d48 be123c 9f1239 881337 4c0519
-"""
-PALETTE: Dict[str, str] = {"white": "#ffffff", "black": "#000000"}
-for _row in _PALETTE_HEX.strip().splitlines():
-    _fam, *_hexes = _row.split()
-    PALETTE.update({f"{_fam}-{s}": f"#{h}" for s, h in zip(_SHADES, _hexes)})
+_FAMILIES = P.TAILWIND_FAMILIES
+PALETTE: Dict[str, str] = P.TAILWIND_PALETTE
 _PALETTE = re.compile(
     CLS + r"(-?(?:text|bg|border(?:-[trblxyse]{1,2})?|ring(?:-offset)?|outline|fill|stroke|from|to|via|divide|decoration"
     r"|accent|caret|placeholder|shadow|inset-shadow|drop-shadow))-(white|black|(?:" + "|".join(_FAMILIES) + r")-(?:50|[1-9]00|950))"
@@ -845,8 +784,7 @@ def check_palette_colour(ctx: Ctx) -> Iterator[Hit]:
         yield Hit(m.start(), m.group(0), fix=_colour_fix(ctx, PALETTE[name], 1.0, prefix, _role_of_prefix(prefix)))
 
 
-_TW_TYPE = {"xs": 12, "sm": 14, "base": 16, "lg": 18, "xl": 20, "2xl": 24, "3xl": 30, "4xl": 36, "5xl": 48, "6xl": 60,
-            "7xl": 72, "8xl": 96, "9xl": 128}
+_TW_TYPE = P.TAILWIND_TYPE
 _TYPE_CLASS = re.compile(CLS + r"text-(xs|sm|base|lg|xl|[2-9]xl)(?![\w-])")
 _FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*([^;{}\n]{1,120})")
 _CSS_LEN = re.compile(r"(?<![\w.-])(\d*\.?\d+)(px|rem)(?![\w-])")
@@ -1298,6 +1236,858 @@ def check_kotlin_radius(ctx: Ctx) -> Iterator[Hit]:
                 yield Hit(d.start(), d.group(0), fix=_dimension_fix(ctx, "radius", px, "theme"))
 
 
+# ---------------------------------------------------------------- cross-file rules (full mode only)
+
+
+@dataclass(frozen=True)
+class XHit:
+    """One finding of a cross-file rule: where it is, the matched text, and (optionally) a specific message and fix."""
+
+    file: str
+    line: int
+    match: str
+    message: Optional[str] = None
+    fix: Optional[str] = None
+
+
+_BUILD_TOKENS = "build-tokens.py"
+_RAW_VALUE_RULES = frozenset(("raw-colour", "arbitrary-value", "palette-colour", "inline-style", "swift-raw-colour",
+                              "kotlin-raw-colour"))  # not errors when there are no tokens to point to
+_FINDING_SIZE_KINDS = ("font-size", "line-height", "spacing", "radius")
+_LIGHT_ONLY = re.compile(r"^\s*light[\s-]*only\b", re.I)
+
+
+def load_build_tokens():
+    """build-tokens.py from this script's folder (the same version as this audit), or None when it is not there."""
+    path = Path(__file__).resolve().parent / _BUILD_TOKENS
+    name = "plumb_build_tokens"
+    mod = sys.modules.get(name)
+    if mod is not None and Path(getattr(mod, "__file__", "") or "").resolve() == path:
+        return mod
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def _plumb_error_parts(exc: PlumbError) -> Tuple[str, str]:
+    first, _, rest = str(exc).partition("\n")
+    fix = rest[len("fix: "):] if rest.startswith("fix: ") else rest or "correct the tokens file"
+    return first[len("error: "):] if first.startswith("error: ") else first, fix
+
+
+class Project:
+    """Everything the cross-file rules look at: the audited files (as Ctx), the tokens, the settings, the inventory.
+
+    A later --changed mode passes a subset of files in ctxs; the token-level rules (contrast, drift, dark values)
+    do not depend on which files were passed."""
+
+    def __init__(self, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict, ctxs: List["Ctx"],
+                 explicit: bool, tokens_file: Optional[Path], generated_texts: Optional[List[str]] = None) -> None:
+        self.root, self.skill_dir, self.doc, self.settings = root, skill_dir, doc, settings
+        self.ctxs, self.explicit, self.tokens_file = ctxs, explicit, tokens_file
+        self.generated_texts = generated_texts or []
+        self.inconsistency = doc is None
+        self.scales = scales_for(doc)
+        self.tokens_name = rel(tokens_file, root) if tokens_file is not None else ""
+        self.light_only = _LIGHT_ONLY.match(str(settings.get("Themes", "") or "")) is not None
+        self.build_command = f"python3 {rel(skill_dir / 'scripts' / _BUILD_TOKENS, root)}"
+        globs = _split_list(settings.get("Allowed raw values"))
+        self.primitive_globs = globs or ["components/ui/**"]
+        self.markup = [c for c in ctxs if c.platform == "web" and not c.stylesheet]
+        self._tokens_text: Optional[str] = None
+        self._pairs: Optional[object] = None
+        self._inventory: Optional[dict] = None
+        self._inv_findings: Optional[List[Tuple[str, XHit]]] = None
+
+    # ---- tokens
+
+    def is_primitive(self, ctx: "Ctx") -> bool:
+        return path_matches(ctx.path, self.primitive_globs)
+
+    def token_line(self, path: str) -> int:
+        """The line of a token ("color.primary") in the tokens file; 1 when it cannot be found."""
+        if self._tokens_text is None:
+            try:
+                self._tokens_text = normalise_text(read_source(self.tokens_file)) if self.tokens_file else ""
+            except OSError:
+                self._tokens_text = ""
+        text, pos, found = self._tokens_text, 0, None
+        for part in path.split("."):
+            found = re.compile(r"\"" + re.escape(part) + r"\"\s*:").search(text, pos)
+            if found is None:
+                return 1
+            pos = found.end()
+        return text.count("\n", 0, found.start()) + 1 if found else 1
+
+    def pairs(self):
+        """build-tokens' measured contrast pairs, a PlumbError (bad contrast settings), or None (no generator)."""
+        if self._pairs is None:
+            bt = load_build_tokens()
+            if bt is None or self.doc is None:
+                self._pairs = False
+            else:
+                try:
+                    self._pairs = bt.measure_pairs(self.doc)
+                except PlumbError as exc:
+                    self._pairs = exc
+        return self._pairs or None
+
+    def modes(self) -> Tuple[str, ...]:
+        return ("light",) if self.light_only else ("light", "dark")
+
+    def colour_tokens(self) -> List[Tuple[str, dict]]:
+        return [(path, tok) for path, tok, ttype in P.iter_tokens(self.doc or {}) if ttype == "color"]
+
+    # ---- the inventory of values used in code
+
+    @property
+    def inventory(self) -> dict:
+        if self._inventory is None:
+            tailwind = any(c.tailwind for c in self.ctxs) or any(P.uses_tailwind(c.text) for c in self.ctxs)
+            for marker in ("tailwind.config.js", "tailwind.config.ts", "tailwind.config.cjs", "tailwind.config.mjs"):
+                tailwind = tailwind or (self.root / marker).is_file()
+            inv = P.new_inventory()
+            for c in self.ctxs:
+                P.inventory_add(inv, c.path, c.text, tailwind, code=c.code)
+            self._inventory = P.finish_inventory(inv)
+        return self._inventory
+
+    def scales_inferred(self) -> Dict[str, List[dict]]:
+        return {kind: [{"value": g["canonical"], "count": g["count"], "members": g["members"]}
+                       for g in P.cluster(self.inventory, kind)] for kind in P.INVENTORY_KINDS}
+
+
+def _at(where: str) -> Tuple[str, int]:
+    file, _, line = where.rpartition(":")
+    return file, int(line) if line.isdigit() else 1
+
+
+def _times(n: int) -> str:
+    return "once" if n == 1 else f"{n} times"
+
+
+# ---- near-duplicates and outliers in code (inconsistency-only mode: no tokens yet)
+
+
+def _inventory_findings(proj: Project) -> List[Tuple[str, XHit]]:
+    if proj._inv_findings is not None:
+        return proj._inv_findings
+    out: List[Tuple[str, XHit]] = []
+    inv = proj.inventory
+    for kind in ("color",) + _FINDING_SIZE_KINDS:
+        for group in P.cluster(inv, kind):
+            canon = group["canonical"]
+            canon_n = inv[kind][canon]["count"]
+            for member in group["members"][1:]:
+                slot = inv[kind][member]
+                file, line = _at(slot["where"][0])
+                if kind == "color":
+                    gap = f"ΔE {P.delta_e(P.parse_color(member)[0], P.parse_color(canon)[0]):.1f}"
+                    what = member
+                else:
+                    gap = "within 1px or 6%"
+                    what = f"{kind} {member}"
+                if slot["count"] == 1 and canon_n >= 5:
+                    out.append(("outlier-value", XHit(
+                        file, line, member,
+                        f"{what} is used once while the near-identical {canon} is used {canon_n} times ({gap}): "
+                        f"a one-off value is usually a slip",
+                        f"use {canon} here; /plumb:extract turns the de-facto scale into tokens")))
+                else:
+                    rule = "near-duplicate-colour" if kind == "color" else "near-duplicate-size"
+                    out.append((rule, XHit(
+                        file, line, member,
+                        f"{what} ({_times(slot['count'])}) is a near-duplicate of {canon} ({canon_n} times, {gap}): "
+                        f"two values nobody can tell apart split the scale",
+                        f"use {canon}, the most-used value of this group, where {member} appears "
+                        f"({', '.join(slot['where'][:3])}{' ...' if len(slot['where']) > 3 else ''}); "
+                        f"/plumb:extract turns the groups into tokens")))
+    proj._inv_findings = out
+    return out
+
+
+def check_near_duplicate_colour(proj: Project) -> Iterator[XHit]:
+    if proj.inconsistency:
+        yield from (h for r, h in _inventory_findings(proj) if r == "near-duplicate-colour")
+
+
+def check_near_duplicate_size(proj: Project) -> Iterator[XHit]:
+    if proj.inconsistency:
+        yield from (h for r, h in _inventory_findings(proj) if r == "near-duplicate-size")
+
+
+def check_outlier_value(proj: Project) -> Iterator[XHit]:
+    if proj.inconsistency:
+        yield from (h for r, h in _inventory_findings(proj) if r == "outlier-value")
+
+
+# ---- several components doing one job
+
+
+_COMP_DEF = re.compile(r"(?:\bfunction\s+([A-Z]\w*)\s*[(<]|\b(?:const|let)\s+([A-Z]\w*)\s*(?::[^=\n]{1,80})?=\s*"
+                       r"(?:React\.)?(?:forwardRef|memo)?\s*\(?\s*(?:\([^()]{0,200}\)|[A-Za-z_]\w*)\s*(?::[^=\n]{1,80})?=>)")
+_BUTTONISH = re.compile(r"button|btn", re.I)
+_BUTTON_TAG = re.compile(r"<button(?![\w.-])")
+_TEST_FILE = re.compile(r"\.(?:test|spec|stories|story)$", re.I)
+
+
+def _classes_in(code: str, start: int, end: int) -> Tuple[List[str], int]:
+    """The class names given in a tag's class/className attributes (string literals only) and where the first starts."""
+    out, first = [], -1
+    for a in _CLASS_ATTR.finditer(code, start, end):
+        value = _attr_value(code, a.end(), end)
+        if not value:
+            continue
+        first = a.start() if first < 0 else first
+        for t in _STR_LIT.findall(value):
+            out.extend(" ".join(g for g in t if g).split())
+    return out, first
+
+
+def _base(cls: str) -> str:
+    return cls.rsplit(":", 1)[-1].lstrip("!")
+
+
+def _stem(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[0]
+
+
+def check_duplicate_component(proj: Project) -> Iterator[XHit]:
+    items: List[Tuple[str, int, str]] = []
+    seen_sigs = set()
+    for ctx in proj.markup:
+        if proj.is_primitive(ctx):
+            continue
+        stem = _stem(ctx.path)
+        defs = list(_COMP_DEF.finditer(ctx.code))
+        if _BUTTONISH.search(stem) and not _TEST_FILE.search(stem):
+            named = next((d for d in defs if _BUTTONISH.search(d.group(1) or d.group(2))), defs[0] if defs else None)
+            items.append((ctx.path, ctx.line_of(named.start()) if named else 1, stem))
+            continue
+        for d in defs:
+            name = d.group(1) or d.group(2)
+            if _BUTTONISH.search(name):
+                items.append((ctx.path, ctx.line_of(d.start()), name))
+        for m in _BUTTON_TAG.finditer(ctx.code):
+            end = _tag_end(ctx.code, m.end(), min(len(ctx.code), m.end() + 3000))
+            if end < 0:
+                continue
+            classes, _first = _classes_in(ctx.code, m.end(), end)
+            bases = [_base(c) for c in classes]
+            has = (any(b.startswith("bg-") for b in bases), any(b.startswith("rounded") for b in bases),
+                   any(re.match(r"^p[xytrblse]?-", b) for b in bases), any(b.startswith("text-") for b in bases))
+            if not all(has):
+                continue
+            sig = tuple(sorted(classes))
+            if sig in seen_sigs:
+                continue
+            seen_sigs.add(sig)
+            items.append((ctx.path, ctx.line_of(m.start()), f'<button class="{" ".join(classes)}">'))
+    if len(items) < 3:
+        return
+    names = ", ".join(i[2] for i in items[:6]) + (" ..." if len(items) > 6 else "")
+    where = proj.primitive_globs[0].replace("**", "").rstrip("/*") or "the primitives folder"
+    for file, line, name in items:
+        yield XHit(file, line, name,
+                   f"{name} is one of {len(items)} button-like components outside the primitives ({names}): several "
+                   f"components doing one job drift apart in size, colour and focus",
+                   f"use the Button primitive ({where}/button) and add a variant there if none fits; then remove the copy")
+
+
+# ---- tokens: contrast, dark values, drift
+
+
+def _fmt_need(need: float) -> str:
+    return num(need)
+
+
+def check_contrast(proj: Project) -> Iterator[XHit]:
+    pairs = proj.pairs()
+    if pairs is None:
+        return
+    if isinstance(pairs, PlumbError):
+        what, fix = _plumb_error_parts(pairs)
+        yield XHit(proj.tokens_name, 1, what, f"contrast cannot be measured: {what}", fix)
+        return
+    for pair in pairs:
+        for mode in proj.modes():
+            ratio = pair.light if mode == "light" else pair.dark
+            if ratio >= pair.need:
+                continue
+            near = pair.fix.get(mode)
+            if near:
+                fix = (f"nearest passing {pair.fg} in {mode} mode: {near[0]} ({near[1]:.2f}:1); change {pair.fg_path} "
+                       f"with /plumb:update, then run {proj.build_command}")
+            else:
+                fix = (f"no {pair.fg} of this hue reaches {_fmt_need(pair.need)}:1 on {pair.bg} in {mode} mode: change "
+                       f"{pair.bg_path} with /plumb:update, then run {proj.build_command}")
+            yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
+                       f"{pair.fg} on {pair.bg} is {ratio:.2f}:1 in {mode} mode (needs {_fmt_need(pair.need)}:1): text "
+                       f"this faint is hard to read", fix)
+
+
+def check_contrast_headroom(proj: Project) -> Iterator[XHit]:
+    pairs = proj.pairs()
+    bt = load_build_tokens()
+    if not pairs or isinstance(pairs, PlumbError) or bt is None:
+        return
+    for pair in pairs:
+        for mode in proj.modes():
+            ratio = pair.light if mode == "light" else pair.dark
+            if not pair.need <= ratio < pair.need + 0.3:
+                continue
+            fg, bg = pair.hex[mode]
+            better = bt.nearest_passing(fg, bg, pair.need + 0.5, lighten=(mode == "dark"))
+            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, 0.5 to spare) with /plumb:update, "
+                   f"then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
+            yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
+                       f"{pair.fg} on {pair.bg} passes at {ratio:.2f}:1 in {mode} mode, only {ratio - pair.need:.2f} "
+                       f"above the {_fmt_need(pair.need)}:1 minimum: thin fonts and dim screens push it under", fix)
+
+
+def _dark_ext(token: dict) -> dict:
+    ext = token.get("$extensions")
+    ext = ext.get("plumb") if isinstance(ext, dict) else None
+    return ext if isinstance(ext, dict) else {}
+
+
+def check_missing_dark_value(proj: Project) -> Iterator[XHit]:
+    if proj.doc is None or proj.light_only:
+        return
+    for path, tok in proj.colour_tokens():
+        raw = tok.get("$value")
+        if isinstance(raw, str) and raw.strip().startswith("{"):
+            continue  # an alias takes its dark value from the token it points at (checked there)
+        ext = _dark_ext(tok)
+        if "dark" in ext or ext.get("same-in-dark") is True:
+            continue
+        try:
+            light = P.parse_color(P.resolve(proj.doc, path))[0]
+        except PlumbError:
+            light = str(raw)
+        yield XHit(proj.tokens_name, proj.token_line(path), path,
+                   f"{path} has no dark value: in dark mode it stays {light}, a value chosen for light surfaces",
+                   f'add "$extensions": {{"plumb": {{"dark": "#..."}}}} to {path} with /plumb:update; if it is '
+                   f'deliberately the same in both themes mark it "same-in-dark": true; a light-only product records '
+                   f"Themes: light-only in PLUMB.md")
+
+
+def check_generated_drift(proj: Project) -> Iterator[XHit]:
+    if proj.doc is None or proj.tokens_file is None:
+        return
+    bt = load_build_tokens()
+    if bt is None:
+        return
+    try:
+        files = bt.outputs(proj.doc, proj.skill_dir, proj.root, proj.tokens_file)
+    except PlumbError as exc:
+        what, fix = _plumb_error_parts(exc)
+        yield XHit(proj.tokens_name, 1, what, f"the generated files cannot be checked: {what}", fix)
+        return
+    for path, text in files.items():
+        try:
+            current = normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.is_file() else None
+        except OSError:
+            current = None
+        if current == text:
+            continue
+        state = "missing" if current is None else "stale: it does not match the tokens (edited by hand, or tokens changed since)"
+        yield XHit(rel(path, proj.root), 1, rel(path, proj.root), f"generated file is {state}", proj.build_command)
+
+
+# ---- focus, hover, touch, motion
+
+
+_FOCUS = re.compile(r"(?:^|[\s\"'`:{(\[,])(?:[\w-]+:)*(?:group-|peer-)?focus(?:-visible|-within)?:"
+                    r"|:focus(?:-visible|-within)?(?![\w-])|data-\[?focus|focus-ring|focusRing|isFocusVisible|useFocusRing")
+_INTERACTIVE = re.compile(r"<(?:button|a|input|select|textarea|summary)(?![\w.-])"
+                          r"|role\s*=\s*\{?\s*[\"'`](?:button|link|checkbox|switch|tab|menuitem|option|radio)[\"'`]")
+_INTERACTIVE_NAMES = frozenset("button input select checkbox switch tabs toggle toggle-group slider radio radio-group "
+                               "textarea link combobox dropdown-menu menu menubar".split())
+
+
+def _sibling_focus(proj: Project, ctx: "Ctx") -> bool:
+    folder = (proj.root / ctx.path).parent
+    stem = _stem(ctx.path).lower()
+    try:
+        siblings = [p for p in folder.iterdir() if p.suffix in (".css", ".scss") and p.name.lower().startswith(stem + ".")]
+    except OSError:
+        return False
+    for p in siblings:
+        try:
+            if _FOCUS.search(mask_comments(normalise_text(read_source(p)), p.suffix)):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def check_focus_state(proj: Project) -> Iterator[XHit]:
+    prims = [c for c in proj.markup if proj.is_primitive(c)]
+    if prims:
+        for ctx in prims:
+            m = _INTERACTIVE.search(ctx.code)
+            if m is None and _stem(ctx.path).lower() not in _INTERACTIVE_NAMES:
+                continue
+            if _FOCUS.search(ctx.code) or _sibling_focus(proj, ctx):
+                continue
+            yield XHit(ctx.path, ctx.line_of(m.start()) if m else 1, _stem(ctx.path),
+                       f"the {_stem(ctx.path)} primitive has no focus style: keyboard users cannot see where they are, "
+                       f"and every screen built on it inherits the gap",
+                       "add a visible focus style with the focus ring token (focus-visible:ring-2 focus-visible:ring-<token>, "
+                       "or :focus-visible { outline: 2px solid var(--color-<token>) })")
+        return
+    if any(_FOCUS.search(c.code) for c in proj.ctxs):
+        return
+    for ctx in proj.markup:
+        m = _INTERACTIVE.search(ctx.code)
+        if m:
+            yield XHit(ctx.path, ctx.line_of(m.start()), m.group(0),
+                       "interactive elements but no focus style anywhere: keyboard users cannot see where they are",
+                       "add one shared focus style (:focus-visible { outline: 2px solid <focus colour> } or "
+                       "focus-visible:ring-2) and use it on every control")
+            return
+
+
+_HOVER_STRING = re.compile(r"\"[^\"\n]*hover:[^\"\n]*\"|'[^'\n]*hover:[^'\n]*'|`[^`]*hover:[^`]*`")
+_REVEAL = re.compile(r"^(?:opacity-(?!0$)\d+|visible)$")
+
+
+def check_hover_only(proj: Project) -> Iterator[XHit]:
+    for ctx in proj.markup:
+        if "hover:" not in ctx.code:
+            continue
+        for m in _HOVER_STRING.finditer(ctx.code):
+            classes = m.group(0)[1:-1].split()
+            hidden = [c for c in classes if ":" not in c and c.lstrip("!") in ("opacity-0", "invisible")]
+            reveal = any("hover:" in c and _REVEAL.match(_base(c)) for c in classes)
+            focus = any("focus" in c.rsplit(":", 1)[0] for c in classes if ":" in c)
+            if hidden and reveal and not focus:
+                pos = m.start() + m.group(0).find(hidden[0])
+                yield XHit(ctx.path, ctx.line_of(pos), " ".join(c for c in classes if "hover" in c or c in hidden),
+                           f"{hidden[0]} revealed only on hover: keyboard and touch users never see this action",
+                           "reveal it on focus too: add group-focus-within:opacity-100 (or focus-visible:opacity-100 / "
+                           "group-focus-within:visible), or keep it visible on touch (pointer-coarse:opacity-100)")
+
+
+_TOUCH_TAG = re.compile(r"<(button|a)(?![\w.-])")
+_ROLE_BUTTON = re.compile(r"role\s*=\s*\{?\s*[\"'`]button[\"'`]")
+_TAG_NAME = re.compile(r"<([\w.-]+)")
+_SIZE_CLASS = re.compile(r"^(min-)?(h|w|size)-(\d+(?:\.\d+)?|px|\[(\d*\.?\d+)(px|rem)\])$")
+TOUCH_PX = 44.0
+
+
+def check_touch_target(proj: Project) -> Iterator[XHit]:
+    base = proj.scales.base if proj.scales else 4.0
+    for ctx in proj.markup:
+        code = ctx.code
+        starts = {m.start(): m.group(1) for m in _TOUCH_TAG.finditer(code)}
+        for m in _ROLE_BUTTON.finditer(code):
+            lt = code.rfind("<", 0, m.start())
+            t = _TAG_NAME.match(code, lt) if lt >= 0 else None
+            if t:
+                starts.setdefault(lt, t.group(1))
+        for start in sorted(starts):
+            tag = starts[start]
+            end = _tag_end(code, start + 1 + len(tag), min(len(code), start + 3000))
+            if end < 0:
+                continue
+            classes, _first = _classes_in(code, start, end)
+            if not classes or any("pointer-coarse:" in c for c in classes):
+                continue
+            small, mins = [], set()
+            for c in classes:
+                s = _SIZE_CLASS.match(c.lstrip("!"))
+                if not s:
+                    continue
+                step = s.group(3)
+                px = _px_len(s.group(4), s.group(5)) if s.group(4) else 1.0 if step == "px" else float(step) * base
+                dims = ("h", "w") if s.group(2) == "size" else (s.group(2),)
+                if s.group(1):
+                    if px >= TOUCH_PX:
+                        mins.update(dims)
+                elif px < TOUCH_PX:
+                    small.append((dims, c))
+            small = [c for dims, c in small if not set(dims) <= mins]
+            if small:
+                yield XHit(ctx.path, ctx.line_of(start), f"<{tag}> {' '.join(small)}",
+                           f"touch target under {num(TOUCH_PX)}px: <{tag}> {' '.join(small)}: hard to hit on a phone",
+                           f"make it at least {num(TOUCH_PX)}px on touch: add pointer-coarse:size-11 (or min-h-11 min-w-11), "
+                           f"or give it a larger padded hit area")
+
+
+def _px_len(num_text: str, unit: str) -> float:
+    return float(num_text) * (16 if unit == "rem" else 1)
+
+
+_ANIM_CLASS = re.compile(r"(?<![^\s\"'`:])(?:transition(?:-(?!none)[a-z]+)?|animate-(?!none)[a-z][\w-]*)(?![\w-])")
+_ANIM_DECL = re.compile(r"(?<![\w-])(?:transition|animation)(?:-[a-z]+)?\s*:\s*[\"'`]?(?!none\b)[\w.]"
+                        r"|@keyframes\b|(?<![\w-])(?:transition|animation)[A-Z]\w*\s*:")
+_REDUCED = re.compile(r"prefers-reduced-motion|motion-reduce:|motion-safe:|useReducedMotion|reducedMotion")
+
+
+def _first_animation(ctx: "Ctx") -> Optional[int]:
+    best = None
+    m = _ANIM_DECL.search(ctx.code)
+    if m:
+        best = m.start()
+    if not ctx.stylesheet:
+        for s in _STR_LIT.finditer(ctx.code):
+            a = _ANIM_CLASS.search(s.group(0))
+            if a:
+                pos = s.start() + a.start()
+                best = pos if best is None else min(best, pos)
+                break
+    return best
+
+
+def _reduced_motion_anywhere(proj: Project) -> bool:
+    if any(_REDUCED.search(c.code) for c in proj.ctxs) or any(_REDUCED.search(t) for t in proj.generated_texts):
+        return True
+    seen = {c.path for c in proj.ctxs}
+    for dirpath, dirnames, filenames in os.walk(proj.root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for name in filenames:
+            ext = file_ext(name)
+            if ext not in (".css", ".scss", ".html"):
+                continue
+            path = Path(dirpath) / name
+            if rel(path, proj.root) in seen:
+                continue
+            try:
+                if path.stat().st_size > MAX_BYTES:
+                    continue
+                if _REDUCED.search(mask_comments(normalise_text(read_source(path)), ext)):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def check_reduced_motion(proj: Project) -> Iterator[XHit]:
+    for ctx in proj.ctxs:
+        if ctx.platform != "web":
+            continue
+        pos = _first_animation(ctx)
+        if pos is None:
+            continue
+        if not _reduced_motion_anywhere(proj):
+            yield XHit(ctx.path, ctx.line_of(pos), "animation",
+                       "animations or transitions but no prefers-reduced-motion handling anywhere: motion can make "
+                       "people with vestibular disorders sick",
+                       "add @media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation-duration: 0s "
+                       "!important; transition-duration: 0s !important; } } to the global stylesheet (Plumb's tokens.css "
+                       "has it), or use motion-safe: / motion-reduce: variants")
+        return
+
+
+# ---- suggestions: improvements, never failures
+
+
+def _colour_name(hexv: str) -> str:
+    import colorsys
+    r, g, b = (int(hexv[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    h, light, sat = colorsys.rgb_to_hls(r, g, b)
+    if sat < 0.12 or light > 0.97 or light < 0.03:
+        family = "gray"
+    else:
+        deg = h * 360
+        bounds = ((15, "red"), (40, "orange"), (55, "amber"), (70, "yellow"), (90, "lime"), (150, "green"),
+                  (175, "teal"), (195, "cyan"), (215, "sky"), (240, "blue"), (260, "indigo"), (280, "violet"),
+                  (300, "purple"), (330, "pink"), (345, "rose"), (361, "red"))
+        family = next(name for limit, name in bounds if deg < limit)
+    step = min(950, max(50, int(round((1 - light) * 10)) * 100))
+    return f"{family}-{step}"
+
+
+def _token_values(proj: Project) -> Dict[str, List[float]]:
+    s = proj.scales
+    out: Dict[str, List[float]] = {"font-size": list(s.type.values()), "spacing": list(s.spacing.values()),
+                                   "radius": list(s.radius.values()), "duration": [d[2] for d in s.durations]}
+    return out
+
+
+def check_missing_token(proj: Project) -> Iterator[XHit]:
+    s = proj.scales
+    if s is None:
+        return
+    inv = proj.inventory
+    colours = set()
+    for path, _tok in proj.colour_tokens():
+        for mode in ("light", "dark"):
+            try:
+                colours.add(P.parse_color(P.resolve(proj.doc, path, mode))[0])
+            except PlumbError:
+                pass
+    labs = [P._lab(c) for c in colours]
+    sizes = _token_values(proj)
+    taken = {path for path, _t, _ty in P.iter_tokens(proj.doc)}
+    for kind in ("color", "font-size", "spacing", "radius", "shadow", "duration"):
+        for value, slot in sorted(inv[kind].items(), key=lambda kv: (-kv[1]["count"], kv[0])):
+            n = slot["count"]
+            if n < 3:
+                continue
+            if kind == "color":
+                hexv = value[:7]
+                lab = P._lab(hexv)
+                if any(P.delta_e_lab(lab, t) < P.COLOUR_DELTA for t in labs):
+                    continue  # a token is close: the per-file fix already names it
+                name = f"color.{_colour_name(hexv)}"
+            elif kind == "shadow":
+                if s.shadows and (not value.startswith("shadow-") or value[len("shadow-"):] in s.shadows):
+                    continue
+                name = f"shadow.{value[len('shadow-'):] if value.startswith('shadow-') else 'raised'}"
+            else:
+                size = P._size_of(value)
+                if size is None or any(P.sizes_close(size[0], t, size[1]) for t in sizes[kind]):
+                    continue
+                n_txt = num(size[0])
+                name = {"font-size": f"typography.size-{n_txt}", "spacing": f"spacing.{num(size[0] / s.base)}",
+                        "radius": f"radius.r{n_txt}", "duration": f"motion.duration.d{n_txt}"}[kind]
+            base_name, i = name, 2
+            while name in taken:
+                name, i = f"{base_name}-{i}", i + 1
+            taken.add(name)
+            file, line = _at(slot["where"][0])
+            places = ", ".join(slot["where"][:3]) + (" ..." if len(slot["where"]) > 3 else "")
+            yield XHit(file, line, value,
+                       f"{value} ({kind}) is used {n} times with no token: a value used this often belongs in the scale, "
+                       f"where it can change in one place",
+                       f"add {name} = {value} with /plumb:update, then use it at {places}")
+
+
+_UTIL = re.compile(
+    r"^-?(bg|text|border(?:-[trblxyse]{1,2})?|ring(?:-offset)?|outline|fill|stroke|from|via|to|decoration|divide(?:-[xy])?"
+    r"|accent|caret|placeholder|shadow|inset-shadow|drop-shadow|rounded(?:-[trblse]{1,2})?|font|leading|tracking|ease"
+    r"|duration|delay|animate|p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy]|[wh]|size|min-[wh]|max-[wh]|inset(?:-[xy])?"
+    r"|top|left|right|bottom|translate-[xy]|scroll-[mp][xytrblse]?)-(.+)$")
+_WORD = re.compile(r"-{0,2}[A-Za-z][\w-]*")
+_FAMILY_OF_PREFIX = (("rounded", "radius"), ("shadow", "shadow"), ("inset-shadow", "shadow"), ("drop-shadow", "shadow"),
+                     ("duration", "duration"), ("delay", "duration"), ("ease", "easing"), ("font", "font"))
+_COLOUR_PREFIXES = re.compile(r"^(?:bg|text|border|ring|outline|fill|stroke|from|via|to|decoration|divide|accent|caret|placeholder|shadow)")
+_SPACING_PREFIXES = re.compile(r"^(?:p[xytrblse]?|m[xytrblse]?|gap|space|[wh]|size|min|max|inset|top|left|right|bottom|translate|scroll)")
+
+
+def check_unused_token(proj: Project) -> Iterator[XHit]:
+    if proj.doc is None or proj.explicit or not proj.ctxs:
+        return
+    words, mobile = set(), set()
+    for c in proj.ctxs:
+        found = set(_WORD.findall(c.code))
+        (mobile if c.platform != "web" else words).update(found)
+    used: Dict[str, set] = {k: set() for k in ("colour", "text", "radius", "shadow", "duration", "easing", "font", "spacing")}
+    for w in words:
+        m = _UTIL.match(w)
+        if not m:
+            continue
+        prefix, rest = m.group(1), m.group(2)
+        if _COLOUR_PREFIXES.match(prefix):
+            used["colour"].add(rest)
+        if prefix == "text":
+            used["text"].add(rest)
+        for p, fam in _FAMILY_OF_PREFIX:
+            if prefix == p or prefix.startswith(p + "-") and p == "rounded":
+                used[fam].add(rest)
+        if _SPACING_PREFIXES.match(prefix):
+            used["spacing"].add(rest)
+    s = proj.scales
+    referenced = set()
+    aliases: Dict[str, str] = {}
+    candidates = []
+    for path, tok, ttype in P.iter_tokens(proj.doc):
+        raw = tok.get("$value")
+        if isinstance(raw, str) and raw.strip().startswith("{") and raw.strip().endswith("}"):
+            aliases[path] = raw.strip()[1:-1]
+        group = path.split(".")[0]
+        var = varname(path)
+        if group not in ("color", "typography", "radius", "spacing", "shadow", "motion", "font"):
+            continue
+        candidates.append(path)
+        camel = re.sub(r"[-_.]+([a-zA-Z0-9])", lambda x: x.group(1).upper(), "-".join(path.split(".")[1:]))
+        hit = var in words or (camel and camel in mobile)
+        if not hit:
+            if ttype == "color":
+                hit = var[len("--color-"):] in used["colour"]
+            elif group == "typography":
+                hit = var[len("--text-"):] in used["text"]
+            elif group == "radius":
+                hit = var[len("--radius-"):] in used["radius"]
+            elif group == "shadow":
+                hit = var[len("--shadow-"):] in used["shadow"]
+            elif group == "font":
+                hit = var[len("--font-"):] in used["font"]
+            elif group == "spacing":
+                px = s.px_of.get(path) if s else None
+                hit = "-".join(path.split(".")[1:]) in used["spacing"] or (
+                    px is not None and s.base and num(px / s.base) in used["spacing"])
+            elif group == "motion" and var.startswith("--duration-"):
+                ms = next((d[2] for d in s.durations if d[0] == path), None) if s else None
+                hit = var[len("--duration-"):] in used["duration"] or (ms is not None and num(ms) in used["duration"])
+            elif group == "motion" and var.startswith("--ease-"):
+                hit = var[len("--ease-"):] in used["easing"]
+            else:
+                hit = True  # other motion tokens: no utility to look for
+        if hit:
+            referenced.add(path)
+    changed = True
+    while changed:
+        changed = False
+        for src, target in aliases.items():
+            if src in referenced and target not in referenced:
+                referenced.add(target)
+                changed = True
+    for path in candidates:
+        if path in referenced:
+            continue
+        yield XHit(proj.tokens_name, proj.token_line(path), path,
+                   f"{path} is not used anywhere in the {_plural(len(proj.ctxs), 'file')} checked: an unused token is noise in the "
+                   f"scale and invites near-duplicates",
+                   f"remove {path} with /plumb:update, or use it where it belongs (var({varname(path)}))")
+
+
+def _is_text_role(name: str) -> bool:
+    return name.startswith("on-") or name == "link" or bool({"text", "ink"} & set(name.split("-")))
+
+
+def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
+    if proj.doc is None:
+        return
+    doc = proj.doc
+    colours = []
+    for path, tok in proj.colour_tokens():
+        raw = tok.get("$value")
+        if isinstance(raw, str) and raw.strip().startswith("{"):
+            continue
+        try:
+            light = P.parse_color(P.resolve(doc, path))
+            dark = P.parse_color(P.resolve(doc, path, "dark"))
+        except PlumbError:
+            continue
+        colours.append((path, light, dark, _is_text_role("-".join(path.split(".")[1:]))))
+    for i, (path, light, dark, texty) in enumerate(colours):
+        for other, olight, odark, otexty in colours[:i]:
+            if texty != otexty or abs(light[1] - olight[1]) > 0.02:
+                continue
+            dl = P.delta_e(light[0], olight[0])
+            dd = P.delta_e(dark[0], odark[0])
+            if dl < P.COLOUR_DELTA and (proj.light_only or dd < P.COLOUR_DELTA):
+                both = f"ΔE {dl:.1f} in light" + ("" if proj.light_only else f", {dd:.1f} in dark")
+                yield XHit(proj.tokens_name, proj.token_line(path), path,
+                           f"{path} ({light[0]}) looks the same as {other} ({olight[0]}): {both}; two tokens nobody can "
+                           f"tell apart get used interchangeably",
+                           f"merge? keep {other} and point {path} at {{{other}}} (or remove it) with /plumb:update")
+                break
+    s = proj.scales
+    if s is None:
+        return
+    groups: Dict[str, List[Tuple[str, float]]] = {}
+    for path, px in s.px_of.items():
+        if px and not (path in s.aliases):
+            groups.setdefault(path.split(".")[0], []).append((path, px))
+    def style(path: str) -> object:
+        """A type token's other fields: the same size with another line height or weight is a different style (label
+        vs body); sizes 1px apart are near-duplicate steps whatever the other fields say."""
+        try:
+            value = P.resolve(doc, path)
+        except PlumbError:
+            return None
+        return sorted((k, str(v)) for k, v in value.items() if k != "fontSize") if isinstance(value, dict) else None
+
+    for group, items in groups.items():
+        for i, (path, px) in enumerate(items):
+            for other, opx in items[:i]:
+                if group == "typography" and px == opx and style(path) != style(other):
+                    continue
+                if abs(px - opx) <= P.SIZE_PX:
+                    yield XHit(proj.tokens_name, proj.token_line(path), path,
+                               f"{path} ({num(px)}px) is within 1px of {other} ({num(opx)}px): steps this close are not "
+                               f"a scale, they are a choice left open",
+                               f"merge? keep {other} and point {path} at {{{other}}} (or remove it) with /plumb:update")
+                    break
+
+
+_PAD_RADIUS = re.compile(r"^(?:[\w-]+:)*(?:-?p[xytrblse]?-|rounded(?:-|$))")
+
+
+def check_consolidate_components(proj: Project) -> Iterator[XHit]:
+    groups: Dict[tuple, List[Tuple[str, str, int, frozenset]]] = {}
+    for ctx in proj.markup:
+        if proj.is_primitive(ctx):
+            continue
+        code = ctx.code
+        defs = list(_COMP_DEF.finditer(code))
+        for k, d in enumerate(defs):
+            limit = min(defs[k + 1].start() if k + 1 < len(defs) else len(code), d.end() + 1500)
+            a = _CLASS_ATTR.search(code, d.end(), limit)
+            if a is None:
+                continue
+            lt = code.rfind("<", d.end(), a.start())
+            t = _TAG_NAME.match(code, lt) if lt >= 0 else None
+            value = _attr_value(code, a.end(), limit)
+            if t is None or not value or "${" in value:
+                continue
+            classes = " ".join(g for tup in _STR_LIT.findall(value) for g in tup if g).split()
+            pr = frozenset(c for c in classes if _PAD_RADIUS.match(c))
+            rest = frozenset(c for c in classes if c not in pr)
+            if len(rest) < 2 or not pr:
+                continue
+            groups.setdefault((t.group(1), rest), []).append((d.group(1) or d.group(2), ctx.path, ctx.line_of(a.start()), pr))
+    for (_tag, _rest), comps in groups.items():
+        if len(comps) < 2 or len({c[3] for c in comps}) < 2:
+            continue
+        names = [c[0] for c in comps]
+        for name, file, line, pr in comps:
+            others = ", ".join(n for n in names if n != name)
+            yield XHit(file, line, name,
+                       f"{name} differs from {others} only in padding/radius ({' '.join(sorted(pr))}): several components "
+                       f"doing one job with small differences drift further apart",
+                       f"make one component with a size or shape variant (e.g. size=\"sm\" | \"lg\") and use it for "
+                       f"{', '.join(names)}")
+
+
+_USE_TAG = re.compile(r"<([A-Z][\w.]*|button|input|select|textarea)(?![\w.-])")
+_PAD_CLASS = re.compile(r"^-?p[xytrblse]?-")
+_RADIUS_CLASS_ANY = re.compile(r"^rounded(?:-|$)")
+
+
+def check_consistency(proj: Project) -> Iterator[XHit]:
+    seen: Dict[Tuple[str, str], Dict[str, List[Tuple[str, int]]]] = {}
+    for ctx in proj.markup:
+        if proj.is_primitive(ctx):
+            continue
+        code = ctx.code
+        for m in _USE_TAG.finditer(code):
+            end = _tag_end(code, m.end(), min(len(code), m.end() + 3000))
+            if end < 0:
+                continue
+            classes, first = _classes_in(code, m.end(), end)
+            plain = [c for c in classes if ":" not in c]
+            for aspect, rx in (("padding", _PAD_CLASS), ("radius", _RADIUS_CLASS_ANY)):
+                vals = sorted(c for c in plain if rx.match(c))
+                if vals:
+                    seen.setdefault((m.group(1), aspect), {}).setdefault(" ".join(vals), []).append(
+                        (ctx.path, ctx.line_of(m.start())))
+    for (tag, aspect), values in seen.items():
+        if len(values) < 2 or len({f for uses in values.values() for f, _l in uses}) < 2:
+            continue
+        ranked = sorted(values.items(), key=lambda kv: -len(kv[1]))
+        if len(ranked[0][1]) == len(ranked[1][1]):
+            continue  # no majority to pick
+        major, uses = ranked[0]
+        for value, places in ranked[1:]:
+            for file, line in places:
+                yield XHit(file, line, f"<{tag}> {value}",
+                           f"<{tag}> uses {value} here but {major} in {len(uses)} other places: the same element should "
+                           f"have the same {aspect} everywhere",
+                           f"pick one: use {major} (the majority) here, or if this one is deliberately different make it a "
+                           f"named variant of {tag}")
+
+
 # ---------------------------------------------------------------- the rule table
 
 WEB, ALL = ("web",), ("web", "ios", "android")
@@ -1346,6 +2136,41 @@ RULES: List[Rule] = [
          "use a text style from the generated theme (MaterialTheme.typography)"),
     Rule("kotlin-corner-radius", "error", ("android",), "file", check_kotlin_radius, "literal corner radius {match}",
          "use a shape from the generated theme (MaterialTheme.shapes)"),
+    # cross file (full mode only)
+    Rule("generated-drift", "error", ALL, "cross", check_generated_drift, "generated file is stale",
+         "run build-tokens.py"),
+    Rule("contrast", "error", ALL, "cross", check_contrast, "contrast failure: {match}",
+         "change the token, then run build-tokens.py"),
+    Rule("missing-dark-value", "error", ALL, "cross", check_missing_dark_value, "{match} has no dark value",
+         'add $extensions.plumb.dark, or mark it "same-in-dark": true'),
+    Rule("near-duplicate-colour", "warn", ALL, "cross", check_near_duplicate_colour, "near-duplicate colour {match}",
+         "use the most-used value of the group"),
+    Rule("near-duplicate-size", "warn", ALL, "cross", check_near_duplicate_size, "near-duplicate size {match}",
+         "use the most-used value of the group"),
+    Rule("outlier-value", "warn", ALL, "cross", check_outlier_value, "one-off value {match}",
+         "use the common value"),
+    Rule("duplicate-component", "warn", WEB, "cross", check_duplicate_component, "duplicate component {match}",
+         "use the Button primitive with a variant"),
+    Rule("focus-state", "warn", WEB, "cross", check_focus_state, "no focus style: {match}",
+         "add a visible focus style with the focus ring token"),
+    Rule("hover-only", "warn", WEB, "cross", check_hover_only, "hover-only action: {match}",
+         "reveal it on focus too (group-focus-within:)"),
+    Rule("touch-target", "warn", WEB, "cross", check_touch_target, "touch target under 44px: {match}",
+         "make it at least 44px on touch (pointer-coarse:size-11)"),
+    Rule("reduced-motion", "warn", WEB, "cross", check_reduced_motion, "no reduced-motion handling",
+         "add a prefers-reduced-motion block"),
+    Rule("missing-token", "suggest", ALL, "cross", check_missing_token, "{match} has no token",
+         "add a token with /plumb:update"),
+    Rule("unused-token", "suggest", ALL, "cross", check_unused_token, "{match} is unused",
+         "remove it with /plumb:update, or use it"),
+    Rule("duplicate-tokens", "suggest", ALL, "cross", check_duplicate_tokens, "{match} duplicates another token",
+         "merge the two tokens with /plumb:update"),
+    Rule("consolidate-components", "suggest", WEB, "cross", check_consolidate_components,
+         "{match} differs from another component only in padding/radius", "make one component with a variant"),
+    Rule("contrast-headroom", "suggest", ALL, "cross", check_contrast_headroom, "{match} barely passes",
+         "nudge the token for 0.5 to spare"),
+    Rule("consistency", "suggest", WEB, "cross", check_consistency, "{match} differs from the majority",
+         "pick one value"),
 ]
 _ORDER = {r.id: i for i, r in enumerate(RULES)}
 
@@ -1358,15 +2183,24 @@ def audit_text(path_name: str, text: str, doc: Optional[dict], settings: dict) -
 
     Unsupported extensions and generated files give []. CRLF and Windows paths give the same result as LF and /.
     """
+    ctx = make_ctx(path_name, text, doc, settings)
+    return file_findings(ctx) if ctx is not None else []
+
+
+def make_ctx(path_name: str, text: str, doc: Optional[dict], settings: dict) -> Optional[Ctx]:
+    """The Ctx for one file, or None when the file is not audited (other extension, build output, generated)."""
     if file_ext(path_name) is None or in_build_output(path_name):
-        return []
+        return None
     text = normalise_text(text or "")
     if is_generated(text) and generator_owned(path_name, settings or {}):
-        return []
-    ctx = Ctx(path_name, text, doc, settings)
+        return None
+    return Ctx(path_name, text, doc, settings)
+
+
+def file_findings(ctx: Ctx, skip: frozenset = frozenset()) -> List[Finding]:
     out: List[Finding] = []
     for rule in RULES:
-        if rule.kind != "file" or ctx.platform not in rule.platforms or (rule.skip_allowed and ctx.allowed):
+        if rule.kind != "file" or rule.id in skip or ctx.platform not in rule.platforms or (rule.skip_allowed and ctx.allowed):
             continue
         for hit in rule.check(ctx):
             line = ctx.line_of(hit.pos)
@@ -1375,6 +2209,22 @@ def audit_text(path_name: str, text: str, doc: Optional[dict], settings: dict) -
                 hit.fix or rule.fix, match=hit.match, source=ctx.line_text(line),
             ))
     out.sort(key=lambda f: (f.line, _ORDER[f.rule]))
+    return out
+
+
+_SEVERITY_RANK = {"error": 0, "warn": 1, "suggest": 2}
+
+
+def cross_findings(proj: Project) -> List[Finding]:
+    """Every cross-file finding (full mode only): errors, then warnings, then suggestions."""
+    out: List[Finding] = []
+    for rule in RULES:
+        if rule.kind != "cross":
+            continue
+        for hit in rule.check(proj):
+            out.append(Finding(rule.id, rule.severity, hit.file, hit.line, hit.message or rule.message.format(match=hit.match),
+                               hit.fix or rule.fix, match=hit.match))
+    out.sort(key=lambda f: (_SEVERITY_RANK[f.severity], _ORDER[f.rule], f.file, f.line))
     return out
 
 
@@ -1424,14 +2274,20 @@ def find_project_root(skill_dir: Path, project: Optional[Path] = None) -> Path:
 
 
 def rel(path: Path, root: Path) -> str:
+    """path relative to root (posix); the path as given when it is outside. Tries the plain absolute path first
+    (no filesystem calls: walked files are already under the resolved root), then resolves symlinks."""
     try:
-        return Path(path).resolve().relative_to(root.resolve()).as_posix()
+        return Path(os.path.abspath(path)).relative_to(os.path.abspath(root)).as_posix()
+    except ValueError:
+        pass
+    try:
+        return Path(path).resolve().relative_to(Path(root).resolve()).as_posix()
     except ValueError:
         return Path(path).as_posix()
 
 
-def load_doc(skill_dir: Path) -> Optional[dict]:
-    """The tokens document, or None when there is no tokens file yet. Several files or broken JSON raise PlumbError."""
+def find_tokens(skill_dir: Path) -> Optional[Path]:
+    """The one *.tokens.json in <skill>/assets/tokens, or None. Several files raise PlumbError."""
     folder = skill_dir / "assets" / "tokens"
     found = sorted(folder.glob("*.tokens.json")) if folder.is_dir() else []
     if not found:
@@ -1439,7 +2295,13 @@ def load_doc(skill_dir: Path) -> Optional[dict]:
     if len(found) > 1:
         names = ", ".join(f.name for f in found)
         raise PlumbError(f"error: several tokens files in {folder}: {names}\nfix: keep exactly one *.tokens.json there")
-    return P.load_tokens(found[0])
+    return found[0]
+
+
+def load_doc(skill_dir: Path) -> Optional[dict]:
+    """The tokens document, or None when there is no tokens file yet. Several files or broken JSON raise PlumbError."""
+    path = find_tokens(skill_dir)
+    return P.load_tokens(path) if path is not None else None
 
 
 def make_settings(root: Path, doc: Optional[dict]) -> dict:
@@ -1475,7 +2337,7 @@ def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: di
     def wanted(path: Path) -> bool:
         if file_ext(path.name) is None:
             return False
-        resolved = path.resolve()
+        resolved = Path(os.path.abspath(path))
         try:  # the design-system skill's own files are not the app; only its starter components are audited
             inside = resolved.relative_to(skill_root).parts
             if inside[:2] != ("assets", "platforms") or "starter" not in inside[2:-1]:
@@ -1526,21 +2388,37 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}" + ("" if n == 1 else "s")
 
 
-def _report(findings: List[Finding], checked: int, as_json: bool) -> int:
+def _report(findings: List[Finding], checked: int, as_json: bool, mode: Optional[str] = None,
+            scales: Optional[Dict[str, List[dict]]] = None) -> int:
     errors = sum(1 for f in findings if f.severity == "error")
-    warnings = len(findings) - errors
+    warnings = sum(1 for f in findings if f.severity == "warn")
+    suggestions = sum(1 for f in findings if f.severity == "suggest")
     if as_json:
-        out = {"version": P.PLUMB_VERSION, "checked": checked, "errors": errors, "warnings": warnings,
-               "findings": [f.to_json() for f in findings]}
+        out: dict = {"version": P.PLUMB_VERSION}
+        if mode:
+            out["mode"] = mode
+        out.update({"checked": checked, "errors": errors, "warnings": warnings, "suggestions": suggestions,
+                    "findings": [f.to_json() for f in findings]})
+        if scales is not None:
+            out["scales"] = scales
         sys.stdout.write(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
     else:
         for f in findings:
             print(f"{f.file}:{f.line}: {f.severity} {f.rule}: {f.message}")
             print(f"  fix: {f.fix}")
-        if findings:
+        if mode == MODE_INCONSISTENCY:
+            print("mode: inconsistency-only (no tokens yet): the scales below are inferred from the code; near-duplicates "
+                  "and one-off values are warnings, raw values are not errors")
+            for kind, groups in (scales or {}).items():
+                if groups:
+                    shown = ", ".join(f"{g['value']} x{g['count']}" for g in groups[:8])
+                    print(f"  scale {kind}: {shown}" + (" ..." if len(groups) > 8 else ""))
+        if errors or warnings:
             print(f"audit: {_plural(errors, 'error')}, {_plural(warnings, 'warning')} in {_plural(checked, 'file')} checked")
         else:
             print(f"audit: no design-system issues in {_plural(checked, 'file')}")
+        if suggestions:
+            print(f"audit: {_plural(suggestions, 'suggestion')} (improvements; they never fail the audit)")
     return 1 if errors else 0
 
 
@@ -1573,9 +2451,13 @@ def run_quick(args: argparse.Namespace, root: Path, doc: Optional[dict], setting
     return _report(findings, checked, True)
 
 
-def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict) -> int:
+MODE_FULL, MODE_INCONSISTENCY = "full", "inconsistency-only"
+
+
+def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
+             tokens_file: Optional[Path] = None) -> int:
     explicit = bool(args.paths)
-    targets = [Path(p) for p in args.paths] if explicit else [root]
+    targets = [Path(p).resolve() for p in args.paths] if explicit else [root.resolve()]
     existing = [t for t in targets if t.exists()]
     for t in targets:
         if not t.exists():
@@ -1585,9 +2467,20 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
               f"fix: pass the folders that hold your UI code, e.g. python3 {rel(skill_dir / SCRIPT_REL, root)} app components",
               file=sys.stderr)
         return 2
+    files = collect_files(existing, root, skill_dir, settings, explicit)
+    return audit_files(files, root, skill_dir, doc, settings, tokens_file, explicit, args.json)
+
+
+def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
+                tokens_file: Optional[Path], explicit: bool, as_json: bool) -> int:
+    """Full mode over a list of files: per-file rules, then the cross-file rules. With no tokens (doc None) this is
+    inconsistency-only mode. A --changed mode (end-of-turn check) can call this with the changed files only."""
+    inconsistency = doc is None
+    skip = _RAW_VALUE_RULES if inconsistency else frozenset()
     findings: List[Finding] = []
-    checked = 0
-    for path in collect_files(existing, root, skill_dir, settings, explicit):
+    ctxs: List[Ctx] = []
+    generated: List[str] = []
+    for path in files:
         name = rel(path, root)
         try:
             size = path.stat().st_size
@@ -1599,15 +2492,24 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
             print(f"note: cannot read {name} ({exc}), skipped", file=sys.stderr)
             continue
         if is_generated(normalise_text(text[:1500])) and generator_owned(name, settings):
-            continue  # a header counts only on the paths the generators own
-        checked += 1
-        findings.extend(audit_text(name, text, doc, settings))
-    if not checked:
-        print(f"error: no UI files in {', '.join(str(t) for t in existing)}, nothing was checked\n"
+            generated.append(text)  # a header counts only on the paths the generators own
+            continue
+        ctx = make_ctx(name, text, doc, settings)
+        if ctx is None:
+            continue
+        ctxs.append(ctx)
+        findings.extend(file_findings(ctx, skip))
+    if not ctxs:
+        print(f"error: no UI files in the paths given, nothing was checked\n"
               f"fix: pass the folders that hold your UI code, e.g. python3 {rel(skill_dir / SCRIPT_REL, root)} app components",
               file=sys.stderr)
         return 2
-    return _report(findings, checked, args.json)
+    if doc is not None and load_build_tokens() is None:
+        print(f"note: {_BUILD_TOKENS} is not next to audit.py: contrast and generated-file checks skipped", file=sys.stderr)
+    proj = Project(root, skill_dir, doc, settings, ctxs, explicit, tokens_file, generated)
+    findings.extend(cross_findings(proj))
+    mode = MODE_INCONSISTENCY if inconsistency else MODE_FULL
+    return _report(findings, len(ctxs), as_json, mode, proj.scales_inferred() if inconsistency else None)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1619,6 +2521,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
+    parser.add_argument("--no-tokens", action="store_true",
+                        help="inconsistency-only mode even when a tokens file exists (infer the scales from the code)")
     args = parser.parse_args(argv)
     if args.before and not args.quick:
         parser.error("--before works only with --quick FILE")
@@ -1627,14 +2531,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     try:
         root = find_project_root(skill_dir, Path(args.project) if args.project else None)
-        doc = load_doc(skill_dir)
+        tokens_file = None if args.no_tokens else find_tokens(skill_dir)
+        doc = P.load_tokens(tokens_file) if tokens_file is not None else None
         settings = make_settings(root, doc)
-        if doc is None:
-            print(f"note: no tokens file in {rel(skill_dir / 'assets' / 'tokens', root)}: only the checks that need no "
-                  f"tokens ran", file=sys.stderr)
+        if doc is None and not args.no_tokens:
+            print(f"note: no tokens file in {rel(skill_dir / 'assets' / 'tokens', root)}: inconsistency-only mode "
+                  f"(only the checks that need no tokens ran)", file=sys.stderr)
         if args.quick:
             return run_quick(args, root, doc, settings)
-        return run_full(args, root, skill_dir, doc, settings)
+        return run_full(args, root, skill_dir, doc, settings, tokens_file)
     except PlumbError as exc:
         print(str(exc), file=sys.stderr)
         return 2

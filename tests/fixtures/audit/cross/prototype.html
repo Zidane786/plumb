@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Checkout prototype</title>
+<style>
+  body { font-family: system-ui, sans-serif; font-size: 16px; color: #1b2230; }
+  .card { padding: 16px; border-radius: 8px; background: #ffffff; }
+  .cta { background: #2563eb; color: #ffffff; padding: 12px 16px; border-radius: 8px; font-size: 16px; }
+  .cta:hover { background: #1d4ed8; transition: background 150ms ease-out; }
+  .cta:focus-visible { outline: 2px solid #2563eb; }
+  .link { color: #2563eb; }
+  .note { color: #2563eb; font-size: 15px; }
+  .tag { border-color: #2563eb; }
+  /* .old { color: #2462ea; } comments are not counted */
+  @media (prefers-reduced-motion: reduce) { * { transition: none; } }
+</style>
+</head>
+<body>
+  <main class="card">
+    <h1 style="font-size: 24px">Checkout ✓</h1>
+    <p style="color: #2463eb; font-size: 16px">Almost done. Order #123 is ready.</p>
+    <button class="cta">Pay</button>
+  </main>
+</body>
+</html>
