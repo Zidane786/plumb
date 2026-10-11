@@ -323,7 +323,7 @@ through the prototype first. `/plumb:audit improve` is for a project that alread
 `fix`): it goes beyond the rules with the suggestions plus a design pass across the product
 (hierarchy, spacing rhythm, consistency between screens, states, dark-mode polish, accessibility
 beyond AA), produces a ranked improvement plan, and for each item the user picks: prototype first →
-approval → build; token changes go through `/plumb:update`. `improve` also improves **the design
+approval → build. Changes to the design system itself are proposed here and made in `/plumb:update` (§3.7). `improve` also improves **the design
 system itself** when the findings show it should change (a missing or mergeable token, a component
 spec that needs a variant, a `ux.md` or `design.md` rule that screens keep breaking for a good
 reason): with the user's OK, `/plumb:update` updates tokens and specs, regenerates the themes,
@@ -353,6 +353,12 @@ Changes or adds tokens or components, adds a platform later ("web only, now add 
 Android": generates the themes, references and starters), or improves a part (e.g. motion).
 Regenerates every output and prototype token block, records the decision, runs the audit and shows
 the diff.
+
+**Improving the system from the audit.** `/plumb:update` reads the latest audit's system-level
+suggestions (missing or mergeable tokens, component specs that need a variant, `ux.md` or
+`design.md` rules that real screens keep breaking for a good reason), proposes them one at a time
+with options and a recommendation, and applies what the user approves: tokens and specs updated,
+themes regenerated, prototypes refreshed, the decision recorded, and the audit re-run.
 
 ### 3.8 `/plumb:upgrade`
 
