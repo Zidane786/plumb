@@ -15,8 +15,10 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 
 import pytest
@@ -693,13 +695,20 @@ def test_catalogue_copies_are_isolated_documents(project: Path) -> None:
     page = read(project / CATALOGUE_REL)
     for theme in ("light", "dark"):
         copy = block(page, "data-copy", f"signup/ready/{theme}")
-        assert '<iframe class="sc-iframe" sandbox="allow-scripts" title="Sign up: Ready, ' + theme + ' theme">' in copy
+        assert '<iframe class="sc-iframe" title="Sign up: Ready, ' + theme + ' theme">' in copy
         assert '<template class="sc-copy"><section data-screen="signup"' in copy
         assert '<label for="email">' in copy and '<input id="email"' in copy  # markup untouched: ids stay as written
-    assert 'allow-same-origin' not in page
+    assert "sandbox=" not in page  # an opaque origin would block the screens' relative file:// images
+    assert '<base href=' in page  # relative paths resolve against the docs folder, as in prototype.html
     assert page.count('<template data-screen-scripts="booking">') == 1 and page.count('<template data-screen-styles="booking">') == 1
     assert "default-src 'none'" in page  # the copies' CSP: nothing from the network
     assert not re.search(r"<style>\s*\[data-screen=", page)  # screen styles live only inside the copies
+
+
+def test_catalogue_says_it_needs_javascript(project: Path) -> None:
+    page = read(project / CATALOGUE_REL)
+    notice = page[page.index("<noscript>"): page.index("</noscript>")]
+    assert "JavaScript" in notice and 'href="prototype.html"' in notice
 
 
 # ---------------------------------------------------------------- browser (headless)
@@ -1035,6 +1044,43 @@ def test_narrow_screen_strip_cards_line_up(browser, built) -> None:
         assert clamp[0] <= clamp[1] * 2 + 1, clamp
         assert page.get_attribute('.pp-nav [data-nav="menu"]', "title") == TITLES["menu"]
         assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+
+def _tiny_png() -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0)
+    pixels = b"".join(b"\x00" + b"\xcc\x00\x00" * 2 for _ in range(2))
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b"")
+
+
+def test_relative_images_load_in_every_copy(browser, tmp_path: Path) -> None:
+    p = make_project(tmp_path / "Café Ünïcode", build=False)
+    (p / DOCS / "img").mkdir(parents=True, exist_ok=True)
+    (p / DOCS / "img/dot.png").write_bytes(_tiny_png())
+    write(p / SCREENS_REL / "pic.html", '<section data-screen="pic" data-title="Picture"><div data-state="ready">'
+          '<img src="img/dot.png" alt="A dot" width="20" height="20" data-test="dot"></div></section>\n')
+    assert run(p).returncode == 0
+    ctx, page, errors, requests = _open(browser, p / CATALOGUE_REL)
+    try:
+        _copies_ready(page)
+        for theme in ("light", "dark"):
+            img = _copy(page, f"pic/ready/{theme}").locator('[data-test="dot"]')
+            img.evaluate("el => el.complete ? null : new Promise(r => { el.onload = el.onerror = r; })")
+            assert img.evaluate("el => el.naturalWidth") == 2, theme
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+    ctx, page, errors, _ = _open(browser, p / PROTO_REL, hash_="#screen-pic")
+    try:
+        img = page.locator('#pp-frame [data-test="dot"]')
+        img.evaluate("el => el.complete ? null : new Promise(r => { el.onload = el.onerror = r; })")
+        assert img.evaluate("el => el.naturalWidth") == 2
         assert errors == []
     finally:
         ctx.close()

@@ -15,9 +15,10 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
   <docs>/screens.html              the catalogue: a sidebar, every screen in every state in light and dark side by side,
                                    the control-state sheet (buttons, input, chip, link in default, hover, focus, pressed,
                                    disabled, loading) drawn from the tokens, and the Decisions page. Each copy is its
-                                   own sandboxed <iframe srcdoc> (allow-scripts, a no-network CSP), built by the page
-                                   from a <template>, sized to its content: ids, url(#id), #id selectors, scripts and
-                                   radio groups never meet another copy.
+                                   own <iframe srcdoc> document, built by the page from a <template>, with a <base> at
+                                   the docs folder (relative images load as in prototype.html) and a CSP that allows no
+                                   network, sized to its content: ids, url(#id), #id selectors, scripts and radio groups
+                                   never meet another copy. The catalogue needs JavaScript (a <noscript> note says so).
   <docs>/prototype/screens.json    the screen map. This script is its only writer: id, title, states, route, files
                                    (globs relative to the project root), files_hash, approved {by, at, hash} | null,
                                    synced_from_code, status (to-build | built).
@@ -821,11 +822,12 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
             label = state_label(st)
             pair = []
             for theme, name in (("light", "Light"), ("dark", "Dark")):
-                # each copy is its own document (sandboxed iframe, built from the template by the page's script), so
-                # ids, url(#id), #id selectors, getElementById and radio groups never meet another copy's
+                # each copy is its own document (an iframe built from the template by the page's script), so ids,
+                # url(#id), #id selectors, getElementById and radio groups never meet another copy's. No sandbox: an
+                # opaque-origin frame may not load the screen's relative file:// images; its CSP keeps the network out
                 pair.append(f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
                             f'<figcaption>{name}</figcaption>'
-                            f'<iframe class="sc-iframe" sandbox="allow-scripts" '
+                            f'<iframe class="sc-iframe" '
                             f'title="{_e(s.title)}: {_e(label)}, {theme} theme"></iframe>'
                             f'<template class="sc-copy">{s.render(st)}</template></figure>')
             copies = "".join(pair)
