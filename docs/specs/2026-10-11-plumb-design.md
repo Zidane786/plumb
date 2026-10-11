@@ -583,13 +583,14 @@ UX is checked while building, not only after:
 
 ## 8. Hooks
 
-Three scripts behind Slate's launchers: `run.sh` (python3 / python / py -3, 3.9+), `run.cmd` and
-a `powershell` command on every hook for Windows Copilot. All three apply in **both tools**.
+Four scripts behind Slate's launchers: `run.sh` (python3 / python / py -3, 3.9+), `run.cmd` and
+a `powershell` command on every hook for Windows Copilot. All four apply in **both tools**.
 
 | Script | Event · matcher | Job |
 |---|---|---|
 | `session_start.py` | SessionStart | One status line (`Plumb: caredesk-design-system 1.0.0 · tokens up to date · 3 audit issues · read the skill before UI changes`); "run /plumb:upgrade" when `PLUMB.md` is older than the plugin; a warning when a linked design system path is missing. Copilot: `{"additionalContext"}`. Takes the session snapshot (hash of every UI file already changed or untracked). Silent in projects without `PLUMB.md`. |
 | `pre_edit.py` | PreToolUse · `Edit\|Write\|MultiEdit\|Bash\|PowerShell` | **Prototype first:** refuses creating a new page or route file that has no approved screen in `screens.json` (when prototype sync is on). **Guard:** refuses hand edits to generated files (themes, copies, `specimen.html`, `prototype.html`, `screens.html`, `screens.json`, `tours/*.html`), including shell writes (`sed -i`, `>`, `tee`, …, parsed as Slate parses them); running `build-tokens.py` is allowed. **Edit check** (when on): computes the file before and after the edit, runs `audit.py --quick`, refuses only errors the edit adds. |
+| `guard_installs.py` | PreToolUse · `Bash\|PowerShell\|Edit\|Write\|MultiEdit` | **Install guard**, from `PLUMB.md` `Installs: ask \| never \| allow` (default `ask`, chosen at init). Catches package installs on every OS: npm/npx/pnpm/yarn/bun, pip/pip3/`python -m pip`/uv/poetry/pipx/conda, brew/apt/apt-get/yum/dnf, choco/winget/scoop, gem, cargo, go get/install, composer, dotnet add package, pod; commands are split on `&&`, `;` and `\|` and unwrapped from `sudo`, `cmd /c`, `powershell -c`. Also catches edits that add a dependency to a manifest (`package.json`, `requirements*.txt`, `pyproject.toml`, `Pipfile`, `Gemfile`, `Cargo.toml`, `go.mod`, `build.gradle(.kts)`, `Package.swift`, `Podfile`). `ask` → the tool's approval prompt (`permissionDecision: "ask"`, in Claude Code and Copilot CLI) naming what would be installed; `never` → refused with `error:` + `fix:`; `allow` → silent. A script that may install internally (`make setup`, `./bootstrap.sh`) is named in the prompt; this is a guardrail, not a sandbox: registry controls remain the real enforcement. |
 | `stop_check.py` | Stop | **End-of-turn check** (when on): if no UI file changed since the snapshot, silent. Otherwise `audit.py --changed`, which includes **prototype sync** (a screen whose source files changed this session while its `screens/<id>.html` did not); new errors block the stop once with the list and fixes (`{"decision": "block", "reason": …}`); with `stop_hook_active` set it only reports, so it cannot loop. A clean run prints one line. |
 
 **Copilot CLI differences** (pinned by `tests/test_copilot.py`): edits arrive as apply_patch text
@@ -626,7 +627,7 @@ Python: `python3`
 ## Checks
 Edit check: on
 End-of-turn check: on
-New dependencies: ask              (ask | never)
+Installs: ask                      (ask | never | allow; the install guard, §8)
 UI files: app/**, components/** · *.tsx *.jsx *.css
 Allowed raw values: components/ui/**
 
@@ -689,9 +690,9 @@ no hosted web fonts. A project font is embedded from the project's own font file
 system font stack is used. Every page opens offline from disk.
 
 **New dependencies in the project:** when a component the agent writes would need a package the
-project doesn't have, Plumb asks first and records the answer in the decision log. `PLUMB.md`
-`New dependencies: ask | never` (default `ask`); with `never`, components are built from what
-the project already has.
+project doesn't have, Plumb asks first and records the answer in the decision log; with
+`Installs: never`, components are built from what the project already has. The install guard
+(§8) enforces the same setting for every install, by any agent, for anything.
 
 **Optional, each the organisation's choice:** Effective HTML skills (else Plumb's built-in rules
 and templates), a browser tool (else audit and `/plumb:ux` review code instead of screenshots),
@@ -746,6 +747,9 @@ hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE
 - `test_hooks.py`: guard (file and shell writes), prototype first (a new route without an
   approved screen), edit check (new-only), stop check (silent, block once, no loop, prototype
   sync), fail-open paths, timing budget.
+- `test_guard_installs.py`: every package manager and OS form, chained and wrapped commands,
+  manifest edits, `ask` / `never` / `allow`, no false positives (e.g. `npm run`, `pip list`,
+  `git add`), both tools' output formats.
 - `test_copilot.py`: apply_patch, camelCase input, deny JSON, additionalContext, `tool_result`,
   `powershell` on every hook.
 - `test_placement.py`: every layout in §4 on fixture trees.
