@@ -4,12 +4,17 @@
 Usage:
   audit.py [PATHS...] [--json] [--no-tokens] [--root SKILL_DIR] [--project PATH]   full audit (default: the whole project)
   audit.py --quick FILE [--before -|PATH] [--root SKILL_DIR]                        one file, only what an edit adds (JSON)
+  audit.py [PATHS...] --html [OUT.html]                                            also write the HTML report
 
 Full mode prints every finding as `file:line: <severity> <rule>: <message>` and `  fix: <fix>`, then a summary
 ("N errors, N warnings" and, on its own line, "N suggestions"). It runs the per-file rules and then the cross-file
 rules. --quick reads the file's text before the edit from stdin (`--before -`) or a file, audits FILE as it is now, and
 prints JSON with only the findings the edit adds (compared by rule and matched text, not by line, so moved lines are not
 new); --quick never runs the cross-file rules.
+--html writes the report page (default <docs_dir>/audit-YYYY-MM-DD.html) from templates/audit-report.html.tmpl, styled
+with the project's tokens: the summary, Issues (errors then warnings, grouped by rule, each with file:line, message and
+fix, filterable by severity and rule), Improvements (the suggestions ranked by impact = the rule's weight x occurrences,
+each with why and fix) and how to re-run. The terminal output and the exit code are the same with or without it.
 --json prints {"version", "mode", "checked", "errors", "warnings", "suggestions",
 "findings": [{"rule","severity","file","line","message","fix"}]} (+ "scales" in inconsistency-only mode).
 
@@ -84,6 +89,8 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import datetime
+import html
 import importlib.util
 import json
 import os
@@ -100,7 +107,8 @@ import _plumb as P  # noqa: E402
 from _plumb import PlumbError  # noqa: E402
 
 SCRIPT_REL = "scripts/audit.py"
-USAGE = f"python3 {SCRIPT_REL} [PATHS...] [--json] [--no-tokens] [--root SKILL_DIR] [--project PATH] | --quick FILE --before -"
+USAGE = (f"python3 {SCRIPT_REL} [PATHS...] [--json] [--html [OUT.html]] [--no-tokens] [--root SKILL_DIR] [--project PATH]"
+         " | --quick FILE --before -")
 WEB_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss"))
 PLATFORM_OF = {**{e: "web" for e in WEB_EXT}, ".swift": "ios", ".kt": "android"}
 SKIP_DIRS = P.SKIP_DIRS
@@ -128,6 +136,8 @@ class Rule:
     only, check(Project) yields XHits. severity: error | warn | suggest. message is a template with {match}; fix is the
     default (non token-aware) fix.
     skip_allowed: the rule does not apply to paths on PLUMB.md's `Allowed raw values:` list.
+    weight: how much one occurrence matters; the HTML report ranks Improvements by weight x occurrences.
+    why: one sentence on why it matters (shown with each suggestion in the HTML report).
     """
 
     id: str
@@ -138,6 +148,8 @@ class Rule:
     message: str
     fix: str
     skip_allowed: bool = True
+    weight: int = 1
+    why: str = ""
 
 
 @dataclass
@@ -2398,17 +2410,29 @@ RULES: List[Rule] = [
     Rule("reduced-motion", "warn", WEB, "cross", check_reduced_motion, "no reduced-motion handling",
          "add a prefers-reduced-motion block"),
     Rule("missing-token", "suggest", ALL, "cross", check_missing_token, "{match} has no token",
-         "add a token with /plumb:update"),
+         "add a token with /plumb:update", weight=3,
+         why="A raw value repeated across files drifts the moment one copy changes; a token keeps every use in step "
+             "and lets dark mode and a rebrand reach it."),
     Rule("unused-token", "suggest", ALL, "cross", check_unused_token, "{match} is unused",
-         "remove it with /plumb:update, or use it"),
+         "remove it with /plumb:update, or use it", weight=1,
+         why="A token nothing uses still has to be named, documented and kept in contrast; removing it (or using it) "
+             "keeps the scale honest."),
     Rule("duplicate-tokens", "suggest", ALL, "cross", check_duplicate_tokens, "{match} duplicates another token",
-         "merge the two tokens with /plumb:update"),
+         "merge the two tokens with /plumb:update", weight=2,
+         why="Two tokens nobody can tell apart get used interchangeably, so changing one leaves half the product "
+             "behind."),
     Rule("consolidate-components", "suggest", WEB, "cross", check_consolidate_components,
-         "{match} differs from another component only in padding/radius", "make one component with a variant"),
+         "{match} differs from another component only in padding/radius", "make one component with a variant", weight=2,
+         why="Components that differ only in padding or radius drift apart over time; one component with a variant is "
+             "one place to fix and to test."),
     Rule("contrast-headroom", "suggest", ALL, "cross", check_contrast_headroom, "{match} barely passes",
-         "nudge the token for 0.5 to spare"),
+         "nudge the token for 0.5 to spare", weight=3,
+         why="A pair that only just passes fails after the smallest tweak, on a dim screen or in the other theme; a "
+             "little headroom keeps the text readable."),
     Rule("consistency", "suggest", WEB, "cross", check_consistency, "{match} differs from the majority",
-         "pick one value"),
+         "pick one value", weight=2,
+         why="The same control with a different padding or radius on different screens makes the product feel "
+             "unfinished, and it can no longer be changed in one place."),
 ]
 _ORDER = {r.id: i for i, r in enumerate(RULES)}
 
@@ -2619,6 +2643,184 @@ def read_source(path: Path) -> str:
 # ---------------------------------------------------------------- CLI
 
 
+# ---------------------------------------------------------------- the HTML report (--html)
+
+
+REPORT_TEMPLATE = "audit-report.html.tmpl"
+_SEV_WORD = {"error": ("Error", "Errors"), "warn": ("Warning", "Warnings"), "suggest": ("Suggestion", "Suggestions")}
+
+
+def _t(text: object) -> str:
+    """Text content, escaped (quotes kept as they are, so messages read and search the same as in the terminal)."""
+    return html.escape(str(text), quote=False)
+
+
+def _a(text: object) -> str:
+    return html.escape(str(text), quote=True)
+
+
+def _sev(severity: str, plural: bool = False) -> str:
+    word = _SEV_WORD[severity][1 if plural else 0]
+    return f'<span class="sev sev-{severity}"><span class="sev-shape" aria-hidden="true"></span> {word}</span>'
+
+
+def _finding_item(f: Finding) -> str:
+    return (f'<li class="finding" data-severity="{_a(f.severity)}" data-rule="{_a(f.rule)}">'
+            f'<div class="f-where">{_sev(f.severity)}<code class="loc">{_t(f"{f.file}:{f.line}")}</code></div>'
+            f'<div class="f-what"><p class="msg">{_t(f.message)}</p>'
+            f'<p class="fix"><span class="fix-label">Fix</span>{_t(f.fix)}</p></div></li>')
+
+
+def _rules_by_id() -> Dict[str, Rule]:
+    return {r.id: r for r in RULES}
+
+
+def report_issues(findings: List[Finding]) -> str:
+    issues = sorted((f for f in findings if f.severity in ("error", "warn")),
+                    key=lambda f: (_SEVERITY_RANK[f.severity], _ORDER.get(f.rule, 999), f.file, f.line))
+    if not issues:
+        return '    <p class="empty">No errors or warnings.</p>'
+    rules = _rules_by_id()
+    out = []
+    for severity in ("error", "warn"):
+        mine = [f for f in issues if f.severity == severity]
+        if not mine:
+            continue
+        out.append(f'    <div class="sev-group" data-group>')
+        out.append(f'      <h3 class="sev-h">{_sev(severity, True)} <span class="count">{len(mine)}</span></h3>')
+        for rule_id in dict.fromkeys(f.rule for f in mine):
+            group = [f for f in mine if f.rule == rule_id]
+            what = rules[rule_id].message.replace("{match}", "…").strip(" :…") if rule_id in rules else ""
+            out.append(f'      <div class="rule-group" data-group><h4><code>{_t(rule_id)}</code>'
+                       f'<span class="rule-msg">{_t(what)}</span><span class="count">{len(group)}</span></h4>')
+            out.append('        <ul class="findings" role="list">')
+            out += [f"          {_finding_item(f)}" for f in group]
+            out.append("        </ul>\n      </div>")
+        out.append("    </div>")
+    return "\n".join(out)
+
+
+def improvement_groups(findings: List[Finding]) -> List[Tuple[str, int, int, List[Finding]]]:
+    """(rule, impact, weight, findings) for the suggestions, highest impact (weight x occurrences) first."""
+    rules = _rules_by_id()
+    by_rule: Dict[str, List[Finding]] = {}
+    for f in findings:
+        if f.severity == "suggest":
+            by_rule.setdefault(f.rule, []).append(f)
+    groups = []
+    for rule_id, items in by_rule.items():
+        weight = rules[rule_id].weight if rule_id in rules else 1
+        groups.append((rule_id, weight * len(items), weight, sorted(items, key=lambda f: (f.file, f.line))))
+    groups.sort(key=lambda g: (-g[1], _ORDER.get(g[0], 999)))
+    return groups
+
+
+def report_improvements(findings: List[Finding]) -> str:
+    groups = improvement_groups(findings)
+    if not groups:
+        return '    <p class="empty">No improvements suggested.</p>'
+    rules = _rules_by_id()
+    out = ['    <ol class="improvements" role="list">']
+    for rank, (rule_id, impact, weight, items) in enumerate(groups, 1):
+        why = rules[rule_id].why if rule_id in rules else ""
+        times = f"{len(items)} occurrence" + ("" if len(items) == 1 else "s")
+        out.append(f'      <li class="improvement" data-rule="{_a(rule_id)}" data-impact="{impact}" data-group>'
+                   f'<span class="rank" aria-hidden="true">{rank}</span><div class="imp-body">'
+                   f'<div class="imp-head"><h3><span class="sr-only">Rank {rank}: </span><code>{_t(rule_id)}</code></h3>'
+                   f'<span class="impact">impact {impact} (weight {weight} × {times})</span></div>'
+                   + (f'<p class="why"><span class="why-label">Why</span>{_t(why)}</p>' if why else "")
+                   + '<ul class="findings" role="list">' + "".join(_finding_item(f) for f in items) + "</ul></div></li>")
+    out.append("    </ol>")
+    return "\n".join(out)
+
+
+def report_scales(scales: Optional[Dict[str, List[dict]]]) -> str:
+    if not scales or not any(scales.values()):
+        return ""
+    rows = []
+    for kind, groups in scales.items():
+        if groups:
+            shown = ", ".join(f"{g['value']} ×{g['count']}" for g in groups[:12]) + (" …" if len(groups) > 12 else "")
+            rows.append(f"<tr><th scope=\"row\">{_t(kind)}</th><td>{_t(shown)}</td></tr>")
+    return ('  <section id="scales" aria-labelledby="scales-h">\n    <div class="section-head"><h2 id="scales-h">Inferred '
+            'scales</h2><p class="note">No tokens yet: the values the code already uses, most used first. Near-duplicates '
+            'and one-off values are reported above.</p></div>\n    <div class="table-wrap"><table><thead><tr>'
+            '<th scope="col">Kind</th><th scope="col">Values (uses)</th></tr></thead><tbody>' + "".join(rows)
+            + "</tbody></table></div>\n  </section>")
+
+
+def render_report(template: str, findings: List[Finding], checked: int, mode: str, scales: Optional[Dict[str, List[dict]]],
+                  doc: Optional[dict], settings: dict, root: Path, skill_dir: Path, day: str) -> str:
+    """The audit report page from the fixed template: summary, Issues (errors then warnings, grouped by rule),
+    Improvements (suggestions ranked by impact), and how to re-run. Styled with the project's tokens when there are any."""
+    errors = sum(1 for f in findings if f.severity == "error")
+    warnings = sum(1 for f in findings if f.severity == "warn")
+    suggestions = sum(1 for f in findings if f.severity == "suggest")
+    project = (str(settings.get("project") or "").strip() or str(settings.get("Project") or "").strip()
+               or root.name or "This project")
+    script = rel(skill_dir / SCRIPT_REL, root)
+    theme_css = "/* No tokens yet: Plumb's neutral page colours. */"
+    bt = load_build_tokens() if doc is not None else None
+    if bt is not None:
+        try:
+            theme_css = bt.page_theme_css(doc)
+        except PlumbError:
+            theme_css = "/* The tokens could not be turned into CSS (see the findings): Plumb's neutral page colours. */"
+    if errors:
+        verdict = ('<span class="sev sev-error"><span class="sev-shape" aria-hidden="true"></span> Fails</span> '
+                   f"{_plural(errors, 'error')} to fix" + (f", {_plural(warnings, 'warning')} to review" if warnings else ""))
+    else:
+        verdict = ('<span class="sev sev-pass"><span class="sev-shape" aria-hidden="true"></span> Pass</span> '
+                   "No errors" + (f", {_plural(warnings, 'warning')} to review" if warnings else ""))
+    mode_text = "full audit" if mode == MODE_FULL else "inconsistency-only (no tokens yet)"
+    mode_note = ""
+    if mode == MODE_INCONSISTENCY:
+        mode_note = ('    <p class="note mode-note">Mode: inconsistency-only. There are no tokens yet, so raw values are '
+                     "not errors; the scales are inferred from the code and near-duplicates and one-off values are "
+                     "warnings.</p>")
+    present = [r.id for r in RULES if any(f.rule == r.id for f in findings)]
+    present += sorted({f.rule for f in findings} - set(present))
+    options = "\n".join(f'          <option value="{_a(r)}">{_t(r)} ({sum(1 for f in findings if f.rule == r)})</option>'
+                        for r in present)
+    values = {
+        "header": f"<!-- GENERATED by {_t(script)} --html on {day}. Do not edit: run the audit again. -->",
+        "title": _t(f"{project}: design audit {day}"),
+        "project": _t(project),
+        "date": _t(day),
+        "mode": _t(mode_text),
+        "plumb_version": _t(P.PLUMB_VERSION),
+        "theme_css": theme_css,
+        "verdict": verdict,
+        "errors": str(errors),
+        "warnings": str(warnings),
+        "suggestions": str(suggestions),
+        "files": str(checked),
+        "mode_note": mode_note,
+        "rule_options": options,
+        "issues": report_issues(findings),
+        "improvements": report_improvements(findings),
+        "scales": report_scales(scales),
+        "rerun": _t(f"python3 {script} --html"),
+    }
+    text = P.fill_template(template, values, REPORT_TEMPLATE)
+    return text if text.endswith("\n") else text + "\n"
+
+
+def write_report(out: Path, text: str, root: Path) -> bool:
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    except OSError as exc:
+        print(f"error: cannot write the report to {rel(out, root)} ({exc.strerror or exc})\n"
+              f"fix: pass a writable path ending in .html, e.g. --html docs/design/audit.html", file=sys.stderr)
+        return False
+    print(f"wrote {rel(out, root)}", file=sys.stderr)
+    return True
+
+
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # shaped like every other refusal
         self.exit(2, f"error: {message}\nfix: {USAGE}\n")
@@ -2694,6 +2896,24 @@ def run_quick(args: argparse.Namespace, root: Path, doc: Optional[dict], setting
 MODE_FULL, MODE_INCONSISTENCY = "full", "inconsistency-only"
 
 
+def _html_target(given: str, root: Path, skill_dir: Path, settings: dict) -> Tuple[Path, str]:
+    """(report path, template text) for --html; raises PlumbError when the template is missing or unreadable."""
+    tpl = P.find_template(skill_dir, REPORT_TEMPLATE)
+    if tpl is None:
+        raise PlumbError(f"error: templates/{REPORT_TEMPLATE} is missing from {rel(skill_dir, root)}, so the HTML report "
+                         f"cannot be written\nfix: copy it from the Plumb plugin's assets/skill/templates/ into "
+                         f"{rel(skill_dir / 'templates', root)}/ (or run /plumb:upgrade), then run the audit again")
+    try:
+        template = tpl.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PlumbError(f"error: {tpl}: cannot read the report template ({exc})\n"
+                         f"fix: restore it from the Plumb plugin's assets/skill/templates/") from None
+    if given:
+        return Path(given).resolve(), template
+    docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
+    return (root / docs / f"audit-{datetime.date.today().isoformat()}.html").resolve(), template
+
+
 def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
              tokens_file: Optional[Path] = None) -> int:
     explicit = bool(args.paths)
@@ -2712,11 +2932,13 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
     ui = str(settings.get("UI files", "") or "").strip()
     if ui and not explicit:
         looked += f", narrowed by PLUMB.md UI files: {ui}"
-    return audit_files(files, root, skill_dir, doc, settings, tokens_file, explicit, args.json, looked)
+    return audit_files(files, root, skill_dir, doc, settings, tokens_file, explicit, args.json, looked,
+                       html_out=getattr(args, "html_out", None))
 
 
 def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
-                tokens_file: Optional[Path], explicit: bool, as_json: bool, looked: str = "the paths given") -> int:
+                tokens_file: Optional[Path], explicit: bool, as_json: bool, looked: str = "the paths given",
+                html_out: Optional[Tuple[Path, str]] = None) -> int:
     """Full mode over a list of files: per-file rules, then the cross-file rules. With no tokens (doc None) this is
     inconsistency-only mode. A --changed mode (end-of-turn check) can call this with the changed files only."""
     inconsistency = doc is None
@@ -2754,7 +2976,14 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
     proj = Project(root, skill_dir, doc, settings, ctxs, explicit, tokens_file, generated)
     findings.extend(cross_findings(proj))
     mode = MODE_INCONSISTENCY if inconsistency else MODE_FULL
-    return _report(findings, len(ctxs), as_json, mode, proj.scales_inferred() if inconsistency else None)
+    scales = proj.scales_inferred() if inconsistency else None
+    code = _report(findings, len(ctxs), as_json, mode, scales)
+    if html_out is not None:  # (path, template text): the terminal output above is unchanged
+        page = render_report(html_out[1], findings, len(ctxs), mode, scales, doc, settings, root, skill_dir,
+                             datetime.date.today().isoformat())
+        if not write_report(html_out[0], page, root):
+            return 2
+    return code
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -2764,6 +2993,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--quick", metavar="FILE", help="check one file and report only what the edit adds (JSON)")
     parser.add_argument("--before", metavar="-|PATH", help="with --quick: the file's text before the edit (- reads stdin)")
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
+    parser.add_argument("--html", nargs="?", const="", metavar="OUT.html",
+                        help="also write the HTML report (default <docs_dir>/audit-YYYY-MM-DD.html); put it after the PATHS")
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     parser.add_argument("--no-tokens", action="store_true",
@@ -2773,6 +3004,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--before works only with --quick FILE")
     if args.quick and args.paths:
         parser.error("--quick checks one file: pass no other paths")
+    if args.quick and args.html is not None:
+        parser.error("--quick prints JSON for one edit; --html is for the full audit (drop --quick)")
+    if args.html and not args.html.lower().endswith((".html", ".htm")):
+        parser.error(f"--html takes the report's path ending in .html, got {args.html!r} (put --html after the PATHS, "
+                     f"or write --html=OUT.html)")
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     try:
         root = find_project_root(skill_dir, Path(args.project) if args.project else None)
@@ -2784,6 +3020,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                   f"(only the checks that need no tokens ran)", file=sys.stderr)
         if args.quick:
             return run_quick(args, root, doc, settings)
+        args.html_out = None
+        if args.html is not None:
+            args.html_out = _html_target(args.html, root, skill_dir, settings)
         return run_full(args, root, skill_dir, doc, settings, tokens_file)
     except PlumbError as exc:
         print(str(exc), file=sys.stderr)

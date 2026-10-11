@@ -49,6 +49,33 @@ def utf8_stdio() -> None:
             pass
 
 
+# ---------------------------------------------------------------- page templates (specimen, audit report)
+
+
+def find_template(skill_dir: Optional[Path], name: str) -> Optional[Path]:
+    """<skill>/templates/<name>, else the templates folder next to these scripts (the plugin's masters), else None."""
+    here = Path(__file__).resolve().parents[1] / "templates" / name
+    for path in ([Path(skill_dir) / "templates" / name] if skill_dir is not None else []) + [here]:
+        if path.is_file():
+            return path
+    return None
+
+
+_SLOT = re.compile(r"\{\{([a-z_]+)\}\}")
+
+
+def fill_template(text: str, values: dict, name: str = "template") -> str:
+    """Every {{slot}} replaced in one pass (inserted text is never scanned again). An unknown slot is an error."""
+    text = text.replace("\r\n", "\n").lstrip("\ufeff")
+
+    def sub(m: "re.Match[str]") -> str:
+        if m.group(1) not in values:
+            raise _err(f"{name}: unknown slot {m.group(0)}", "restore the template from the Plumb plugin (assets/skill/templates/)")
+        return str(values[m.group(1)])
+
+    return _SLOT.sub(sub, text)
+
+
 # ---------------------------------------------------------------- reading tokens
 
 

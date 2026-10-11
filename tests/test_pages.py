@@ -1,0 +1,520 @@
+"""The two fixed-template pages: the audit report (audit.py --html) and the specimen (written by build-tokens.py).
+
+Static checks run everywhere. The browser checks load both pages headless at 1280 and 390 px, in light and dark, and
+skip only when Playwright is not importable.
+"""
+
+from __future__ import annotations
+
+import datetime
+import html
+import importlib.util
+import json
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+SKILL_SRC = REPO / "plugins/plumb/assets/skill"
+SCRIPTS = SKILL_SRC / "scripts"
+TEMPLATES = SKILL_SRC / "templates"
+WEB_TEMPLATES = SKILL_SRC / "assets/platforms/web"
+FIXTURE = REPO / "tests/fixtures/pages"
+SKILL_REL = ".claude/skills/demo-design-system"
+TOKENS_REL = f"{SKILL_REL}/assets/tokens/demo.tokens.json"
+SPECIMEN_REL = "docs/design/specimen.html"
+STATES = ("default", "hover", "focus", "pressed", "disabled", "loading")
+COMPONENTS = ("button-primary", "button-secondary", "button-outline", "button-danger", "input", "chip", "card")
+
+sys.path.insert(0, str(SCRIPTS))
+import _plumb as P  # noqa: E402
+
+
+def _load(name: str, file: str):
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / file)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+A = _load("plumb_audit", "audit.py")
+BT = _load("plumb_build_tokens", "build-tokens.py")
+
+
+def write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def make_project(dest: Path, app: bool = True, templates: bool = True, mutate=None, build: bool = True) -> Path:
+    """A project with the pages fixture's tokens (and app files), the skill's scripts and (by default) its templates."""
+    dest.mkdir(parents=True, exist_ok=True)
+    if app:
+        shutil.copytree(FIXTURE / "app", dest / "app")
+    skill = dest / SKILL_REL
+    (skill / "scripts").mkdir(parents=True, exist_ok=True)
+    for name in ("_plumb.py", "audit.py", "build-tokens.py"):
+        shutil.copy(SCRIPTS / name, skill / "scripts" / name)
+    if templates:
+        (skill / "templates").mkdir(parents=True, exist_ok=True)
+        for name in ("specimen.html.tmpl", "audit-report.html.tmpl"):
+            shutil.copy(TEMPLATES / name, skill / "templates" / name)
+    doc = json.loads((FIXTURE / "tokens.json").read_text(encoding="utf-8"))
+    if mutate:
+        mutate(doc)
+    write(dest / TOKENS_REL, json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+    write(skill / "assets/platforms/web/tokens.css.template",
+          (WEB_TEMPLATES / "tokens.css.template.tailwind-v4").read_text(encoding="utf-8"))
+    write(dest / "PLUMB.md", "Project: demo\n\n## Checks\nAllowed raw values: components/ui/**\n")
+    if build:
+        r = build_tokens(dest)
+        assert r.returncode == 0, r.stdout + r.stderr
+    return dest
+
+
+def build_tokens(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-tokens.py"), *args], cwd=str(project),
+                          capture_output=True, text=True, encoding="utf-8")
+
+
+def audit(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/audit.py"), *args], cwd=str(project),
+                          capture_output=True, text=True, encoding="utf-8")
+
+
+def doc_of(project: Path) -> dict:
+    return P.load_tokens(project / TOKENS_REL)
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def today_report(project: Path) -> Path:
+    return project / f"docs/design/audit-{datetime.date.today().isoformat()}.html"
+
+
+def assert_refusal(r, *needles: str) -> None:
+    assert r.returncode == 2, (r.returncode, r.stdout, r.stderr)
+    assert "error: " in r.stderr and "\nfix: " in r.stderr, r.stderr
+    assert "Traceback" not in r.stderr
+    for n in needles:
+        assert n in r.stderr, r.stderr
+
+
+@pytest.fixture()
+def project(tmp_path: Path) -> Path:
+    return make_project(tmp_path / "proj")
+
+
+@pytest.fixture()
+def report(project: Path) -> Path:
+    r = audit(project, "--html")
+    assert r.returncode == 1, r.stdout + r.stderr
+    return today_report(project)
+
+
+NETWORK = re.compile(r"""(?:\b(?:src|href|action|poster|data)\s*=\s*["']?\s*https?:|@import\s+(?:url\()?\s*["']?\s*https?:"""
+                     r"""|url\(\s*["']?\s*https?:|\bimport\s*\(\s*["']https?:)""", re.I)
+
+
+def assert_offline(text: str) -> None:
+    assert not NETWORK.search(text), NETWORK.search(text).group(0)
+    assert "<link" not in text.lower() or not re.search(r"<link[^>]+href\s*=\s*[\"']?(?:https?:)?//", text, re.I)
+
+
+def assert_document(text: str) -> None:
+    assert text.startswith("<!doctype html>")
+    head = text[:3000].lower()
+    assert '<meta charset="utf-8">' in head
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in head
+    assert "</html>" in text[-200:]
+
+
+# ---------------------------------------------------------------- templates
+
+
+def test_templates_are_complete_offline_documents() -> None:
+    for name in ("specimen.html.tmpl", "audit-report.html.tmpl"):
+        text = read(TEMPLATES / name)
+        assert_document(text)
+        assert_offline(text)
+        assert 'id="theme-toggle"' in text
+        assert "prefers-color-scheme: dark" in text and "prefers-reduced-motion: reduce" in text
+        assert ":focus-visible" in text
+        assert "data-theme" in text
+
+
+# ---------------------------------------------------------------- specimen
+
+
+def test_build_writes_the_specimen_with_a_generated_header(project: Path) -> None:
+    path = project / SPECIMEN_REL
+    text = read(path)
+    assert_document(text)
+    head = "\n".join(text.splitlines()[:5])
+    assert "GENERATED" in head and "do not edit" in head.lower()
+    assert TOKENS_REL in head and "build-tokens.py" in head
+    assert "Café Ünïcode" in text
+    assert_offline(text)
+
+
+def test_specimen_is_in_outputs_and_byte_stable(project: Path) -> None:
+    path = (project / SPECIMEN_REL).resolve()
+    out = BT.outputs(doc_of(project), project / SKILL_REL)
+    assert path in out
+    first = path.read_bytes()
+    assert out[path].encode("utf-8") == first
+    r = build_tokens(project)
+    assert r.returncode == 0 and "specimen" not in r.stdout, r.stdout
+    assert path.read_bytes() == first
+    assert not re.search(r"20\d\d-\d\d-\d\d", first.decode("utf-8")), "no date or timestamp in the specimen"
+
+
+def test_check_covers_the_specimen(project: Path) -> None:
+    assert build_tokens(project, "--check").returncode == 0
+    path = project / SPECIMEN_REL
+    write(path, read(path).replace("</main>", "<p>hand edit</p></main>"))
+    r = build_tokens(project, "--check")
+    assert r.returncode == 1 and f"stale: {SPECIMEN_REL}" in r.stdout, r.stdout
+    path.unlink()
+    r = build_tokens(project, "--check")
+    assert r.returncode == 1 and f"stale: {SPECIMEN_REL}" in r.stdout, r.stdout
+
+
+def test_specimen_follows_docs_dir(tmp_path: Path) -> None:
+    def mutate(doc: dict) -> None:
+        doc["$extensions"]["plumb"]["docs_dir"] = "design/system"
+
+    p = make_project(tmp_path / "proj", mutate=mutate)
+    assert (p / "design/system/specimen.html").is_file()
+    assert not (p / SPECIMEN_REL).exists()
+
+
+def test_specimen_skipped_with_a_note_when_the_template_is_missing(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "proj", templates=False, build=False)
+    r = build_tokens(p)
+    assert r.returncode == 0, r.stderr
+    assert "note:" in r.stderr and "specimen.html.tmpl" in r.stderr, r.stderr
+    assert not (p / SPECIMEN_REL).exists()
+    r = build_tokens(p, "--check")
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_specimen_shows_every_token(project: Path) -> None:
+    text = read(project / SPECIMEN_REL)
+    doc = doc_of(project)
+    for path, _tok, _type in P.iter_tokens(doc):
+        assert f'data-token="{path}"' in text, path
+        assert BT.varname(path) in text, path
+    for section in ("colour", "type", "spacing", "radius", "shadow", "motion", "components", "other"):
+        assert f'id="{section}"' in text, section
+
+
+def _row(text: str, path: str) -> str:
+    start = text.index(f'data-token="{path}"')
+    end = text.find('data-token="', start + 10)
+    return text[start:end if end != -1 else len(text)]
+
+
+def test_specimen_colours_in_light_and_dark_with_contrast(project: Path) -> None:
+    text = read(project / SPECIMEN_REL)
+    doc = doc_of(project)
+    for path, _tok, ttype in P.iter_tokens(doc):
+        if ttype != "color":
+            continue
+        row = _row(text, path)
+        light = P.parse_color(P.resolve(doc, path, "light"))[0]
+        dark = P.parse_color(P.resolve(doc, path, "dark"))[0]
+        assert light in row and dark in row, path
+        assert 'class="pl-light' in row and 'class="pl-dark' in row, path
+    pairs = BT.measure_pairs(doc)
+    assert pairs
+    for pair in pairs:
+        key = f'data-pair="{pair.fg} on {pair.bg}"'
+        assert key in text, key
+        chunk = text[text.index(key):text.index(key) + 600]
+        assert f"{pair.light:.2f}" in chunk and f"{pair.dark:.2f}" in chunk, chunk
+
+
+def test_specimen_scopes_both_themes_from_the_tokens(project: Path) -> None:
+    text = read(project / SPECIMEN_REL)
+    doc = doc_of(project)
+    assert BT.css_vars(doc) in text  # the project's own export, inlined
+    dark_block = re.search(r"\.pl-dark\s*\{([^}]*)\}", text).group(1)
+    light_block = re.search(r"\.pl-light\s*\{([^}]*)\}", text).group(1)
+    assert "--color-background: #0f1217;" in dark_block
+    assert "--color-background: #ffffff;" in light_block and "#0f1217" not in light_block
+    assert "--pl-accent: var(--color-primary);" in text
+
+
+def test_specimen_components_in_every_state_in_both_themes(project: Path) -> None:
+    text = read(project / SPECIMEN_REL)
+    for comp in COMPONENTS:
+        for state in STATES:
+            needle = f'data-component="{comp}" data-state="{state}"'
+            assert text.count(needle) == 2, (needle, text.count(needle))
+
+
+def test_specimen_escapes_token_text(project: Path) -> None:
+    text = read(project / SPECIMEN_REL)
+    assert "&lt;b&gt;&amp;amp; body&lt;/b&gt;" in text
+    assert "<b>&amp; body</b>" not in text
+
+
+def test_specimen_type_motion_and_reduced_motion(project: Path) -> None:
+    text = read(project / SPECIMEN_REL)
+    assert "var(--text-display--font-weight)" in text and "var(--text-display--letter-spacing)" in text
+    assert "var(--duration-fast)" in text and "var(--ease-in-out)" in text
+    assert "@media (prefers-reduced-motion: reduce)" in text
+
+
+def test_specimen_for_a_minimal_token_set(tmp_path: Path) -> None:
+    def mutate(doc: dict) -> None:
+        for group in ("label", "font", "typography", "radius", "spacing", "size", "border", "shadow", "motion"):
+            doc.pop(group)
+        doc["color"] = {"$type": "color", "ink": {"$value": "#222222", "$extensions": {"plumb": {"dark": "#eeeeee"}}}}
+
+    p = make_project(tmp_path / "proj", mutate=mutate)
+    text = read(p / SPECIMEN_REL)
+    assert_document(text)
+    assert 'data-token="color.ink"' in text
+    for comp in COMPONENTS:
+        assert f'data-component="{comp}" data-state="default"' in text
+
+
+# ---------------------------------------------------------------- audit report
+
+
+def test_report_written_and_terminal_unchanged(project: Path) -> None:
+    plain = audit(project)
+    r = audit(project, "--html")
+    assert r.returncode == plain.returncode == 1
+    assert r.stdout == plain.stdout
+    path = today_report(project)
+    assert path.is_file()
+    assert path.name in r.stderr and "wrote" in r.stderr
+    text = read(path)
+    assert_document(text)
+    assert_offline(text)
+    assert "GENERATED" in "\n".join(text.splitlines()[:5])
+
+
+def test_report_has_every_finding_and_the_summary(project: Path, report: Path) -> None:
+    data = json.loads(audit(project, "--json").stdout)
+    text = read(report)
+    assert data["errors"] and data["warnings"] and data["suggestions"]
+    for key, sev in (("errors", "error"), ("warnings", "warn"), ("suggestions", "suggest")):
+        assert f'data-count="{key}">{data[key]}<' in text, key
+        assert len(re.findall(rf'<li class="finding[^"]*" data-severity="{sev}"', text)) == data[key], sev
+    assert f'data-count="files">{data["checked"]}<' in text
+    rows = re.findall(r'<li class="finding[^"]*" data-severity="(\w+)" data-rule="([\w-]+)"', text)
+    assert len(rows) == len(data["findings"])
+    for f in data["findings"]:
+        assert html.escape(f["message"], quote=False) in text, f["message"]
+        assert html.escape(f["fix"], quote=False) in text, f["fix"]
+        assert html.escape(f"{f['file']}:{f['line']}", quote=False) in text
+    assert P.PLUMB_VERSION in text and datetime.date.today().isoformat() in text
+    for section in ("summary", "issues", "improvements"):
+        assert f'id="{section}"' in text
+    assert f"python3 {SKILL_REL}/scripts/audit.py --html" in text
+    assert "menü.tsx" in text
+
+
+def test_report_ranks_errors_first_and_improvements_by_impact(report: Path) -> None:
+    text = read(report)
+    issues = text[text.index('id="issues"'):text.index('id="improvements"')]
+    sevs = re.findall(r'<li class="finding[^"]*" data-severity="(\w+)"', issues)
+    assert sevs and "suggest" not in sevs
+    assert sevs == sorted(sevs, key=lambda s: {"error": 0, "warn": 1}[s])
+    improvements = text[text.index('id="improvements"'):]
+    groups = re.findall(r'data-rule="([\w-]+)" data-impact="(\d+)"', improvements)
+    assert groups
+    impacts = [int(i) for _r, i in groups]
+    assert impacts == sorted(impacts, reverse=True)
+    weights = {r.id: r.weight for r in A.RULES}
+    for rule, impact in groups:
+        count = len(re.findall(rf'<li class="finding[^"]*" data-severity="suggest" data-rule="{rule}"', improvements))
+        assert int(impact) == weights[rule] * count
+        assert A.RULES[[r.id for r in A.RULES].index(rule)].why in html.unescape(improvements)
+    for sev, word in (("error", "Error"), ("warn", "Warning"), ("suggest", "Suggestion")):
+        assert re.search(rf'class="sev sev-{sev}"[^>]*>\s*<span class="sev-shape" aria-hidden="true"></span>\s*{word}', text), sev
+
+
+def test_suggest_rules_have_a_weight_and_a_why() -> None:
+    for r in A.RULES:
+        assert isinstance(r.weight, int) and r.weight >= 1, r.id
+        if r.severity == "suggest":
+            assert r.why and r.why.endswith("."), r.id
+
+
+def test_report_custom_path_and_json_stdout(project: Path) -> None:
+    r = audit(project, "--json", "--html", "out/report.html")
+    assert r.returncode == 1
+    json.loads(r.stdout)
+    assert (project / "out/report.html").is_file()
+    r = audit(project, "--html=out/second.html")
+    assert r.returncode == 1 and (project / "out/second.html").is_file()
+
+
+def test_report_is_styled_with_the_project_tokens(report: Path, project: Path) -> None:
+    text = read(report)
+    assert BT.css_vars(doc_of(project)) in text
+    assert "--pl-accent: var(--color-primary);" in text
+    assert "--pl-bad: var(--color-danger);" in text
+
+
+def test_report_in_inconsistency_only_mode(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "proj")
+    r = audit(p, "--no-tokens", "--html")
+    assert r.returncode in (0, 1), r.stderr
+    text = read(today_report(p))
+    assert "inconsistency-only" in text
+    assert "--color-primary" not in text  # no tokens: Plumb's neutral page colours only
+
+
+def test_report_with_nothing_to_report(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "proj", app=False)
+    write(p / "app/ok.tsx", "export const Ok = () => <p className=\"text-sm\">Fine</p>;\n")
+    r = audit(p, "--html")
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = read(today_report(p))
+    assert "No errors or warnings" in text
+
+
+def test_report_refusals(project: Path, tmp_path: Path) -> None:
+    assert_refusal(audit(project, "--html", "notes.txt"), "--html")
+    assert_refusal(audit(project, "--quick", "app/page.tsx", "--html", "r.html"), "--quick")
+    write(project / "blocker", "a file, not a folder\n")
+    assert_refusal(audit(project, "--html", "blocker/r.html"), "cannot write")
+    bare = make_project(tmp_path / "bare", templates=False)
+    r = subprocess.run([sys.executable, str(bare / SKILL_REL / "scripts/audit.py"), "--html"], cwd=str(bare),
+                       capture_output=True, text=True, encoding="utf-8")
+    assert_refusal(r, "audit-report.html.tmpl")
+
+
+# ---------------------------------------------------------------- browser (headless)
+
+
+def _playwright():
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+    except ImportError:
+        pytest.skip("requires Playwright")
+    return sync_playwright
+
+
+@pytest.fixture(scope="module")
+def browser():
+    sync_playwright = _playwright()
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(headless=True)
+        yield b
+        b.close()
+
+
+@pytest.fixture(scope="module")
+def pages(tmp_path_factory) -> dict:
+    p = make_project(tmp_path_factory.mktemp("pages") / "proj")
+    r = audit(p, "--html")
+    assert r.returncode == 1, r.stderr
+    data = json.loads(audit(p, "--json").stdout)
+    return {"specimen": p / SPECIMEN_REL, "report": today_report(p), "data": data}
+
+
+def _open(browser, path: Path, width: int, scheme: str, reduced: str = "no-preference"):
+    ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=scheme, reduced_motion=reduced)
+    page = ctx.new_page()
+    errors = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    requests = []
+    page.on("request", lambda req: requests.append(req.url) if not req.url.startswith(("file:", "data:", "about:")) else None)
+    page.goto(path.resolve().as_uri())
+    page.wait_for_load_state("load")
+    return ctx, page, errors, requests
+
+
+@pytest.mark.parametrize("name", ["specimen", "report"])
+@pytest.mark.parametrize("width", [1280, 390])
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_page_renders_cleanly(browser, pages, name: str, width: int, scheme: str) -> None:
+    ctx, page, errors, requests = _open(browser, pages[name], width, scheme)
+    try:
+        assert page.evaluate("document.documentElement.dataset.theme") == scheme
+        overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        assert overflow <= 0, f"horizontal scroll of {overflow}px at {width}px"
+        before = page.evaluate("getComputedStyle(document.body).backgroundColor")
+        page.click("#theme-toggle")
+        other = "dark" if scheme == "light" else "light"
+        assert page.evaluate("document.documentElement.dataset.theme") == other
+        after = page.evaluate("getComputedStyle(document.body).backgroundColor")
+        assert after != before
+        overflow = page.evaluate("document.documentElement.scrollWidth - window.innerWidth")
+        assert overflow <= 0, f"horizontal scroll of {overflow}px at {width}px after the toggle"
+        page.keyboard.press("Tab")
+        assert page.evaluate("document.activeElement !== document.body")
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+def test_report_filters_and_every_finding(browser, pages) -> None:
+    data = pages["data"]
+    ctx, page, errors, _ = _open(browser, pages["report"], 1280, "light")
+    try:
+        visible = "() => [...document.querySelectorAll('li.finding')].filter(e => e.offsetParent !== null)"
+        count = lambda sev=None: page.evaluate(  # noqa: E731
+            f"({visible})().filter(e => !{json.dumps(sev)} || e.dataset.severity === {json.dumps(sev)}).length")
+        assert count() == len(data["findings"])
+        page.click('[data-filter-severity="error"]')
+        assert count("error") == 0 and count("warn") == data["warnings"]
+        page.click('[data-filter-severity="error"]')
+        assert count("error") == data["errors"]
+        page.select_option("#rule-filter", "hover-only")
+        assert count() == sum(1 for f in data["findings"] if f["rule"] == "hover-only") >= 1
+        page.select_option("#rule-filter", "")
+        assert count() == len(data["findings"])
+        page.click('[data-filter-severity="suggest"]')
+        assert count("suggest") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_specimen_side_by_side_themes_use_the_token_values(browser, pages) -> None:
+    ctx, page, errors, _ = _open(browser, pages["specimen"], 1280, "light")
+    try:
+        swatch = "document.querySelector('[data-token=\"color.background\"] .pl-{0} .swatch-chip')"
+        light = page.evaluate(f"getComputedStyle({swatch.format('light')}).backgroundColor")
+        dark = page.evaluate(f"getComputedStyle({swatch.format('dark')}).backgroundColor")
+        assert light == "rgb(255, 255, 255)" and dark == "rgb(15, 18, 23)"
+        page.click("#theme-toggle")
+        assert page.evaluate(f"getComputedStyle({swatch.format('light')}).backgroundColor") == light
+        n = page.evaluate("document.querySelectorAll('[data-component][data-state]').length")
+        assert n == len(COMPONENTS) * len(STATES) * 2
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_specimen_motion_is_static_with_reduced_motion(browser, pages) -> None:
+    ctx, page, errors, _ = _open(browser, pages["specimen"], 1280, "light", reduced="reduce")
+    try:
+        durations = page.evaluate("[...document.querySelectorAll('.motion-dot')].map(e => getComputedStyle(e).transitionDuration)")
+        assert durations and all(d == "0s" for d in durations), durations
+        assert errors == []
+    finally:
+        ctx.close()
+    ctx, page, errors, _ = _open(browser, pages["specimen"], 1280, "light")
+    try:
+        durations = page.evaluate("[...document.querySelectorAll('.motion-dot')].map(e => getComputedStyle(e).transitionDuration)")
+        assert "0.15s" in durations and "0.32s" in durations, durations
+    finally:
+        ctx.close()

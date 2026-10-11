@@ -7,7 +7,11 @@ Reads <skill>/assets/tokens/*.tokens.json (exactly one) and the web template, wr
 <skill>/assets/platforms/web/tokens.css (+ tailwind.tokens.js for tailwind-v3) and the copies listed in
 $extensions.plumb.web.copies (relative to the project root), plus assets/platforms/mobile/ios/<Project>Theme.swift and
 mobile/android/<Project>Theme.kt for the platforms listed in $extensions.plumb.platforms, and refreshes the block between
-<!-- plumb:contrast:start --> and <!-- plumb:contrast:end --> in <skill>/references/dark-mode.md when that file has the markers.
+<!-- plumb:contrast:start --> and <!-- plumb:contrast:end --> in <skill>/references/dark-mode.md when that file has the markers,
+and the specimen page <project>/<docs_dir>/specimen.html (docs_dir from $extensions.plumb, default docs/design) from
+templates/specimen.html.tmpl: every token (colours light and dark side by side with their contrast pairs, type, spacing,
+radii, shadows in both themes, motion, the rest) and the basic controls in every state in both themes, styled with the
+project's own tokens, offline, no timestamps. --check covers it; with no template the build notes it and skips the page.
 
   --check      write nothing; exit 1 naming every stale or missing file.
   --contrast   rewrite only the contrast block of references/dark-mode.md (exit 2 if the file or the markers are missing).
@@ -38,6 +42,7 @@ Python 3.9+, standard library only. Declarations follow the order of the tokens 
 from __future__ import annotations
 
 import argparse
+import html as _html
 import json
 import re
 import sys
@@ -981,14 +986,15 @@ def mobile_outputs(doc: dict, skill_dir: Path, header: str) -> Dict[Path, str]:
 # ---------------------------------------------------------------- outputs
 
 
-def safe_copy_path(root: Path, copy: object) -> Path:
+def safe_copy_path(root: Path, copy: object, setting: str = "$extensions.plumb.web.copies") -> Path:
     text = str(copy).replace("\\", "/") if isinstance(copy, str) else ""
     bad = (not text or text.startswith("/") or re.match(r"^[A-Za-z]:", text) is not None
            or ".." in text.split("/"))
     if bad:
+        example = "docs/design" if "docs_dir" in setting else "app/globals.css"
         raise _err(
-            f"$extensions.plumb.web.copies has {copy!r}, which is not a path inside the project",
-            "write copies relative to the project root, e.g. \"app/globals.css\"",
+            f"{setting} has {copy!r}, which is not a path inside the project",
+            f"write it relative to the project root, e.g. \"{example}\"",
         )
     return (root / text).resolve()
 
@@ -1018,6 +1024,9 @@ def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_f
     dark = contrast_output(doc, skill_dir, required=False)
     if dark:
         out[dark[0]] = dark[1]
+    specimen = specimen_output(doc, skill_dir, root, tokens_file, header)
+    if specimen:
+        out[specimen[0]] = specimen[1]
     return dict(sorted(out.items(), key=lambda kv: str(kv[0])))
 
 
@@ -1353,6 +1362,412 @@ def css_vars(doc: dict) -> str:
     return "\n".join(out) + "\n"
 
 
+# ---------------------------------------------------------------- pages: theme CSS and the specimen
+
+
+SPECIMEN_TEMPLATE = "specimen.html.tmpl"
+# Plumb's page roles (--pl-<role>) and the colour token names (in the color group) that fill them, first found wins.
+# A role with no token keeps the template's neutral value for the theme.
+PAGE_COLOUR_ROLES = (
+    ("bg", ("background", "page", "surface")),
+    ("surface", ("surface", "surface-raised", "card", "surface-container", "background", "page")),
+    ("sunk", ("sunk", "surface-variant", "column", "surface-container-low", "muted")),
+    ("text", ("on-surface", "on-background", "text", "ink", "foreground", "fg")),
+    ("muted", ("text-muted", "on-surface-variant", "muted-foreground", "on-surface-soft", "text-secondary", "ink-muted")),
+    ("border", ("outline", "border", "outline-variant", "divider", "outline-strong")),
+    ("border-strong", ("outline-input", "outline-strong", "border-strong", "outline", "border")),
+    ("accent", ("primary", "primary-fill", "accent", "brand", "link")),
+    ("focus", ("focus", "focus-ring", "ring", "primary", "primary-fill", "accent")),
+    ("bad", ("danger", "error", "bad", "destructive", "critical")),
+    ("warn", ("warning", "warn", "caution", "attention")),
+    ("good", ("success", "ok", "good", "positive")),
+)
+SAMPLE_TEXT = "Every screen speaks the same language, 0123456789"
+
+
+def _e(text: object) -> str:
+    return _html.escape(str(text), quote=True)
+
+
+def _colour_keys(doc: dict) -> Dict[str, str]:
+    """colour name (as the contrast pairs name it: color.on-primary -> on-primary, label.teal -> label-teal) -> path."""
+    keys: Dict[str, str] = {}
+    for path, _tok, ttype in P.iter_tokens(doc):
+        if ttype == "color":
+            parts = path.split(".")
+            keys["-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)] = path
+    return keys
+
+
+def _pick(names: Dict[str, str], wanted: Tuple[str, ...]) -> Optional[str]:
+    return next((names[w] for w in wanted if w in names), None)
+
+
+def _closest(entries: List[Tuple[str, Optional[float]]], target: float, below: float = 999.0) -> Optional[str]:
+    sized = [(abs(px - target), i, path) for i, (path, px) in enumerate(entries) if px is not None and px < below]
+    return min(sized)[2] if sized else None
+
+
+def page_roles(doc: dict) -> List[Tuple[str, str]]:
+    """(--pl-role, value) for every page role the project's tokens can fill; the template's neutrals cover the rest."""
+    out: List[Tuple[str, str]] = []
+    colours = {k: p for k, p in _colour_keys(doc).items() if p.startswith("color.")}
+    for role, wanted in PAGE_COLOUR_ROLES:
+        path = _pick(colours, wanted)
+        if path is None:
+            continue
+        out.append((f"--pl-{role}", f"var({varname(path)})"))
+        if role in ("accent", "bad"):
+            key = next(w for w in wanted if colours.get(w) == path)
+            on = colours.get(f"on-{key}")
+            out.append((f"--pl-on-{role}", f"var({varname(on)})" if on else "var(--pl-bg)"))
+    groups: Dict[str, List[Tuple[str, str, Optional[str]]]] = {}
+    for path, _tok, ttype in P.iter_tokens(doc):
+        parts = path.split(".")
+        groups.setdefault(parts[0] if parts[0] != "motion" or len(parts) < 3 else f"motion.{parts[1]}", []).append(
+            (path, parts[-1], ttype))
+    fonts = [(p, n) for p, n, t in groups.get("font", []) if t == "fontFamily"]
+    font = _pick({n: p for p, n in fonts}, ("sans", "body", "base", "ui", "text")) or (fonts[0][0] if fonts else None)
+    mono = _pick({n: p for p, n in fonts}, ("mono", "code", "monospace"))
+    for role, path in (("font", font), ("mono", mono)):
+        if path:
+            out.append((f"--pl-{role}", f"var({varname(path)})"))
+    radii = [(p, P._px(P.resolve(doc, p))) for p, _n, t in groups.get("radius", []) if t == "dimension"]
+    for role, target in (("radius", 8.0), ("radius-sm", 4.0)):
+        path = _closest(radii, target)
+        if path:
+            out.append((f"--pl-{role}", f"var({varname(path)})"))
+    spacing = [(p, P._px(P.resolve(doc, p))) for p, _n, t in groups.get("spacing", []) if t == "dimension"]
+    for step, target in ((1, 4.0), (2, 8.0), (3, 12.0), (4, 16.0), (6, 24.0)):
+        path = _closest(spacing, target)
+        if path:
+            out.append((f"--pl-space-{step}", f"var({varname(path)})"))
+    shadows = [(p, n) for p, n, t in groups.get("shadow", []) if t == "shadow"]
+    if shadows:
+        names = {n: p for p, n in shadows}
+        out.append(("--pl-shadow", f"var({varname(_pick(names, ('sm', 'card', 'md', 'raised')) or shadows[0][0])})"))
+        out.append(("--pl-shadow-lg", f"var({varname(_pick(names, ('lg', 'overlay', 'md', 'xl')) or shadows[-1][0])})"))
+    durations = [(p, n) for p, n, t in groups.get("motion.duration", []) if t == "duration"]
+    if durations:
+        path = _pick({n: p for p, n in durations}, ("fast", "short", "base", "normal", "default")) or durations[0][0]
+        out.append(("--pl-duration", f"var({varname(path)})"))
+    easings = [(p, n) for p, n, t in groups.get("motion.easing", []) if t == "cubicBezier"]
+    if easings:
+        path = _pick({n: p for p, n in easings}, ("standard", "default", "out", "in-out", "emphasized")) or easings[0][0]
+        out.append(("--pl-ease", f"var({varname(path)})"))
+    sizes = []
+    for path, _n, ttype in groups.get("typography", []):
+        value = P.resolve(doc, path)
+        if ttype == "typography" and isinstance(value, dict):
+            sizes.append((path, P._px(value.get("fontSize"))))
+    for role, target in (("text-control", 15.0), ("text-small", 13.0), ("text-title", 22.0)):
+        path = _closest(sizes, target)
+        if path:
+            out.append((f"--pl-{role}", f"var({varname(path)})"))
+    return out
+
+
+def page_theme_css(doc: Optional[dict], scopes: bool = False) -> str:
+    """The CSS a Plumb page inlines: the project's --css-vars export, the page roles mapped to its tokens, and (scopes)
+    .pl-light / .pl-dark blocks that pin one theme inside an element, so both themes can sit side by side."""
+    if doc is None:
+        return "/* No tokens yet: Plumb's neutral page colours. */"
+    roles = [f"  {n}: {v};" for n, v in page_roles(doc)]
+    lines = ["/* The project's tokens (build-tokens.py --css-vars). */", css_vars(doc).rstrip("\n"),
+             "/* Plumb's page roles, mapped to the project's tokens. */", ":root {", *roles, "}"]
+    if scopes:
+        light, dark, md = declarations(doc, "light"), declarations(doc, "dark"), declarations(doc, "md")
+        lines += ["/* One theme pinned inside an element (light and dark side by side). */", ".pl-light {"]
+        lines += [f"  {n}: {v};" for n, v in light] + roles + ["  color-scheme: light;", "}", ".pl-dark {"]
+        lines += [f"  {n}: {v};" for n, v in light + dark] + roles + ["  color-scheme: dark;", "}"]
+        if md:
+            lines += ["@media (min-width: 48rem) {", "  .pl-light, .pl-dark {"]
+            lines += [f"    {n}: {v};" for n, v in md] + ["  }", "}"]
+    return "\n".join(lines)
+
+
+def specimen_path(doc: dict, root: Path) -> Path:
+    docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
+    return safe_copy_path(root, f"{str(docs).rstrip('/')}/specimen.html", "$extensions.plumb.docs_dir")
+
+
+def _css_value(doc: dict, path: str, ttype: Optional[str], mode: str = "light") -> str:
+    value = P.resolve(doc, path, mode)
+    if ttype == "typography" and isinstance(value, dict):
+        bits = [value_css(value[k], FIELD_TYPES.get(k)) for k in ("fontSize", "lineHeight") if k in value]
+        text = " / ".join(bits)
+        if "fontWeight" in value:
+            text += f" · {value['fontWeight']}"
+        if "letterSpacing" in value:
+            text += f" · {value_css(value['letterSpacing'], 'dimension')} tracking"
+        return text
+    return value_css(value, ttype)
+
+
+def _name_cell(path: str, token: dict) -> str:
+    desc = _one_line(token.get("$description", ""))
+    out = f'<code class="tok">{_e(path)}</code> <code class="var">{_e(varname(path))}</code>'
+    return out + (f'<p class="desc">{_e(desc)}</p>' if desc else "")
+
+
+def _verdict(passed: bool) -> str:
+    sev = "good" if passed else "bad"
+    word = "Pass" if passed else "Fail"
+    return f'<span class="verdict verdict-{sev}"><span class="verdict-shape" aria-hidden="true"></span>{word}</span>'
+
+
+def _pair_item(pair: "Pair") -> str:
+    return (f'<li class="pair" data-pair="{_e(pair.fg)} on {_e(pair.bg)}"><span class="pair-name">{_e(pair.fg)} on {_e(pair.bg)}'
+            f'</span><span class="ratio">light <b>{pair.light:.2f}</b></span><span class="ratio">dark <b>{pair.dark:.2f}</b>'
+            f'</span><span class="need">needs {num(pair.need)}</span>{_verdict(not pair.failed)}</li>')
+
+
+def _specimen_colours(doc: dict, items: List[Tuple[str, dict]]) -> str:
+    if not items:
+        return '<p class="empty">No colour tokens yet.</p>'
+    keys = {p: k for k, p in _colour_keys(doc).items()}
+    try:
+        pairs: Optional[List[Pair]] = measure_pairs(doc)
+        problem = ""
+    except PlumbError as exc:
+        pairs, problem = None, str(exc).splitlines()[0][len("error: "):]
+    out = []
+    if problem:
+        out.append(f'<p class="note">Contrast could not be measured: {_e(problem)}</p>')
+    group = None
+    for path, token in items:
+        top = path.split(".")[0]
+        if top != group:
+            if group is not None:
+                out.append("</ul>")
+            out.append(f'<h3 class="group-h">{_e(top)}</h3><ul class="swatches" role="list">')
+            group = top
+        key = keys[path]
+        mine = [p for p in pairs or [] if key in (p.fg, p.bg)]
+        on_me = next((p for p in mine if p.bg == key), None)
+        cells = []
+        for mode, label in (("light", "Light"), ("dark", "Dark")):
+            hexv, alpha = P.parse_color(P.resolve(doc, path, mode))
+            shown = hexv + (f" · {round(alpha * 100)}%" if alpha < 1 else "")
+            sample = (f'<span class="swatch-sample" style="color: var({varname(on_me.fg_path)})">Aa</span>' if on_me else "")
+            cells.append(f'<div class="pl-{mode} swatch"><div class="swatch-chip{" alpha" if alpha < 1 else ""}" '
+                         f'style="--chip: var({varname(path)})">{sample}</div>'
+                         f'<p class="swatch-meta"><span class="mode">{label}</span> <code>{_e(shown)}</code></p></div>')
+        plist = (f'<ul class="pairs" role="list">{"".join(_pair_item(p) for p in mine)}</ul>' if mine else "")
+        out.append(f'<li class="swatch-row" data-token="{_e(path)}"><div class="swatch-name">{_name_cell(path, token)}</div>'
+                   f'<div class="swatch-pair">{"".join(cells)}</div>{plist}</li>')
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+def _specimen_type(doc: dict, styles: List[Tuple[str, dict]], fonts: List[Tuple[str, dict]]) -> str:
+    out = []
+    if fonts:
+        out.append('<h3 class="group-h">Families</h3><ul class="type-list" role="list">')
+        for path, token in fonts:
+            out.append(f'<li class="font-row" data-token="{_e(path)}"><div class="type-meta">{_name_cell(path, token)}'
+                       f'<span class="val">{_e(_css_value(doc, path, "fontFamily"))}</span></div>'
+                       f'<p class="type-sample" style="font-family: var({varname(path)})">{_e(SAMPLE_TEXT)}</p></li>')
+        out.append("</ul>")
+    if styles:
+        out.append('<h3 class="group-h">Scale</h3><ul class="type-list" role="list">')
+        for path, token in styles:
+            value = P.resolve(doc, path)
+            name = varname(path)
+            style = []
+            for key, suffix in TYPO_FIELDS:
+                if isinstance(value, dict) and key in value:
+                    prop = {"fontSize": "font-size", "lineHeight": "line-height", "letterSpacing": "letter-spacing",
+                            "fontWeight": "font-weight", "fontFamily": "font-family"}[key]
+                    style.append(f"{prop}: var({name}{suffix})")
+            md = f' <span class="val">from md: {_e(_css_value(doc, path, "typography", "md"))}</span>' \
+                if "md" in _token_ext(token) else ""
+            out.append(f'<li class="type-row" data-token="{_e(path)}"><div class="type-meta">{_name_cell(path, token)}'
+                       f'<span class="val">{_e(_css_value(doc, path, "typography"))}</span>{md}</div>'
+                       f'<p class="type-sample" style="{"; ".join(style)}">{_e(SAMPLE_TEXT)}</p></li>')
+        out.append("</ul>")
+    return "\n".join(out) or '<p class="empty">No type tokens yet.</p>'
+
+
+def _value_text(doc: dict, path: str, token: dict, ttype: Optional[str]) -> str:
+    text = _css_value(doc, path, ttype)
+    ext = _token_ext(token)
+    if "md" in ext:
+        text += f" (from md: {_css_value(doc, path, ttype, 'md')})"
+    return text
+
+
+def _specimen_list(doc: dict, items: List[Tuple[str, dict, Optional[str]]], kind: str) -> str:
+    if not items:
+        return f'<p class="empty">No {kind} tokens yet.</p>'
+    out = [f'<ul class="{kind}-list" role="list">']
+    for path, token, ttype in items:
+        name = varname(path)
+        if kind == "spacing":
+            visual = f'<span class="space-bar" style="width: var({name})"></span>'
+        else:
+            visual = f'<span class="radius-box" style="border-radius: var({name})"></span>'
+        out.append(f'<li class="{kind}-row" data-token="{_e(path)}">{visual}<div class="row-meta">{_name_cell(path, token)}'
+                   f'<span class="val">{_e(_value_text(doc, path, token, ttype))}</span></div></li>')
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+def _specimen_shadows(doc: dict, items: List[Tuple[str, dict]]) -> str:
+    if not items:
+        return '<p class="empty">No shadow tokens yet.</p>'
+    out = ['<ul class="shadow-list" role="list">']
+    for path, token in items:
+        stages = "".join(
+            f'<div class="pl-{mode} shadow-stage"><div class="shadow-card" style="box-shadow: var({varname(path)})">'
+            f'{label}</div><p class="val">{_e(_css_value(doc, path, "shadow", mode))}</p></div>'
+            for mode, label in (("light", "Light"), ("dark", "Dark")))
+        out.append(f'<li class="shadow-row" data-token="{_e(path)}"><div class="row-meta">{_name_cell(path, token)}</div>'
+                   f'<div class="shadow-pair">{stages}</div></li>')
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+def _specimen_motion(doc: dict, durations: List[Tuple[str, dict]], easings: List[Tuple[str, dict]]) -> str:
+    if not durations and not easings:
+        return '<p class="empty">No motion tokens yet.</p>'
+    longest = max(durations, key=lambda d: _ms(d[0], P.resolve(doc, d[0])), default=None)
+    demo = f"var({varname(longest[0])})" if longest else "300ms"
+    out = ['<ul class="motion-list" role="list">']
+    for path, token in durations:
+        style = f"transition-duration: var({varname(path)}); transition-timing-function: var(--pl-ease)"
+        out.append(_motion_row(doc, path, token, "duration", style))
+    for path, token in easings:
+        style = f"transition-duration: {demo}; transition-timing-function: var({varname(path)})"
+        out.append(_motion_row(doc, path, token, "cubicBezier", style))
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+def _motion_row(doc: dict, path: str, token: dict, ttype: str, style: str) -> str:
+    return (f'<li class="motion-row" data-token="{_e(path)}" tabindex="0"><div class="row-meta">{_name_cell(path, token)}'
+            f'<span class="val">{_e(_css_value(doc, path, ttype))}</span></div>'
+            f'<span class="motion-track" aria-hidden="true"><span class="motion-dot" style="{style}"></span></span></li>')
+
+
+COMPONENT_ROWS = (
+    ("button-primary", "Button, primary"), ("button-secondary", "Button, secondary"),
+    ("button-outline", "Button, outline"), ("button-danger", "Button, danger"),
+    ("input", "Input"), ("chip", "Chip"), ("card", "Card"),
+)
+COMPONENT_STATES = (("default", "Default"), ("hover", "Hover"), ("focus", "Focus"), ("pressed", "Pressed"),
+                    ("disabled", "Disabled"), ("loading", "Loading"))
+
+
+def _component(comp: str, state: str, theme: str) -> str:
+    cls = {"hover": " is-hover", "focus": " is-focus", "pressed": " is-pressed", "loading": " is-loading"}.get(state, "")
+    data = f'data-component="{comp}" data-state="{state}"'
+    disabled = " disabled" if state == "disabled" else ""
+    busy = ' aria-busy="true"' if state == "loading" else ""
+    spinner = '<span class="spinner" aria-hidden="true"></span>'
+    if comp.startswith("button-"):
+        variant = comp.split("-", 1)[1]
+        label = {"danger": "Delete", "secondary": "Cancel", "outline": "Export"}.get(variant, "Save changes")
+        text = f"{spinner}Saving" if state == "loading" else label
+        return f'<button type="button" class="c-btn c-btn-{variant}{cls}" {data}{disabled}{busy}>{text}</button>'
+    if comp == "input":
+        extra = spinner if state == "loading" else ""
+        return (f'<span class="c-field{cls}" {data}><input class="c-input" type="text" value="Ada Lovelace" '
+                f'aria-label="Name, {state} ({theme})"{disabled}{busy}>{extra}</span>')
+    if comp == "chip":
+        text = f"{spinner}Open" if state == "loading" else "Open"
+        return f'<button type="button" class="c-chip{cls}" {data}{disabled}{busy}>{text}</button>'
+    body = ('<span class="skeleton"></span><span class="skeleton short"></span>' if state == "loading"
+            else '<span class="c-card-title">Weekly report</span><span class="c-card-body">12 orders shipped, 2 returned</span>')
+    dis = ' aria-disabled="true"' if state == "disabled" else ""
+    return f'<div class="c-card{cls}" {data}{dis}{busy}>{body}</div>'
+
+
+def _specimen_components() -> str:
+    out = ['<div class="comp-themes">']
+    for theme, label in (("light", "Light"), ("dark", "Dark")):
+        out.append(f'<div class="pl-{theme} comp-panel"><h3 class="group-h">{label}</h3>')
+        for comp, title in COMPONENT_ROWS:
+            cells = "".join(f'<li class="comp-cell"><span class="state-name">{name}</span>{_component(comp, state, theme)}</li>'
+                            for state, name in COMPONENT_STATES)
+            out.append(f'<div class="comp-row"><h4>{title}</h4><ul class="comp-states" role="list">{cells}</ul></div>')
+        out.append("</div>")
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def _specimen_other(doc: dict, items: List[Tuple[str, dict, Optional[str]]]) -> str:
+    if not items:
+        return '<p class="empty">No other tokens.</p>'
+    rows = []
+    for path, token, ttype in items:
+        light = _value_text(doc, path, token, ttype)
+        dark = _css_value(doc, path, ttype, "dark") if "dark" in _token_ext(token) else "same"
+        rows.append(f'<tr data-token="{_e(path)}"><td><code class="tok">{_e(path)}</code></td>'
+                    f'<td><code class="var">{_e(varname(path))}</code></td><td>{_e(light)}</td><td>{_e(dark)}</td></tr>')
+    return ('<div class="table-wrap"><table><thead><tr><th scope="col">Token</th><th scope="col">Variable</th>'
+            '<th scope="col">Value</th><th scope="col">Dark</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table></div>")
+
+
+def build_specimen(doc: dict, template: str, header: str, source: str) -> str:
+    """docs/design/specimen.html: every token (colours light and dark with their contrast, type, spacing, radii, shadows,
+    motion, the rest) and the basic controls in every state in both themes, from the fixed template. No timestamps."""
+    buckets: Dict[str, list] = {k: [] for k in ("colour", "style", "font", "spacing", "radius", "shadow", "duration",
+                                                "easing", "other")}
+    for path, token, ttype in P.iter_tokens(doc):
+        group = path.split(".")[0]
+        if ttype == "color":
+            buckets["colour"].append((path, token))
+        elif ttype == "typography":
+            buckets["style"].append((path, token))
+        elif ttype == "fontFamily":
+            buckets["font"].append((path, token))
+        elif ttype == "shadow":
+            buckets["shadow"].append((path, token))
+        elif ttype == "duration":
+            buckets["duration"].append((path, token))
+        elif ttype == "cubicBezier":
+            buckets["easing"].append((path, token))
+        elif ttype == "dimension" and group in ("spacing", "radius"):
+            buckets[group].append((path, token, ttype))
+        else:
+            buckets["other"].append((path, token, ttype))
+    project = str(P.plumb_settings(doc).get("project") or "").strip() or "Design system"
+    counts = len(list(P.iter_tokens(doc)))
+    values = {
+        "header": f"<!-- {_e(header)} -->",
+        "title": _e(f"{project}: design system specimen"),
+        "project": _e(project),
+        "source": _e(source),
+        "summary": _e(f"{counts} tokens"),
+        "plumb_version": _e(P.PLUMB_VERSION),
+        "theme_css": page_theme_css(doc, scopes=True),
+        "colours": _specimen_colours(doc, buckets["colour"]),
+        "type": _specimen_type(doc, buckets["style"], buckets["font"]),
+        "spacing": _specimen_list(doc, buckets["spacing"], "spacing"),
+        "radii": _specimen_list(doc, buckets["radius"], "radius"),
+        "shadows": _specimen_shadows(doc, buckets["shadow"]),
+        "motion": _specimen_motion(doc, buckets["duration"], buckets["easing"]),
+        "components": _specimen_components(),
+        "other": _specimen_other(doc, buckets["other"]),
+    }
+    text = P.fill_template(template, values, SPECIMEN_TEMPLATE)
+    return text if text.endswith("\n") else text + "\n"
+
+
+def specimen_output(doc: dict, skill_dir: Path, root: Path, tokens_file: Path, header: str) -> Optional[Tuple[Path, str]]:
+    """(path, page) for the specimen, or None when the template is missing (the build notes it and carries on)."""
+    tpl = P.find_template(skill_dir, SPECIMEN_TEMPLATE)
+    if tpl is None:
+        return None
+    try:
+        template = tpl.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _err(f"{tpl}: cannot read the specimen template ({exc})", "restore it from the Plumb plugin's assets/skill/templates/") from None
+    return specimen_path(doc, root), build_specimen(doc, template, header, rel(tokens_file, root))
+
+
+
 # ---------------------------------------------------------------- cli
 
 
@@ -1434,6 +1849,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"{fails} pair(s) fail: see the nearest passing values in {rel(path, root)}")
         return 0
     files = outputs(doc, skill_dir, project, tokens_file)
+    if P.find_template(skill_dir, SPECIMEN_TEMPLATE) is None:
+        print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
+              f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
     stale = []
     for path, text in files.items():
