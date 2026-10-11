@@ -626,7 +626,6 @@ Python: `python3`
 ## Checks
 Edit check: on
 End-of-turn check: on
-New dependencies: ask              (ask | never: may agent-written components add a package?)
 UI files: app/**, components/** · *.tsx *.jsx *.css
 Allowed raw values: components/ui/**
 
@@ -688,10 +687,10 @@ session snapshots); without it Plumb still works with fewer details.
 no hosted web fonts. A project font is embedded from the project's own font files; otherwise a
 system font stack is used. Every page opens offline from disk.
 
-**New dependencies in the project:** when a component the agent writes would need a package the
-project doesn't have, Plumb asks first and records the answer in the decision log. `PLUMB.md`
-`New dependencies: ask | never` (default `ask`); with `never`, components are built from what
-the project already has. (Guarding installs in general is not Plumb's job.)
+**Nothing is installed or downloaded.** A rule in every Plumb skill: never install or download
+anything (no package, image, tool or file from the network); build components with what the
+project already has. If a component really seems to need a new package, the agent says so
+(`ask the user: …`) and leaves the decision to the user. There is no setting for this.
 
 **Optional, each the organisation's choice:** Effective HTML skills (else Plumb's built-in rules
 and templates), a browser tool (else audit and `/plumb:ux` review code instead of screenshots),
