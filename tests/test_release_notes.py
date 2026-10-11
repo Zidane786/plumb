@@ -56,9 +56,7 @@ def test_version_is_the_same_everywhere() -> None:
     version = json.loads(PLUGIN_JSON.read_text(encoding="utf-8"))["version"]
     template = (REPO / "plugins/plumb/templates/PLUMB.md").read_text(encoding="utf-8")
     shared = REPO / "plugins/plumb/assets/skill/scripts/_plumb.py"
-    if shared.exists():
-        assert f'PLUMB_VERSION = "{version}"' in shared.read_text(encoding="utf-8")
-    # else: _plumb.py arrives in Task 2; the PLUMB_VERSION check starts then
+    assert f'PLUMB_VERSION = "{version}"' in shared.read_text(encoding="utf-8")
     assert template.startswith(f"<!-- plumb v{version} ")
 
 
