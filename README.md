@@ -13,7 +13,7 @@ builds uses the same colours, type, spacing, components and words.
 - **While Claude builds:** hooks stop edits that bypass the design system and check the changed
   screens before Claude hands back.
 
-Plumb is in design. The first release (0.1.0) will add the install steps, the commands and a
+Plumb is in design. The first release (1.0.0) will add the install steps, the commands and a
 full example of what a project gets. See [Releases](https://github.com/Zidane786/plumb/releases).
 
 ## License
