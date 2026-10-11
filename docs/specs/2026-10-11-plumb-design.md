@@ -622,6 +622,7 @@ Role: home                          (home = this repo owns the tokens; linked = 
 Platforms: web
 UI packages: . (Next.js · Tailwind v4 · shadcn)
 Python: `python3`
+No downloads: nothing is installed or downloaded for the design system; if something is missing, ask the user.
 
 ## Checks
 Edit check: on
@@ -690,7 +691,8 @@ system font stack is used. Every page opens offline from disk.
 **Nothing is installed or downloaded.** A rule in every Plumb skill: never install or download
 anything (no package, image, tool or file from the network); build components with what the
 project already has. If a component really seems to need a new package, the agent says so
-(`ask the user: …`) and leaves the decision to the user. There is no setting for this.
+(`ask the user: …`) and leaves the decision to the user. There is no setting for this; `PLUMB.md`
+states it in one line so every agent working in the project sees it.
 
 **Optional, each the organisation's choice:** Effective HTML skills (else Plumb's built-in rules
 and templates), a browser tool (else audit and `/plumb:ux` review code instead of screenshots),
