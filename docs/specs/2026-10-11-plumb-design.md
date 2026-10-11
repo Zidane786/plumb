@@ -799,8 +799,9 @@ hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE
   dependency, never a runtime one), and the tests skip with a reason elsewhere. What CI cannot
   run: the two CLIs themselves (they need sign-in), so the live tmux runs below are done by hand
   before every release and recorded in the PR.
-- **Two small sample apps, one per path:** a minimal Next.js + Tailwind v4 app and a minimal
-  Angular app (plain CSS/SCSS), kept as source trees under `tests/fixtures/apps/`. Both CLIs run
+- **Three small sample apps:** a minimal Next.js + Tailwind v4 app, a minimal Angular app (plain
+  CSS/SCSS) and a minimal SwiftUI app (its generated theme and views type-checked with `swiftc` on
+  macOS), kept as source trees under `tests/fixtures/apps/`. Both CLIs run
   init, create or extract, prototype, tour, the hooks (edit check, prototype first, end-of-turn,
   guard) and audit on each, in tmux. If npm is reachable on the test machine, the apps are also
   run so the audit's screenshot comparison and `/plumb:ux` are exercised against the real pages;
@@ -824,7 +825,7 @@ placeholder named.
 
 ## 16. Out of scope for 1.0.0
 
-VS Code Copilot Chat; React Native and Flutter themes; shipped component templates for any
+VS Code Copilot Chat; React Native and Flutter themes (React Native is a candidate for 1.1.0); shipped component templates for any
 framework (components are agent-written from specs); a hosted or shared prototype server
 (prototypes are local files; pixel-perfect visual diffing); importing from Figma.
 
