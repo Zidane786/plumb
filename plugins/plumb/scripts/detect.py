@@ -33,6 +33,9 @@ EXCLUDE = {
     "node_modules", ".git", "dist", "build", ".next", "Pods", "DerivedData", ".venv", "venv",
     "__pycache__", "target", ".turbo", ".nuxt", ".svelte-kit", ".gradle", ".idea", "coverage",
 }
+# Folders never searched for nested projects or repos: build output plus vendored and dependency code
+# (a git checkout under vendor/ is a dependency of the project, not a project of its own).
+NOT_PROJECTS = EXCLUDE | {"vendor", "vendors", "third_party", "third-party", "external", "externals", "out"}
 MAX_DEPTH = 5
 MAX_ENTRIES = 60000
 UI_EXTS = {".tsx", ".jsx", ".vue", ".svelte", ".html", ".swift", ".kt"}
@@ -407,7 +410,7 @@ def list_children(cwd: Path, max_depth: int = MAX_DEPTH) -> List[dict]:
                     continue
             except OSError:
                 continue
-            if e.name.startswith(".") or e.name in EXCLUDE or e.name.endswith(".xcodeproj"):
+            if e.name.startswith(".") or e.name in NOT_PROJECTS or e.name.endswith(".xcodeproj"):
                 continue
             child = Path(e.path)
             child_rel = e.name if not rel else rel + "/" + e.name

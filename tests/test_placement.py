@@ -517,6 +517,25 @@ def test_non_git_folder_with_markers_and_nested_repos_is_a_parent(tmp_path: Path
     assert r["layout"] == "parent" and [c["path"] for c in r["children"]] == ["work/site"]
 
 
+@pytest.mark.parametrize("vendored", ["app/vendor/lib", "third_party/x", "external/y", "node_modules/z",
+                                      "Pods/p", ".venv/src/q", "dist/w"])
+def test_vendored_repos_do_not_make_a_parent(tmp_path: Path, vendored: str) -> None:
+    pkg(tmp_path, "package.json", {"react": "18"}, "q")
+    pkg(tmp_path, "app/package.json", {"react": "18"})
+    repo(tmp_path / vendored)
+    pkg(tmp_path, vendored + "/package.json", {"left-pad": "1"})
+    r = run(tmp_path)
+    assert r["layout"] != "parent" and Path(r["root"]).resolve() == tmp_path.resolve()
+    assert r["proposal"]["skill_dir"] == ".claude/skills/q-design-system"
+
+
+def test_vendored_folders_are_not_listed_under_a_parent(tmp_path: Path) -> None:
+    repo(tmp_path / "Projects/acme")
+    repo(tmp_path / "Projects/vendor/other")
+    r = run(tmp_path)
+    assert r["layout"] == "parent" and [c["path"] for c in r["children"]] == ["Projects/acme"]
+
+
 def test_non_git_monorepo_with_markers_is_still_a_monorepo(tmp_path: Path) -> None:
     put(tmp_path, "pnpm-workspace.yaml", "packages: ['apps/*']\n")
     pkg(tmp_path, "apps/web/package.json", {"next": "14"})

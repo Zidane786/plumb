@@ -63,7 +63,15 @@ def frontmatter(path: Path) -> Dict[str, str]:
 def test_there_are_skills_and_references() -> None:
     names = {p.parent.name for p in skill_files()}
     assert {"init", "create", "extract"} <= names
-    assert {"interview.md", "placement.md", "tokens-format.md"} <= {p.name for p in REFERENCE.glob("*.md")}
+    assert {"interview.md", "placement.md", "tokens-format.md", "wire-in.md"} <= {p.name for p in REFERENCE.glob("*.md")}
+
+
+def test_every_reference_is_linked_from_a_skill() -> None:
+    linked = set()
+    for path in skill_files():
+        linked.update(re.findall(r"\]\(\.\./\.\./reference/([a-z0-9-]+\.md)\)", path.read_text(encoding="utf-8")))
+    for ref in sorted(REFERENCE.glob("*.md")):
+        assert ref.name in linked, f"reference/{ref.name} is not linked from any skill"
 
 
 def test_every_skill_folder_is_a_command() -> None:

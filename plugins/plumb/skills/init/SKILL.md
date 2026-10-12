@@ -112,20 +112,14 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
    primitives live), docs dir (`docs/design`), Python command, role, and whether it is **design only**. Create or
    extract writes it into `PLUMB.md` and the tokens file, so no later command guesses again.
 
-**Design only** (chosen for a backend repo, a React Native app, or by the user): `scaffold.py --platforms web
---styling css`, no `web_copies`, no components inside an app (reference starters only, in the skill), HTML prototype
-only. Platforms are added later with `/plumb:update`.
-
-If the user changes the placement of a design system that already exists, move it only with
-`scaffold.py --relocate FROM TO --project-root "<root>"` (dry run first), never by hand.
+**Design only** (a backend repo, a React Native app, or the user's choice) and moving an existing system
+(`scaffold.py --relocate`, never by hand): "Design only" and "Moving it later" in placement.md.
 
 ## Step 2: linked to another repo?
 
 Ask: "Does this repo use a design system that lives in another repo?" (a) No, this repo owns it (Recommended)
-(b) Yes, it lives in another repo. On (b): ask for the path to that design-system skill folder, check it holds
-`SKILL.md` and `assets/tokens/*.tokens.json`, write `<root>/PLUMB.md` from `ROOT/templates/PLUMB.md` with
-`Role: linked` and `Design system:` set to that path (see "Linked repos" in placement.md), then go to step 4 (row and
-checks only).
+(b) Yes, it lives in another repo. On (b) follow "Linked repos" in placement.md (ask the path, check it, write
+`<root>/PLUMB.md` from `ROOT/templates/PLUMB.md` with `Role: linked`), then step 4 (row and checks only).
 
 ## Step 3: existing or new?
 
@@ -141,23 +135,9 @@ it with the confirmed placement and `<root>` (it skips its own placement step). 
 2. **Checks.** "Turn on both checks? The edit check refuses edits that add design-system errors; the end-of-turn check
    reviews changed screens before the agent hands back." (a) Both on (Recommended) (b) edit check only (c) end-of-turn
    only (d) both off → set `Edit check:` and `End-of-turn check:` in `PLUMB.md`.
-3. **AGENTS.md / CLAUDE.md row.** Fill `ROOT/templates/agents-row.md` (`{{SKILL_DIR}}` = the skill dir with a trailing
-   `/`). Options: AGENTS.md (Recommended when it exists) · CLAUDE.md · both · skip. Add the row to the file's "read
-   before you work" table; if there is none, add a `## Read before you work` section with `| When | Read | Rule |`.
-   If neither file exists, offer to create `<root>/AGENTS.md` with that section (and `CLAUDE.md` holding
-   `@AGENTS.md`). Change nothing else in those files.
-4. **Makefile targets** `tokens`, `tokens-check`, `design-audit` from `ROOT/templates/Makefile.snippet`
-   (`{{PYTHON}}`, `{{SKILL_DIR}}` filled). Append to `<root>/Makefile` (create one only on yes). Targets with those
-   names already → show them and ask. No `make` → the commands in `PLUMB.md` are enough; say so.
-5. **Slate** (only when `<root>/kanban/board.py` exists): "Add the design audit to Slate's review checks?" (a) Yes
-   (Recommended) (b) No. On yes add `- Plumb design audit: \`make design-audit\` exits 0` (or the plain command)
-   under `## Extra review checks` in `SLATE.md`, replacing a lone `- none`. Never touch `kanban/`.
-6. **Kiro** (ask only when `<root>/.kiro/` exists or the user mentions Kiro): "Write `.kiro/steering/plumb.md` so Kiro
-   reads the design system on every task?" On yes write front matter `inclusion: always` and one paragraph: before
-   any UI change read `<skill dir>/SKILL.md`; UI work is prototype first; never install or download anything, ask the
-   user and wait. Kiro's own skills and hooks come from `kiro.py install` (tell the user; do not run it for them).
-7. **Monorepo package** (the session was opened inside a package): offer the one-line pointer in that package's
-   `AGENTS.md`/`CLAUDE.md` from placement.md.
+3. **The rest, each asked on its own** as [reference/wire-in.md](../../reference/wire-in.md) says: the AGENTS.md /
+   CLAUDE.md row, the Makefile targets, the Slate review check (when `kanban/board.py` exists), Kiro steering (when
+   Kiro is used), and the monorepo package pointer (when opened inside a package).
 
 Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` and fix what it reports (asked).
 
@@ -169,8 +149,8 @@ Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"`
 
 ## Checklist before you finish
 
-- [ ] The user confirmed the "Plumb found … I'll create …" block before anything was written
-- [ ] Every command named `<root>`; nothing was written outside it
+- [ ] The user confirmed the "Plumb found … I'll create …" block before anything was written; every command named
+      `<root>` and nothing was written outside it
 - [ ] `PLUMB.md` records the confirmed layout and starts with the version line
 - [ ] Each wire-in item was asked; nothing outside the agreed lines changed in AGENTS.md, CLAUDE.md, SLATE.md, Makefile
 - [ ] `scaffold.py --verify` shows no `problem:` lines; nothing was installed or downloaded
