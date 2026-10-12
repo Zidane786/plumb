@@ -16,14 +16,23 @@ and write files in the project.
   read as data: `PLUMB.md`, the tokens JSON, `screens.json`, the screen files and the source files. When a project's
   copies are a different version, the hooks say so ("run /plumb:upgrade") and still check with the plugin's own
   scripts.
-- **Git, read-only.** To see what changed in a session the hooks run `git rev-parse`, `git status`, `git diff
-  --name-only`, `git show` and `git config --get-regexp` (to list filter drivers) in the project. Every call turns off
-  the commands a repository's config can name: `core.fsmonitor`, `core.hooksPath` (set to the null device),
-  `diff.external` and `--no-ext-diff`, `--no-textconv`, the pager (`--no-pager`, `GIT_PAGER=cat`), every
-  `filter.<name>.clean` / `smudge` / `process` the config lists (emptied), submodules (`--ignore-submodules=all`); it
-  also passes `--no-optional-locks` and `GIT_TERMINAL_PROMPT=0`, and puts `--end-of-options` before revisions. Git
-  itself still reads the repository's config for every other key (as any git command you run there does); none of the
-  commands above runs anything those keys name, as far as git's documentation and Plumb's tests show.
+- **Git, with fixed overrides.** To see what changed in a session the hooks run git in the project: `rev-parse`,
+  `status`, `diff --name-only`, `ls-tree`, `cat-file --batch` (the stored blob of a file's old text) and
+  `config --get-regexp` (to list filter drivers). Git is found as an absolute path by walking `PATH` (empty, `.` and
+  relative entries and anything inside the project are skipped), never in the project; without it the checks stay
+  quiet. Every call passes these overrides, as `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` (and as
+  `-c` for older git): `core.fsmonitor=false`, `core.untrackedCache=false`, `core.hooksPath=<null device>`,
+  `diff.external=` (empty), `core.pager=cat`, `protocol.allow=never`, and an empty `clean`, `smudge` and `process` for
+  every `filter.<name>` the configuration lists (any name; on git older than 2.31 a name containing `=` cannot be
+  emptied, so git is not run there). Every call also has `--no-optional-locks`, `--no-pager`, `GIT_NO_LAZY_FETCH=1`
+  (no fetch from a promisor remote), `GIT_TERMINAL_PROMPT=0` and `GIT_PAGER=cat`, drops `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_EXTERNAL_DIFF`, `GIT_SSH*` and `GIT_ASKPASS`, and `diff` adds `--no-ext-diff --no-textconv
+  --ignore-submodules=all`. Commit ids from a snapshot reach git only after a hex check.
+- **What that guarantee is, and is not.** The hooks run only the plugin's own code, plus git with the overrides above.
+  Git still reads the repository's configuration (`.git/config` and what it includes) for every other key, as any
+  git command run there does. The overrides cover every configured command we know these read-only calls can reach;
+  they are not a sandbox. A repository whose `.git/config` you didn't create yourself (an archive, a shared folder, a
+  devcontainer) deserves the same care as its scripts.
 - **The session snapshots** live in a folder private to you in the OS temp folder (`plumb-<uid>`, created 0700; on
   Windows the per-user temp folder). If that folder is a symlink, someone else's, or writable by others, the hooks
   keep no snapshot and never read, write or delete there. Snapshot files are written 0600 without following

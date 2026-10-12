@@ -526,24 +526,28 @@ def test_broken_tokens_file_fails_open(launcher, tmp_path, proj):
 # ---------------------------------------------------------------- timing (measured through the launcher)
 
 
-def _best(fn, n: int = 3) -> float:
+def _best(fn, limit: float, n: int = 12) -> float:
+    """The fastest of at least 5 runs, and up to n while none is under the limit: a loaded machine (other test
+    processes, CI neighbours) slows single runs down, while the hook's own cost shows in the fastest one."""
     best = float("inf")
-    for _ in range(n):
+    for i in range(n):
         t = time.perf_counter()
         fn()
         best = min(best, time.perf_counter() - t)
+        if i >= 4 and best < limit:
+            break
     return best
 
 
 def test_non_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 0.6 if CI or launcher == "powershell" else 0.15
-    took = _best(lambda: allowed(edit(launcher, tmp_path, proj, "README.md", "Notes.", "More notes.")))
+    took = _best(lambda: allowed(edit(launcher, tmp_path, proj, "README.md", "Notes.", "More notes.")), limit)
     assert took < limit, f"non-UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
 def test_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 3.0 if CI or launcher == "powershell" else 1.0
-    took = _best(lambda: refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW)))
+    took = _best(lambda: refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW)), limit)
     assert took < limit, f"UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
@@ -930,3 +934,161 @@ def test_fix_lines_never_echo_an_unsafe_python_value(launcher, tmp_path, proj, v
     reason = refused(write_tool(launcher, tmp_path, proj, "app/globals.css", "x"))
     fix = next(ln for ln in reason.splitlines() if ln.startswith("fix: "))
     assert fix.endswith(f"rebuild: {shown} {SKILL_REL}/scripts/build-tokens.py"), fix
+
+
+
+# ---------------------------------------------------------------- review round 2: git through the environment, absolute git
+
+
+def _git_cfg(proj: Path, text: str) -> None:
+    cfg = proj / ".git" / "config"
+    cfg.write_text(read(cfg) + text, encoding="utf-8")
+
+
+@needs_git
+def test_filter_named_with_an_equals_sign_never_runs(launcher, tmp_path, proj):
+    git_init(proj)
+    mark = tmp_path / "EQ-RAN"
+    _git_cfg(proj, f'[filter "x=y"]\n\tclean = "touch \'{mark}\'; cat"\n\tprocess = "touch \'{mark}\'"\n')
+    write(proj / ".gitattributes", "*.tsx filter=x=y\n")
+    safe = ("-c", "filter.x=y.clean=cat", "-c", "core.fsmonitor=false")
+    env = {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "filter.x=y.clean", "GIT_CONFIG_VALUE_0": "cat",
+           "GIT_CONFIG_KEY_1": "filter.x=y.process", "GIT_CONFIG_VALUE_1": ""}
+    import subprocess as sp
+    for args in (["add", ".gitattributes"], ["commit", "-qm", "attrs"]):
+        sp.run(["git", *safe, *args], cwd=str(proj), check=True, capture_output=True,
+               env={**os.environ, **env, "GIT_CEILING_DIRECTORIES": str(proj.parent)})
+    write(proj / "components/eq.tsx", "export const a = 1;\n")
+    for args in (["add", "components/eq.tsx"], ["commit", "-qm", "eq"]):
+        sp.run(["git", *safe, *args], cwd=str(proj), check=True, capture_output=True,
+               env={**os.environ, **env, "GIT_CEILING_DIRECTORIES": str(proj.parent)})
+    if mark.exists():
+        mark.unlink()
+    _start(launcher, tmp_path, proj)
+    eq = proj / "components/eq.tsx"
+    write(eq, "export const b = 2;\n")  # same size: git must read the content, through the clean filter
+    st = eq.stat()
+    os.utime(str(eq), (st.st_atime, st.st_mtime + 60))
+    stop(launcher, tmp_path, proj)
+    assert not mark.exists()
+    os.utime(str(eq), (st.st_atime, st.st_mtime + 120))
+    sp.run(["git", "status", "--porcelain"], cwd=str(proj), capture_output=True,
+           env={**os.environ, "GIT_CEILING_DIRECTORIES": str(proj.parent)})
+    assert mark.exists()  # control: a plain git status does run it
+
+
+@needs_git
+def test_lazy_fetch_never_runs_the_promisor_remotes_command(launcher, tmp_path, proj):
+    """A partial clone whose blob is missing: reading the old text must not fetch (uploadpack is a command)."""
+    import subprocess as sp
+    page = proj / "app/page.tsx"
+    write(page, read(page).replace("<main>", '<main className="bg-[#abcdef]">'))  # an error from before the session
+    git_init(proj)
+    git(proj, "config", "uploadpack.allowFilter", "true")
+    victim = tmp_path / "victim" / "demo"
+    victim.parent.mkdir()
+    genv = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    genv.update({"GIT_CEILING_DIRECTORIES": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"})
+    sp.run(["git", "clone", "-q", "--no-local", proj.as_uri(), str(victim)], check=True, capture_output=True, env=genv)
+    for pack in list((victim / ".git/objects/pack").glob("*.pack")):
+        moved = tmp_path / pack.name
+        pack.rename(moved)
+        for q in (victim / ".git/objects/pack").glob("*"):
+            q.unlink()
+        with open(moved, "rb") as fh:
+            sp.run(["git", "unpack-objects", "-q"], stdin=fh, cwd=str(victim), check=True, env=genv)
+    mark = tmp_path / "LAZY-RAN"
+    for key, value in (("core.repositoryformatversion", "1"), ("extensions.partialClone", "origin"),
+                       ("remote.origin.promisor", "true"),
+                       ("remote.origin.uploadpack", f"touch '{mark}'; git-upload-pack")):
+        git(victim, "config", key, value)
+    _start(launcher, tmp_path, victim)
+    oid = sp.run(["git", "rev-parse", "HEAD:app/page.tsx"], cwd=str(victim), env=genv, capture_output=True,
+                 text=True, encoding="utf-8").stdout.strip()
+    (victim / ".git/objects" / oid[:2] / oid[2:]).unlink()
+    page = victim / "app/page.tsx"
+    write(page, read(page) + "\nexport const c = 'x';\n")
+    r = stop(launcher, tmp_path, victim)
+    assert r.returncode == 0
+    assert not mark.exists()
+    assert "#abcdef" not in r.stdout  # the old text is unknown: nothing in the file counts as new
+
+
+def _shim(tmp_path: Path, name: str, body: str) -> Path:
+    import shutil as sh
+    real = sh.which("git")
+    folder = tmp_path / name
+    folder.mkdir()
+    script = folder / "git"
+    script.write_bytes(("#!/bin/sh\n" + body.replace("REAL", str(real))).encode("utf-8"))
+    script.chmod(0o755)
+    return folder
+
+
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="sh shims for git")
+
+
+def _legacy_project(launcher, tmp_path, proj, shim: Path):
+    write(proj / "app/legacy.tsx", "export const legacy = '#abcdef';\n")
+    write(proj / "components/legacy.tsx", 'export const L = () => <p className="bg-[#abcdef]">x</p>;\n')
+    git_init(proj)
+    env = {"PATH": str(shim) + os.pathsep + os.environ.get("PATH", "")}
+    _start(launcher, tmp_path, proj)
+    f = proj / "components/legacy.tsx"
+    write(f, read(f) + "export const ok = 1;\n")
+    return stop(launcher, tmp_path, proj, env=env)
+
+
+@needs_git
+@posix_only
+def test_old_git_without_end_of_options_gives_no_false_block(launcher, tmp_path, proj):
+    shim = _shim(tmp_path, "oldgit", 'for a in "$@"; do [ "$a" = "--end-of-options" ] && exit 129; done\n'
+                                      'exec REAL "$@"\n')
+    r = _legacy_project(launcher, tmp_path, proj, shim)
+    assert r.returncode == 0 and r.stdout.strip() == "Plumb: 1 UI file checked, consistent", r.stdout
+
+
+@needs_git
+@posix_only
+def test_old_text_that_cannot_be_read_counts_as_not_new(launcher, tmp_path, proj):
+    shim = _shim(tmp_path, "brokengit", 'for a in "$@"; do case "$a" in cat-file|show) exit 128;; esac; done\n'
+                                        'exec REAL "$@"\n')
+    r = _legacy_project(launcher, tmp_path, proj, shim)
+    assert r.returncode == 0 and "decision" not in r.stdout, r.stdout
+
+
+@needs_git
+def test_git_planted_in_the_project_is_never_run(launcher, tmp_path, proj):
+    git_init(proj)
+    mark = tmp_path / "PLANTED-GIT-RAN"
+    for name in ("git", "git.exe", "git.cmd", "git.bat"):
+        p = proj / name
+        if name.endswith((".cmd", ".bat")):
+            write(p, f'@echo off\r\necho ran > "{mark}"\r\n', newline="")
+        else:
+            p.write_bytes(f"#!/bin/sh\ntouch '{mark}'\nexit 1\n".encode("utf-8"))
+            p.chmod(0o755)
+    path = os.pathsep.join([".", "", str(proj), "bin", os.environ.get("PATH", "")])
+    env = {"PATH": path}
+    r = session_start(launcher, tmp_path, proj, env=env)
+    assert context(r).startswith("Plumb: ")
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    assert "#ff0000" in _block(stop(launcher, tmp_path, proj, env=env))
+    assert not mark.exists()
+
+
+@pytest.mark.parametrize("command", [
+    "python3 -c \"open('{d}/a b/tokens.css', 'w').write('x')\"",
+    "python3 -c 'open(\"{d}/a b/tokens.css\", \"w\").write(\"x\")'",
+    "echo x > \"{d}/a b/tokens.css\"",
+    "echo x > '{d}/a b/tokens.css'",
+])
+def test_shell_paths_with_spaces_are_read_whole(H, command, tmp_path):
+    found = H.shell_targets(command.format(d=tmp_path), str(tmp_path))
+    assert os.path.join(str(tmp_path), "a b", "tokens.css") in [os.path.normpath(t) for t in found], found
+
+
+def test_generated_file_under_a_folder_with_a_space_is_refused(launcher, tmp_path):
+    proj = make_project(tmp_path, "With Space")
+    assert " is generated" in refused(bash(launcher, tmp_path, proj,
+                                           f"python3 -c \"open('{proj}/app/globals.css', 'w').write('x')\""))

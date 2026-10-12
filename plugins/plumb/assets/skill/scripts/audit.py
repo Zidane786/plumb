@@ -134,14 +134,16 @@ take_snapshot, changed_since, changed_findings). A snapshot records the tracked 
 walk plus the prototype screen files (<docs>/prototype/screens/*.html). In a git repository it holds HEAD and the hash
 (and, when small, the text) of every tracked file `git status` lists as changed or untracked; elsewhere the modification
 time and size of every tracked file (and the text of the small ones); plus each screen's status in screens.json.
---changed compares the files now with it (git: also files committed since its HEAD, their old text from `git show`)
-and reports, for the changed files only: the per-file findings each file gained (quick() against its text at the
-snapshot; every finding when that text is unknown), route-not-prototyped for a route that is new in a changed file,
+--changed compares the files now with it (git: also files committed since its HEAD, their old text read with
+`git ls-tree` and one `git cat-file --batch`: the stored blob, no filter, textconv or fetch) and reports, for the changed files only: the
+per-file findings each file gained (quick() against its text at the snapshot; none when that text cannot be read: the
+check fails open, it never blocks on what may be old), route-not-prototyped for a route that is new in a changed file,
 and, with Prototype sync on, screen-drift for a screen that was built when the snapshot was taken whose source files
 changed while its screen file did not (and still differ from the recorded baseline: "update prototype screen booking:
 states ..."), and screen-unapproved for a built screen whose screen file or source changed and whose current prototype
 is not approved. No changed files: "no UI files changed since the snapshot", exit 0. A missing or broken snapshot
-exits 2.
+exits 2. Git runs as an absolute path found on PATH (never in the project), read-only, with the commands a repository's
+config can name turned off (_GIT_OVERRIDES; SECURITY.md "Trust boundary").
 
 Hooks load this file by path (it is not in a package). Register the module in sys.modules before running it, or
 its dataclasses fail:
@@ -3661,7 +3663,7 @@ def read_source(path: Path) -> str:
 SNAPSHOT_VERSION = 1
 SNAPSHOT_TEXT_MAX = 256 * 1024  # a changed file's text is kept in the snapshot up to this size ...
 SNAPSHOT_TEXT_TOTAL = 4 * 1024 * 1024  # ... and up to this much in all
-GIT_SHOW_MAX = 50  # at most this many `git show` calls to recover the text a file had at the snapshot
+GIT_TEXTS_MAX = 200  # at most this many files' old text read back from git (one ls-tree, one cat-file --batch)
 
 
 class Change(NamedTuple):
@@ -3684,48 +3686,161 @@ def _sha(text: str) -> str:
 
 
 _HEAD_RX = re.compile(r"[0-9a-f]{40,64}")
-# Every git call reads the repository only: none of the commands a repository's own config can name runs (fsmonitor,
-# hooks, an external diff, textconv, a pager, the filter drivers: the latter are listed with `git config` and emptied).
-_GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", f"core.hooksPath={os.devnull}",
-             "-c", "diff.external=", "-c", "core.pager=cat", "--no-optional-locks", "--no-pager")
-_GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat", "GIT_OPTIONAL_LOCKS": "0"}
-_GIT_FILTERS: Dict[str, Tuple[str, ...]] = {}
+# Every git call only reads the repository, and none of the commands a repository's own config can name runs: these
+# overrides go to git as GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n (key and value apart, so any filter
+# name works; git 2.31+) and, for keys without "=", also as -c (older git). Filter drivers are listed with
+# `git config --get-regexp` (reading config runs nothing) and emptied. No lazy fetch from a promisor remote
+# (GIT_NO_LAZY_FETCH, protocol.allow=never), no optional locks, no pager, no prompts.
+_GIT_OVERRIDES = (("core.fsmonitor", "false"), ("core.untrackedCache", "false"), ("core.hooksPath", os.devnull),
+                  ("diff.external", ""), ("core.pager", "cat"), ("protocol.allow", "never"))
+_GIT_OPTIONS = ("--no-optional-locks", "--no-pager")
+_GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat", "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_NO_LAZY_FETCH": "1"}
+_GIT_DROP = re.compile(r"^(?:GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)|GIT_EXTERNAL_DIFF|GIT_DIR|GIT_WORK_TREE|"
+                       r"GIT_ALLOW_PROTOCOL|GIT_PROTOCOL_FROM_USER|GIT_SSH|GIT_SSH_COMMAND|GIT_ASKPASS)$")
+_GIT_FILTERS: Dict[str, Optional[Tuple[Tuple[str, str], ...]]] = {}
+_GIT_EXE: Dict[str, Optional[str]] = {}
+_GIT_VERSION: List[Optional[Tuple[int, ...]]] = []
 
 
-def _git_run(root: Path, args: Tuple[str, ...]) -> Optional[bytes]:
-    env = {k: v for k, v in os.environ.items() if k not in ("GIT_EXTERNAL_DIFF", "GIT_DIR", "GIT_WORK_TREE")}
+def find_executable(name: str, avoid: Optional[Path] = None) -> Optional[str]:
+    """The absolute path of a program found on PATH, looked up here rather than by the OS: empty, `.` and relative PATH
+    entries are skipped, and so is anything inside `avoid` (the project), so a program planted in a repository is
+    never run. On Windows .exe then .cmd. None when it is not found."""
+    exts = [".exe", ".cmd"] if os.name == "nt" else [""]
+    avoid_real = os.path.normcase(os.path.realpath(str(avoid))) if avoid is not None else None
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not entry or entry == "." or not os.path.isabs(entry):
+            continue
+        real = os.path.normcase(os.path.realpath(entry))
+        if avoid_real is not None and (real == avoid_real or real.startswith(avoid_real + os.sep)):
+            continue
+        for ext in exts:
+            candidate = os.path.join(entry, name + ext)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return os.path.realpath(candidate)
+    return None
+
+
+def _git_exe(root: Path) -> Optional[str]:
+    key = str(root)
+    if key not in _GIT_EXE:
+        _GIT_EXE[key] = find_executable("git", root)
+    return _GIT_EXE[key]
+
+
+def _git_env(overrides: Tuple[Tuple[str, str], ...]) -> Dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if not _GIT_DROP.match(k)}
     env.update(_GIT_ENV)
+    env["GIT_CONFIG_COUNT"] = str(len(overrides))
+    for i, (key, value) in enumerate(overrides):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
+
+
+def _git_exec(root: Path, overrides: Tuple[Tuple[str, str], ...], args: Tuple[str, ...],
+              stdin: Optional[bytes] = None) -> Optional[bytes]:
+    exe = _git_exe(root)
+    if exe is None:
+        return None
+    dash_c: List[str] = []
+    for key, value in overrides:
+        if "=" not in key:
+            dash_c += ["-c", f"{key}={value}"]
     try:
-        r = subprocess.run(["git", *args], cwd=str(root), capture_output=True, timeout=15, stdin=subprocess.DEVNULL,
-                           env=env)
+        r = subprocess.run([exe, *dash_c, *_GIT_OPTIONS, *args], cwd=str(root), capture_output=True, timeout=15,
+                           input=stdin if stdin is not None else b"", env=_git_env(overrides))
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None
 
 
-def _git_filters(root: Path) -> Tuple[str, ...]:
-    """`-c filter.<name>.clean= ...` for every filter driver the repository's config names (reading config runs
-    nothing), so `git status` cannot run them."""
+def _git_version(root: Path) -> Optional[Tuple[int, ...]]:
+    if not _GIT_VERSION:
+        out = _git_exec(root, _GIT_OVERRIDES, ("--version",))
+        m = re.search(rb"(\d+)\.(\d+)", out or b"")
+        _GIT_VERSION.append((int(m.group(1)), int(m.group(2))) if m else None)
+    return _GIT_VERSION[0]
+
+
+def _git_overrides(root: Path) -> Optional[Tuple[Tuple[str, str], ...]]:
+    """The fixed overrides plus an empty clean, smudge and process for every filter driver the config names. None when
+    a driver cannot be emptied on this git (a name with "=" needs git 2.31+): then git is not run at all."""
     key = str(root)
     if key not in _GIT_FILTERS:
-        out = _git_run(root, _GIT_SAFE + ("config", "--null", "--get-regexp", r"^filter\..*\.(clean|smudge|process)$"))
+        out = _git_exec(root, _GIT_OVERRIDES, ("config", "--null", "--get-regexp", r"^filter\..*\.(clean|smudge|process)$"))
         names = set()
         for item in (out or b"").decode("utf-8", errors="replace").split("\0"):
             k = item.split("\n", 1)[0]
-            if k.startswith("filter.") and k.count(".") >= 2:
+            if k.lower().startswith("filter.") and k.count(".") >= 2:
                 names.add(k[len("filter."):].rsplit(".", 1)[0])
-        args: List[str] = []
-        for name in sorted(names):
-            for part in ("clean", "smudge", "process"):
-                args += ["-c", f"filter.{name}.{part}="]
-        _GIT_FILTERS[key] = tuple(args)
+        result: Optional[Tuple[Tuple[str, str], ...]] = _GIT_OVERRIDES + tuple(
+            (f"filter.{name}.{part}", "") for name in sorted(names) for part in ("clean", "smudge", "process"))
+        if any("=" in name for name in names) and (_git_version(root) or (0, 0)) < (2, 31):
+            result = None
+        _GIT_FILTERS[key] = result
     return _GIT_FILTERS[key]
 
 
+def _git_bytes(root: Path, *args: str, stdin: Optional[bytes] = None) -> Optional[bytes]:
+    """git, read-only, with the repository's configured commands neutralised (see _GIT_OVERRIDES); None on failure."""
+    overrides = _git_overrides(root)
+    if overrides is None:
+        return None
+    return _git_exec(root, overrides, args, stdin)
+
+
 def _git(root: Path, *args: str) -> Optional[str]:
-    """git, read-only and with the repository's configured commands neutralised (see _GIT_SAFE)."""
-    out = _git_run(root, _GIT_SAFE + _git_filters(root) + args)
+    out = _git_bytes(root, *args)
     return out.decode("utf-8", errors="replace") if out is not None else None
+
+
+_ABSENT = object()
+
+
+def _git_texts(root: Path, head: str, names: List[str]) -> Dict[str, object]:
+    """{name: its text at commit head | _ABSENT (not in that commit)} for the names whose old text git could tell:
+    `git ls-tree` names each file's blob (or shows it is not there), then one `git cat-file --batch` reads the stored
+    blobs (no filter, no textconv; a blob missing from a partial clone is not fetched). A name missing from the result
+    is unknown (a failed call, a missing object, an odd path)."""
+    names = [n for n in names if "\n" not in n and "\r" not in n and "\0" not in n]
+    if not names:
+        return {}
+    listing = _git_bytes(root, "ls-tree", "-z", head, "--", *names)  # paths relative to the project folder (cwd)
+    if listing is None:
+        return {}
+    oids: Dict[str, str] = {}
+    for entry in listing.decode("utf-8", errors="replace").split("\0"):
+        meta, tab, path = entry.partition("\t")
+        parts = meta.split(" ")
+        if tab and len(parts) == 3 and parts[1] == "blob" and _HEAD_RX.fullmatch(parts[2]):
+            oids[path] = parts[2]
+    result: Dict[str, object] = {n: _ABSENT for n in names if n not in oids}
+    wanted = [(n, oids[n]) for n in names if n in oids]
+    if not wanted:
+        return result
+    out = _git_bytes(root, "cat-file", "--batch", stdin="".join(oid + "\n" for _, oid in wanted).encode("ascii"))
+    if out is None:
+        return result
+    pos = 0
+    for name, oid in wanted:
+        nl = out.find(b"\n", pos)
+        if nl < 0:
+            break
+        header = out[pos:nl].decode("ascii", errors="replace").split(" ")
+        pos = nl + 1
+        if len(header) == 2 and header[1] == "missing":
+            continue  # the object is not here (a partial clone): unknown
+        if len(header) != 3 or header[0] != oid or not header[2].isdigit():
+            break
+        size = int(header[2])
+        data = out[pos:pos + size]
+        pos += size + 1
+        if header[1] == "blob" and len(data) == size:
+            result[name] = data.decode("utf-8", errors="replace")
+    return result
 
 
 class _GitState(NamedTuple):
@@ -3922,7 +4037,7 @@ def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -
     candidates = set(files) | set(state.dirty)
     if head and state.head and head != state.head:  # committed during the session
         diff = _git(root, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all",
-                    "--end-of-options", head, state.head, "--", ".")
+                    head, state.head, "--", ".")  # both hex-checked: they cannot read as options
         real_root = Path(os.path.realpath(root))
         for name in (diff or "").split("\0"):
             if name:
@@ -3930,9 +4045,10 @@ def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -
                     candidates.add((state.top / name).relative_to(real_root).as_posix())
                 except ValueError:
                     pass
-    shows = 0
-    for name in sorted(candidates):
-        kind = tracked(name)
+    kinds = {name: tracked(name) for name in sorted(candidates)}
+    clean_then = [n for n, k in kinds.items() if k is not None and n not in files]
+    texts = _git_texts(root, head, clean_then[:GIT_TEXTS_MAX]) if head else {}
+    for name, kind in kinds.items():
         if kind is None:
             continue
         text = _read_text(root / name) if (root / name).is_file() else None
@@ -3941,14 +4057,14 @@ def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -
             then_sha = files[name].get("sha")
             then = files[name].get("text") if isinstance(files[name].get("text"), str) else None
             existed = then_sha is not None
-        else:  # unchanged at the snapshot: what HEAD had then
-            then = None
-            if head and shows < GIT_SHOW_MAX:
-                shows += 1
-                then = _git(root, "show", "--no-ext-diff", "--no-textconv", "--end-of-options",
-                            f"{head}:./{name}")  # ./ = relative to the project folder (git's cwd)
-            existed = then is not None
-            then_sha = _sha(then) if then is not None else None
+        elif not head or texts.get(name) is _ABSENT:  # not in the commit the session started from: new
+            then, then_sha, existed = None, None, False
+        elif isinstance(texts.get(name), str):
+            then = texts[name]  # type: ignore[assignment]
+            then_sha, existed = _sha(then), True  # type: ignore[arg-type]
+        else:  # git could not tell what it was: changed, its old text unknown (nothing in it counts as new)
+            out.append(Change(name, None, True, text is not None, bool(kind)))
+            continue
         if now_sha != then_sha:
             out.append(Change(name, normalise_text(then) if then is not None else None, existed, text is not None,
                               bool(kind)))
@@ -3968,7 +4084,7 @@ def changed_findings(snapshot: dict, root: Path, skill_dir: Path, doc: Optional[
     were checked:
 
     - per-file rules: only what the session added to each changed UI file (quick() against its text at the snapshot;
-      every finding when that text is unknown);
+      nothing when that text is unknown: fail open);
     - route-not-prototyped: a route that is new in a changed file;
     - prototype sync (Prototype sync: on): screen-drift for a screen that was built when the session started whose
       source files changed this session while its screen file did not (and still differ from the approved baseline);
@@ -3980,7 +4096,6 @@ def changed_findings(snapshot: dict, root: Path, skill_dir: Path, doc: Optional[
         changes = changed_since(snapshot, root, skill_dir, settings)
     findings: List[Finding] = []
     ctxs: List[Ctx] = []
-    skip = RAW_VALUE_RULES if doc is None else frozenset()
     befores: Dict[str, Change] = {}
     for c in changes:
         if c.screen or not c.exists:
@@ -3993,10 +4108,9 @@ def changed_findings(snapshot: dict, root: Path, skill_dir: Path, doc: Optional[
             continue
         ctxs.append(ctx)
         befores[c.rel] = c
-        if c.before is None and c.existed:  # the text at the snapshot is unknown: every finding counts
-            findings.extend(file_findings(ctx, skip))
-        else:
-            findings.extend(quick(c.rel, c.before, text, doc, settings))
+        if c.before is None and c.existed:  # the text at the snapshot is unknown: nothing counts as new (fail open)
+            continue
+        findings.extend(quick(c.rel, c.before, text, doc, settings))
     proj = Project(root, skill_dir, doc, settings, ctxs, True, tokens_file)
     for hit in check_route_not_prototyped(proj):
         c = befores.get(hit.file)

@@ -850,6 +850,14 @@ def _runs_builder(words: List[str]) -> bool:
     return i < n and _BUILDER_SCRIPT.search(words[i]) is not None
 
 
+_QUOTED = re.compile(r"'([^']*)'|\"((?:[^\"\\]|\\.)*)\"")
+
+
+def _quoted(text: str) -> List[str]:
+    """The contents of the quoted strings in text (backslash-escaped quotes unescaped)."""
+    return [a if a or not b else b.replace('\\"', '"') for a, b in _QUOTED.findall(text)]
+
+
 def _stage_targets(stage: str) -> List[str]:
     """The files one pipeline stage writes (best effort). A stage that runs a Plumb builder may write generated files
     itself; only its redirects and tee count."""
@@ -883,8 +891,10 @@ def _stage_targets(stage: str) -> List[str]:
         value = _flag_value(args, ("-destination",))
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))
         targets += [value] if value else pos[1:2]
-    if _GENERIC.search(rest):  # a write that doesn't name its target in a way read here: every path it mentions
-        targets += re.findall(r"[^\s'\"`=(),;|&<>]+", rest)
+    if _GENERIC.search(rest):  # a write that doesn't name its target in a way read here: every path it mentions,
+        targets += re.findall(r"[^\s'\"`=(),;|&<>]+", rest)  # by its words and by every quoted string (spaces kept),
+        for outer in _quoted(stage):  # also one level down (python -c "open('/a b/x.css', 'w')")
+            targets += [outer] + _quoted(outer)
     return targets
 
 
