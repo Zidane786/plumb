@@ -833,7 +833,7 @@ plugins/plumb/
 examples/caredesk/        the golden output of create on CareDesk Lite, with its input brief
 tests/                    see §14
 docs/specs · docs/plans · docs/what-you-get.html
-TEST.md · README.md (like Slate's: what Plumb does, install in both tools, updating, a table
+docs/USAGE.md (the complete usage guide: start here; walkthroughs by situation; every command with an example session; the daily prototype-first loop; prototypes and tours; the design-system files and who owns them; hooks and their messages; team and enterprise use; troubleshooting and FAQ — linked from both READMEs) · TEST.md · README.md (like Slate's: what Plumb does, install in both tools, updating, a table
 explaining what every command does and when to use it, how it flows, what a project gets, the
 hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE.md) · SECURITY.md
 .github/workflows/{test.yml, release.yml} · .github/dependabot.yml · scripts/
