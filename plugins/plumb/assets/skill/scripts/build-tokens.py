@@ -1743,6 +1743,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     overrides: List[dict] = []
     remove: set = set()
     by_hand: List[str] = []
+    notes: List[str] = []  # what the plan decided for the person to know (not to decide)
     feeds: Dict[str, str] = {}  # project variable -> the token variable it fed
     for pos, name in P.block_overrides(text):
         line = L.line(pos)
@@ -1800,6 +1801,10 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                         change = {"add": token, "$value": _colour_value(values.get("light") or value)}
                         if values.get("dark"):
                             change["$extensions"] = {"plumb": {"dark": _colour_value(values["dark"])}}
+                        else:  # what the app does today: the same colour in dark, recorded as a decision
+                            change["$extensions"] = {"plumb": {"same-in-dark": True}}
+                            notes.append(f"line {line}: {name} has no dark value in the app; kept the same in dark "
+                                         f"(same-in-dark) — change it with /plumb:update")
                     except PlumbError:
                         change = None
             elif ns == "radius" and rest:
@@ -1899,7 +1904,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             remove.add(n + 1)
     remove -= set(L.block)  # Plumb's block is never the plan's to change
     return {"file": shown, "overrides": overrides, "remove_lines": sorted(remove), "replace": replace,
-            "project_variables": project_vars, "by_hand": by_hand}
+            "project_variables": project_vars, "by_hand": by_hand, "notes": notes}
 
 
 def override_plans(doc: dict, skill_dir: Path, project: Optional[Path]) -> List[Tuple[Path, dict]]:
@@ -1978,6 +1983,8 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
             if v["used_in"]:
                 print(f"note: var({v['name']}) is gone from {plan['file']} but still read at {', '.join(v['used_in'])}: "
                       f"ask the user, then point those at var({v['maps_to']})")
+        for note in plan["notes"]:
+            print(f"note: {plan['file']} {note}")
         for note in plan["by_hand"]:
             print(f"by hand: {plan['file']} {note}")
     print(f"next: python3 {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")

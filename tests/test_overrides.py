@@ -256,6 +256,23 @@ def test_a_translucent_value_keeps_its_alpha(project: Path) -> None:
     assert change == {"add": "color.glass", "$value": "#ffffff1a", "$extensions": {"plumb": {"dark": "#00000080"}}}
 
 
+def test_a_colour_the_app_sets_only_in_root_stays_the_same_in_dark(project: Path) -> None:
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n\n@theme inline {\n  --color-brand: var(--brand);\n}\n\n:root {\n'
+        '  --brand: #7a1fa2;\n}\n', encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    change = by_name({"copies": [copy]})["--color-brand"]["token_change"]
+    assert change == {"add": "color.brand", "$value": "#7a1fa2", "$extensions": {"plumb": {"same-in-dark": True}}}
+    assert any("--color-brand has no dark value in the app; kept the same in dark" in n and "/plumb:update" in n
+               for n in copy["notes"])
+    out = run(project, "build-tokens.py", "--overrides", "--apply").stdout
+    assert "note: app/globals.css line 4: --color-brand has no dark value in the app" in out
+    assert run(project, "build-tokens.py").returncode == 0
+    r = run(project, "audit.py", "--json")
+    assert not [f for f in json.loads(r.stdout)["findings"]
+                if f["rule"] == "missing-dark-value" and "color.brand" in f["message"]]
+
+
 def test_the_plan_lists_other_files_that_use_a_removed_variable(project: Path) -> None:
     (project / "components").mkdir()
     (project / "components/chart.tsx").write_text(

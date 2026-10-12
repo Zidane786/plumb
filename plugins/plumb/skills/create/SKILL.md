@@ -122,7 +122,7 @@ components, prototypes) the system wins.
    shadcn `globals.css` sets `--color-background`, `--font-sans` … in its own `@theme`), run `build-tokens.py
    --overrides` and show each variable, the token it maps onto (`kind` token: the token wins; new-name: a token is
    added, e.g. `color.foreground` = `{color.on-surface}`; a font the app loads goes first in its font token), the
-   project's values, the lines that go and any `by_hand` item (ask about each). Ask once: move them into the tokens
+   project's values, the lines that go, its `notes` and any `by_hand` item (ask about each). Ask once: move them into the tokens
    (Recommended: the app's utilities keep working and the audit can pass) · leave them for now (the audit fails until
    then). Only on yes: `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`; the other files
    in each `project_variables` entry's `used_in` still read the removed variable: show them and, asked first, point

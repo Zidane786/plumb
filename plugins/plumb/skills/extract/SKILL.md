@@ -93,7 +93,9 @@ Ask only the interview questions the code does not answer: the product (A1–A6)
 clear. Offer what the code shows as the recommendation ("the app uses a left sidebar: keep it?"). **Always ask these
 two**, one at a time, recommending what the app already does so extract keeps it:
 - **How the app switches themes** (`theme_switch`): next-themes' `<ThemeProvider attribute="class">` → `class`, its
-  `attribute="data-theme"` or no `attribute` (next-themes' default) → `data-theme`; other code that toggles a `.dark`
+  `attribute="data-theme"` or no `attribute` (next-themes' default) → `data-theme`; an array (`["class",
+  "data-theme"]`) → `class` when it holds "class", else `data-theme`; another attribute (`data-mode`): Plumb follows
+  only a class or `data-theme`, so say so and recommend `both`; other code that toggles a `.dark`
   class → `class`, a `data-theme` attribute → `data-theme`; only `@media (prefers-color-scheme: dark)` → `system`; a
   class and the media rule → `both`; no dark mode yet → `both`. Ask anyway, with that as the recommendation.
 - **Reduced motion** (`reduced_motion`): an existing `prefers-reduced-motion` rule that keeps opacity transitions →

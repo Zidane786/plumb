@@ -484,8 +484,11 @@ def test_create_and_extract_move_a_stylesheets_own_theme_variables_and_name_moti
 
 def test_the_data_theme_switch_is_documented_and_extract_reads_next_themes() -> None:
     extract = _flat(SKILLS / "extract/SKILL.md")
-    for phrase in ("next-themes", 'attribute="class"', 'attribute="data-theme"', "→ `data-theme`", "ask anyway"):
+    for phrase in ("next-themes", 'attribute="class"', 'attribute="data-theme"', "→ `data-theme`", "ask anyway",
+                   "an array", "when it holds \"class\"", "another attribute", "recommend `both`"):
         assert phrase in extract, f"extract: {phrase!r}"
+    assert "clipped to the nearest srgb colour" in _flat(REFERENCE / "tokens-format.md")
+    assert "same-in-dark" in _flat(REFERENCE / "scripts.md") and "`notes`" in _flat(SKILLS / "create/SKILL.md")
     for path in (REFERENCE / "tokens-format.md", REFERENCE / "interview.md", REFERENCE / "scripts.md",
                  SKILLS / "create/SKILL.md"):
         assert "data-theme" in _flat(path), path.name
