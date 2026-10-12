@@ -437,15 +437,15 @@ def test_temp_folder_is_named_where_it_is_used() -> None:
 
 
 SPEC = REPO / "docs/specs/2026-10-11-plumb-design.md"
-ROUTE_DOCS = skill_files() + [p for p in sorted(REFERENCE.glob("*.md")) if p.name != "scripts.md"] + [
-    SPEC, USAGE, REPO / "TEST.md"]  # scripts.md belongs to the engine change and follows separately
+ROUTE_DOCS = skill_files() + sorted(REFERENCE.glob("*.md")) + [SPEC, USAGE, REPO / "TEST.md"] + [
+    PLUGIN / "assets/skill/scripts" / name for name in ("build-prototype.py", "audit.py")]  # usage text and fix lines
 
 
 @pytest.mark.parametrize("path", ROUTE_DOCS, ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
 def test_routes_are_passed_as_one_argument(path: Path) -> None:
     # `--route /` made Copilot ask for path access to `/`.
     text = path.read_text(encoding="utf-8")
-    assert not re.search(r"--route [</A-Z]", text), f"{path.relative_to(REPO)}: write --route=<route>"
+    assert not re.search(r"--route [</A-Z{\"']", text), f"{path.relative_to(REPO)}: write --route=<route>"
 
 
 @pytest.mark.parametrize("path", [p for p in skill_files() if "`&&`" in p.read_text(encoding="utf-8")],
@@ -466,6 +466,32 @@ def test_create_shows_the_stylesheet_diff_and_passes_the_settings_as_answers() -
     assert "`build-tokens.py --check` prints the diff" in flat
     assert "`theme_switch` / `reduced_motion`" in flat
     assert "`theme_switch`" in _flat(REFERENCE / "interview.md") and "`reduced_motion`" in _flat(REFERENCE / "interview.md")
+
+
+@pytest.mark.parametrize("name", ["create", "extract"])
+def test_create_and_extract_move_a_stylesheets_own_theme_variables_and_name_motion_fade(name: str) -> None:
+    flat = _flat(SKILLS / f"{name}/SKILL.md")
+    for phrase in ("build-tokens.py --overrides", "motion-fade"):
+        assert phrase in flat, f"{name}: {phrase!r}"
+    create = _flat(SKILLS / "create/SKILL.md")
+    for phrase in ("block-override", "--overrides --apply", "move them into the tokens (recommended", "only on yes",
+                   "`used_in`", "the app's own code", "/plumb:audit fix"):
+        assert phrase in create, f"create: {phrase!r}"
+    for path in (REFERENCE / "scripts.md", USAGE, REPO / "TEST.md"):
+        assert "--overrides" in _flat(path), path.name
+        assert "--migrate" in _flat(path), path.name
+
+
+def test_the_data_theme_switch_is_documented_and_extract_reads_next_themes() -> None:
+    extract = _flat(SKILLS / "extract/SKILL.md")
+    for phrase in ("next-themes", 'attribute="class"', 'attribute="data-theme"', "→ `data-theme`", "ask anyway",
+                   "an array", "when it holds \"class\"", "another attribute", "recommend `both`"):
+        assert phrase in extract, f"extract: {phrase!r}"
+    assert "clipped to the nearest srgb colour" in _flat(REFERENCE / "tokens-format.md")
+    assert "same-in-dark" in _flat(REFERENCE / "scripts.md") and "`notes`" in _flat(SKILLS / "create/SKILL.md")
+    for path in (REFERENCE / "tokens-format.md", REFERENCE / "interview.md", REFERENCE / "scripts.md",
+                 SKILLS / "create/SKILL.md"):
+        assert "data-theme" in _flat(path), path.name
 
 
 def test_spec_states_the_new_rules() -> None:

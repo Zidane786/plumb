@@ -285,7 +285,7 @@ def prototype_first(proj: H.Project, A, settings: dict, rel: str, before: Option
         if covering:
             sid = covering[0].get("id")
             return (f"error: {what} whose prototype (screen {sid}) is not approved yet\n"
-                    f"ask the user: approve screen {sid} in {docs}/prototype.html#screen-{sid}? Then record it: "
+                    f"ask the user: approve screen {sid} in {docs}/prototype.html#screen-{sid}? Only after their yes, record it: "
                     f"{proj.script('build-prototype.py')} --approve {sid}")
         return (f"error: {what} with no approved prototype\n"
                 f"fix: /plumb:prototype {slug} (design the screen, get the user's approval, then build it to match)")

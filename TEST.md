@@ -218,7 +218,7 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Choose **create**. The product questions come before any design question; every question has options with one
       marked (Recommended) and a reason; it asks before writing `docs/design/directions.html`; the directions page
       opens from disk and shows 2–3 distinct directions in light and dark.
-- [ ] Dark mode asks how the app switches themes (system · class · both, both recommended) and reduced motion asks keep
+- [ ] Dark mode asks how the app switches themes (system · class · both · data-theme, both recommended) and reduced motion asks keep
       fades or none; both land in the tokens file (`$extensions.plumb.web.theme_switch`,
       `$extensions.plumb.motion.reduced`).
 - [ ] It shows the full token set (light and dark) and the `scaffold.py --dry-run` file list, and writes only after you
@@ -226,6 +226,13 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       Before the first build it says what changes in your existing stylesheet (e.g. `app/globals.css`: only a marked
       `plumb:start … plumb:end` block is Plumb's) and asks. The audit on the components it writes exits 0;
       `docs/design/specimen.html` exists.
+- [ ] On a fresh `npx create-next-app` app (its stock `globals.css`): after the first build the audit reports
+      `block-override` for `--color-background`, `--color-foreground`, `--font-sans`, `--font-mono`. Create shows
+      each with the token it maps onto (from `build-tokens.py --overrides`) and asks once, "move them into the tokens"
+      recommended. Say yes → the `@theme inline`, `:root` and dark `--background`/`--foreground` lines are gone, `body`
+      uses `var(--color-background)` / `var(--color-foreground)` / `var(--font-sans)`, the tokens gain
+      `color.foreground`, and the audit exits 0. Say no → nothing in `globals.css` changes. In a plain-CSS app,
+      choosing keep fades tells you to add `motion-fade` to fade-only elements.
 - [ ] Every decision is in `docs/design/decisions.md` with `Decided by:` your git name.
 - [ ] Init's wire-in: each item is asked on its own (`PLUMB.md`, both checks, the `AGENTS.md` row, the Makefile),
       also in a project with no `AGENTS.md` and no `Makefile`. Say no to the Makefile → `PLUMB.md`'s `## Commands`
@@ -264,6 +271,9 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       session → the second context line says `… run /plumb:upgrade`. `/plumb:upgrade` shows What's new for 1.0.0,
       asks, refreshes Plumb's files, migrates, runs the checks, sets the version line back to 1.0.0 and adds a dated
       "Plumb updates" line. It never deletes a value.
+- [ ] Remove `theme_switch` and `motion` from the tokens file's `$extensions.plumb` and build: two `note:` lines say
+      the defaults apply and name `build-tokens.py --migrate`. Run it → it prints `added … theme_switch = "both"` and
+      `added … motion.reduced = "none"`, the next build prints no note, and the generated CSS is unchanged.
 - [ ] `/plumb:status` → a short read-only report ending with the next step.
 
 **tmux / SSH:** repeat one refusal and `/plumb:status` inside tmux, and over SSH if you can; open the pages on the

@@ -556,6 +556,33 @@ def test_missing_theme_switch_and_reduced_motion_get_a_note_and_the_defaults(pro
     assert 'motion.reduced is not set, so the default "none"' in r.stderr
     assert set(dark_rules(css_out(project).read_text(encoding="utf-8"))) == {"media", "class", "light"}
     assert "not set" not in run(project, "--check").stderr  # --check stays quiet about it
+    assert "build-tokens.py --migrate" in r.stderr  # the note names the one command that records the defaults
+
+
+def test_migrate_records_the_default_theme_switch_and_reduced_motion(project: Path) -> None:
+    def drop(d):
+        d["$extensions"]["plumb"]["web"].pop("theme_switch")
+        d["$extensions"]["plumb"].pop("motion")
+    edit_tokens(project, drop)
+    assert run(project).returncode == 0
+    css = css_out(project).read_text(encoding="utf-8")
+    r = run(project, "--migrate")
+    assert r.returncode == 0, r.stderr
+    assert 'added $extensions.plumb.web.theme_switch = "both"' in r.stdout
+    assert 'added $extensions.plumb.motion.reduced = "none"' in r.stdout
+    ext = json.loads(tokens_path(project).read_text(encoding="utf-8"))["$extensions"]["plumb"]
+    assert ext["web"]["theme_switch"] == "both" and ext["motion"] == {"reduced": "none"}
+    r = run(project)
+    assert r.returncode == 0 and "not set" not in r.stderr
+    assert css_out(project).read_text(encoding="utf-8") == css  # the defaults, now recorded: the same output
+
+
+def test_migrate_never_changes_a_recorded_motion_choice(project: Path) -> None:
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"].__setitem__("motion", {"reduced": "keep-fades"}))
+    r = run(project, "--migrate")
+    assert r.returncode == 0 and "motion.reduced" not in r.stdout and "theme_switch" not in r.stdout
+    assert json.loads(tokens_path(project).read_text(encoding="utf-8"))["$extensions"]["plumb"]["motion"] == {
+        "reduced": "keep-fades"}
 
 
 def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
@@ -573,7 +600,8 @@ def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
 def dark_rules(css: str) -> dict:
     found = {}
     for name, opener in (("media", "@media (prefers-color-scheme: dark) {\n  :root:not(.light) {"),
-                         ("class", "\n.dark {"), ("light", "\n.light {")):
+                         ("class", "\n.dark {"), ("light", "\n.light {"),
+                         ("attr-dark", '\n[data-theme="dark"] {'), ("attr-light", '\n[data-theme="light"] {')):
         if opener in css:
             found[name] = css.split(opener, 1)[1].split("}", 1)[0]
     return found
@@ -593,15 +621,31 @@ def test_dark_values_follow_the_system_and_the_class_by_default(project: Path, m
 
 
 @pytest.mark.parametrize("switch,present", [("system", {"media", "light"}), ("class", {"class", "light"}),
-                                            ("both", {"media", "class", "light"})])
+                                            ("both", {"media", "class", "light"}),
+                                            ("data-theme", {"attr-dark", "attr-light"})])
 def test_theme_switch_selects_the_dark_rules(project: Path, switch: str, present: set) -> None:
     edit_tokens(project, lambda d: d["$extensions"]["plumb"]["web"].__setitem__("theme_switch", switch))
     assert run(project).returncode == 0
     css = css_out(project).read_text(encoding="utf-8")
     assert set(dark_rules(css)) == present
     variant = css.split("@custom-variant dark", 1)[1].split("\n\n", 1)[0]
-    assert ("&:where(.dark, .dark *)" in variant) == (switch != "system")
-    assert ("prefers-color-scheme: dark" in variant) == (switch != "class")
+    assert ("&:where(.dark, .dark *)" in variant) == (switch in ("class", "both"))
+    assert ("prefers-color-scheme: dark" in variant) == (switch in ("system", "both"))
+    assert ('&:where([data-theme="dark"], [data-theme="dark"] *)' in variant) == (switch == "data-theme")
+
+
+def test_data_theme_switches_on_the_attribute_next_themes_sets(project: Path) -> None:
+    # next-themes with attribute="data-theme" (its default) sets data-theme="dark" | "light" on <html>
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"]["web"].__setitem__("theme_switch", "data-theme"))
+    assert run(project).returncode == 0
+    rules = dark_rules(css_out(project).read_text(encoding="utf-8"))
+    assert "--color-primary: #4fb3c4;" in rules["attr-dark"] and "color-scheme: dark;" in rules["attr-dark"]
+    assert "--color-primary: #14857f;" in rules["attr-light"] and "color-scheme: light;" in rules["attr-light"]
+    set_mode(project, "tailwind-v3")
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"]["web"].__setitem__("theme_switch", "data-theme"))
+    assert run(project).returncode == 0
+    js = (skill(project) / "assets/platforms/web/tailwind.tokens.js").read_text(encoding="utf-8")
+    assert 'darkMode: ["selector", "[data-theme=\\"dark\\"]"]' in js
 
 
 def test_v3_map_says_which_dark_mode_setting_matches(project: Path) -> None:
@@ -624,11 +668,17 @@ def test_reduced_motion_keep_fades_keeps_opacity_and_colour_and_stops_movement(p
     assert run(project).returncode == 0
     css = css_out(project).read_text(encoding="utf-8")
     block = css.split("@media (prefers-reduced-motion: reduce) {", 1)[1].split("\n}\n", 1)[0]
-    assert "transition-property" not in block  # nothing gains a transition it did not have
     keep = ":not(.transition-opacity, .transition-colors, .motion-fade)"
-    stop = block.split(f"{keep}, {keep}::before, {keep}::after {{", 1)[1]
-    assert "transition-duration: 0s !important;" in stop  # every transition but a fade-only one stops
+    stop = block.split(f"{keep}, {keep}::before, {keep}::after {{", 1)[1].split("}", 1)[0]
+    assert "transition-duration: 0s !important;" in stop  # every transition but a fade-only one stops, pseudos too
     assert "animation-duration: 0s !important;" in block  # keyframe movement stops
+    # a fade element's ::before / ::after keep only opacity and colour transitions (they may move otherwise)
+    pseudos = ", ".join(f"{c}::{p}" for c in (".transition-opacity", ".transition-colors", ".motion-fade")
+                        for p in ("before", "after"))
+    fade = block.split(f"{pseudos} {{", 1)[1].split("}", 1)[0]
+    assert "transition-property: opacity, color, background-color, border-color" in fade and "!important" in fade
+    assert "transform" not in fade and "duration" not in fade  # no element gains a duration it did not have
+    assert block.count("transition-property") == 1  # an element itself keeps its own transition as it is
     assert "keep the fades" in css
 
 
@@ -692,6 +742,12 @@ def test_nested_numeric_groups_build_as_before(project: Path) -> None:
     assert r.returncode == 0, r.stderr
     css = css_out(project).read_text(encoding="utf-8")
     assert "--z-1-2: 3px;" in css and "--size-nudge: var(--z-1-2);" in css
+
+
+def test_a_decimal_name_that_spells_the_same_path_as_nested_groups_is_refused(project: Path) -> None:
+    edit_tokens(project, lambda d: d.update({"z": {"$type": "dimension", "1": {"2": {"$value": "3px"}},
+                                                   "1.2": {"$value": "4px"}}}))
+    assert_refusal(run(project), "z.1.2", '"1.2"')
 
 
 def test_a_dot_that_is_not_a_decimal_step_is_refused(project: Path) -> None:

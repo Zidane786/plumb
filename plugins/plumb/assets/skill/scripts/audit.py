@@ -43,8 +43,9 @@ file was found or the input is bad.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
-emoji in UI source, block-override (in a web copy, the project's own @custom-variant dark or token
-variables in an @theme block outside Plumb's block), the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values, stale
+emoji in UI source, block-override (in a web copy, the project's own @custom-variant dark, or a variable in the
+tokens' namespaces set in an @theme block outside Plumb's block: it replaces a token or adds a name outside the token
+set; `build-tokens.py --overrides` maps each onto a token), the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values, stale
 generated files and the prototype fidelity errors (screen drift, a screen changed since approval, a route not prototyped
 while Prototype sync is on). Errors fail the audit (exit 1) and the edit check refuses them.
 **warn** is softer and only reported: `dark:` outside the primitives, a hand-rolled accessibility primitive, a primitive
@@ -1041,15 +1042,29 @@ def check_block_override(ctx: Ctx) -> Iterator[Hit]:
     an `@theme` block. Either overrides the design system silently (the later definition wins)."""
     if not ctx.block_copy:
         return
-    for pos, what in P.block_overrides(ctx.text):
+    found = P.block_overrides(ctx.text)
+    if not found:
+        return
+    tokens = {varname(p): p for p, _t, _ty in P.iter_tokens(ctx.doc)} if ctx.doc else {}
+    move = ("move it into the tokens: build-tokens.py --overrides shows each one with the token it maps to; ask the "
+            "user, and only after their yes run build-tokens.py --overrides --apply (or change the tokens with "
+            "/plumb:update and delete it here), then rebuild")
+    for pos, what in found:
         if what == "@custom-variant dark":
             msg = (f"{what} outside Plumb's block overrides the design system's dark variant, so dark: no longer "
                    f"follows $extensions.plumb.web.theme_switch")
             fix = ("delete it here; choose how dark mode switches with $extensions.plumb.web.theme_switch "
                    "(/plumb:update), then rebuild")
         else:
-            msg = f"{what} set in an @theme block outside Plumb's block overrides the design tokens"
-            fix = "move the value into the tokens with /plumb:update and delete it here, then rebuild"
+            space = "--" + what[2:].split("-", 1)[0] + "-*"
+            where = f"{what} in an @theme block outside Plumb's block"
+            if "*" in what:
+                msg = f"{where} resets every {space} token (the later definition wins)"
+            elif what in tokens:
+                msg = f"{where} replaces the token {tokens[what]} (the later definition wins)"
+            else:
+                msg = f"{where} adds {what} to the design tokens' {space} namespace, a value outside the token set"
+            fix = move
         yield Hit(pos, what, message=msg, fix=fix)
 
 
@@ -2938,7 +2953,7 @@ def check_route_not_prototyped(proj: Project) -> Iterator[XHit]:
                    f"route {r.route}{shown} is not prototyped: no screen in {fid.map_rel} has this route or its file, so "
                    f"nobody has seen or approved what it shows{note}",
                    f"prototype it first: /plumb:prototype {slug}, approve it, then map it: {fid.command} --map {slug} "
-                   f"--route {_arg(r.route)} --files {_q(target)}",
+                   f"--route={_arg(r.route)} --files {_q(target)}",
                    severity="error" if fid.sync_on else "warn")
 
 
@@ -2978,7 +2993,7 @@ def check_screen_not_built(proj: Project) -> Iterator[XHit]:
         yield XHit(s.file, s.line, s.id,
                    f"screen {s.id} ({s.title}) is in the prototype but not built yet: {why} (expected before it is built; "
                    f"it stays listed until its route exists)",
-                   f"build it to match {s.file}, then map it: {fid.command} --map {s.id} --route {_arg(route)} "
+                   f"build it to match {s.file}, then map it: {fid.command} --map {s.id} --route={_arg(route)} "
                    f"--files {files}")
 
 

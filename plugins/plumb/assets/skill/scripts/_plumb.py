@@ -23,7 +23,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Iterator, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 PLUMB_VERSION = "1.0.0"
 SCHEMA_VERSION = 1
@@ -109,16 +109,29 @@ _PATH_SPLIT = re.compile(r"(?<!\d)\.|\.(?!\d)")
 _DECIMAL_NAME = re.compile(r"^\d+(?:\.\d+)+$")
 
 
-# Paths iter_tokens has seen where a numeric group holds a numeric name ("z": {"1": {"2": ...}} is z.1.2, three
-# names): the decimal rule would read "1.2" as one name, so these keep the names the file really has.
-_NESTED_NUMERIC: dict = {}
+class TokenPath(str):
+    """A dotted token path that also carries the names it was built from. iter_tokens yields these, so a path met as
+    nested numeric groups ("z": {"1": {"2": ...}} is z.1.2, three names) keeps the names the file really has, where
+    the decimal rule alone would read "1.2" as one name. It is still a plain str everywhere else."""
+
+    parts: Tuple[str, ...] = ()
+
+    def __new__(cls, path: str, parts: Tuple[str, ...]) -> "TokenPath":
+        obj = super().__new__(cls, path)
+        obj.parts = tuple(parts)
+        return obj
 
 
 def path_parts(path: str) -> list:
     """A token path split into its names: "spacing.0.5" -> ["spacing", "0.5"], "typography.sm.fontSize" -> 3 parts.
-    A path iter_tokens met as nested numeric groups ("z.1.2" from {"z": {"1": {"2": ...}}}) keeps its three names."""
-    known = _NESTED_NUMERIC.get(path)
-    return list(known) if known is not None else _PATH_SPLIT.split(path)
+    A pure function of its argument: a TokenPath (from iter_tokens) gives the names it carries; a plain string reads a
+    dot between two digits as a decimal point. iter_tokens refuses a file where both readings name a token.
+
+    The rule for callers: pass the paths iter_tokens yields as they are, or turn a path you have as text (a reference
+    such as {z.1.2}) into one with token_path(doc, path). A TokenPath is a str, so `+`, an f-string or slicing gives a
+    plain str and drops its names (only nested numeric groups notice)."""
+    parts = path.parts if isinstance(path, TokenPath) else None
+    return list(parts) if parts else _PATH_SPLIT.split(path)
 
 
 def css_name(part: str) -> str:
@@ -130,7 +143,10 @@ def css_name(part: str) -> str:
 def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
     """Yield (dotted path, token, $type) for every token, in document order; $type is inherited from groups.
 
-    A name may contain a dot only as a decimal step ("0.5", "1.5"); any other dot is refused."""
+    A name may contain a dot only as a decimal step ("0.5", "1.5"); any other dot is refused. Each path is a TokenPath
+    (path_parts gives its real names). Two places that spell the same path ("1.2" next to "1": {"2": ...}) are refused:
+    a reference such as {z.1.2} could not say which one it means."""
+    seen: Dict[str, Tuple[str, ...]] = {}
 
     def walk(node: dict, prefix: str, names: list, inherited: Optional[str]) -> Iterator[Tuple[str, dict, Optional[str]]]:
         gtype = node.get("$type", inherited) if isinstance(node.get("$type"), str) else inherited
@@ -141,10 +157,17 @@ def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
                 where = f"{prefix}.{key}" if prefix else key
                 raise _err(f"{where}: the name {key!r} has a dot; a token or group name may hold one only as a decimal "
                            f"step such as \"0.5\"", f"rename it in the tokens file, e.g. {key.replace('.', '-')!r}")
-            path = f"{prefix}.{key}" if prefix else key
-            parts = names + [key]
-            if _PATH_SPLIT.split(path) != parts:
-                _NESTED_NUMERIC[path] = tuple(parts)
+            text = f"{prefix}.{key}" if prefix else key
+            parts = tuple(names) + (key,)
+            other = seen.setdefault(text, parts)
+            if other != parts:
+                dec = next(p for p in (other, parts) if any("." in n for n in p))
+                name = next(n for n in dec if "." in n)
+                raise _err(f"{text} names two places in the tokens file: the decimal name \"{name}\" and nested groups "
+                           f"{' > '.join(repr(n) for n in (parts if dec is other else other))}, so a reference cannot "
+                           f"say which one it means",
+                           f"rename one of them in the tokens file, e.g. \"{name}\" -> \"{name.replace('.', '_')}\"")
+            path = TokenPath(text, parts)
             if is_token(child):
                 ttype = child.get("$type") if isinstance(child.get("$type"), str) else gtype
                 yield path, child, ttype
@@ -156,15 +179,38 @@ def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
 
 def _find(doc: dict, path: str) -> Tuple[dict, list, Optional[str]]:
     """(token, rest-of-path into its $value, inherited $type) for a dotted path. A decimal name ("0.5") is one name;
-    when the file nests numeric groups instead ("z.1.2"), the plain split by dots is tried too."""
+    when the file nests numeric groups instead ("z.1.2"), the plain split by dots is tried too; a file where both
+    readings name a token is refused, as iter_tokens refuses it."""
+    return _locate(doc, path)[1]
+
+
+def _locate(doc: dict, path: str) -> Tuple[list, Tuple[dict, list, Optional[str]]]:
     first = path_parts(path)
     plain = path.split(".")
-    if plain != first:
+    if plain == first or isinstance(path, TokenPath):
+        return first, _find_parts(doc, path, first)
+    found = []
+    error: Optional[PlumbError] = None
+    for parts in (first, plain):
         try:
-            return _find_parts(doc, path, first)
-        except PlumbError:
-            return _find_parts(doc, path, plain)
-    return _find_parts(doc, path, first)
+            found.append((parts, _find_parts(doc, path, parts)))
+        except PlumbError as exc:
+            error = exc
+    if len(found) == 2:
+        list(iter_tokens(doc))  # raises the error that names both places
+    if not found:
+        assert error is not None
+        raise error
+    return found[0]
+
+
+def token_path(doc: dict, path: str) -> TokenPath:
+    """A reference's path (the text inside {...}) as a TokenPath of the token it names in `doc`, so path_parts gives
+    the names the file has ("z.1.2" -> z > 1 > 2 when the file nests numeric groups)."""
+    if isinstance(path, TokenPath):
+        return path  # type: ignore[return-value]
+    parts, _found = _locate(doc, path)
+    return TokenPath(path, tuple(parts))
 
 
 def _find_parts(doc: dict, path: str, parts: list) -> Tuple[dict, list, Optional[str]]:
@@ -258,13 +304,67 @@ _HEX = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 def _bad_color(v: object) -> PlumbError:
     return _err(
         f"not a colour value: {v!r}",
-        "use #rgb, #rrggbb, #rrggbbaa or a DTCG colour object with a hex field (named colours are not supported)",
+        "use #rgb, #rrggbb, #rrggbbaa, oklch(L C H) / oklab(L a b) or a DTCG colour object with a hex field (named colours are not supported)",
     )
 
 
+_OK = re.compile(r"^(oklch|oklab)\(\s*([^\s/)]+)\s+([^\s/)]+)\s+([^\s/)]+)\s*(?:/\s*([^\s)]+)\s*)?\)$", re.I)
+
+
+def _ok_number(s: str, percent_of: float) -> float:
+    s = s.strip().lower()
+    if s == "none":
+        return 0.0
+    if s.endswith("%"):
+        return float(s[:-1]) / 100 * percent_of
+    if s.endswith("deg"):
+        s = s[:-3]
+    return float(s)
+
+
+def oklab_to_hex(lightness: float, a: float, b: float) -> str:
+    """#rrggbb for an OKLab colour (Björn Ottosson's matrices), clipped to sRGB."""
+    l_ = lightness + 0.3963377774 * a + 0.2158037573 * b
+    m_ = lightness - 0.1055613458 * a - 0.0638541728 * b
+    s_ = lightness - 0.0894841775 * a - 1.2914855480 * b
+    l3, m3, s3 = l_ ** 3, m_ ** 3, s_ ** 3
+    rgb = (4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3,
+           -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3,
+           -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3)
+
+    def encode(x: float) -> int:
+        x = min(1.0, max(0.0, x))
+        x = 12.92 * x if x <= 0.0031308 else 1.055 * x ** (1 / 2.4) - 0.055
+        return round(min(1.0, max(0.0, x)) * 255)
+
+    return "#" + "".join(f"{encode(c):02x}" for c in rgb)
+
+
+def _parse_ok(text: str) -> Optional[Tuple[str, float]]:
+    """('#rrggbb', alpha) for CSS oklch(L C H [/ A]) or oklab(L a b [/ A]) (as shadcn writes them), else None."""
+    m = _OK.match(text.strip())
+    if not m:
+        return None
+    try:
+        lightness = _ok_number(m.group(2), 1.0)
+        if m.group(1).lower() == "oklch":
+            chroma, hue = _ok_number(m.group(3), 0.4), math.radians(_ok_number(m.group(4), 1.0))
+            a, b = chroma * math.cos(hue), chroma * math.sin(hue)
+        else:
+            a, b = _ok_number(m.group(3), 0.4), _ok_number(m.group(4), 0.4)
+        alpha = _ok_number(m.group(5), 1.0) if m.group(5) else 1.0
+    except ValueError:
+        return None
+    return oklab_to_hex(lightness, a, b), round(min(1.0, max(0.0, alpha)), 4)
+
+
 def parse_color(v: object) -> Tuple[str, float]:
-    """('#rrggbb', alpha) from #abc, #aabbcc, #aabbccdd or a DTCG object {colorSpace, components, alpha, hex}."""
+    """('#rrggbb', alpha) from #abc, #aabbcc, #aabbccdd, oklch(...) / oklab(...) (converted to sRGB, clipped) or a DTCG
+    object {colorSpace, components, alpha, hex}."""
     if isinstance(v, str):
+        ok = _parse_ok(v)
+        if ok is not None:
+            return ok
         m = _HEX.match(v.strip())
         if not m:
             raise _bad_color(v)
@@ -621,19 +721,67 @@ def remove_block(text: str) -> str:
 # Outside Plumb's block, a stylesheet that defines Tailwind's dark variant again, or sets the tokens' variables in an
 # @theme block, overrides the design system without anyone seeing it (the later definition wins).
 _OVERRIDE_VARIANT = re.compile(r"@custom-variant\s+dark\b")
-_OVERRIDE_THEME = re.compile(r"@theme\b[^{;]*\{([^{}]*)\}")
-_OVERRIDE_VAR = re.compile(r"(--(?:color|radius|shadow|text|font|ease|spacing|duration)(?:-[\w*-]*)?)\s*:")
+_OVERRIDE_VAR = re.compile(r"(?<![\w-])(--(?:color|radius|shadow|text|font|ease|spacing|duration)(?:-[\w*-]*)?)\s*:")
+_CSS_STRING = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"?|'(?:[^'\\\n]|\\.)*'?")
+
+
+def css_blocks(code: str) -> list:
+    """(prelude start, "{" position, "}" position) of every brace block in CSS whose comments are already masked, in
+    the order they open; strings are skipped, an unclosed block runs to the end of the text. The prelude is the text
+    after the previous ";", "{" or "}" (e.g. "@theme inline ", ":root ", "@media (prefers-color-scheme: dark) ")."""
+    out: list = []
+    stack: list = []
+    last = 0  # where the current prelude starts
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\"'":
+            m = _CSS_STRING.match(code, i)
+            i = m.end() if m else i + 1
+            continue
+        if c == "{":
+            stack.append(len(out))
+            out.append([last, i, n])
+            last = i + 1
+        elif c == "}":
+            if stack:
+                out[stack.pop()][2] = i
+            last = i + 1
+        elif c == ";":
+            last = i + 1
+        i += 1
+    return [tuple(b) for b in out]
+
+
+def theme_bodies(code: str) -> list:
+    """(start, body) for each `@theme` block's own declarations: the text between its braces with any nested block (an
+    @keyframes inside @theme) blanked, so offsets stay those of `code`."""
+    blocks = css_blocks(code)
+    out = []
+    for pre, op, cl in blocks:
+        if not re.match(r"\s*@theme\b", code[pre:op]):
+            continue
+        body = list(code[op + 1:cl])
+        for _p, nop, ncl in blocks:
+            if op < nop < cl:
+                lo = code.rfind(";", op + 1, nop)
+                lo = max(lo, code.rfind("}", op + 1, nop), op) + 1  # the nested block's prelude goes too
+                for k in range(lo, min(ncl + 1, cl)):
+                    if body[k - op - 1] != "\n":
+                        body[k - op - 1] = " "
+        out.append((op + 1, "".join(body)))
+    return out
 
 
 def block_overrides(text: str) -> list:
     """(position, what) for each place outside Plumb's block that overrides it: a `@custom-variant dark` of the
-    project's own, or a variable of the tokens' namespaces set in an `@theme` block. Comments are ignored; the block
-    itself is skipped."""
+    project's own, or a variable of the tokens' namespaces set in an `@theme` block (its own declarations, not those
+    inside a nested @keyframes). Comments are ignored; the block itself is skipped."""
     code = mask_comments(mask_block(text), ".css")
     out = [(m.start(), "@custom-variant dark") for m in _OVERRIDE_VARIANT.finditer(code)]
-    for m in _OVERRIDE_THEME.finditer(code):
-        for v in _OVERRIDE_VAR.finditer(m.group(1)):
-            out.append((m.start(1) + v.start(1), v.group(1)))
+    for start, body in theme_bodies(code):
+        for v in _OVERRIDE_VAR.finditer(body):
+            out.append((start + v.start(1), v.group(1)))
     return sorted(out)
 
 

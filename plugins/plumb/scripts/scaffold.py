@@ -55,8 +55,8 @@ answers.json (every key optional; unknown keys are ignored with a note):
     "allowed_raw": "components/ui/**",
     "web_copies":  ["app/globals.css"],                (project-relative files that get Plumb's marked block of the
                    generated CSS; an existing file keeps everything outside the block, and a note says so)
-    "theme_switch": "both" | "system" | "class",       (how the web app switches to dark: the system setting, a .dark
-                   class, or either; default both)
+    "theme_switch": "both" | "system" | "class" | "data-theme",  (how the web app switches to dark: the system setting, a .dark
+                   class, either, or data-theme="dark" on <html> as next-themes sets it; default both)
     "reduced_motion": "none" | "keep-fades",           (what reduced motion keeps on the web: nothing, or the opacity
                    and colour fades; default none)
     "colors": {"light": {"primary": "#0f6b66", ...}, "dark": {"primary": "#4fb3c4", ...}},
@@ -100,7 +100,7 @@ STYLINGS = ("tailwind-v4", "tailwind-v3", "css")
 STYLING_LABEL = {"tailwind-v4": "Tailwind CSS v4", "tailwind-v3": "Tailwind CSS v3", "css": "plain CSS"}
 THEMES = ("light-and-dark", "light-only")
 ROLES = ("home", "linked")
-THEME_SWITCHES = ("both", "system", "class")  # $extensions.plumb.web.theme_switch
+THEME_SWITCHES = ("both", "system", "class", "data-theme")  # $extensions.plumb.web.theme_switch
 REDUCED_MOTION = ("none", "keep-fades")  # $extensions.plumb.motion.reduced
 
 RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON"))

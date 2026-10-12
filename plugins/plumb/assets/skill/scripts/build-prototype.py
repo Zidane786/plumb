@@ -2,7 +2,7 @@
 """build-prototype.py: assemble the main prototype from one source file per screen.
 
 Usage: build-prototype.py [--check] [--root SKILL_DIR] [--project PATH]
-                          [--map ID --route ROUTE --files GLOB [GLOB ...]] [--approve ID] [--synced ID]
+                          [--map ID --route=ROUTE --files GLOB [GLOB ...]] [--approve ID] [--synced ID]
        build-prototype.py --proposal NAME [--check] [--root SKILL_DIR] [--project PATH]
 
 Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, default docs/design), the decision log
@@ -64,7 +64,7 @@ Screen file contract (one per screen, <id>.html):
   (phone or desktop), so responsive screen CSS uses `@container plumb-frame (min-width: 48rem)`.
 
 Commands (every call rebuilds the three files, so the pages always show the current map and approvals):
-  --map ID --route R --files G...   set a screen's route and source files; files_hash is the sha256 of those files
+  --map ID --route=R --files G...   set a screen's route and source files; files_hash is the sha256 of those files
                                     (CRLF-normalised). status is "built" once every glob matches a file.
   --approve ID                      record the approval: git user.name (else $USER / %USERNAME%), today's ISO date,
                                     the sha256 of the screen file (CRLF-normalised); clears synced_from_code. Editing
@@ -121,7 +121,7 @@ INDEX_TEMPLATE = "proposal-index.html.tmpl"
 PLAYER_CSS = "player.css"
 PLAYER_JS = "player.js"
 SCHEMA = 1
-USAGE = ("[--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
+USAGE = ("[--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
          "[--project PATH]")
 _ID = re.compile(r"^\w[\w-]*\Z")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
@@ -538,7 +538,7 @@ def safe_glob(glob: str, where: str = "") -> str:
     bad = (not g or g.startswith("/") or re.match(r"^[A-Za-z]:", g) is not None or ".." in g.split("/"))
     if bad and where:
         raise _err(f"{where} has the source glob \"{glob}\", which is not a path inside the project",
-                   "re-map the screen with globs relative to the project root: build-prototype.py --map ID --route R "
+                   "re-map the screen with globs relative to the project root: build-prototype.py --map ID --route=R "
                    "--files \"app/billing/**\" (or restore the file with git)")
     if bad:
         raise _err(f"--files \"{glob}\" is not a path inside the project",

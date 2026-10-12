@@ -614,6 +614,16 @@ def test_theme_switch_and_reduced_motion_answers_reach_the_tokens(tmp_path: Path
     assert r.returncode == 2 and r.stderr.startswith("error:") and "keep-fades" in r.stderr
 
 
+def test_a_data_theme_answer_reaches_the_tokens(tmp_path: Path) -> None:
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"theme_switch": "data-theme"}), encoding="utf-8")
+    proj = tmp_path / "p"
+    proj.mkdir()
+    assert run(proj, "--answers", str(path)).returncode == 0
+    doc = json.loads((proj / SKILL_REL / "assets/tokens/demo.tokens.json").read_text(encoding="utf-8"))
+    assert doc["$extensions"]["plumb"]["web"]["theme_switch"] == "data-theme"
+
+
 def test_an_existing_stylesheet_copy_gets_a_note_before_the_build(tmp_path: Path) -> None:
     (tmp_path / "app").mkdir()
     (tmp_path / "app/globals.css").write_text('@import "tailwindcss";\nbody { margin: 0; }\n', encoding="utf-8")

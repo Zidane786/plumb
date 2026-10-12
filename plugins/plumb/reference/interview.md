@@ -83,7 +83,7 @@ why in one clause with every recommendation. Brand colours or fonts found in the
 | C10 | Elevation | flat with borders (dense tools) · soft shadows (Recommended) · layered — and how dark mode shows depth (lighter surfaces) | `shadow.*`, `design.md` |
 | C11 | Motion and reduced motion | subtle and fast 150/200/300ms (Recommended) · expressive · minimal; then reduced motion: drop movement, keep fades (Recommended) · no animation at all | `motion.*`, `references/motion.md`, `$extensions.plumb.motion.reduced` (`"keep-fades"` \| `"none"`) |
 | C12 | Icons | Lucide on web, SF Symbols on iOS, Material Symbols on Android (Recommended) · the icon set already in the project (never a second one) | `icon-map.json` |
-| C13 | Dark mode, and how the app switches | light and dark, both designed (Recommended, the default) · light only (an explicit decision, recorded; `Themes: light-only`). Then, web with both themes: how does the app switch? both: the system setting until the user picks, then a `.dark` class (Recommended) · system only (`prefers-color-scheme`) · class only (the app sets `.dark`) | every colour's `dark` value, `PLUMB.md` `Themes:`, `$extensions.plumb.web.theme_switch` (`"both"` \| `"system"` \| `"class"`) |
+| C13 | Dark mode, and how the app switches | light and dark, both designed (Recommended, the default) · light only (an explicit decision, recorded; `Themes: light-only`). Then, web with both themes: how does the app switch? both: the system setting until the user picks, then a `.dark` class (Recommended) · system only (`prefers-color-scheme`) · class only (the app sets `.dark`) · data-theme (the app sets `data-theme="dark"` on `<html>`, as next-themes does by default) | every colour's `dark` value, `PLUMB.md` `Themes:`, `$extensions.plumb.web.theme_switch` (`"both"` \| `"system"` \| `"class"` \| `"data-theme"`) |
 | C14 | Accessibility target | WCAG 2.2 AA (Recommended, the default) · AAA for text · AA plus larger targets for A2's audience | `references/accessibility.md`, contrast |
 | C15 | Vocabulary and voice | a voice from C1 ("plain and calm, verbs on buttons") · the words for the key objects and statuses from A4 | `references/vocabulary.md`, answers `voice` |
 | C16 | **UX patterns**, one sub-question each: navigation model (sidebar · top tabs · bottom tabs on phones · hub and spoke); page anatomy (header + actions + content; list → detail); forms (labels above, validate on blur, errors in words); feedback (toasts for background results, inline for errors); empty, loading and error states (skeletons for lists, a next step in every empty state, errors say what happened and what to do); destructive actions (confirm with the object named · undo instead of confirm); onboarding (none · first-run checklist · sample data) | recommendations from A2–A4 | `references/ux.md` |
@@ -94,8 +94,8 @@ After C, show a one-screen summary of every decision and ask "Generate direction
 keys `reduced_motion` and `theme_switch` (create E2; checked in E3; tokens-format.md). Extract always asks both,
 recommending what the app already does: `$extensions.plumb.motion.reduced` — `"keep-fades"` (the generated
 `prefers-reduced-motion` block stops movement but keeps opacity fades) or `"none"` (every animation and transition
-off) — and `$extensions.plumb.web.theme_switch` — `"both"`, `"system"` or `"class"` — which decides whether the
-generated web theme answers `prefers-color-scheme`, a `.dark` class, or both. Without them the generated CSS may not
+off) — and `$extensions.plumb.web.theme_switch` — `"both"`, `"system"`, `"class"` or `"data-theme"` — which decides whether
+the generated web theme answers `prefers-color-scheme`, a `.dark` class, both, or a `data-theme` attribute. Without them the generated CSS may not
 match what the user chose (a `.dark` theme nothing turns on, fades removed the user wanted kept).
 
 ## D. Directions
@@ -128,7 +128,7 @@ show its full file list and paths, and run it for real only on the user's OK. Ke
 outline-input, danger, on-danger, success, on-success, scrim), `fonts` (`sans`, `mono`), `type_scale`
 (`display h1 h2 h3 body-lg body sm xs` → `[size, line height]`), `spacing` (Tailwind steps), `radius` (`sm md lg`),
 `shadows` (`card`, `popover`, each `light`/`dark`), `motion` (`fast mid slow`), `icons`, `theme_switch` (`both`
-`system` `class`), `reduced_motion` (`keep-fades` `none`).
+`system` `class` `data-theme`), `reduced_motion` (`keep-fades` `none`).
 
 Anything the scaffold has no key for (warning, info, `label.*`, `md` values, extra tokens) goes into the tokens file
 right after scaffolding, before the first build (see `tokens-format.md`).
