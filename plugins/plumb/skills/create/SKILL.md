@@ -3,7 +3,7 @@ name: create
 description: Create a new design system for this project - the product interview first, then platforms and stack, then each design decision with a recommendation (including UX patterns and dark mode), 2-3 directions on one page, then, after the user approves the token set and the file list, generate the tokens, themes, contrast evidence, skill files and starter components (audit must pass), offer prototypes of the key screens, and record every decision in docs/design/decisions.md.
 argument-hint: "[product name]"
 disable-model-invocation: true
-allowed-tools: Bash(python3 *scripts/scaffold.py*), Bash(python *scripts/scaffold.py*), Bash(py -3 *scripts/scaffold.py*), Bash(python3 *scripts/build-tokens.py*), Bash(python *scripts/build-tokens.py*), Bash(py -3 *scripts/build-tokens.py*), Bash(python3 *scripts/audit.py*), Bash(python *scripts/audit.py*), Bash(py -3 *scripts/audit.py*), Bash(git rev-parse *), Bash(git config user.name), Bash(git -C * status --short)
+allowed-tools: Bash(python3 *scripts/detect.py*), Bash(python *scripts/detect.py*), Bash(py -3 *scripts/detect.py*), Bash(python3 *scripts/scaffold.py*), Bash(python *scripts/scaffold.py*), Bash(py -3 *scripts/scaffold.py*), Bash(python3 *scripts/build-tokens.py*), Bash(python *scripts/build-tokens.py*), Bash(py -3 *scripts/build-tokens.py*), Bash(python3 *scripts/audit.py*), Bash(python *scripts/audit.py*), Bash(py -3 *scripts/audit.py*), Bash(git rev-parse *), Bash(git config user.name), Bash(git -C * status --short)
 ---
 
 # /plumb:create — from an idea to a design system
@@ -23,7 +23,7 @@ group up to four), options with the recommendation first marked "(Recommended)" 
 following from what the user said. Every question and how to derive its recommendation:
 [reference/interview.md](../../reference/interview.md). Light **and** dark are designed by default; light-only is an
 explicit, recorded decision. **Never install or download anything** (no packages, fonts, icon sets, images); if
-something seems needed, say so, **ask the user and wait**. Pre-approved commands (`allowed-tools`): Plumb's
+something seems needed, say so, **ask the user and wait**. Pre-approved commands (`allowed-tools`): Plumb's `detect.py`,
 `scaffold.py`, `build-tokens.py`, `audit.py`, and the read-only git calls; anything else asks first.
 
 **Plugin root (`ROOT`):** `${CLAUDE_PLUGIN_ROOT}` (Claude Code and Copilot CLI fill this in for plugin skills).
@@ -32,7 +32,8 @@ If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base di
 [reference/tokens-format.md](../../reference/tokens-format.md). Placement: [reference/placement.md](../../reference/placement.md).
 
 **Project root (`<root>`):** the absolute root the user confirmed in `/plumb:init`. Every path below is relative to
-`<root>` and every command names it explicitly; never write outside it, never use `.` for it.
+`<root>` and every command names it explicitly; never write outside it, never use `.` for it. The one exception: the
+answers JSON for `scaffold.py` goes to the system temp folder and is deleted right after the scaffold.
 
 ## Step 0: placement and Python
 
@@ -67,8 +68,9 @@ screen and ask to continue.
 
 ## D. Directions
 
-Write 2–3 **distinct, finished-looking** directions to `<root>/docs/design/directions.html` (say the path first):
-palette, type, components and one real screen of a key task, each in light and dark. When the Effective HTML skills
+**OK?** "I'll write the directions page to `<root>/docs/design/directions.html`" (a) Write it (Recommended)
+(b) Another path. Then write 2–3 **distinct, finished-looking** directions: palette, type, components and one real
+screen of a key task, each in light and dark. When the Effective HTML skills
 (`design-artifact`, `html`, `html-prototype`) are available in this session, follow them; otherwise start from
 `ROOT/templates/directions.html` and its rules. Nothing from the network. **OK?** pick one · combine (which parts) ·
 change something.
@@ -79,7 +81,7 @@ change something.
    right after the build, in E5), type family and scale, spacing, radius, shadows, motion, labels; point at the chosen direction in
    `directions.html` as the preview. Change what the user asks; continue only on their OK.
 2. **OK? The files.** Write the answers JSON (keys in interview.md, including the confirmed placement: `ui_packages`,
-   `ui_files`, `allowed_raw`, `web_copies`, `python`, `role`) to a temp file outside the repo. Run
+   `ui_files`, `allowed_raw`, `web_copies`, `python`, `role`) to a file in the system temp folder (deleted after the scaffold). Run
    `python3 "<ROOT>/scripts/scaffold.py" --project-root "<root>" --name "<Name>" --skill-dir <skill dir>
    --platforms <list> --styling <mode> --answers <file> --docs-dir docs/design --dry-run`, show its **full** list of
    files and paths, and run it without `--dry-run` only on the user's OK.

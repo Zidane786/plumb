@@ -3,7 +3,7 @@ name: extract
 description: Extract the design system an existing app already has - inventory every colour, font, size, spacing, radius, shadow, duration and easing in use (counts and file:line), cluster near-duplicates into a clean token set shown as a before/after page, confirm it group by group, ask the product and UX questions the code cannot answer, generate the design system after the user approves the files, build the main prototype from the existing routes, and audit what does not match yet (with Slate tickets on offer).
 argument-hint: "[UI folders]"
 disable-model-invocation: true
-allowed-tools: Bash(python3 *scripts/scaffold.py*), Bash(python *scripts/scaffold.py*), Bash(py -3 *scripts/scaffold.py*), Bash(python3 *scripts/build-tokens.py*), Bash(python *scripts/build-tokens.py*), Bash(py -3 *scripts/build-tokens.py*), Bash(python3 *scripts/audit.py*), Bash(python *scripts/audit.py*), Bash(py -3 *scripts/audit.py*), Bash(python3 *scripts/build-prototype.py*), Bash(python *scripts/build-prototype.py*), Bash(py -3 *scripts/build-prototype.py*), Bash(git rev-parse *), Bash(git config user.name), Bash(git -C * status --short)
+allowed-tools: Bash(python3 *scripts/detect.py*), Bash(python *scripts/detect.py*), Bash(py -3 *scripts/detect.py*), Bash(python3 *scripts/scaffold.py*), Bash(python *scripts/scaffold.py*), Bash(py -3 *scripts/scaffold.py*), Bash(python3 *scripts/build-tokens.py*), Bash(python *scripts/build-tokens.py*), Bash(py -3 *scripts/build-tokens.py*), Bash(python3 *scripts/audit.py*), Bash(python *scripts/audit.py*), Bash(py -3 *scripts/audit.py*), Bash(python3 *scripts/build-prototype.py*), Bash(python *scripts/build-prototype.py*), Bash(py -3 *scripts/build-prototype.py*), Bash(git rev-parse *), Bash(git config user.name), Bash(git -C * status --short)
 ---
 
 # /plumb:extract — the system you already ship, cleaned up
@@ -24,7 +24,7 @@ recommendation first marked "(Recommended)" and why. Questions and recommendatio
 [reference/tokens-format.md](../../reference/tokens-format.md); placement:
 [reference/placement.md](../../reference/placement.md). Light **and** dark by default. **Never install or download
 anything**; if something seems needed, say so, **ask the user and wait**. App code changes only with the user's OK;
-the audit in step 7 reports, it does not fix. Pre-approved commands (`allowed-tools`): Plumb's `scaffold.py`,
+the audit in step 7 reports, it does not fix. Pre-approved commands (`allowed-tools`): Plumb's `detect.py`, `scaffold.py`,
 `build-tokens.py`, `audit.py`, `build-prototype.py`, and the read-only git calls; anything else asks first.
 
 **Plugin root (`ROOT`):** `${CLAUDE_PLUGIN_ROOT}` (Claude Code and Copilot CLI fill this in for plugin skills).
@@ -32,7 +32,8 @@ If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base di
 `<plugin>/skills/extract`) + `/../..`, resolved to an absolute path.
 
 **Project root (`<root>`):** the absolute root the user confirmed in `/plumb:init`. Every path below is relative to
-`<root>` and every command names it explicitly; never write outside it, never use `.` for it.
+`<root>` and every command names it explicitly; never write outside it, never use `.` for it. The one exception: the
+answers JSON for `scaffold.py` goes to the system temp folder and is deleted right after the scaffold.
 
 ## Step 0: placement and Python
 
@@ -67,8 +68,9 @@ proposed dark value.
 
 ## 4. Before/after page, then each group confirmed
 
-Write `<root>/docs/design/extract.html` (say the path first; with Effective HTML's `design-artifact` when available,
-else a plain self-contained page; nothing from the network): per group, **before** (every value with swatch, count
+**OK?** "I'll write the proposal page to `<root>/docs/design/extract.html`" (a) Write it (Recommended) (b) Another
+path. Then write it (with Effective HTML's `design-artifact` when available, else a plain self-contained page;
+nothing from the network): per group, **before** (every value with swatch, count
 and a few `file:line`) and **after** (the proposed token, its value in light and dark, what merges into it), and how
 many values become how many tokens. **OK? Each group, one at a time:** accept (Recommended) · rename · merge with
 another · split · leave out. After three groups, also offer "Accept all remaining groups as proposed" next to "Keep

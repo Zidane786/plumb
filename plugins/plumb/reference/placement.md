@@ -7,7 +7,9 @@ root, layout, framework, styling, platforms, copy paths) is a suggestion the use
 **The project root (`<root>`)** is the absolute `root` from detect.py, as the user confirmed or corrected it. From then
 on every path is relative to `<root>` and every command names it explicitly (`--project-root "<root>"`,
 `"<root>/<skill dir>/scripts/…"`); never write outside it, and never use `.` for it (the session may be open in a
-subfolder of the project, or in a parent folder of several).
+subfolder of the project, or in a parent folder of several). Two exceptions, each only as stated: the answers JSON for
+`scaffold.py` goes to the system temp folder and is deleted after the scaffold; and when the frontend lives in another
+repo, the backend repo's linked `PLUMB.md` is written only when the user says yes to that separate question.
 
 ## Detection is a first guess, never the decision
 
@@ -22,7 +24,9 @@ files and folders. No script knows every layout, so:
    `settings.gradle*`), find where the global stylesheet really is (search for `@import "tailwindcss"`, `@tailwind`,
    `:root {`), and where the routes or screens live.
 3. **Always** show the user what was found and what will be created, in the block below, and wait for "OK" or a
-   correction. Even at `high` confidence.
+   correction. Even at `high` confidence. The block lists everything that will be written, **including the docs
+   folder** (`docs/design/`: the directions or extract page, the decision log, the prototype, the reports), so the
+   first page written later is covered by this OK; the skills still name each page's path before writing it.
 4. What the user confirms is what gets written, and it is recorded in `PLUMB.md` (`Design system:`, `Role:`,
    `Platforms:`, `UI packages:`, `UI files:`, the copy paths in the tokens file), so later commands never guess again.
 
@@ -35,6 +39,7 @@ Plumb found:
 I'll create:
   .claude/skills/acme-design-system/   in ~/Projects/acme
   PLUMB.md                             in ~/Projects/acme
+  docs/design/                         in ~/Projects/acme   (directions or extract page, decision log, prototype, reports)
   generated copy → apps/web/app/globals.css
 OK, or change something?
 ```
@@ -51,22 +56,24 @@ OK, or change something?
 | `monorepo` | The marker found: `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `lerna.json`, `rush.json`, `package.json workspaces`, `apps/ + packages/`, `frontend/ + backend/`. |
 | `ui_packages[]` | `path`, `framework` (`next react vue svelte angular html swiftui uikit compose android-views react-native`), `styling` (`tailwind-v4 tailwind-v3 css native`), `shadcn`, `platforms`, `files` (UI file count), `supported`, `note`, `global_css {path, exists}`. |
 | `no_ui[]` | Backend packages: `path`, `stack` (`fastapi django flask go java rust rails express …`). |
-| `children[]` | Only for `parent`: `name`, `is_repo`, `has_ui`. |
+| `children[]` | Only for `parent`: the project folders under it, by path up to the scan depth (`Projects/acme`): git repos and folders with markers (`name`, `path`, `is_repo`, `has_ui`). A folder that holds other git repos is never taken as a project root. |
+| `enclosing` | Outside git only: the nearest folder above with monorepo markers or a `PLUMB.md` (`root`, `markers`, `plumb_md`), else `null`. Lowers confidence: the project may be that folder. |
 | `existing` | `plumb_md` (a `PLUMB.md` is there), `skill`, `role`. |
-| `proposal` | `project` (kebab-case name), `skill_dir`, `plumb_md`, `copies` (generated CSS copy paths), `platforms`, `alternatives`. |
+| `proposal` | `project` (kebab-case name), `skill_dir`, `plumb_md`, `docs_dir`, `copies` (generated CSS copy paths), `platforms`, `alternatives`. |
 | `confidence`, `reasons` | How sure the guess is and why not more. `low`: no markers, a guessed CSS path, several UI packages without monorepo markers, a parent folder. `medium`: an unsupported stack, backend and UI side by side, not a git repo. |
 
 ## Layouts
 
 | Situation | What init does |
 |---|---|
-| **Parent folder** (`layout: parent`, e.g. opened at `~/Desktop`) | List `children` (repo or folder, has UI) and ask which project. Write **nothing** in the parent. Run detect again with `--cwd <child>` and continue there; tell the user to open future sessions in that folder (the hooks look for `PLUMB.md` upwards from where a session opens). |
-| **New, empty folder** (`layout: new`) | Ask "Start a new project here?" (a) Yes (Recommended) (b) it is somewhere else (ask the path). On yes route to `/plumb:create` in this folder. git is optional; offer `git init` once, the user decides. |
+| **Parent folder** (`layout: parent`, e.g. opened at `~/Desktop`, also when the projects sit deeper, like `Projects/acme`) | List `children` (path, repo or folder, has UI) and ask which project. Write **nothing** in the parent. Run detect again with `--cwd <child>` and continue there; tell the user to open future sessions in that folder (the hooks look for `PLUMB.md` upwards from where a session opens). |
+| **New, empty folder** (`layout: new`) | Ask "Start a new project here?" (a) Yes (Recommended) (b) it is somewhere else (ask the path, run detect with `--cwd <path>`, take its `root`). On yes route to `/plumb:create` in this folder. git is optional; offer `git init` once, the user decides. |
 | **Not a git repo, with project markers** (`in_repo: false`) | The opened folder is the project root. Say so in the block; confirm it is the whole project and not a package of a bigger one. |
+| **Inside a bigger project** (`enclosing` set) | Ask whether the project is `enclosing.root` (Recommended when it has monorepo markers or a `PLUMB.md`); on yes run detect there. An `enclosing.plumb_md` means Plumb is already set up there: go to init's step 0 for that folder, never a second setup. |
 | **Opened in a subfolder** (`opened` is not `.`) | Use the repo root as `<root>`. Say so in the block ("you opened apps/web"). |
 | **Monorepo** | Skill and `PLUMB.md` at the **repo root**. Every UI package is listed in `PLUMB.md` `UI packages:` with its stack, and each one's global CSS is a generated copy in `web.copies`. A package that is not UI is listed as "no UI". |
 | **Separate frontend repo** | Skill and `PLUMB.md` in this repo. |
-| **Backend-only repo** | Ask "Where will the UI live?" (a) the frontend is in another repo (Recommended): ask for its path, run detect with `--cwd <that path>`, set Plumb up there (it becomes `<root>`), then offer this repo a linked `PLUMB.md` and row, and tell the user to open the frontend repo for UI work; (b) the frontend will live here (create here, platforms chosen in the interview); (c) design only for now (below). |
+| **Backend-only repo** | Ask "Where will the UI live?" (a) the frontend is in another repo (Recommended): ask for its path, run detect with `--cwd <that path>`, set Plumb up there (it becomes `<root>`), then ask separately whether to write a linked `PLUMB.md` and row in this backend repo (written only on yes), and tell the user to open the frontend repo for UI work; (b) the frontend will live here (create here, platforms chosen in the interview); (c) design only for now (below). |
 | **Several UI repos share one system** | One **home** repo owns the tokens (`Role: home`). The others get only a linked `PLUMB.md` and the AGENTS/CLAUDE row pointing at the home skill. The home's `build-tokens.py` can write generated copies into the other repos (their paths in the home tokens' `web.copies`), asked in the home repo. |
 | **React Native** (`framework: react-native`, `supported: false`) | Say plainly: React Native themes are not supported in Plumb 1.0.0 (a candidate for 1.1.0). Offer only: design only (Recommended, below), web (when the repo has a web part), or iOS (SwiftUI) / Android (Compose) themes for native apps. Never generate a React Native theme or write React Native components. |
 | **Nothing recognised** (`layout: single`, low confidence) | Explore (above). If there really is no UI yet, the project is new: route to `/plumb:create`. |

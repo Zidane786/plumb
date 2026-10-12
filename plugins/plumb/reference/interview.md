@@ -111,7 +111,7 @@ as the record and is linked from the decision entry.
 
 **Before generating**, show the full token set (colours light and dark, type, spacing, radius, shadows, motion; the
 chosen direction is the preview) and wait for the user's OK. Then write the confirmed answers as JSON to a temporary
-file **outside the repo** (the system temp folder) and pass it to `scaffold.py --answers`, first with `--dry-run`:
+file in the **system temp folder** (never in the project; deleted after the scaffold) and pass it to `scaffold.py --answers`, first with `--dry-run`:
 show its full file list and paths, and run it for real only on the user's OK. Keys (all optional; see `scaffold.py`'s docstring for the exact names): `description`,
 `audience`, `direction`, `voice`, `themes`, `python`, `role`, `ui_packages`, `ui_files`, `allowed_raw`, `web_copies`,
 `colors` (`light`/`dark` for background, surface, sunk, on-surface, on-surface-muted, primary, on-primary, outline,

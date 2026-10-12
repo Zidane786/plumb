@@ -108,6 +108,8 @@ def test_skill_keeps_the_user_in_the_loop(path: Path) -> None:
         assert "one at a time" in text, "questions go one at a time"
     if name in CONFIRM_FIRST:
         assert "nothing is written without the user's ok" in text
+    if name == "init":  # the confirmed "I'll create" block covers the docs folder too
+        assert "docs/design/ in <root>" in text
 
 
 @pytest.mark.parametrize("path", doc_files(), ids=lambda p: p.relative_to(PLUGIN).as_posix())
