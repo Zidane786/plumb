@@ -694,6 +694,12 @@ def test_nested_numeric_groups_build_as_before(project: Path) -> None:
     assert "--z-1-2: 3px;" in css and "--size-nudge: var(--z-1-2);" in css
 
 
+def test_a_decimal_name_that_spells_the_same_path_as_nested_groups_is_refused(project: Path) -> None:
+    edit_tokens(project, lambda d: d.update({"z": {"$type": "dimension", "1": {"2": {"$value": "3px"}},
+                                                   "1.2": {"$value": "4px"}}}))
+    assert_refusal(run(project), "z.1.2", '"1.2"')
+
+
 def test_a_dot_that_is_not_a_decimal_step_is_refused(project: Path) -> None:
     edit_tokens(project, lambda d: d["spacing"].__setitem__("a.b", {"$value": "2px"}))
     assert_refusal(run(project), "spacing.a.b", "'a-b'")

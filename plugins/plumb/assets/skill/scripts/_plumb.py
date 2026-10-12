@@ -23,7 +23,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Iterator, Optional, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 PLUMB_VERSION = "1.0.0"
 SCHEMA_VERSION = 1
@@ -109,16 +109,25 @@ _PATH_SPLIT = re.compile(r"(?<!\d)\.|\.(?!\d)")
 _DECIMAL_NAME = re.compile(r"^\d+(?:\.\d+)+$")
 
 
-# Paths iter_tokens has seen where a numeric group holds a numeric name ("z": {"1": {"2": ...}} is z.1.2, three
-# names): the decimal rule would read "1.2" as one name, so these keep the names the file really has.
-_NESTED_NUMERIC: dict = {}
+class TokenPath(str):
+    """A dotted token path that also carries the names it was built from. iter_tokens yields these, so a path met as
+    nested numeric groups ("z": {"1": {"2": ...}} is z.1.2, three names) keeps the names the file really has, where
+    the decimal rule alone would read "1.2" as one name. It is still a plain str everywhere else."""
+
+    parts: Tuple[str, ...] = ()
+
+    def __new__(cls, path: str, parts: Tuple[str, ...]) -> "TokenPath":
+        obj = super().__new__(cls, path)
+        obj.parts = tuple(parts)
+        return obj
 
 
 def path_parts(path: str) -> list:
     """A token path split into its names: "spacing.0.5" -> ["spacing", "0.5"], "typography.sm.fontSize" -> 3 parts.
-    A path iter_tokens met as nested numeric groups ("z.1.2" from {"z": {"1": {"2": ...}}}) keeps its three names."""
-    known = _NESTED_NUMERIC.get(path)
-    return list(known) if known is not None else _PATH_SPLIT.split(path)
+    A pure function of its argument: a TokenPath (from iter_tokens) gives the names it carries; a plain string reads a
+    dot between two digits as a decimal point. iter_tokens refuses a file where both readings name a token."""
+    parts = getattr(path, "parts", None)
+    return list(parts) if parts else _PATH_SPLIT.split(path)
 
 
 def css_name(part: str) -> str:
@@ -130,7 +139,10 @@ def css_name(part: str) -> str:
 def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
     """Yield (dotted path, token, $type) for every token, in document order; $type is inherited from groups.
 
-    A name may contain a dot only as a decimal step ("0.5", "1.5"); any other dot is refused."""
+    A name may contain a dot only as a decimal step ("0.5", "1.5"); any other dot is refused. Each path is a TokenPath
+    (path_parts gives its real names). Two places that spell the same path ("1.2" next to "1": {"2": ...}) are refused:
+    a reference such as {z.1.2} could not say which one it means."""
+    seen: Dict[str, Tuple[str, ...]] = {}
 
     def walk(node: dict, prefix: str, names: list, inherited: Optional[str]) -> Iterator[Tuple[str, dict, Optional[str]]]:
         gtype = node.get("$type", inherited) if isinstance(node.get("$type"), str) else inherited
@@ -141,10 +153,17 @@ def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
                 where = f"{prefix}.{key}" if prefix else key
                 raise _err(f"{where}: the name {key!r} has a dot; a token or group name may hold one only as a decimal "
                            f"step such as \"0.5\"", f"rename it in the tokens file, e.g. {key.replace('.', '-')!r}")
-            path = f"{prefix}.{key}" if prefix else key
-            parts = names + [key]
-            if _PATH_SPLIT.split(path) != parts:
-                _NESTED_NUMERIC[path] = tuple(parts)
+            text = f"{prefix}.{key}" if prefix else key
+            parts = tuple(names) + (key,)
+            other = seen.setdefault(text, parts)
+            if other != parts:
+                dec = next(p for p in (other, parts) if any("." in n for n in p))
+                name = next(n for n in dec if "." in n)
+                raise _err(f"{text} names two places in the tokens file: the decimal name \"{name}\" and nested groups "
+                           f"{' > '.join(repr(n) for n in (parts if dec is other else other))}, so a reference cannot "
+                           f"say which one it means",
+                           f"rename one of them in the tokens file, e.g. \"{name}\" -> \"{name.replace('.', '_')}\"")
+            path = TokenPath(text, parts)
             if is_token(child):
                 ttype = child.get("$type") if isinstance(child.get("$type"), str) else gtype
                 yield path, child, ttype
@@ -156,15 +175,38 @@ def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
 
 def _find(doc: dict, path: str) -> Tuple[dict, list, Optional[str]]:
     """(token, rest-of-path into its $value, inherited $type) for a dotted path. A decimal name ("0.5") is one name;
-    when the file nests numeric groups instead ("z.1.2"), the plain split by dots is tried too."""
+    when the file nests numeric groups instead ("z.1.2"), the plain split by dots is tried too; a file where both
+    readings name a token is refused, as iter_tokens refuses it."""
+    return _locate(doc, path)[1]
+
+
+def _locate(doc: dict, path: str) -> Tuple[list, Tuple[dict, list, Optional[str]]]:
     first = path_parts(path)
     plain = path.split(".")
-    if plain != first:
+    if plain == first or getattr(path, "parts", None):
+        return first, _find_parts(doc, path, first)
+    found = []
+    error: Optional[PlumbError] = None
+    for parts in (first, plain):
         try:
-            return _find_parts(doc, path, first)
-        except PlumbError:
-            return _find_parts(doc, path, plain)
-    return _find_parts(doc, path, first)
+            found.append((parts, _find_parts(doc, path, parts)))
+        except PlumbError as exc:
+            error = exc
+    if len(found) == 2:
+        list(iter_tokens(doc))  # raises the error that names both places
+    if not found:
+        assert error is not None
+        raise error
+    return found[0]
+
+
+def token_path(doc: dict, path: str) -> TokenPath:
+    """A reference's path (the text inside {...}) as a TokenPath of the token it names in `doc`, so path_parts gives
+    the names the file has ("z.1.2" -> z > 1 > 2 when the file nests numeric groups)."""
+    if getattr(path, "parts", None):
+        return path  # type: ignore[return-value]
+    parts, _found = _locate(doc, path)
+    return TokenPath(path, tuple(parts))
 
 
 def _find_parts(doc: dict, path: str, parts: list) -> Tuple[dict, list, Optional[str]]:

@@ -187,3 +187,28 @@ def test_utf8_stdio_tolerates_streams_without_reconfigure(monkeypatch: pytest.Mo
     monkeypatch.setattr(sys, "stderr", Bare())
     P.utf8_stdio()
     assert calls == [(("encoding", "utf-8"), ("errors", "replace"))]
+
+
+def _nested_and_decimal() -> dict:
+    return {"z": {"$type": "dimension", "1.2": {"$value": "1px"}, "1": {"2": {"$value": "2px"}}}}
+
+
+def test_path_parts_is_a_pure_function_of_the_path() -> None:
+    nested = {"z": {"$type": "dimension", "1": {"2": {"$value": "3px"}}}}
+    decimal = {"spacing": {"$type": "dimension", "1.2": {"$value": "5px"}}}
+    assert P.path_parts("spacing.1.2") == ["spacing", "1.2"]  # a plain string: the decimal reading
+    paths = {p: list(P.path_parts(p)) for p, _t, _ty in P.iter_tokens(nested)}
+    assert paths == {"z.1.2": ["z", "1", "2"]}  # the path iter_tokens yields carries the names the file has
+    assert P.path_parts("z.1.2") == ["z", "1.2"]  # walking a document left nothing behind
+    assert [list(P.path_parts(p)) for p, _t, _ty in P.iter_tokens(decimal)] == [["spacing", "1.2"]]
+    assert P.resolve(nested, "z.1.2") == "3px" and P.resolve(decimal, "spacing.1.2") == "5px"
+
+
+def test_a_decimal_name_next_to_the_same_nested_groups_is_refused() -> None:
+    with pytest.raises(P.PlumbError) as exc:
+        list(P.iter_tokens(_nested_and_decimal()))
+    assert_formatted(exc.value)
+    assert "z.1.2" in str(exc.value) and '"1.2"' in str(exc.value)
+    with pytest.raises(P.PlumbError) as exc:
+        P.resolve(_nested_and_decimal(), "z.1.2")
+    assert_formatted(exc.value)

@@ -237,7 +237,7 @@ def _decls(doc: dict, path: str, token: dict, ttype: Optional[str], mode: str) -
         raw = ext[mode] if mode in ext else token["$value"]
         target = _alias_target(raw)
         if target is not None and not isinstance(value, dict) and ttype != "typography":
-            return [(name, f"var({varname(target)})")]
+            return [(name, f"var({varname(P.token_path(doc, target))})")]
         return [(name, value_css(value, ttype))]
     except PlumbError as exc:
         text = str(exc)
