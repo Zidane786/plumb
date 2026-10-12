@@ -23,8 +23,8 @@ from hook_support import HOOKS, PLUGIN, SH, hook_env, make_project, payload, rea
 
 RUN_SH = HOOKS / "run.sh"
 
-pytestmark = pytest.mark.skipif(SH is None, reason="no POSIX sh on this machine")
-posix_only = pytest.mark.skipif(sys.platform == "win32", reason="fake sh interpreters need a POSIX system")
+pytestmark = pytest.mark.skipif(SH is None, reason="requires POSIX: a POSIX sh")
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX: fake sh interpreters")
 
 
 def _hooks_dir(tmp_path: Path) -> Path:

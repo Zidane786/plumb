@@ -876,7 +876,7 @@ def test_temp_folder_that_is_a_symlink_is_never_used(launcher, tmp_path, proj):
     try:
         os.symlink(str(victim), str(folder), target_is_directory=True)
     except (OSError, NotImplementedError):
-        pytest.skip("cannot create a symlink here")
+        pytest.skip("requires POSIX: symlinks (or Windows with the right to create them)")
     r = session_start(launcher, tmp_path, proj)
     assert context(r).startswith("Plumb: demo-design-system 1.0.0 · ")
     assert keep.exists() and sorted(p.name for p in victim.iterdir()) == ["important.json"]
@@ -886,7 +886,7 @@ def test_temp_folder_that_is_a_symlink_is_never_used(launcher, tmp_path, proj):
     assert sorted(p.name for p in victim.iterdir()) == ["important.json"]
 
 
-@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX permissions")
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="requires POSIX: permission bits")
 def test_temp_folder_writable_by_others_is_never_used(launcher, tmp_path, proj):
     folder = plumb_tmp(tmp_path)
     folder.mkdir(parents=True)
@@ -900,7 +900,7 @@ def test_temp_folder_writable_by_others_is_never_used(launcher, tmp_path, proj):
     assert sorted(p.name for p in folder.iterdir()) == [planted.name]
 
 
-@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX permissions")
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="requires POSIX: permission bits")
 def test_temp_folder_and_snapshots_are_private(launcher, tmp_path, proj):
     _start(launcher, tmp_path, proj)
     folder = plumb_tmp(tmp_path)
@@ -918,7 +918,7 @@ def test_builder_exemption_covers_only_the_builder_itself(launcher, tmp_path, pr
     assert " is generated" in refused(bash(launcher, tmp_path, proj, command))
 
 
-@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="case-insensitive file systems")
+@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="requires macOS or Windows: case-insensitive file system")
 def test_generated_file_in_another_case_is_refused(launcher, tmp_path, proj):
     rel = f"{SKILL_REL}/assets/platforms/web/TOKENS.CSS"
     assert " is generated" in refused(write_tool(launcher, tmp_path, proj, rel, "x"))
@@ -949,9 +949,10 @@ def _git_cfg(proj: Path, text: str) -> None:
 def test_filter_named_with_an_equals_sign_never_runs(launcher, tmp_path, proj):
     git_init(proj)
     mark = tmp_path / "EQ-RAN"
-    _git_cfg(proj, f'[filter "x=y"]\n\tclean = "touch \'{mark}\'; cat"\n\tprocess = "touch \'{mark}\'"\n')
+    m = mark.as_posix()  # forward slashes: a backslash is an escape in a git config value
+    _git_cfg(proj, f'[filter "x=y"]\n\tclean = "touch \'{m}\'; cat"\n\tprocess = "touch \'{m}\'"\n')
     write(proj / ".gitattributes", "*.tsx filter=x=y\n")
-    safe = ("-c", "filter.x=y.clean=cat", "-c", "core.fsmonitor=false")
+    safe = ("-c", "core.fsmonitor=false")  # the filter is emptied through env (a -c key cannot hold "=" on every git)
     env = {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "filter.x=y.clean", "GIT_CONFIG_VALUE_0": "cat",
            "GIT_CONFIG_KEY_1": "filter.x=y.process", "GIT_CONFIG_VALUE_1": ""}
     import subprocess as sp
@@ -990,11 +991,16 @@ def test_lazy_fetch_never_runs_the_promisor_remotes_command(launcher, tmp_path, 
     genv = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     genv.update({"GIT_CEILING_DIRECTORIES": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"})
     sp.run(["git", "clone", "-q", "--no-local", proj.as_uri(), str(victim)], check=True, capture_output=True, env=genv)
+    def unlink(path: Path) -> None:  # git writes its objects read-only; Windows refuses to delete those
+        os.chmod(str(path), 0o644)
+        path.unlink()
+
     for pack in list((victim / ".git/objects/pack").glob("*.pack")):
         moved = tmp_path / pack.name
+        os.chmod(str(pack), 0o644)
         pack.rename(moved)
         for q in (victim / ".git/objects/pack").glob("*"):
-            q.unlink()
+            unlink(q)
         with open(moved, "rb") as fh:
             sp.run(["git", "unpack-objects", "-q"], stdin=fh, cwd=str(victim), check=True, env=genv)
     mark = tmp_path / "LAZY-RAN"
@@ -1005,7 +1011,7 @@ def test_lazy_fetch_never_runs_the_promisor_remotes_command(launcher, tmp_path, 
     _start(launcher, tmp_path, victim)
     oid = sp.run(["git", "rev-parse", "HEAD:app/page.tsx"], cwd=str(victim), env=genv, capture_output=True,
                  text=True, encoding="utf-8").stdout.strip()
-    (victim / ".git/objects" / oid[:2] / oid[2:]).unlink()
+    unlink(victim / ".git/objects" / oid[:2] / oid[2:])
     page = victim / "app/page.tsx"
     write(page, read(page) + "\nexport const c = 'x';\n")
     r = stop(launcher, tmp_path, victim)
@@ -1025,7 +1031,7 @@ def _shim(tmp_path: Path, name: str, body: str) -> Path:
     return folder
 
 
-posix_only = pytest.mark.skipif(sys.platform == "win32", reason="sh shims for git")
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX: sh shims for git")
 
 
 def _legacy_project(launcher, tmp_path, proj, shim: Path):
@@ -1140,7 +1146,7 @@ def test_node_reads_are_allowed(launcher, tmp_path, proj):
 
 
 @needs_git
-@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO (POSIX)")
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX: FIFO")
 def test_git_that_hangs_on_config_is_cut_short(launcher, tmp_path, proj):
     git_init(proj)
     fifo = tmp_path / "config-fifo"
