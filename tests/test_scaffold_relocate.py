@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -189,9 +190,10 @@ def test_a_fresh_scaffold_names_the_direct_commands_and_passes_verify(tmp_path: 
     root.mkdir()
     assert run(root).returncode == 0
     commands = COMMANDS.search((root / "PLUMB.md").read_text(encoding="utf-8")).group(1)
-    assert f"python3 {SKILL_REL}/scripts/build-tokens.py`" in commands
-    assert f"python3 {SKILL_REL}/scripts/build-tokens.py --check`" in commands
-    assert f"python3 {SKILL_REL}/scripts/audit.py`" in commands
+    py = "python" if os.name == "nt" else "python3"  # scaffold's default when init names no interpreter
+    assert f"{py} {SKILL_REL}/scripts/build-tokens.py`" in commands
+    assert f"{py} {SKILL_REL}/scripts/build-tokens.py --check`" in commands
+    assert f"{py} {SKILL_REL}/scripts/audit.py`" in commands
     assert "make" not in commands
     r = cli(root, "--verify")
     assert r.returncode == 0, r.stdout
