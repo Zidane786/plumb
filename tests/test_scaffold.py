@@ -22,10 +22,17 @@ SHARED = [
     "assets/platforms/web/tokens.css.template",
     "references/components.md", "references/inventory.md", "references/ux.md", "references/accessibility.md",
     "references/motion.md", "references/vocabulary.md", "references/dark-mode.md", "references/fidelity.md",
-    "scripts/_plumb.py", "scripts/build-tokens.py", "scripts/audit.py", "scripts/build-prototype.py",
-    "templates/specimen.html.tmpl", "templates/audit-report.html.tmpl",
-    "templates/prototype-shell.html.tmpl", "templates/screens.html.tmpl",
 ]
+SKILL_SRC = PLUGIN / "assets/skill"
+
+
+def plugin_files(sub: str) -> List[str]:
+    """[P] files the plugin ships verbatim: derived from the folder so the test can't go stale."""
+    base = SKILL_SRC / sub
+    return [p.relative_to(SKILL_SRC).as_posix() for p in base.rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"]
+
+
 WEB = ["references/web/stack.md", "references/web/components.md",
        "references/web/ux-guidelines.md", "references/web/dark-mode.md"]
 MOBILE = ["references/mobile/README.md", "references/mobile/components.md"]
@@ -50,7 +57,7 @@ def skill_files(root: Path, skill: str = SKILL_REL) -> List[str]:
 
 
 def expected(platforms: List[str]) -> List[str]:
-    out = list(SHARED)
+    out = list(SHARED) + plugin_files("scripts") + plugin_files("templates")
     if "web" in platforms:
         out += WEB
     if "ios" in platforms or "android" in platforms:
