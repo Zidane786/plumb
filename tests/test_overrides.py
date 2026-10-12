@@ -156,6 +156,16 @@ def test_a_shadcn_stylesheet_moves_what_it_can_and_leaves_nothing_dangling(proje
     assert "--color-sidebar-ring: var(--sidebar-ring);" in css and "--sidebar-ring: oklch(0.708 0 0);" in css
 
 
+def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
+    css = project / "app/globals.css"
+    css.write_bytes(css.read_bytes().replace(b"\n", b"\r\n"))
+    assert plan(project)["copies"][0]["remove_lines"] == list(range(3, 22))
+    assert run(project, "build-tokens.py", "--overrides", "--apply").returncode == 0
+    raw = css.read_bytes()
+    assert b"\n" not in raw.replace(b"\r\n", b"") and b"--background:" not in raw
+    assert raw.startswith(b'@import "tailwindcss";\r\n\r\nbody {\r\n  background: var(--color-background);\r\n')
+
+
 def test_nothing_to_move(project: Path) -> None:
     (project / "app/globals.css").write_text('@import "tailwindcss";\n\nbody {\n  margin: 0;\n}\n', encoding="utf-8")
     assert plan(project)["copies"][0]["overrides"] == []
