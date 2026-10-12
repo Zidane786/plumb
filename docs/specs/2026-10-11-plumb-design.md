@@ -425,6 +425,13 @@ I'll create:
 OK, or change something?
 ```
 
+**Moving it later.** If the design system ends up in the wrong place, or the user later wants it
+elsewhere, `scaffold.py --relocate FROM TO` moves the skill and updates every reference in one step
+(`PLUMB.md`, the `AGENTS.md`/`CLAUDE.md` row, Makefile targets), then runs the generator check.
+`/plumb:status` runs `scaffold.py --verify` and offers the move when `PLUMB.md` and the actual
+location disagree; init uses the same step when the user changes their placement answer. Files are
+never moved by hand, so no reference is left pointing at the old place.
+
 The default skill location is `.claude/skills/<project>-design-system/`; both tools read it
 (Copilot CLI loads skills from `.claude/skills`, `.github/skills`, `~/.copilot/skills` and
 `~/.agents/skills`). `.github/skills/` and `~/.claude/skills/` are offered as alternatives. If a
