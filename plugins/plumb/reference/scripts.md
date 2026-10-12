@@ -151,3 +151,10 @@ other check. A `#fragment` that scrolls to an anchor can come out blank in headl
 **Which browser, in order:** (1) the agent's own browser tool, if it has one and the organisation allows it; (2)
 `screenshot.py` (a Chrome, Edge or Chromium already installed); (3) none: skip the visual part with the `note:` and its
 `fix:` line in the report. Playwright is never installed for a project; it is used only in Plumb's own CI.
+
+## kiro.py (plugin): Plumb's skills and hooks for Kiro
+
+`python3 "<ROOT>/scripts/kiro.py" install|uninstall [--home DIR] [--project DIR] [--yes]`: copies the skills to
+`.kiro/skills/plumb-<name>/` and writes `.kiro/hooks/plumb.json` in the home folder (and the project), or removes only
+what it installed. It lists every path and writes only after `--yes` or a typed `y`; the user runs it, never an agent.
+Every flag and what differs in Kiro: [kiro.md](kiro.md). Exit codes: 0 · 1 the user said no · 2 refused.

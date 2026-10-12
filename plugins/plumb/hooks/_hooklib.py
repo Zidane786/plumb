@@ -12,6 +12,14 @@ differences (pinned by tests/test_copilot.py):
   refusal is {"permissionDecision": "deny", ...} on stdout, flat and in hookSpecificOutput, with exit 0;
 - no permission_mode; session start context goes out as {"additionalContext": ...}.
 
+Kiro (IDE and CLI v3) runs the same scripts from the .kiro/hooks/plumb.json files scripts/kiro.py installs (pinned by
+tests/test_kiro.py; formats from Kiro's docs, verify live): snake_case input like Claude Code with its own tool names
+(fs_write, whose "command" is create / str_replace / insert / append, and execute_bash / execute_cmd) and, from 2.x,
+camelCase event names (agentSpawn, preToolUse, stop: read as SessionStart, PreToolUse, Stop). A Kiro payload is answered
+like Claude Code: a refusal is exit 2 with the reason on stderr (Kiro blocks a PreToolUse on any non-zero exit), session
+start is plain stdout, the Stop block is {"decision": "block", "reason": ...}. The home file's commands carry
+--kiro-global; such a hook does nothing where the workspace has Plumb's own hooks file (deferred_to_workspace).
+
 Every JSON a hook prints is ASCII (non-ASCII as \\u escapes), so it survives any console code page on the way (Copilot
 CLI on Windows runs the hooks through PowerShell and run.cmd).
 
@@ -66,7 +74,21 @@ TOOL_KINDS = {
     "edit": "edit", "strreplace": "edit", "strreplaceeditor": "edit", "write": "write", "create": "write",
     "multiedit": "multiedit", "applypatch": "patch", "patch": "patch", "bash": "shell", "powershell": "shell",
     "shell": "shell",
+    # Kiro: fs_write (its input's "command" says create / str_replace / insert / append), execute_bash, and
+    # execute_cmd (its Windows shell; verify live).
+    "fswrite": "write", "executebash": "shell", "executecmd": "shell",
 }
+
+# Kiro (IDE and CLI v3) sends Claude-style snake_case input; these tool names and event spellings tell it apart (the
+# 2.x camelCase events are still accepted by v3; verify live which spelling v3 sends). A Kiro payload is always answered
+# in Claude Code's dialect (exit 2 + stderr, plain session-start text, the Stop decision JSON), never Copilot's.
+KIRO_TOOLS = frozenset(("fs_write", "fs_read", "execute_bash", "execute_cmd", "use_aws", "use_subagent", "code"))
+KIRO_EVENTS = {"agentSpawn": "SessionStart", "preToolUse": "PreToolUse", "postToolUse": "PostToolUse", "stop": "Stop",
+               "userPromptSubmit": "UserPromptSubmit"}
+# The line kiro.py puts in every file it installs (its ownership mark); kiro.py has the same constant.
+KIRO_MARK = "installed by Plumb's kiro.py"
+# The argument kiro.py adds to the commands of the home hooks file (~/.kiro/hooks/plumb.json).
+KIRO_GLOBAL_ARG = "--kiro-global"
 
 
 def utf8_stdio() -> None:
@@ -147,8 +169,9 @@ def _apply_hunks(before: str, hunks: List[Hunk]) -> Optional[str]:
 
 
 class Change:
-    """One file an edit touches. kind: write (whole content), edit (old -> new), multiedit, insert (after a line), add /
-    update / delete / move (apply_patch sections), path (the tool names a file but its new text is unknown)."""
+    """One file an edit touches. kind: write (whole content), edit (old -> new), multiedit, insert (after a line),
+    append (Kiro: at the end), add / update / delete / move (apply_patch sections), path (the tool names a file but its
+    new text is unknown)."""
 
     def __init__(self, path: str, kind: str, content: Optional[str] = None,
                  edits: Optional[List[Tuple[str, str, bool]]] = None, line: int = 0) -> None:
@@ -177,6 +200,8 @@ class Change:
                     return None
                 text = text.replace(old, new) if every else text.replace(old, new, 1)
             return text
+        if self.kind == "append":  # Kiro's fs_write append: a newline first when the file does not end with one
+            return text + ("\n" if text and not text.endswith("\n") else "") + normalise(self.content or "")
         if self.kind == "insert":
             lines = text.split("\n")
             at = min(max(self.line, 0), len(lines))
@@ -245,10 +270,12 @@ class Payload:
 
     def __init__(self, raw: dict) -> None:
         self.raw = raw
-        self.event = str(raw.get("hook_event_name") or raw.get("hookEventName") or "")
+        event = str(raw.get("hook_event_name") or raw.get("hookEventName") or "")
+        self.event = KIRO_EVENTS.get(event, event)
         camel = ("toolName" in raw or "toolArgs" in raw) and "tool_name" not in raw and "tool_input" not in raw
         name = raw.get("toolName") if camel else raw.get("tool_name")
         self.tool_name = name if isinstance(name, str) else ""
+        self.kiro = not camel and (self.tool_name in KIRO_TOOLS or event in KIRO_EVENTS)
         tool_input = raw.get("toolArgs") if camel else raw.get("tool_input")
         if isinstance(tool_input, str) and camel:
             try:
@@ -258,8 +285,8 @@ class Payload:
         self.tool = TOOL_KINDS.get(re.sub(r"[\s_-]", "", self.tool_name.lower()), "")
         self.changes, self.command = _changes(self.tool, tool_input)
         # Only Copilot CLI sends patch text or camelCase input, so those are answered in its dialect even without
-        # COPILOT_CLI.
-        self.copilot = camel or isinstance(tool_input, str) or bool(os.environ.get("COPILOT_CLI"))
+        # COPILOT_CLI. Kiro's input is answered in Claude Code's (its own) dialect whatever the environment says.
+        self.copilot = not self.kiro and (camel or isinstance(tool_input, str) or bool(os.environ.get("COPILOT_CLI")))
         sid = raw.get("session_id") or raw.get("sessionId") or ""
         self.session_id = sid if isinstance(sid, str) else str(sid)
         cwd = raw.get("cwd")
@@ -311,6 +338,8 @@ def _changes(kind: str, tool_input: object) -> Tuple[List[Change], Optional[str]
     content = tool_input.get("content", tool_input.get("file_text"))
     if isinstance(content, str):
         return [Change(path, "write", content=content)], None
+    if command == "append" and isinstance(new, str):  # Kiro's fs_write append
+        return [Change(path, "append", content=new)], None
     line = tool_input.get("insert_line")
     if isinstance(new, str) and isinstance(line, int) and not isinstance(line, bool):
         return [Change(path, "insert", content=new, line=line)], None
@@ -541,9 +570,38 @@ class Project:
         return self.root_s
 
 
+def kiro_workspace_hooks(start: str) -> Optional[str]:
+    """The nearest .kiro/hooks/plumb.json at or above start that kiro.py installed for a project (it carries KIRO_MARK
+    and, unlike the home file, no KIRO_GLOBAL_ARG), or None."""
+    folder = os.path.realpath(start)
+    while True:
+        candidate = os.path.join(folder, ".kiro", "hooks", "plumb.json")
+        if os.path.isfile(candidate):
+            text = _read(candidate) or ""
+            if KIRO_MARK in text and KIRO_GLOBAL_ARG not in text:
+                return candidate
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            return None
+        folder = parent
+
+
+def deferred_to_workspace(payload: Optional[Payload]) -> bool:
+    """Kiro CLI runs the home hooks file and a workspace's side by side: a hook started from the home file
+    (KIRO_GLOBAL_ARG on its command line) stands down where the workspace has Plumb's own hooks file, so nothing runs
+    twice."""
+    if KIRO_GLOBAL_ARG not in sys.argv[1:]:
+        return False
+    start = (payload.cwd if payload else "") or os.getcwd()
+    return kiro_workspace_hooks(start) is not None
+
+
 def load_project(payload: Optional[Payload]) -> Optional[Project]:
     """The project the hook runs for: from CLAUDE_PROJECT_DIR when the CLI sets it (only there), else from the
-    payload's cwd, else from the current directory. None without a PLUMB.md."""
+    payload's cwd, else from the current directory. None without a PLUMB.md, and None for a hook from Kiro's home hooks
+    file where the workspace has its own (deferred_to_workspace)."""
+    if deferred_to_workspace(payload):
+        return None
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     starts = [env] if env else [payload.cwd if payload else "", os.getcwd()]
     for start in starts:

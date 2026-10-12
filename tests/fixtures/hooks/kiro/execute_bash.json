@@ -1,0 +1,10 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{{CWD}}",
+  "session_id": "{{SESSION}}",
+  "tool_name": "execute_bash",
+  "tool_input": {
+    "command": "{{COMMAND}}",
+    "summary": "Run the command"
+  }
+}
