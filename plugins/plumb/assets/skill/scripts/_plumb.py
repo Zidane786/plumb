@@ -125,8 +125,12 @@ class TokenPath(str):
 def path_parts(path: str) -> list:
     """A token path split into its names: "spacing.0.5" -> ["spacing", "0.5"], "typography.sm.fontSize" -> 3 parts.
     A pure function of its argument: a TokenPath (from iter_tokens) gives the names it carries; a plain string reads a
-    dot between two digits as a decimal point. iter_tokens refuses a file where both readings name a token."""
-    parts = getattr(path, "parts", None)
+    dot between two digits as a decimal point. iter_tokens refuses a file where both readings name a token.
+
+    The rule for callers: pass the paths iter_tokens yields as they are, or turn a path you have as text (a reference
+    such as {z.1.2}) into one with token_path(doc, path). A TokenPath is a str, so `+`, an f-string or slicing gives a
+    plain str and drops its names (only nested numeric groups notice)."""
+    parts = path.parts if isinstance(path, TokenPath) else None
     return list(parts) if parts else _PATH_SPLIT.split(path)
 
 
@@ -183,7 +187,7 @@ def _find(doc: dict, path: str) -> Tuple[dict, list, Optional[str]]:
 def _locate(doc: dict, path: str) -> Tuple[list, Tuple[dict, list, Optional[str]]]:
     first = path_parts(path)
     plain = path.split(".")
-    if plain == first or getattr(path, "parts", None):
+    if plain == first or isinstance(path, TokenPath):
         return first, _find_parts(doc, path, first)
     found = []
     error: Optional[PlumbError] = None
@@ -203,7 +207,7 @@ def _locate(doc: dict, path: str) -> Tuple[list, Tuple[dict, list, Optional[str]
 def token_path(doc: dict, path: str) -> TokenPath:
     """A reference's path (the text inside {...}) as a TokenPath of the token it names in `doc`, so path_parts gives
     the names the file has ("z.1.2" -> z > 1 > 2 when the file nests numeric groups)."""
-    if getattr(path, "parts", None):
+    if isinstance(path, TokenPath):
         return path  # type: ignore[return-value]
     parts, _found = _locate(doc, path)
     return TokenPath(path, tuple(parts))
