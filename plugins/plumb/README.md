@@ -67,5 +67,24 @@ boundary"), and fail open. In Copilot CLI, refusals arrive as a "deny" answer wi
 end-of-turn check can make Copilot continue depends on its `agentStop` support, and where it can't, the edit check is
 the hard guard there.
 
+## Effective HTML (optional)
+
+Plumb uses the [Effective HTML](https://github.com/plannotator/effective-html) skills (`design-artifact`, `html`,
+`html-prototype`) when they are installed in the session. They add craft guidance (a deliberate palette and type
+pairing, real hierarchy, nothing generic-looking) to the pages an agent writes: the create directions, the prototype
+variants and screen files, the extract before/after page and the UX review page.
+
+**Without them** nothing breaks: Plumb follows its built-in quality bar ("The quality bar" in
+[reference/prototypes.md](reference/prototypes.md)) and its own directions template (`templates/directions.html`).
+Every page still opens offline, in light and dark. `/plumb:init` says whether they are available and `/plumb:status`
+reports it.
+
+**To add them**, run these yourself in Claude Code (from Effective HTML's README; Plumb never installs anything):
+
+```
+/plugin marketplace add plannotator/effective-html
+/plugin install plannotator-effective-html@effective-html
+```
+
 Every script command and flag for agents: [reference/scripts.md](reference/scripts.md); every audit rule:
 [reference/rules.md](reference/rules.md). Full docs, design and source: https://github.com/Zidane786/plumb

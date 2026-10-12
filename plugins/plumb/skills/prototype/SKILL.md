@@ -63,8 +63,9 @@ ask the user and wait for their decision. Both themes, unless `PLUMB.md` says `T
 
 - Name the proposal (`<name>`, e.g. `billing`) and the 2–3 variants (folders like `a-calm-list`, `b-dense-table`), each
   with its one-line idea. Variants differ in **UX** (layout, flow, density, navigation), all on the same design system;
-  each a distinct, finished-looking option. If the `html-prototype` and `design-artifact` skills are available in this
-  session, follow them; otherwise the quality bar in `<ROOT>/reference/prototypes.md` (real content, every state,
+  each a distinct, finished-looking option. If the Effective HTML skills `html-prototype` and `design-artifact` are
+  available in this session, follow them (optional; never install them); otherwise Plumb's built-in quality bar in
+  [prototypes.md](../../reference/prototypes.md#the-quality-bar-effective-html) (real content, every state,
   working interactions, keyboard and focus, both themes, reduced motion, no generic look).
 - **Ask before writing:** "I'll write the variants' screen files in
   `<docs>/prototype/proposals/<name>/<variant>/screens/` (+ an `idea.md` per variant) and build both views with

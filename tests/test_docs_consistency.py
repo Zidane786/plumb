@@ -134,6 +134,29 @@ def test_skill_keeps_the_user_in_the_loop(path: Path) -> None:
         assert "docs/design/ in <root>" in text
 
 
+# Skills that write HTML pages follow Effective HTML when installed and Plumb's built-in quality bar otherwise
+# (owner requirement): each says so and links the bar. Init and status say whether it is available.
+HTML_WRITERS = ("create", "extract", "prototype", "ux", "tour")
+QUALITY_BAR_LINK = "](../../reference/prototypes.md#the-quality-bar-effective-html)"
+
+
+@pytest.mark.parametrize("name", HTML_WRITERS)
+def test_html_writing_skills_name_the_effective_html_fallback(name: str) -> None:
+    text = (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+    flat = " ".join(text.split()).lower()
+    assert "effective html" in flat, f"{name}: say that Effective HTML is used when it is available"
+    assert "built-in quality bar" in flat, f"{name}: name Plumb's built-in quality bar as the fallback"
+    assert QUALITY_BAR_LINK in text, f"{name}: link reference/prototypes.md 'The quality bar'"
+    assert "never install" in flat, f"{name}: Effective HTML is optional; never install it"
+    assert (REFERENCE / "prototypes.md").read_text(encoding="utf-8").count("## The quality bar (Effective HTML)") == 1
+
+
+@pytest.mark.parametrize("name", ("init", "status"))
+def test_init_and_status_report_effective_html(name: str) -> None:
+    flat = " ".join((SKILLS / name / "SKILL.md").read_text(encoding="utf-8").split()).lower()
+    assert "effective html" in flat and "built-in quality bar" in flat and "never install" in flat
+
+
 @pytest.mark.parametrize("path", doc_files(), ids=lambda p: p.relative_to(PLUGIN).as_posix())
 def test_root_paths_exist(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
@@ -300,6 +323,15 @@ def test_internal_names_list_can_be_extended(monkeypatch: pytest.MonkeyPatch) ->
     rx = _internal_names()
     assert rx.search("built for acme-secret") and rx.search("Other") and rx.search("caredesk")
     assert not rx.search("acme") and not rx.search("others")
+
+
+@pytest.mark.parametrize("path", [REPO / "README.md", PLUGIN / "README.md", USAGE], ids=lambda p: str(p.relative_to(REPO)))
+def test_user_docs_say_effective_html_is_optional(path: Path) -> None:
+    flat = " ".join(path.read_text(encoding="utf-8").split()).lower()
+    assert "effective html (optional)" in flat or "optional, used when installed" in flat, path
+    assert "built-in quality bar" in flat, f"{path.relative_to(REPO)}: name the fallback"
+    if path == USAGE:
+        assert "what if effective html isn't installed?" in flat
 
 
 def test_what_you_get_opens_offline_in_both_themes() -> None:

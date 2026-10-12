@@ -74,8 +74,9 @@
   question); `uninstall` removes only what it wrote. Built from Kiro's documented formats; the live check on a real
   Kiro is pending.
 - **Slate and Effective HTML**: audit and UX findings can become Slate tickets (through Slate's `board.py`), and
-  `make design-audit` can join Slate's review checks; the Effective HTML skills are used for directions and variants
-  when installed.
+  `make design-audit` can join Slate's review checks; the Effective HTML skills are optional: used when installed for
+  the directions, prototype variants and screens, the extract page and the UX review page, with Plumb's built-in
+  quality bar otherwise; `/plumb:init` and `/plumb:status` say which is in use.
 - Works on macOS, Linux and Windows (`py -3`, `python` or `python3`), over SSH and in tmux; every generated page opens
   offline (no CDN, no hosted fonts).
 

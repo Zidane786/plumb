@@ -599,7 +599,8 @@ It is **read-only** (the one exception: if the design system sits in the wrong p
 move). It reports: project and plugin versions; the system's path, home or linked, platforms, styling, themes; whether
 `PLUMB.md` and the real location agree; stale generated files; audit errors, warnings and suggestions; the prototype
 (screens built and to build, approvals pending, screens synced from code to confirm, drift, routes not prototyped,
-tours, whether the pages are stale); the checks on or off; uncommitted design files; and the one most useful next step.
+tours, whether the pages are stale); the checks on or off; whether the Effective HTML skills are available or Plumb's
+built-in quality bar is in use; uncommitted design files; and the one most useful next step.
 
 ```
 you   /plumb:status
@@ -1030,12 +1031,23 @@ When the project uses Slate (`kanban/board.py` exists), Plumb offers, each asked
 
 Plumb never edits `kanban/`; Slate never edits the design system.
 
-### Effective HTML
+### Effective HTML (optional)
 
-When the Effective HTML skills (`html`, `design-artifact`, `html-prototype`, `html-diagram`) are installed, Plumb uses
-them for the directions page, prototype variants and the extract page. When they are not, it falls back to its own
-templates and rules (real content, every state, working interactions, keyboard and focus, both themes, reduced motion,
-no generic look). The specimen, the reports and the prototype shell are Plumb's own fixed templates either way.
+The [Effective HTML](https://github.com/plannotator/effective-html) skills (`html`, `design-artifact`,
+`html-prototype`, `html-diagram`) are **optional, used when installed, with Plumb's built-in quality bar otherwise**.
+When they are in the session, Plumb follows them for the pages an agent writes: the create directions, the prototype
+variants and screen files, the extract before/after page and the UX review page. When they are not, it follows its own
+rules ("The quality bar" in [reference/prototypes.md](../plugins/plumb/reference/prototypes.md): real content, every
+state, working interactions, keyboard and focus, both themes, reduced motion, no generic look) and its directions
+template. The specimen, the audit report and the prototype shell are Plumb's own fixed templates either way.
+`/plumb:init` tells you once whether the skills are available, and `/plumb:status` reports it.
+
+Plumb never installs them. To add them, run these yourself in Claude Code (from Effective HTML's README):
+
+```
+/plugin marketplace add plannotator/effective-html
+/plugin install plannotator-effective-html@effective-html
+```
 
 ### Operating systems, SSH and tmux
 
@@ -1172,6 +1184,10 @@ screen files are never touched. They are the record, not kept in step with code.
 
 **Can one design system serve web, iOS and Android?** Yes: one tokens file generates the web CSS (Tailwind v4, v3 or
 plain CSS), a SwiftUI theme and a Compose Material 3 theme. Add platforms later with `/plumb:update`.
+
+**What if Effective HTML isn't installed?** Nothing breaks. It is optional and used when installed; otherwise Plumb
+follows its built-in quality bar and its own templates, and every page still opens offline in light and dark.
+`/plumb:status` says which one is in use. See [Effective HTML (optional)](#effective-html-optional).
 
 **What about React Native or Flutter?** Not in 1.0.0. React Native is a candidate for 1.1.0.
 

@@ -193,9 +193,14 @@ Every setting, with examples: [docs/USAGE.md](docs/USAGE.md#plumbmd).
   review checks, offers audit and UX findings as tickets (written only through Slate's `board.py`), and a ticket that
   changes a screen starts with "prototype approved" and links the screen. Plumb never edits `kanban/`; Slate never edits
   the design system.
-- **Effective HTML** (`html`, `design-artifact`, `html-prototype`, `html-diagram`): when installed, Plumb uses them for
-  the directions page and prototype variants; otherwise its own templates and rules. Either way every page opens
-  offline.
+- **[Effective HTML](https://github.com/plannotator/effective-html)** (`html`, `design-artifact`, `html-prototype`,
+  `html-diagram`) is **optional, used when installed, with Plumb's built-in quality bar otherwise**. When its skills
+  are in the session, Plumb follows them for the create directions, the prototype variants and screen files, the
+  extract page and the UX review page; without them it follows "The quality bar" in
+  `plugins/plumb/reference/prototypes.md` and its own directions template. Either way every page opens offline in light
+  and dark. `/plumb:init` says whether it is available and `/plumb:status` reports it. To add it, run in Claude Code
+  `/plugin marketplace add plannotator/effective-html`, then `/plugin install plannotator-effective-html@effective-html`
+  (Plumb never installs it).
 
 ## Dependencies and enterprise control
 
