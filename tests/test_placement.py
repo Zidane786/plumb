@@ -828,7 +828,9 @@ def test_angular_workspace_projects_use_their_source_roots(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("text", ["{ // a comment\n}", "not json", "[]", '{"projects": {"a": {"sourceRoot": 3}}}',
-                                  '{"projects": {"a": {"sourceRoot": "../outside"}}}'])
+                                  '{"projects": {"a": {"sourceRoot": "../outside"}}}',
+                                  '{"projects": {"a": {"sourceRoot": "/abs/src"}}}',
+                                  '{"projects": {"a": {"sourceRoot": "C:/abs/src"}}}'])
 def test_angular_json_that_cannot_be_read_falls_back_to_src(tmp_path: Path, text: str) -> None:
     repo(tmp_path)
     _angular(tmp_path)

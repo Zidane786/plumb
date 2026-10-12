@@ -560,11 +560,14 @@ def angular_source_roots(base: Path) -> List[str]:
             sr = proj.get("sourceRoot") if isinstance(proj, dict) else None
             if not isinstance(sr, str):
                 continue
-            sr = sr.replace("\\", "/").strip().strip("/")
+            sr = sr.replace("\\", "/").strip()
+            if sr.startswith("/"):  # absolute: outside the workspace
+                continue
+            sr = sr.strip("/")
             if sr.startswith("./"):
                 sr = sr[2:]
             parts = sr.split("/")
-            if not sr or ".." in parts or sr.startswith("/") or ":" in parts[0]:
+            if not sr or ".." in parts or ":" in parts[0]:
                 continue
             if sr not in roots:
                 roots.append(sr)
