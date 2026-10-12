@@ -533,6 +533,7 @@ def test_synced_from_code_is_listed_to_confirm(fw: str, tmp_path: Path) -> None:
     f = fidelity(out, "synced-from-code")[0]
     assert f["severity"] == "warn" and "confirm" in (f["message"] + f["fix"]).lower()
     assert f"{BP_CMD} --approve {sid}" in f["fix"]
+    assert f["fix"].startswith("ask the user: ") and "Only after their yes to that screen" in f["fix"]
     assert out["_code"] == 0
     assert where(out, "screen-unapproved") == [] and where(out, "screen-drift") == []
 

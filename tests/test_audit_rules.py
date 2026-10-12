@@ -584,10 +584,12 @@ def test_docstring_explains_loading_by_path() -> None:
     assert "sys.modules" in A.__doc__ and "exec_module" in A.__doc__
 
 
-def test_spacing_compares_resolved_px_not_names() -> None:
+def test_spacing_named_steps_are_the_projects_and_other_steps_resolve_to_px() -> None:
     doc = {"$extensions": {"plumb": {"web": {"styling": "tailwind-v4"}}},
            "spacing": {"$type": "dimension", "8": {"$value": "8px"}, "16": {"$value": "16px"}}}
     settings = P.plumb_settings(doc)
-    found = A.audit_text("app/x.tsx", '<p className="p-8 p-2 p-4 gap-16" />\n', doc, settings)
-    assert [f.match for f in found] == ["p-8", "gap-16"]
-    assert found[0].fix.startswith("p-4 (spacing.16 = 16px)")
+    # p-8 and gap-16 are the project's own steps (Tailwind v4 uses --spacing-8 / --spacing-16 when the theme has them);
+    # p-2 and p-4 are steps of the 4px base that land on a token's px; p-3 (12px) is on neither
+    found = A.audit_text("app/x.tsx", '<p className="p-8 p-2 p-4 gap-16 p-3" />\n', doc, settings)
+    assert [f.match for f in found] == ["p-3"]
+    assert found[0].fix.startswith("p-2 (spacing.8 = 8px)") or found[0].fix.startswith("p-4 (spacing.16 = 16px)")

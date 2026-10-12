@@ -1,0 +1,2 @@
+/* expect: none path: app/theme.css */
+@custom-variant dark (&:is(.dark *));

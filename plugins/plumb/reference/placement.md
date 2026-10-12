@@ -40,11 +40,15 @@ I'll create:
   .claude/skills/acme-design-system/   in ~/Projects/acme
   PLUMB.md                             in ~/Projects/acme
   docs/design/                         in ~/Projects/acme   (directions or extract page, decision log, prototype, reports)
-  generated copy → apps/web/app/globals.css
+  generated copy → apps/web/app/globals.css   (Plumb's marked block of the token CSS)
+  apps/web/app/globals.css exists: Plumb will add a marked block; the rest stays yours
+  UI files   apps/web/app/**, apps/web/components/** · *.tsx *.css   (PLUMB.md: what the audit and the checks cover)
 OK, or change something?
 ```
 
-`detect.py` without `--json` prints this block; use it as the starting point and correct it with what you found.
+`detect.py` without `--json` prints this block; show it to the user verbatim (do not summarise it), correcting it with
+what you found. It always has the `UI files` line (the stack's value, else the platform default), and one line per web
+copy that already exists, saying Plumb adds only a marked block to it (or, when the block is there, updates only it).
 
 ## detect.py fields
 

@@ -557,3 +557,69 @@ def test_mobile_defaults_are_unchanged(tmp_path: Path) -> None:
     other.mkdir()
     assert run(other, platforms="web,android").returncode == 0
     assert ui_files_line(other) == WEB_DEFAULT + " · *.kt"
+
+
+# ---------------------------------------------------------------- one project id for detect.py and scaffold.py
+
+
+def _detect():
+    spec = importlib.util.spec_from_file_location("detect_for_id_test", PLUGIN / "scripts/detect.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_detect_and_scaffold_agree_on_the_project_id(tmp_path: Path) -> None:
+    root = tmp_path / "front-desk-app"
+    root.mkdir()
+    (root / "package.json").write_text(json.dumps({"name": "frontdesk", "dependencies": {"next": "15"}}),
+                                       encoding="utf-8")
+    proposal = _detect().detect(root)["proposal"]
+    assert proposal["project"] == "frontdesk"
+    assert proposal["skill_dir"] == ".claude/skills/frontdesk-design-system"
+    r = run(root, name="Front Desk", skill=proposal["skill_dir"])  # the display name differs from the package name
+    assert r.returncode == 0, r.stderr
+    skill = root / proposal["skill_dir"]
+    tokens = json.loads((skill / "assets/tokens/frontdesk.tokens.json").read_text(encoding="utf-8"))
+    assert tokens["$extensions"]["plumb"]["project"] == "frontdesk"
+    assert not list((skill / "assets/tokens").glob("front-desk*"))
+    assert "Front Desk" in (root / "PLUMB.md").read_text(encoding="utf-8")
+
+
+def test_a_skill_folder_not_named_after_the_project_falls_back_to_the_same_rule(tmp_path: Path) -> None:
+    root = tmp_path / "Some Folder"
+    root.mkdir()
+    (root / "package.json").write_text(json.dumps({"name": "@acme/front-desk"}), encoding="utf-8")
+    assert _detect().project_id(root, "design/system") == "front-desk" == _detect().project_name(root)
+    assert run(root, name="Front Desk", skill="design/system").returncode == 0
+    assert (root / "design/system/assets/tokens/front-desk.tokens.json").is_file()
+    bare = tmp_path / "Bare App"
+    bare.mkdir()
+    assert _detect().project_id(bare) == "bare-app"
+
+
+def test_theme_switch_and_reduced_motion_answers_reach_the_tokens(tmp_path: Path) -> None:
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"theme_switch": "class", "reduced_motion": "keep-fades"}), encoding="utf-8")
+    proj = tmp_path / "p"
+    proj.mkdir()
+    assert run(proj, "--answers", str(path)).returncode == 0
+    doc = json.loads((proj / SKILL_REL / "assets/tokens/demo.tokens.json").read_text(encoding="utf-8"))
+    assert doc["$extensions"]["plumb"]["web"]["theme_switch"] == "class"
+    assert doc["$extensions"]["plumb"]["motion"] == {"reduced": "keep-fades"}
+    path.write_text(json.dumps({"reduced_motion": "fades"}), encoding="utf-8")
+    other = tmp_path / "q"
+    other.mkdir()
+    r = run(other, "--answers", str(path))
+    assert r.returncode == 2 and r.stderr.startswith("error:") and "keep-fades" in r.stderr
+
+
+def test_an_existing_stylesheet_copy_gets_a_note_before_the_build(tmp_path: Path) -> None:
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/globals.css").write_text('@import "tailwindcss";\nbody { margin: 0; }\n', encoding="utf-8")
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"web_copies": ["app/globals.css"]}), encoding="utf-8")
+    r = run(tmp_path, "--answers", str(path), "--dry-run")
+    assert r.returncode == 0
+    assert "note: app/globals.css already exists with your own CSS" in r.stdout and "would add Plumb's block" in r.stdout
+    assert (tmp_path / "app/globals.css").read_text(encoding="utf-8").startswith('@import "tailwindcss";\nbody')

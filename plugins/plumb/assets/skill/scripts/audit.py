@@ -43,7 +43,8 @@ file was found or the input is bad.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
-emoji in UI source, the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values, stale
+emoji in UI source, block-override (in a web copy, the project's own @custom-variant dark or token
+variables in an @theme block outside Plumb's block), the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values, stale
 generated files and the prototype fidelity errors (screen drift, a screen changed since approval, a route not prototyped
 while Prototype sync is on). Errors fail the audit (exit 1) and the edit check refuses them.
 **warn** is softer and only reported: `dark:` outside the primitives, a hand-rolled accessibility primitive, a primitive
@@ -84,14 +85,14 @@ screens.json it was reading. Findings sit on the screen file's <section data-scr
                             the files given are checked; the screen rules always check every screen.
   screen-drift (error)      a built screen whose source files (screens.json files) hash differently from the baseline
                             recorded at --map / --approve / --synced (CRLF ignored) while its screen file still matches
-                            its approval (or it is synced from code): update the prototype screen, then --approve. A built
+                            its approval (or it is synced from code): update the prototype screen, then ask the user (--approve only after their yes). A built
                             screen with no baseline (files_hash null) is a warning.
   screen-unapproved (error once built, warn while to-build) the screen file changed after its approval (approved.hash
                             differs): a screen not built yet is "awaiting approval again: don't build from it yet"; or the
-                            code of a screen that was never approved changed since its baseline: review it, then --approve.
+                            code of a screen that was never approved changed since its baseline: the user reviews it; --approve only after their yes.
   screen-not-built (warn)   a screen with no route or source files, or whose globs match no file yet (expected before it
                             is built: listed until the route exists).
-  synced-from-code (warn)   a screen marked synced from code: confirm it in the prototype, then --approve.
+  synced-from-code (warn)   a screen marked synced from code: the user confirms it in the prototype; --approve only after their yes.
   state-missing-in-code (warn, at the data-state line) a state of a built screen (not its first state, nor a content
                             variant: ready, default, long-text ...) with no handling in its source files. Heuristic, the
                             same for every framework: the state's word or a synonym as a name or part of one (React/Next
@@ -146,7 +147,12 @@ Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt
 (.next dist build out coverage Pods DerivedData ...), never files over 5 MB. A `GENERATED ... do not edit` header exempts
 a file only on the paths Plumb's generators own: <skill>/assets/platforms/** (not starter/), the copies listed in
 $extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, screens.html,
-tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited. With no PATHS the project
+tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited.
+In a web copy only Plumb's block (/* plumb:start ... */ to /* plumb:end */) is skipped (blanked, so line numbers stay):
+the rest of the file is the project's and is audited. Tailwind's named steps (text-sm, rounded-lg, gap-4, p-0.5) count
+at the project's token value when the tokens define that step (the rules and the inventory behind missing-token), never
+at Tailwind's default. unused-token and duplicate-tokens wait FRESH_DAYS (14) after PLUMB.md's
+`- YYYY-MM-DD created with Plumb` line. With no PATHS the project
 is walked: PLUMB.md `UI files:` narrows it, the design-system skill's own folder is left out except
 assets/platforms/*/starter/, and docs/design is left to the prototype checks. PATHS given are always checked.
 
@@ -280,7 +286,7 @@ def num(x: float) -> str:
 
 def varname(path: str) -> str:
     """The CSS custom property build-tokens.py writes for a token path (kept in step with build-tokens.varname)."""
-    parts = path.split(".")
+    parts = [P.css_name(p) for p in P.path_parts(path)]
     group, rest = parts[0], "-".join(parts[1:])
     if group == "motion" and len(parts) > 2:
         sub = "-".join(parts[2:])
@@ -332,7 +338,7 @@ class Scales:
         for path, tok, ttype in P.iter_tokens(doc):
             if isinstance(tok.get("$value"), str) and tok["$value"].startswith("{"):
                 self.aliases.add(path)
-            parts = path.split(".")
+            parts = P.path_parts(path)
             group, name = parts[0], "-".join(parts[1:])
             try:
                 value = P.resolve(doc, path)
@@ -374,6 +380,9 @@ class Scales:
         self.duration_ms = {d[2] for d in self.durations}
         self.easing_names = {e[1] for e in self.easings}
         self.spacing_px = set(self.spacing.values())
+        # The project's own Tailwind steps: rounded-lg, text-sm, gap-4 mean these values here, not Tailwind's defaults.
+        self.named = {"text": dict(self.type), "radius": dict(self.radius), "spacing": dict(self.spacing),
+                      "spacing_base": self.base}
 
     # ---- nearest tokens (memoised: a minified file repeats the same values thousands of times)
 
@@ -549,6 +558,7 @@ class Ctx:
         self._transitions: Optional[List[Tuple[int, int]]] = None
         self._styles: Optional[List[Tuple[int, int]]] = None
         self._nl = [m.start() for m in re.finditer("\n", text)]
+        self.block_copy = False  # a web copy whose Plumb block was blanked (make_ctx): block-override applies
 
     def class_ok(self, pos: int) -> bool:
         """Tailwind classes count anywhere in markup and scripts; in a stylesheet only after @apply."""
@@ -624,7 +634,7 @@ def _dimension_fix(ctx: Ctx, group: str, px: float, utility: Optional[str]) -> O
     if near is None:
         return f"no {group} tokens yet: {ADD_TOKEN}"
     path, tokpx, dist = near
-    name = "-".join(path.split(".")[1:])
+    name = "-".join(P.path_parts(path)[1:])
     if group == "spacing" and utility not in (None, "theme") and s.base:
         step = tokpx / s.base  # Tailwind spacing utilities are steps of the base, whatever the token is called
         name = num(step) if (step * 2).is_integer() else name
@@ -962,8 +972,10 @@ def check_off_scale_spacing(ctx: Ctx) -> Iterator[Hit]:
         if not ctx.class_ok(m.start()):
             continue
         step = m.group(2)
+        if step in s.spacing:
+            continue  # a step the tokens define: Tailwind uses the project's --spacing-<step>, whatever its value
         px = float(step) * s.base
-        if px == 0 or px in s.spacing_px:  # the utility's px (step x base), never its name
+        if px == 0 or px in s.spacing_px:  # otherwise the utility's px (step x base)
             continue
         yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "spacing", px, m.group(1)))
 
@@ -1022,6 +1034,23 @@ def check_off_token_easing(ctx: Ctx) -> Iterator[Hit]:
 
 _OUTLINE_CLASS = re.compile(CLS + r"outline-none(?![\w-])")
 _OUTLINE_DECL = re.compile(r"(?<![\w-])outline\s*:\s*[\"']?(?:none|0)(?![\w.%-])")
+
+
+def check_block_override(ctx: Ctx) -> Iterator[Hit]:
+    """In a web copy, outside Plumb's block: a `@custom-variant dark` of the project's own, or a token variable set in
+    an `@theme` block. Either overrides the design system silently (the later definition wins)."""
+    if not ctx.block_copy:
+        return
+    for pos, what in P.block_overrides(ctx.text):
+        if what == "@custom-variant dark":
+            msg = (f"{what} outside Plumb's block overrides the design system's dark variant, so dark: no longer "
+                   f"follows $extensions.plumb.web.theme_switch")
+            fix = ("delete it here; choose how dark mode switches with $extensions.plumb.web.theme_switch "
+                   "(/plumb:update), then rebuild")
+        else:
+            msg = f"{what} set in an @theme block outside Plumb's block overrides the design tokens"
+            fix = "move the value into the tokens with /plumb:update and delete it here, then rebuild"
+        yield Hit(pos, what, message=msg, fix=fix)
 
 
 def check_outline_none(ctx: Ctx) -> Iterator[Hit]:
@@ -1435,6 +1464,18 @@ class Project:
         self._inv_findings: Optional[List[Tuple[str, XHit]]] = None
         self._fidelity: Optional["Fidelity"] = None
 
+    @property
+    def fresh(self) -> bool:
+        """The design system was created less than FRESH_DAYS ago (PLUMB.md's `- YYYY-MM-DD created with Plumb` line):
+        its tokens were all just chosen on purpose and the UI is still being built, so the token-housekeeping
+        suggestions about the tokens themselves (unused-token, duplicate-tokens) wait."""
+        created = self.settings.get("_created")
+        try:
+            day = datetime.date.fromisoformat(str(created))
+        except ValueError:
+            return False
+        return 0 <= (datetime.date.today() - day).days < FRESH_DAYS
+
     # ---- tokens
 
     def is_primitive(self, ctx: "Ctx") -> bool:
@@ -1448,7 +1489,7 @@ class Project:
             except OSError:
                 self._tokens_text = ""
         text, pos, found = self._tokens_text, 0, None
-        for part in path.split("."):
+        for part in P.path_parts(path):
             found = re.compile(r"\"" + re.escape(part) + r"\"\s*:").search(text, pos)
             if found is None:
                 return 1
@@ -1482,8 +1523,9 @@ class Project:
             tailwind = (any(c.tailwind for c in self.ctxs) or any(P.uses_tailwind(c.text) for c in self.ctxs)
                         or P.tailwind_project(self.root))
             inv = P.new_inventory()
+            named = self.scales.named if self.scales is not None else None
             for c in self.ctxs:
-                P.inventory_add(inv, c.path, c.text, tailwind, code=c.code)
+                P.inventory_add(inv, c.path, c.text, tailwind, code=c.code, named=named)
             self._inventory = P.finish_inventory(inv)
         return self._inventory
 
@@ -1663,15 +1705,17 @@ def check_contrast_headroom(proj: Project) -> Iterator[XHit]:
     bt = load_build_tokens()
     if not pairs or isinstance(pairs, PlumbError) or bt is None:
         return
+    headroom = getattr(bt, "HEADROOM", 0.3)
+    spare = getattr(bt, "FIX_SPARE", 0.5)
     for pair in pairs:
         for mode in proj.modes():
             ratio = pair.light if mode == "light" else pair.dark
-            if not pair.need <= ratio < pair.need + 0.3:
+            if not pair.need <= ratio < pair.need + headroom:
                 continue
             fg, bg = pair.hex[mode]
-            better = bt.nearest_passing(fg, bg, pair.need + 0.5, lighten=(mode == "dark"))
-            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, 0.5 to spare) with /plumb:update, "
-                   f"then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
+            better = bt.nearest_passing(fg, bg, pair.need + spare, lighten=(mode == "dark"))
+            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, {num(spare)} to spare) with "
+                   f"/plumb:update, then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
             yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
                        f"{pair.fg} on {pair.bg} passes at {ratio:.2f}:1 in {mode} mode, only {ratio - pair.need:.2f} "
                        f"above the {num(pair.need)}:1 minimum: thin fonts and dim screens push it under", fix)
@@ -1721,7 +1765,7 @@ def check_generated_drift(proj: Project) -> Iterator[XHit]:
             current = normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.is_file() else None
         except OSError:
             current = None
-        if current == text:
+        if current == normalise_text(text):
             continue
         state = "missing" if current is None else "stale: it does not match the tokens (edited by hand, or tokens changed since)"
         yield XHit(rel(path, proj.root), 1, rel(path, proj.root), f"generated file is {state}", proj.build_command)
@@ -2226,7 +2270,7 @@ _UTIL = re.compile(
     r"|accent|caret|placeholder|shadow|inset-shadow|drop-shadow|rounded(?:-[trblse]{1,2})?|font|leading|tracking|ease"
     r"|duration|delay|animate|p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy]|[wh]|size|min-[wh]|max-[wh]|inset(?:-[xy])?"
     r"|top|left|right|bottom|translate-[xy]|scroll-[mp][xytrblse]?)-(.+)$")
-_WORD = re.compile(r"-{0,2}[A-Za-z][\w-]*")
+_WORD = re.compile(r"-{0,2}[A-Za-z](?:[\w-]|\.(?=\d))*")  # p-0.5 is one word (a decimal step)
 _FAMILY_OF_PREFIX = (("rounded", "radius"), ("shadow", "shadow"), ("inset-shadow", "shadow"), ("drop-shadow", "shadow"),
                      ("duration", "duration"), ("delay", "duration"), ("ease", "easing"), ("font", "font"))
 _COLOUR_PREFIXES = re.compile(r"^(?:bg|text|border|ring|outline|fill|stroke|from|via|to|decoration|divide|accent|caret|placeholder|shadow)")
@@ -2234,13 +2278,14 @@ _SPACING_PREFIXES = re.compile(r"^(?:p[xytrblse]?|m[xytrblse]?|gap|space|[wh]|si
 
 
 UNUSED_MIN_FILES = 5
+FRESH_DAYS = 14  # unused-token and duplicate-tokens wait this long after the design system was created
 _GROUP_LABEL = {"color": "colour", "typography": "type", "radius": "radius", "spacing": "spacing", "shadow": "shadow",
                 "motion": "motion", "font": "font"}
 
 
 def check_unused_token(proj: Project) -> Iterator[XHit]:
-    if proj.doc is None or proj.explicit or len(proj.ctxs) < UNUSED_MIN_FILES:
-        return  # partial scans and early projects use few tokens yet: not worth a suggestion
+    if proj.doc is None or proj.explicit or len(proj.ctxs) < UNUSED_MIN_FILES or proj.fresh:
+        return  # partial scans, early projects and a just-created system use few tokens yet: not worth a suggestion
     words, mobile = set(), set()
     for c in proj.ctxs:
         found = set(_WORD.findall(c.code))
@@ -2268,12 +2313,12 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
         raw = tok.get("$value")
         if isinstance(raw, str) and raw.strip().startswith("{") and raw.strip().endswith("}"):
             aliases[path] = raw.strip()[1:-1]
-        group = path.split(".")[0]
+        group = P.path_parts(path)[0]
         var = varname(path)
         if group not in ("color", "typography", "radius", "spacing", "shadow", "motion", "font"):
             continue
         candidates.append(path)
-        camel = re.sub(r"[-_.]+([a-zA-Z0-9])", lambda x: x.group(1).upper(), "-".join(path.split(".")[1:]))
+        camel = re.sub(r"[-_.]+([a-zA-Z0-9])", lambda x: x.group(1).upper(), "-".join(P.path_parts(path)[1:]))
         hit = var in words or (camel and camel in mobile)
         if not hit:
             if ttype == "color":
@@ -2288,7 +2333,7 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
                 hit = var[len("--font-"):] in used["font"]
             elif group == "spacing":
                 px = s.px_of.get(path) if s else None
-                hit = "-".join(path.split(".")[1:]) in used["spacing"] or (
+                hit = "-".join(P.path_parts(path)[1:]) in used["spacing"] or (
                     px is not None and s.base and num(px / s.base) in used["spacing"])
             elif group == "motion" and var.startswith("--duration-"):
                 ms = next((d[2] for d in s.durations if d[0] == path), None) if s else None
@@ -2309,7 +2354,7 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
     unused: Dict[str, List[str]] = {}
     for path in candidates:
         if path not in referenced:
-            unused.setdefault(path.split(".")[0], []).append(path)
+            unused.setdefault(P.path_parts(path)[0], []).append(path)
     for group, paths in unused.items():
         n = len(paths)
         label = _GROUP_LABEL.get(group, group)
@@ -2322,8 +2367,8 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
 
 
 def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
-    if proj.doc is None:
-        return
+    if proj.doc is None or proj.fresh:
+        return  # a just-created system's tokens were all chosen on purpose: no housekeeping on them yet
     doc = proj.doc
     colours = []
     for path, tok in proj.colour_tokens():
@@ -2335,7 +2380,7 @@ def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
             dark = P.parse_color(P.resolve(doc, path, "dark"))
         except PlumbError:
             continue
-        colours.append((path, light, dark, P.is_text_name("-".join(path.split(".")[1:]))))
+        colours.append((path, light, dark, P.is_text_name("-".join(P.path_parts(path)[1:]))))
     for i, (path, light, dark, texty) in enumerate(colours):
         for other, olight, odark, otexty in colours[:i]:
             if texty != otexty or abs(light[1] - olight[1]) > 0.02:
@@ -2355,7 +2400,7 @@ def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
     groups: Dict[str, List[Tuple[str, float]]] = {}
     for path, px in s.px_of.items():
         if px and not (path in s.aliases):
-            groups.setdefault(path.split(".")[0], []).append((path, px))
+            groups.setdefault(P.path_parts(path)[0], []).append((path, px))
     def style(path: str) -> object:
         """A type token's other fields: the same size with another line height or weight is a different style (label
         vs body); sizes 1px apart are near-duplicate steps whatever the other fields say."""
@@ -2950,17 +2995,28 @@ def check_screen_drift(proj: Project) -> Iterator[XHit]:
             yield XHit(s.file, s.line, s.id,
                        f"screen {s.id} is built but {fid.map_rel} has no source baseline for it, so a change to its code "
                        f"cannot be noticed",
-                       f"check that {_list_names(fid.source(s)[1]) or 'its code'} matches {s.file}, then record the baseline: "
-                       f"{fid.command} --approve {s.id}", severity="warn")
+                       _ask_approve(fid, s, f"check that {_list_names(fid.source(s)[1]) or 'its code'} matches "
+                                    f"{s.file}, then "), severity="warn")
         elif changed:
             since = "it was synced from code" if e["synced_from_code"] else "its approval"
             yield XHit(s.file, s.line, s.id,
                        f"the source of screen {s.id} ({_list_names(fid.source(s)[1]) or _list_names(e['files'])}) changed after "
                        f"{since} but {s.file} did not: update prototype screen {s.id} so the prototype shows what the code "
                        f"does",
-                       f"update prototype screen {s.id} ({s.file}) to match the change and rebuild with {fid.command}, "
-                       f"then approve it: {fid.command} --approve {s.id} (if the change does not alter what the screen "
-                       f"shows, approving records the new baseline)")
+                       _ask_approve(fid, s, f"update prototype screen {s.id} ({s.file}) to match the change and "
+                                    f"rebuild with {fid.command}, then "))
+
+
+def _ask_approve(fid: "Fidelity", s: "ScreenInfo", before: str = "") -> str:
+    """The way out for a screen that needs the user's approval: never a bare --approve. The finding prints it as an
+    `ask the user:` line; the agent records the approval only after the user's yes to that screen."""
+    return (f"ask the user: {before}approve screen {s.id} in {fid.review(s)}? Only after their yes to that screen, "
+            f"record it: {fid.command} --approve {s.id}")
+
+
+def fix_line(fix: str) -> str:
+    """A finding's way out as printed: `ask the user: ...` stays as it is, anything else is `fix: ...`."""
+    return fix if fix.startswith("ask the user:") else f"fix: {fix}"
 
 
 def check_screen_unapproved(proj: Project) -> Iterator[XHit]:
@@ -2991,8 +3047,7 @@ def check_screen_unapproved(proj: Project) -> Iterator[XHit]:
         else:
             continue
         yield XHit(s.file, s.line, s.id, message,
-                   f"review it in {fid.review(s)} (rebuild with {fid.command}), then approve it: {fid.command} --approve "
-                   f"{s.id}", severity=severity)
+                   _ask_approve(fid, s, f"rebuild with {fid.command}, then "), severity=severity)
 
 
 def check_synced_from_code(proj: Project) -> Iterator[XHit]:
@@ -3004,8 +3059,7 @@ def check_synced_from_code(proj: Project) -> Iterator[XHit]:
             yield XHit(s.file, s.line, s.id,
                        f"screen {s.id} was synced from code, not approved: confirm in the prototype that it shows what "
                        f"you want",
-                       f"open {fid.review(s)}, check it, then confirm it: {fid.command} --approve {s.id} (or change it "
-                       f"first with /plumb:prototype {s.id})")
+                       _ask_approve(fid, s) + f" (Or change it first with /plumb:prototype {s.id}.)")
 
 
 # ---- states and copy
@@ -3188,7 +3242,8 @@ def check_copy_missing_in_code(proj: Project) -> Iterator[XHit]:
                        f"\"{words}\" ({_COPY_TAGS[tag]} on screen {s.id}) is not in its source files ({_list_names(names)}): "
                        f"the built screen says something else",
                        f"use the prototype's words in the code, or change the screen file to the code's words and "
-                       f"approve it ({fid.command} --approve {s.id}); text from a translation file can be ignored")
+                       f"ask the user to approve it (only after their yes: {fid.command} --approve {s.id}); text from a "
+                       f"translation file can be ignored")
 
 
 _UX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
@@ -3343,7 +3398,8 @@ def check_component_missing_in_code(proj: Project) -> Iterator[XHit]:
                        f"component {name} (data-component on screen {s.id}) is not used in its source files "
                        f"({_list_names(names)}): the built screen may use a different component",
                        f"use {name} in the code (see references/components.md), or, if the screen should use another "
-                       f"component, change the screen file and approve it ({fid.command} --approve {s.id})")
+                       f"component, change the screen file and ask the user to approve it (only after their yes: "
+                       f"{fid.command} --approve {s.id})")
 
 
 # ---------------------------------------------------------------- the rule table
@@ -3366,6 +3422,8 @@ RULES: List[Rule] = [
          "use a motion.duration token; to turn a transition off use transition-none"),
     Rule("off-token-easing", "error", WEB, "file", check_off_token_easing, "easing {match} is not a motion token",
          "use a motion.easing token"),
+    Rule("block-override", "error", WEB, "file", check_block_override, "{match} overrides Plumb's block",
+         "move the value into the tokens with /plumb:update and delete it here", skip_allowed=False),
     Rule("outline-none", "error", WEB, "file", check_outline_none, "{match} removes the focus outline",
          "keep a forced-colors outline (outline-hidden / outline: 2px solid transparent) with the focus ring token",
          skip_allowed=False),
@@ -3423,15 +3481,15 @@ RULES: List[Rule] = [
     Rule("no-prototype", "warn", ALL, "cross", fidelity_rule(check_no_prototype), "no prototype yet",
          "run /plumb:extract or /plumb:prototype"),
     Rule("screen-drift", "error", ALL, "cross", fidelity_rule(check_screen_drift), "the code of screen {match} changed after approval",
-         "update the prototype screen, then approve it with build-prototype.py --approve"),
+         "update the prototype screen, then ask the user to approve it (build-prototype.py --approve only after their yes)"),
     Rule("screen-unapproved", "error", ALL, "cross", fidelity_rule(check_screen_unapproved), "screen {match} changed since approval",
-         "review the screen, then approve it with build-prototype.py --approve"),
+         "ask the user to review and approve the screen (build-prototype.py --approve only after their yes)"),
     Rule("screen-not-built", "warn", ALL, "cross", fidelity_rule(check_screen_not_built), "screen {match} is not built yet",
          "build it, then map it with build-prototype.py --map"),
     Rule("state-missing-in-code", "warn", WEB, "cross", fidelity_rule(check_state_missing_in_code), "state {match} is not in the code",
          "build the state as the screen file shows it"),
     Rule("synced-from-code", "warn", ALL, "cross", fidelity_rule(check_synced_from_code), "screen {match} was synced from code",
-         "confirm it in the prototype, then approve it with build-prototype.py --approve"),
+         "ask the user to confirm it in the prototype (build-prototype.py --approve only after their yes)"),
     Rule("missing-token", "suggest", ALL, "cross", check_missing_token, "{match} has no token",
          "add a token with /plumb:update", weight=3,
          why="A raw value repeated across files drifts the moment one copy changes; a token keeps every use in step "
@@ -3492,9 +3550,15 @@ def make_ctx(path_name: str, text: str, doc: Optional[dict], settings: dict) -> 
     if file_ext(path_name) is None or in_build_output(path_name):
         return None
     text = normalise_text(text or "")
-    if is_generated(text) and generator_owned(path_name, settings or {}):
+    owned = generator_owned(path_name, settings or {})
+    if is_generated(text) and owned:
         return None
-    return Ctx(path_name, text, doc, settings)
+    has_block = owned and P.block_span(text) is not None
+    if has_block:
+        text = P.mask_block(text)  # a web copy: Plumb's block is generated, the rest of the file is audited
+    ctx = Ctx(path_name, text, doc, settings)
+    ctx.block_copy = has_block
+    return ctx
 
 
 def file_findings(ctx: Ctx, skip: frozenset = frozenset()) -> List[Finding]:
@@ -3604,12 +3668,22 @@ def load_doc(skill_dir: Path) -> Optional[dict]:
     return P.load_tokens(path) if path is not None else None
 
 
+_CREATED = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s+created with Plumb\b", re.M)
+
+
 def make_settings(root: Path, doc: Optional[dict]) -> dict:
-    """PLUMB.md's Key: value lines merged over the tokens file's $extensions.plumb settings.
+    """PLUMB.md's Key: value lines merged over the tokens file's $extensions.plumb settings, plus "_created": the date
+    of PLUMB.md's `- YYYY-MM-DD created with Plumb` line (Plumb updates), when there is one.
 
     Adds "_shadcn": True when the project has shadcn primitives (components/ui/select or checkbox, at the root or in
     src/), so native <select> and checkbox/radio inputs are reported as hand-rolled."""
     settings = {**P.plumb_settings(doc or {}), **P.read_plumb_md(root / "PLUMB.md")}
+    try:
+        created = _CREATED.search((root / "PLUMB.md").read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError):
+        created = None
+    if created:
+        settings["_created"] = created.group(1)
     for base in (root, root / "src"):
         for name in ("select", "checkbox"):
             if any((base / "components" / "ui" / f"{name}{ext}").is_file() for ext in (".tsx", ".jsx")):
@@ -4181,16 +4255,15 @@ def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Itera
                     s.file, s.line, s.id,
                     f"the source of screen {s.id} ({_list_names(mine)}) changed this session but {s.file} did not: "
                     f"update prototype screen {s.id}: states {states}",
-                    f"update {s.file} to show what the code now does, rebuild with {fid.command}, then ask the user to "
-                    f"approve it: {fid.command} --approve {s.id} (if the change does not alter what the screen shows, "
-                    f"approving records the new baseline)"))
+                    _ask_approve(fid, s, f"update {s.file} to show what the code now does, rebuild with "
+                                 f"{fid.command}, then ")))
             elif ((mine or screen_changed) and e["status"] == "built" and not e["synced_from_code"]
                   and not fid.approved_now(s)):
                 yield _finding("screen-unapproved", XHit(
                     s.file, s.line, s.id,
                     f"screen {s.id} ({s.file}) changed this session and its current prototype is not approved: the code "
                     f"must follow a screen the user approved",
-                    f"ask the user to review {fid.review(s)} and approve it: {fid.command} --approve {s.id}"))
+                    _ask_approve(fid, s)))
     except _UNEXPECTED as exc:
         raise _fidelity_error(exc, fid.where) from None
 
@@ -4545,7 +4618,7 @@ def _report(findings: List[Finding], checked: int, as_json: bool, mode: Optional
     else:
         for f in findings:
             print(f"{f.file}:{f.line}: {f.severity} {f.rule}: {f.message}")
-            print(f"  fix: {f.fix}")
+            print(f"  {fix_line(f.fix)}")
         if mode == MODE_INCONSISTENCY:
             print("mode: inconsistency-only (no tokens yet): the scales below are inferred from the code; near-duplicates "
                   "and one-off values are warnings, raw values are not errors")
@@ -4658,6 +4731,9 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
         if is_generated(normalise_text(text[:1500])) and generator_owned(name, settings):
             generated.append(text)  # a header counts only on the paths the generators own
             continue
+        block = P.block_text(normalise_text(text)) if generator_owned(name, settings) else None
+        if block:
+            generated.append(block)  # a web copy's Plumb block (its reduced-motion rule counts); the rest is audited
         ctx = make_ctx(name, text, doc, settings)
         if ctx is None:
             continue

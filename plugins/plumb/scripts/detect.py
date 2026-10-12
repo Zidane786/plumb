@@ -77,6 +77,30 @@ FRAMEWORK_LABEL = {
     "react-native": "React Native",
 }
 STYLING_LABEL = {"tailwind-v4": "Tailwind v4", "tailwind-v3": "Tailwind v3", "css": "CSS", "native": "native styles"}
+# PLUMB.md `UI files:` when the stack needs nothing special (scaffold.py writes the same; one source, here).
+PLATFORM_UI_FILES = {"web": "app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css", "ios": "*.swift",
+                     "android": "*.kt"}
+BLOCK_MARK = "/* plumb:start"
+
+
+def default_ui_files(platforms: List[str]) -> str:
+    """The platform default for PLUMB.md's `UI files:` (web when no platform is known yet)."""
+    return " · ".join(PLATFORM_UI_FILES[p] for p in (platforms or ["web"]) if p in PLATFORM_UI_FILES)
+
+
+def copy_state(root: Path, rel: str) -> Optional[str]:
+    """What the tokens build will do to an existing web copy, for the placement block: None when the file does not
+    exist (or is empty), else one line."""
+    path = root / rel
+    try:
+        text = path.read_bytes().decode("utf-8", "replace") if path.is_file() else ""
+    except OSError:
+        return None
+    if not text.strip():
+        return None
+    if BLOCK_MARK in text:
+        return rel + " exists with Plumb's block: the build updates only the block; the rest stays yours"
+    return rel + " exists: Plumb will add a marked block; the rest stays yours"
 
 
 # Shared helpers live in the skill template: plugins/plumb/assets/skill/scripts/_plumb.py
@@ -444,11 +468,30 @@ def kebab(text: str) -> str:
 
 
 def project_name(root: Path) -> str:
+    """The project id: the root package.json's name (without an @scope/), else the folder's name, made lower-case
+    with hyphens by kebab(); "project" when neither has a letter or digit. The one rule detect.py proposes the skill
+    folder (<id>-design-system) with and scaffold.py names the tokens file with (project_id)."""
     raw = ""
     if (root / "package.json").is_file():
         raw = str(load_package_json(root / "package.json").get("name") or "")
         raw = raw.split("/")[-1]
     return kebab(raw) or kebab(root.name) or "project"
+
+
+SKILL_SUFFIX = "-design-system"
+
+
+def project_id(root: Path, skill_dir: Optional[str] = None) -> str:
+    """The project id scaffold.py writes (tokens file <id>.tokens.json, $extensions.plumb.project, the theme names):
+    the confirmed skill folder's name without -design-system when it is named that way (detect.py proposed it from
+    project_name, or the person chose another), else project_name(root). So the two never disagree."""
+    if skill_dir:
+        folder = str(skill_dir).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        if folder.endswith(SKILL_SUFFIX):
+            own = kebab(folder[:-len(SKILL_SUFFIX)])
+            if own:
+                return own
+    return project_name(root)
 
 
 # --- PLUMB.md --------------------------------------------------------------------------------
@@ -869,10 +912,14 @@ def human(r: dict) -> str:
     lines.append("  " + p["plumb_md"] + "   in " + r["root"])
     lines.append("  " + p["docs_dir"] + "/   in " + r["root"]
                  + "   (directions or extract page, decision log, prototype, reports)")
+    root = Path(r["root"])
     for c in p["copies"]:
-        lines.append("  generated copy → " + c)
-    if p.get("ui_files"):
-        lines.append("  UI files   " + p["ui_files"] + "   (PLUMB.md: what the audit and the checks cover)")
+        lines.append("  generated copy → " + c + "   (Plumb's marked block of the token CSS)")
+        state = copy_state(root, c)
+        if state:
+            lines.append("  " + state)
+    ui_files = p.get("ui_files") or default_ui_files(p.get("platforms") or [])
+    lines.append("  UI files   " + ui_files + "   (PLUMB.md: what the audit and the checks cover)")
     for u in r["ui_packages"]:
         if not u["supported"]:
             lines.append("  not supported yet: " + u["path"] + " (" + u["note"] + ")")

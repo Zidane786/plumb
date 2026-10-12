@@ -155,6 +155,21 @@ def test_verify_reports_stale_agents_makefile_and_copies(tmp_path: Path) -> None
     assert "problem: web copy app/globals.css: its folder does not exist" in r.stdout
 
 
+def test_verify_reports_make_targets_plumb_md_names_but_the_makefile_lacks(tmp_path: Path) -> None:
+    root = project_with_everything(tmp_path)
+    make = root / "Makefile"
+    make.write_text(make.read_text(encoding="utf-8").replace("design-audit:", "audit:"), encoding="utf-8")
+    r = cli(root, "--verify")
+    assert r.returncode == 1
+    assert "problem: PLUMB.md names `make design-audit`, but the Makefile has no such target" in r.stdout
+    assert "make tokens`" not in r.stdout and "templates/Makefile.snippet" in r.stdout
+    make.unlink()
+    r = cli(root, "--verify")
+    assert r.returncode == 1
+    for target in ("tokens", "tokens-check", "design-audit"):
+        assert f"problem: PLUMB.md names `make {target}`, but there is no Makefile" in r.stdout
+
+
 def test_verify_without_plumb_md(tmp_path: Path) -> None:
     r = cli(tmp_path, "--verify")
     assert r.returncode == 1 and "problem: no PLUMB.md" in r.stdout and "fix: " in r.stdout

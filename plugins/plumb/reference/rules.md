@@ -16,7 +16,14 @@ primitives live, e.g. `components/ui/**`). Exceptions are by path only, never by
 
 **Where it looks:** `.tsx .jsx .ts .js .vue .svelte .astro .html .css .scss` (web), `.swift` (iOS), `.kt` (Android);
 never `node_modules`, build output or files over 5 MB; a `GENERATED … do not edit` header exempts a file only on the
-paths Plumb's generators own. `PLUMB.md`'s `UI files:` narrows a whole-project run.
+paths Plumb's generators own. In a web copy (`$extensions.plumb.web.copies`, e.g. `app/globals.css`) only Plumb's block
+(`/* plumb:start … */` to `/* plumb:end */`) is exempt: the rest of the file is the project's and is checked like any
+stylesheet. `PLUMB.md`'s `UI files:` narrows a whole-project run.
+
+**Named Tailwind steps are the project's.** `text-sm`, `rounded-lg`, `gap-4` (and `p-0.5`) mean the project's own token
+when the tokens define that step (`typography.sm`, `radius.lg`, `spacing.4`, `spacing.0.5`): the rules and the
+inventory behind `missing-token` count them at the token's value, never at Tailwind's default (in a project where
+`radius.lg` is 10px, `rounded-lg` is 10px, not 8px).
 
 ## Per file (the edit check and the full audit)
 
@@ -27,9 +34,10 @@ paths Plumb's generators own. `PLUMB.md`'s `UI files:` narrows a whole-project r
 | `palette-colour` | error | A Tailwind default palette colour (`text-gray-500`, `bg-blue-600`, `text-white`). | Use a colour token utility (`text-on-surface-muted`, `bg-primary`, `text-on-primary`). |
 | `off-scale-type` | error | A font size that is not a typography token. | Use the typography token the fix names (`text-sm`, `var(--text-sm)`). |
 | `off-scale-radius` | error | A border radius not on the radius scale. | Use a radius token (`rounded-md`, `var(--radius-md)`); `rounded-full` and `rounded-none` are always fine. |
-| `off-scale-spacing` | error | Padding, margin or gap not on the spacing scale. | Use a spacing step (`p-4`, `var(--spacing-4)`). |
+| `off-scale-spacing` | error | Padding, margin or gap not on the spacing scale (a step the tokens name, like `p-4` with `spacing.4`, is always on it). | Use a spacing step (`p-4`, `var(--spacing-4)`). |
 | `off-token-duration` | error | A transition or animation duration that is not a `motion.duration` token. | Use the motion token; `transition-none` turns a transition off. |
 | `off-token-easing` | error | An easing curve that is not a `motion.easing` token. | Use the motion easing token. |
+| `block-override` | error | In a web copy, outside Plumb's block: the project's own `@custom-variant dark`, or a token variable (`--color-*`, `--radius-*`, `--text-*`, `--font-*`, `--shadow-*`, `--ease-*`, `--spacing-*`, `--duration-*`) set in an `@theme` block. It overrides the design system without anyone seeing it. | Delete it there; put the value in the tokens with `/plumb:update` (how dark mode switches is `web.theme_switch`), then rebuild. Applies on allowed paths too. |
 | `outline-none` | error | `outline: none` / `outline-none` removes the focus outline (also in forced-colours mode). | Keep a forced-colours outline (`outline-hidden`, or `outline: 2px solid transparent`) plus the focus-ring token. Applies on allowed paths too. |
 | `inline-style` | error | A design property (colour, font, spacing, radius, shadow…) in a `style=` attribute or object. | Style with token utilities or classes; inline style is only for layout geometry. |
 | `icon-library` | error | A second icon library imported next to the project's one. | Use the project's library through the icon map (`assets/icons/icon-map.json`). |
@@ -48,8 +56,8 @@ paths Plumb's generators own. `PLUMB.md`'s `UI files:` narrows a whole-project r
 
 | Rule | Severity | What it means | How to fix |
 |---|---|---|---|
-| `generated-drift` | error | A generated file (theme CSS, copies, Swift/Kotlin themes, specimen, prototype token blocks) differs from what the tokens produce. | Run the tokens command (`<python> <skill>/scripts/build-tokens.py`); never hand-edit the generated file. |
-| `contrast` | error | A colour pair below 4.5:1 (text) or 3:1 (large text, UI boundaries), in light or dark. The finding names the nearest passing value. | Change the token with `/plumb:update`, regenerate. Light-only projects (`Themes: light-only`) check light only. |
+| `generated-drift` | error | A generated file (theme CSS, Plumb's block in a web copy, Swift/Kotlin themes, specimen, prototype token blocks) differs from what the tokens produce. Only the block of a copy counts. | Run the tokens command (`<python> <skill>/scripts/build-tokens.py`); never hand-edit the generated file. |
+| `contrast` | error | A colour pair below 4.5:1 (text) or 3:1 (large text, UI boundaries), in light or dark. The finding names the nearest value that passes with 0.5 to spare (so `contrast-headroom` never flags it once applied; when the hue cannot get that far, with 0.3, else the nearest that passes). | Change the token with `/plumb:update`, regenerate. Light-only projects (`Themes: light-only`) check light only. |
 | `missing-dark-value` | error | A colour token with no `$extensions.plumb.dark`. | Add the dark value, or mark a deliberate constant `"same-in-dark": true` (`/plumb:update`). Off with `Themes: light-only`. |
 | `near-duplicate-colour` | warn | Colours within ΔE 3 of each other (inconsistency-only mode). | Use the most-used value of the group. |
 | `near-duplicate-size` | warn | Sizes within 1px or 6% of each other (inconsistency-only mode). | Use the most-used value of the group. |
@@ -66,10 +74,10 @@ paths Plumb's generators own. `PLUMB.md`'s `UI files:` narrows a whole-project r
 |---|---|---|---|
 | `route-not-prototyped` | error (warn unless `Prototype sync: on`) | A route or page in the code that no screen in `screens.json` covers. | `/plumb:prototype <screen>`, the user approves, then `build-prototype.py --map <id> --route <route> --files <globs>`. |
 | `no-prototype` | warn | `Prototype sync: on` but there are no screen files and no `screens.json`. | `/plumb:extract` (existing app) or `/plumb:prototype`. |
-| `screen-drift` | error (warn with no baseline) | A built screen's source files changed after its approval (or sync) while its screen file did not. | Update `screens/<id>.html` to show the change, ask the user, then `--approve <id>` (or `--synced <id>` for a small fix already built). |
-| `screen-unapproved` | error once built, warn while to-build | The screen file changed after its approval: don't build from it until it is approved again. Or the code of a never-approved screen changed. | Show the user the screen, then `build-prototype.py --approve <id>`. |
+| `screen-drift` | error (warn with no baseline) | A built screen's source files changed after its approval (or sync) while its screen file did not. | Update `screens/<id>.html` to show the change, ask the user, and only after their yes `--approve <id>` (or `--synced <id>` for a small fix already built). |
+| `screen-unapproved` | error once built, warn while to-build | The screen file changed after its approval: don't build from it until it is approved again. Or the code of a never-approved screen changed. | Show the user the screen and ask; only after their yes to that screen, `build-prototype.py --approve <id>`. The finding prints this as an `ask the user:` line. |
 | `screen-not-built` | warn | A screen with no route or source files yet, or whose globs match nothing. Expected until it is built. | Build it, then `--map` it. |
-| `synced-from-code` | warn | A screen updated to match code that was already built. | The user confirms it in the prototype, then `--approve <id>`. |
+| `synced-from-code` | warn | A screen updated to match code that was already built. | Ask the user to confirm it in the prototype; only after their yes, `--approve <id>`. |
 | `state-missing-in-code` | warn | A state of a built screen (loading, empty, error, success, offline…) with no handling in its source files. | Build the state as the screen file shows it. |
 | `copy-missing-in-code` | suggest | A heading, button, field label or legend of the screen file not found in its source files. | Use the prototype's words, or update the screen file and get it approved. |
 | `component-missing-in-code` | suggest | A component the screen file names (`data-component="BookingCard"`) not used in its source files. | Use that component, or update the screen file. |
@@ -81,10 +89,16 @@ paths Plumb's generators own. `PLUMB.md`'s `UI files:` narrows a whole-project r
 |---|---|---|---|
 | `missing-token` | 3 | The same raw value used 3+ times with no close token (the finding proposes a name). | Add the token with `/plumb:update`, then use it. |
 | `contrast-headroom` | 3 | A pair that passes by less than 0.3 (light or dark). The finding names a value with 0.5 to spare. | Nudge the token with `/plumb:update`. |
-| `duplicate-tokens` | 2 | Two tokens within ΔE 3 in every theme, or within 1px. | Merge them with `/plumb:update`. |
+| `duplicate-tokens` | 2 | Two tokens within ΔE 3 in every theme, or within 1px. Quiet while the system is new (below). | Merge them with `/plumb:update`. |
 | `consolidate-components` | 2 | Components that differ only in padding or radius. | One component with a variant. |
 | `consistency` | 2 | The same control with a different padding or radius across files. | Pick the majority value. |
-| `unused-token` | 1 | A token nothing in the code uses (one per group; not run for explicit paths or under 5 UI files). | Remove it with `/plumb:update`, or use it. |
+| `unused-token` | 1 | A token nothing in the code uses (one per group; not run for explicit paths or under 5 UI files). Quiet while the system is new (below). | Remove it with `/plumb:update`, or use it. |
+
+**A new system's own tokens.** For the first 14 days after the date on `PLUMB.md`'s `- YYYY-MM-DD created with Plumb …`
+line (under `## Plumb updates`), `unused-token` and `duplicate-tokens` stay quiet: every token was just chosen on purpose
+with the user and the UI that will use them is still being built, so housekeeping suggestions about them are noise.
+From day 14 they run as usual. A project with no such line is not treated as new. The other suggestions
+(`missing-token`, `contrast-headroom`, …) are about the code or about accessibility and always run.
 
 The fidelity suggestions (`copy-missing-in-code`, `component-missing-in-code`, `missing-state`) are listed above with
 their rules.

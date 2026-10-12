@@ -704,7 +704,36 @@ def test_other_web_stacks_keep_the_platform_default(tmp_path: Path, deps: dict, 
     assert r["proposal"]["ui_files"] is None
     assert all(u["ui_files"] is None for u in r["ui_packages"])
     assert r["ui_packages"][0]["files"] == len(files)
-    assert "UI files   " not in detect.human(r)
+    # the placement block still shows the UI files line: the platform default PLUMB.md will get
+    assert "  UI files   " + detect.PLATFORM_UI_FILES["web"] + "   (PLUMB.md:" in detect.human(r)
+
+
+def test_placement_block_shows_ui_files_and_what_happens_to_an_existing_stylesheet(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"next": "15", "react": "19", "tailwindcss": "4"}, "frontdesk")
+    put(tmp_path, "app/page.tsx", "export default () => null;\n")
+    put(tmp_path, "app/globals.css", '@import "tailwindcss";\nbody { margin: 0; }\n')
+    r = run(tmp_path)
+    text = detect.human(r)
+    copy = r["proposal"]["copies"][0]
+    assert copy == "app/globals.css"
+    assert "  generated copy → app/globals.css   (Plumb's marked block of the token CSS)\n" in text
+    assert "  app/globals.css exists: Plumb will add a marked block; the rest stays yours\n" in text
+    assert "  UI files   " in text
+    lines = text.splitlines()
+    assert lines.index("I'll create:") < lines.index("  app/globals.css exists: Plumb will add a marked block; the rest stays yours")
+    put(tmp_path, "app/globals.css", "/* plumb:start x */\n/* plumb:end */\nbody {}\n")
+    assert "app/globals.css exists with Plumb's block: the build updates only the block" in detect.human(run(tmp_path))
+    (tmp_path / "app/globals.css").unlink()
+    assert "exists" not in detect.human(run(tmp_path)).split("I'll create:", 1)[1]
+
+
+def test_scaffold_and_detect_share_the_platform_ui_files() -> None:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("scaffold_ui_files", REPO / "plugins/plumb/scripts/scaffold.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.PLATFORM_UI_FILES == detect.PLATFORM_UI_FILES
 
 
 def test_swiftui_sources_without_a_package_or_xcode_project(tmp_path: Path) -> None:

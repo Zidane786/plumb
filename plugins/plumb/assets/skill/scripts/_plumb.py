@@ -104,29 +104,72 @@ def is_token(node: object) -> bool:
     return isinstance(node, dict) and "$value" in node
 
 
-def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
-    """Yield (dotted path, token, $type) for every token, in document order; $type is inherited from groups."""
+# A dot between two digits is a decimal point inside one name (the spacing step "0.5"), not a path separator.
+_PATH_SPLIT = re.compile(r"(?<!\d)\.|\.(?!\d)")
+_DECIMAL_NAME = re.compile(r"^\d+(?:\.\d+)+$")
 
-    def walk(node: dict, prefix: str, inherited: Optional[str]) -> Iterator[Tuple[str, dict, Optional[str]]]:
+
+# Paths iter_tokens has seen where a numeric group holds a numeric name ("z": {"1": {"2": ...}} is z.1.2, three
+# names): the decimal rule would read "1.2" as one name, so these keep the names the file really has.
+_NESTED_NUMERIC: dict = {}
+
+
+def path_parts(path: str) -> list:
+    """A token path split into its names: "spacing.0.5" -> ["spacing", "0.5"], "typography.sm.fontSize" -> 3 parts.
+    A path iter_tokens met as nested numeric groups ("z.1.2" from {"z": {"1": {"2": ...}}}) keeps its three names."""
+    known = _NESTED_NUMERIC.get(path)
+    return list(known) if known is not None else _PATH_SPLIT.split(path)
+
+
+def css_name(part: str) -> str:
+    """One name as it appears in a CSS custom property: the decimal point becomes "_" (spacing 0.5 -> --spacing-0_5,
+    the name Tailwind v4 looks up for p-0.5)."""
+    return part.replace(".", "_")
+
+
+def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
+    """Yield (dotted path, token, $type) for every token, in document order; $type is inherited from groups.
+
+    A name may contain a dot only as a decimal step ("0.5", "1.5"); any other dot is refused."""
+
+    def walk(node: dict, prefix: str, names: list, inherited: Optional[str]) -> Iterator[Tuple[str, dict, Optional[str]]]:
         gtype = node.get("$type", inherited) if isinstance(node.get("$type"), str) else inherited
         for key, child in node.items():
             if key.startswith("$") or not isinstance(child, dict):
                 continue
+            if "." in key and not _DECIMAL_NAME.match(key):
+                where = f"{prefix}.{key}" if prefix else key
+                raise _err(f"{where}: the name {key!r} has a dot; a token or group name may hold one only as a decimal "
+                           f"step such as \"0.5\"", f"rename it in the tokens file, e.g. {key.replace('.', '-')!r}")
             path = f"{prefix}.{key}" if prefix else key
+            parts = names + [key]
+            if _PATH_SPLIT.split(path) != parts:
+                _NESTED_NUMERIC[path] = tuple(parts)
             if is_token(child):
                 ttype = child.get("$type") if isinstance(child.get("$type"), str) else gtype
                 yield path, child, ttype
             else:
-                yield from walk(child, path, gtype)
+                yield from walk(child, path, parts, gtype)
 
-    yield from walk(doc, "", None)
+    yield from walk(doc, "", [], None)
 
 
 def _find(doc: dict, path: str) -> Tuple[dict, list, Optional[str]]:
-    """(token, rest-of-path into its $value, inherited $type) for a dotted path."""
+    """(token, rest-of-path into its $value, inherited $type) for a dotted path. A decimal name ("0.5") is one name;
+    when the file nests numeric groups instead ("z.1.2"), the plain split by dots is tried too."""
+    first = path_parts(path)
+    plain = path.split(".")
+    if plain != first:
+        try:
+            return _find_parts(doc, path, first)
+        except PlumbError:
+            return _find_parts(doc, path, plain)
+    return _find_parts(doc, path, first)
+
+
+def _find_parts(doc: dict, path: str, parts: list) -> Tuple[dict, list, Optional[str]]:
     node: object = doc
     gtype: Optional[str] = None
-    parts = path.split(".")
     for i, key in enumerate(parts):
         if not isinstance(node, dict) or key not in node or key.startswith("$"):
             raise _err(f"unknown token: {path}", "check the name against the tokens file (group.token, e.g. color.primary)")
@@ -371,7 +414,7 @@ def nearest_token(doc: dict, kind: str, value: str) -> Optional[Tuple[str, float
     if want is None:
         return None
     for path, _tok, ttype in iter_tokens(doc):
-        if kind != "dimension" and path.split(".")[0] != kind:
+        if kind != "dimension" and path_parts(path)[0] != kind:
             continue
         try:
             raw = resolve(doc, path)
@@ -519,9 +562,87 @@ def path_matches(path: str, globs) -> bool:
 
 
 def is_generated_text(text: str) -> bool:
-    """A `GENERATED ... do not edit` header in the first five lines."""
+    """A `GENERATED ... do not edit` header in the first five lines. A file with Plumb's marked block (BLOCK_START) is
+    not: only the block is generated, the rest of the file is the project's."""
+    if BLOCK_START in text:
+        return False
     head = "\n".join(text[:1500].splitlines()[:5])
     return "GENERATED" in head and re.search(r"do not edit", head, re.I) is not None
+
+
+# ---------------------------------------------------------------- Plumb's block inside a project's own file
+
+# build-tokens.py writes a web copy (web.copies, e.g. app/globals.css) as this block only; every byte outside it stays
+# the project's. The guard refuses an edit that changes the block, the audit skips only the block, --check compares
+# only the block.
+BLOCK_START = "/* plumb:start \u2014 GENERATED by Plumb, do not edit inside */"
+BLOCK_END = "/* plumb:end */"
+
+
+def block_span(text: str) -> Optional[Tuple[int, int]]:
+    """(start, end) of Plumb's block in text, from the start marker to the end of the end marker, or None when the
+    file has no block or the markers are broken (not exactly one of each, or the end before the start)."""
+    if text.count(BLOCK_START) != 1 or text.count(BLOCK_END) != 1:
+        return None
+    start = text.index(BLOCK_START)
+    end = text.index(BLOCK_END)
+    if end < start:
+        return None
+    return start, end + len(BLOCK_END)
+
+
+def has_block_markers(text: str) -> bool:
+    """Either marker appears (a well-formed block or a broken one)."""
+    return BLOCK_START in text or BLOCK_END in text
+
+
+def block_text(text: str) -> Optional[str]:
+    """The block itself (markers included), or None."""
+    span = block_span(text)
+    return text[span[0]:span[1]] if span else None
+
+
+def remove_block(text: str) -> str:
+    """text without Plumb's block and the line break that joins it to the rest (the one after it, else the one before
+    it): exactly the file as it was before the block was first added."""
+    span = block_span(text)
+    if span is None:
+        return text
+    start, end = span
+    for nl in ("\r\n", "\n"):
+        if text.startswith(nl, end):
+            return text[:start] + text[end + len(nl):]
+    for nl in ("\r\n", "\n"):
+        if text.endswith(nl, 0, start):
+            return text[:start - len(nl)] + text[end:]
+    return text[:start] + text[end:]
+
+
+# Outside Plumb's block, a stylesheet that defines Tailwind's dark variant again, or sets the tokens' variables in an
+# @theme block, overrides the design system without anyone seeing it (the later definition wins).
+_OVERRIDE_VARIANT = re.compile(r"@custom-variant\s+dark\b")
+_OVERRIDE_THEME = re.compile(r"@theme\b[^{;]*\{([^{}]*)\}")
+_OVERRIDE_VAR = re.compile(r"(--(?:color|radius|shadow|text|font|ease|spacing|duration)(?:-[\w*-]*)?)\s*:")
+
+
+def block_overrides(text: str) -> list:
+    """(position, what) for each place outside Plumb's block that overrides it: a `@custom-variant dark` of the
+    project's own, or a variable of the tokens' namespaces set in an `@theme` block. Comments are ignored; the block
+    itself is skipped."""
+    code = mask_comments(mask_block(text), ".css")
+    out = [(m.start(), "@custom-variant dark") for m in _OVERRIDE_VARIANT.finditer(code)]
+    for m in _OVERRIDE_THEME.finditer(code):
+        for v in _OVERRIDE_VAR.finditer(m.group(1)):
+            out.append((m.start(1) + v.start(1), v.group(1)))
+    return sorted(out)
+
+
+def mask_block(text: str) -> str:
+    """text with the block's characters blanked (newlines kept, so offsets and line numbers do not move)."""
+    span = block_span(text)
+    if span is None:
+        return text
+    return text[:span[0]] + _NOT_NL.sub(" ", text[span[0]:span[1]]) + text[span[1]:]
 
 
 PROPOSAL_PAGE_GLOBS = ("*/index.html", "*/*/prototype.html", "*/*/screens.html")
@@ -751,9 +872,16 @@ def _family_value(text: str) -> Optional[str]:
 class _Scan:
     """One file's text being added to an inventory."""
 
-    def __init__(self, inv: dict, name: str, code: str) -> None:
+    def __init__(self, inv: dict, name: str, code: str, named: Optional[dict] = None) -> None:
         self.inv, self.name, self.code = inv, name, code
+        self.named = named or {}
         self._nl = [m.start() for m in re.finditer("\n", code)]
+
+    def step(self, scale: str, name: str, default: float) -> float:
+        """The px of a Tailwind named step: the project's token when it defines that step (rounded-lg is radius.lg),
+        else Tailwind's default."""
+        own = self.named.get(scale) or {}
+        return own[name] if name in own else default
 
     def add(self, kind: str, value: str, pos: int) -> None:
         line = bisect.bisect_right(self._nl, pos - 1) + 1 if pos > 0 else 1
@@ -898,7 +1026,7 @@ class _Scan:
     def tailwind(self, start: int, end: int) -> None:
         code = self.code
         for m in _TW_TEXT.finditer(code, start, end):
-            px = _px_len(m.group(2), m.group(3)) if m.group(2) else TAILWIND_TYPE[m.group(1)]
+            px = _px_len(m.group(2), m.group(3)) if m.group(2) else self.step("text", m.group(1), TAILWIND_TYPE[m.group(1)])
             self.add("font-size", _fmt(px) + "px", m.start())
         for m in _TW_WEIGHT.finditer(code, start, end):
             self.add("font-weight", str(TAILWIND_WEIGHT[m.group(1)]), m.start())
@@ -915,14 +1043,19 @@ class _Scan:
             self.add("line-height", value, m.start())
         for m in _TW_SPACING.finditer(code, start, end):
             step = m.group(1)
-            px = _px_len(m.group(2), m.group(3)) if m.group(2) else 1.0 if step == "px" else float(step) * 4
+            if m.group(2):
+                px = _px_len(m.group(2), m.group(3))
+            elif step == "px":
+                px = 1.0
+            else:
+                px = self.step("spacing", step, float(step) * float(self.named.get("spacing_base") or 4))
             if px:
                 self.add("spacing", _fmt(px) + "px", m.start())
         for m in _TW_RADIUS.finditer(code, start, end):
             size = m.group(1) or ""
             if size in ("none", "full"):
                 continue
-            px = _px_len(m.group(2), m.group(3)) if m.group(2) else TAILWIND_RADIUS[size]
+            px = _px_len(m.group(2), m.group(3)) if m.group(2) else self.step("radius", size, TAILWIND_RADIUS[size])
             if px:
                 self.add("radius", _fmt(px) + "px", m.start())
         for m in _TW_SHADOW.finditer(code, start, end):
@@ -991,16 +1124,20 @@ class _Scan:
                 self.add("duration", m.group(1) + "ms", m.start())
 
 
-def inventory_add(inv: dict, name: str, text: str, tailwind: bool = False, code: Optional[str] = None) -> None:
+def inventory_add(inv: dict, name: str, text: str, tailwind: bool = False, code: Optional[str] = None,
+                  named: Optional[dict] = None) -> None:
     """Add every design value in one file's text to inv (see scan_inventory). name is how the file appears in "where".
 
-    code: the text with comments masked, when the caller has it already. Call finish_inventory(inv) when done."""
+    code: the text with comments masked, when the caller has it already. named: the project's own Tailwind steps from
+    its tokens, {"text": {name: px}, "radius": {name: px}, "spacing": {name: px}, "spacing_base": px}, so a named
+    utility (text-sm, rounded-lg, gap-4) counts at the project's value, not Tailwind's default. Call
+    finish_inventory(inv) when done."""
     ext = source_ext(name)
     if ext is None:
         return
     if code is None:
         code = mask_comments(normalise_text(text), ext)
-    scan = _Scan(inv, name, code)
+    scan = _Scan(inv, name, code, named)
     if ext == ".swift":
         scan.colours(0, len(code), False)
         scan.swift()
@@ -1101,6 +1238,7 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
             if is_generated_text(text):
                 continue
             detected = detected or uses_tailwind(text)
+            text = mask_block(text)  # Plumb's block in a project file is generated: only the rest is the project's
             found.append((name, text))
             if seen is not None:
                 seen.append(name)

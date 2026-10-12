@@ -594,6 +594,27 @@ def test_fs_write_append_with_file_text_is_checked_as_an_append(tmp_path, proj):
 
 
 @needs_sh
+def test_fs_write_to_a_web_copy_is_judged_by_plumbs_block(tmp_path, proj):
+    css = proj / "app/globals.css"
+    text = read(css)
+    end = "/* plumb:end */"
+    inside = next(ln for ln in text.splitlines() if "color-scheme: dark;" in ln)
+    f = str(css)
+    # outside the block: the project's own lines
+    kiro_allowed(pre(tmp_path, proj, "fs_write_append", FILE=f, NEW="body { margin: 0; }\n"))
+    kiro_allowed(pre(tmp_path, proj, "fs_write_insert", FILE=f, LINE=0, NEW="@import \"./fonts.css\";"))
+    kiro_allowed(pre(tmp_path, proj, "fs_write_str_replace", FILE=f, OLD=end, NEW=end + "\nbody { margin: 0; }"))
+    # inside the block, on a marker, or a whole file without it: refused with the block message
+    for name, values in (("fs_write_str_replace", {"OLD": inside, "NEW": inside.replace("dark", "light")}),
+                         ("fs_write_str_replace", {"OLD": end, "NEW": "/* end */"}),
+                         ("fs_write_insert", {"LINE": 1, "NEW": "--x: 1px;"}),
+                         ("fs_write_create", {"CONTENT": "body { margin: 0; }\n"})):
+        reason = kiro_refused(pre(tmp_path, proj, name, FILE=f, **values))
+        assert reason.startswith("error: app/globals.css is generated from the design tokens between its"), reason
+        assert "/plumb-update" in reason
+
+
+@needs_sh
 def test_fs_write_of_other_files_is_allowed_silently(tmp_path, proj):
     r = pre(tmp_path, proj, "fs_write_create", FILE=str(proj / "notes.txt"), CONTENT="hi")
     assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
@@ -665,9 +686,9 @@ def test_stop_blocks_once_with_the_decision_json(tmp_path, proj):
     out = json.loads(r.stdout)
     assert out["decision"] == "block" and "#ff0000" in out["reason"]
     actionable(out["reason"])
-    # Kiro sends no stop_hook_active: the next stop only reports, so it can never loop
+    # Kiro sends no stop_hook_active: the next stop never blocks again (and repeats nothing), so it can never loop
     r = hook(tmp_path, proj, "stop_check.py", "stop", env=env)
-    assert "decision" not in json.loads(r.stdout)
+    assert r.returncode == 0 and r.stdout == ""
 
 
 @needs_sh

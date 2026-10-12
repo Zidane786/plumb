@@ -404,7 +404,12 @@ def test_approve_and_synced_refusals(project: Path) -> None:
 
 def test_synced_marks_and_approve_clears_it(project: Path, tmp_path: Path) -> None:
     env = clean_env(tmp_path, USER="someone")
-    assert run(project, "--synced", "menu", env=env).returncode == 0
+    synced = run(project, "--synced", "menu", env=env)
+    assert synced.returncode == 0
+    # never a bare "run --approve": the agent asks the user first
+    ask = next(ln for ln in synced.stdout.splitlines() if "--approve menu" in ln)
+    assert ask.startswith("ask the user: ") and "Only after their yes to that screen" in ask
+    assert "confirm it with --approve" not in synced.stdout
     assert entry(project, "menu")["synced_from_code"] is True
     page = read(project / PROTO_REL)
     assert 'data-approval="synced"' in page[page.index('data-nav="menu"'):][:600]

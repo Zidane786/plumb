@@ -28,7 +28,8 @@ Ownership (spec 5.1):
 
   scaffold.py --verify --project-root P
       Check that PLUMB.md's skill path exists, that the AGENTS.md / CLAUDE.md row and the Makefile point at it, and that
-      the copy targets resolve. Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
+      the copy targets resolve, and that every `(make X)` PLUMB.md names is a target in the Makefile (no Makefile, or no
+      such target, is a problem). Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
       suggested --relocate command. Exit 0 when there is no problem, 1 otherwise.
 
@@ -52,7 +53,12 @@ answers.json (every key optional; unknown keys are ignored with a note):
                    mobile folders too; a chosen platform with no package keeps *.swift / *.kt), printed as a note;
                    else the platform default)
     "allowed_raw": "components/ui/**",
-    "web_copies":  ["app/globals.css"],                (project-relative copies of the generated CSS)
+    "web_copies":  ["app/globals.css"],                (project-relative files that get Plumb's marked block of the
+                   generated CSS; an existing file keeps everything outside the block, and a note says so)
+    "theme_switch": "both" | "system" | "class",       (how the web app switches to dark: the system setting, a .dark
+                   class, or either; default both)
+    "reduced_motion": "none" | "keep-fades",           (what reduced motion keeps on the web: nothing, or the opacity
+                   and colour fades; default none)
     "colors": {"light": {"primary": "#0f6b66", ...}, "dark": {"primary": "#4fb3c4", ...}},
         names: background surface sunk on-surface on-surface-muted primary on-primary outline outline-input danger
                on-danger success on-success scrim; values #rgb | #rrggbb | #rrggbbaa. Other tokens: edit the tokens file.
@@ -94,6 +100,8 @@ STYLINGS = ("tailwind-v4", "tailwind-v3", "css")
 STYLING_LABEL = {"tailwind-v4": "Tailwind CSS v4", "tailwind-v3": "Tailwind CSS v3", "css": "plain CSS"}
 THEMES = ("light-and-dark", "light-only")
 ROLES = ("home", "linked")
+THEME_SWITCHES = ("both", "system", "class")  # $extensions.plumb.web.theme_switch
+REDUCED_MOTION = ("none", "keep-fades")  # $extensions.plumb.motion.reduced
 
 RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON"))
 SLOT = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
@@ -164,6 +172,7 @@ DEFAULT_ICONS: List[Dict[str, str]] = [
 KNOWN_KEYS = frozenset((
     "name", "description", "audience", "direction", "voice", "themes", "python", "role", "ui_packages", "ui_files",
     "allowed_raw", "web_copies", "colors", "fonts", "type_scale", "spacing", "radius", "shadows", "motion", "icons",
+    "theme_switch", "reduced_motion",
 ))
 # Answers that, when absent, are listed in design.md as neutral defaults.
 DEFAULT_NOTE_KEYS = (("description", "description"), ("audience", "audience"), ("direction", "direction"),
@@ -285,6 +294,13 @@ def resolve_answers(answers: dict, name: str, platforms: List[str]) -> Tuple[Dic
     role = answers.get("role", "home")
     if role not in ROLES:
         raise _bad("role", role, "not a role", f"use one of: {', '.join(ROLES)}")
+    switch = answers.get("theme_switch", "both")
+    if switch not in THEME_SWITCHES:
+        raise _bad("theme_switch", switch, "not a theme switch", f"use one of: {', '.join(THEME_SWITCHES)}")
+    reduced = answers.get("reduced_motion", "none")
+    if reduced not in REDUCED_MOTION:
+        raise _bad("reduced_motion", reduced, "not a reduced-motion choice", f"use one of: {', '.join(REDUCED_MOTION)}")
+    v["THEME_SWITCH"], v["REDUCED_MOTION"] = switch, reduced
     copies = answers.get("web_copies", [])
     if not isinstance(copies, list) or not all(isinstance(c, str) and safe_rel(c) for c in copies):
         raise ScaffoldError("answers.web_copies must be a list of project-relative paths",
@@ -407,15 +423,21 @@ PLATFORM_UI_NAMES = {"ios": "*.swift", "android": "*.kt"}
 DETECT = Path(__file__).resolve().parent / "detect.py"
 
 
+def load_detect():
+    """detect.py from this folder (its project-id rule and stack scan)."""
+    spec = importlib.util.spec_from_file_location("plumb_detect_for_scaffold", DETECT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
 def detected_ui_files(root: Path, platforms: List[str]) -> Optional[str]:
     """The UI files the project's stack needs when the platform default does not fit, from detect.py's scan of the
     project root (only the packages of the chosen platforms): Angular's component files, or web next to iOS/Android
     with the mobile folders. A chosen mobile platform with no package yet keeps its file names (*.swift, *.kt). None
     when the default fits; when the scan fails, None with a note."""
     try:
-        spec = importlib.util.spec_from_file_location("plumb_detect_for_scaffold", DETECT)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        mod = load_detect()
         ui, _ = mod.classify(root)
         value = mod.ui_files_for([u for u in ui if set(u["platforms"]) & set(platforms)])
     except Exception as exc:  # noqa: BLE001 - detection is a convenience: fall back to the platform default
@@ -547,6 +569,31 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
     if not (root / docs / "prototype/screens").exists():
         plan.append(Item(root / docs / "prototype/screens/.gitkeep", "", "Y"))
     return plan
+
+
+BLOCK_MARK = "/* plumb:start"
+MAKE_NAMED = re.compile(r"\(make ([A-Za-z0-9_.-]+)\)")  # PLUMB.md's Commands lines: "(make tokens)"
+MAKE_TARGET = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?!=)", re.M)  # a Makefile rule "tokens:" (not "X := ...")
+
+
+def copy_notes(root: Path, answers: dict, dry_run: bool) -> None:
+    """One note per web copy that already exists with the project's own content: the tokens build will add Plumb's
+    marked block to it (and keep the rest), so the person can be shown that before the first build."""
+    for copy in answers.get("web_copies") or []:
+        rel = safe_rel(copy) if isinstance(copy, str) else None
+        path = root / rel if rel else None
+        if path is None or not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8", "replace")
+        except OSError:
+            continue
+        head = "\n".join(text.splitlines()[:5])
+        if not text.strip() or BLOCK_MARK in text or ("GENERATED" in head and "build-tokens.py" in head):
+            continue
+        print(f"note: {rel} already exists with your own CSS: the tokens build (build-tokens.py) "
+              f"{'would add' if dry_run else 'adds'} Plumb's block (/* plumb:start ... */ to /* plumb:end */) near its "
+              f"top, after its @import lines, and keeps every other line as it is; only the block is Plumb's")
 
 
 def check_blockers(root: Path, plan: List[Item]) -> None:
@@ -787,6 +834,13 @@ def verify(root: Path) -> int:
         if not rows:
             print("note: no Plumb row in AGENTS.md or CLAUDE.md (optional; /plumb:init offers to add it)")
         makefile = root / "Makefile"
+        defined = set(MAKE_TARGET.findall(read_keep(makefile))) if makefile.is_file() else set()
+        for target in dict.fromkeys(MAKE_NAMED.findall(read_keep(root / "PLUMB.md"))):
+            if target not in defined:
+                where = "the Makefile has no such target" if makefile.is_file() else "there is no Makefile"
+                problem(f"PLUMB.md names `make {target}`, but {where}")
+                print("fix: add the Plumb targets from the plugin's templates/Makefile.snippet (the wire-in step of "
+                      f"/plumb:init offers it), or take `(make {target})` out of PLUMB.md's Commands lines")
         if makefile.is_file():
             lines = [l for l in read_keep(makefile).splitlines() if "build-tokens.py" in l or "audit.py" in l]
             if not lines:
@@ -860,20 +914,23 @@ def run(args: argparse.Namespace) -> int:
     if args.verify:
         return verify(root)
     name = " ".join(args.name.split())
-    slug = slugify(name)
-    if not name or not slug or re.search(r"[\x00-\x1f]", args.name.replace("\n", " ").replace("\t", " ")):
+    if not name or not slugify(name) or re.search(r"[\x00-\x1f]", args.name.replace("\n", " ").replace("\t", " ")):
         raise ScaffoldError(f"the name {args.name!r} has no letters or digits to build a project id from",
                             "pass --name with the product's name, e.g. --name \"Acme Notes\"")
     platforms = parse_platforms(args.platforms)
     if args.styling not in STYLINGS:
         raise ScaffoldError(f"the styling {args.styling!r} is not one of {', '.join(STYLINGS)}",
                             f"pass --styling {STYLINGS[0]} (or tailwind-v3, css)")
-    skill_rel = project_rel(args.skill_dir, root, "--skill-dir", f".claude/skills/{slug}-design-system")
+    detect = load_detect()
+    skill_rel = project_rel(args.skill_dir, root, "--skill-dir",
+                            f".claude/skills/{detect.project_name(root)}-design-system")
+    slug = detect.project_id(root, skill_rel)  # the same rule detect.py proposed the skill folder with
     docs = project_rel(args.docs_dir, root, "--docs-dir", "docs/design")
     answers = load_answers(args.answers)
     plan = build_plan(args, root, skill_rel, docs, name, slug, platforms, answers)
     check_blockers(root, plan)
     wrote, kept = execute(root, plan, args.dry_run)
+    copy_notes(root, answers, args.dry_run)
     if args.dry_run:
         print(f"dry run: nothing written ({wrote} would be written, {kept} kept)")
     else:
