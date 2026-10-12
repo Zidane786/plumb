@@ -62,15 +62,24 @@ OK, or change something?
 | `proposal` | `project` (kebab-case name), `skill_dir`, `plumb_md`, `docs_dir`, `copies` (generated CSS copy paths), `platforms`, `ui_files` (the packages' `ui_files` joined, or `null`), `alternatives`. |
 | `confidence`, `reasons` | How sure the guess is and why not more. `low`: no markers, a guessed CSS path, several UI packages without monorepo markers, a parent folder, SwiftUI sources with no Package.swift or Xcode project. `medium`: an unsupported stack, backend and UI side by side, not a git repo, Angular files without the `.component` suffix. |
 
-**UI files (`PLUMB.md` `UI files:`)** decide what the audit walks and what the edit and end-of-turn checks cover:
-folders (with a `/`) and file names, separated by ` · `. Show the value in the confirmation block and pass the
-confirmed one to `scaffold.py` as the `ui_files` answer. Without that answer, `scaffold.py` uses detect's value for the
-stack, else the platform default (web `app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css`, iOS
-`*.swift`, Android `*.kt`). Only Angular gets its own: `src/** · *.component.ts *.component.html *.component.scss
-*.component.css *.routes.ts *routing.module.ts styles.scss styles.css` (the component templates, classes and styles,
-the route configs the audit reads routes from, the global stylesheet; not every `.ts`). In a monorepo the folder is
-the package's (`apps/web/src/**`). With Angular 20 file names (no `.component` suffix) no name tells a component from a
-service, so it covers every `.ts`, `.html`, `.scss` and `.css` under `src/`; narrow it with the user if they want.
+**UI files (`PLUMB.md` `UI files:`)** decide what the audit walks and what the edit and end-of-turn checks cover: a
+file counts only when it is in a listed folder (an entry with a `/`) **and** has a listed name, separated by ` · `.
+Show the value in the confirmation block and pass the confirmed one to `scaffold.py` as the `ui_files` answer. Without
+that answer, `scaffold.py` uses detect's value for the packages of the chosen platforms (it prints `note: UI files
+from the detected stack: …`), else the platform default (web `app/**, src/**, components/** · *.tsx *.jsx *.vue
+*.svelte *.css`, iOS `*.swift`, Android `*.kt`). The value differs from the default in three cases:
+
+- **Angular:** `src/** · *.component.ts *.component.html *.component.scss *.component.css *.routes.ts
+  *routing.module.ts styles.scss styles.css` (the component templates, classes and styles, the route configs the
+  audit reads routes from, the global stylesheet; not every `.ts`). The folders are `angular.json`'s
+  `projects.*.sourceRoot` (a multi-project workspace lists each, e.g. `projects/shop/src/**`), else `src/`, under the
+  package's path in a monorepo (`apps/web/src/**`). When any component is named without the `.component` suffix
+  (Angular 20, alone or next to older names, or an `@Component` class with an inline template) no name tells a
+  component from a service, so it covers every `.ts`, `.html`, `.scss` and `.css` there; narrow it with the user if
+  they want.
+- **Web next to iOS or Android** (e.g. Next.js at the root and `ios/App.xcodeproj`): the web folders plus each mobile
+  package's folder, and its names: `app/**, src/**, components/**, ios/** · *.tsx *.jsx *.vue *.svelte *.css *.swift`.
+- **A chosen platform with no package yet** (Angular with `--platforms web,ios`): its names are kept (`*.swift`).
 
 ## Layouts
 

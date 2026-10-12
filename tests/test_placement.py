@@ -603,23 +603,26 @@ ANGULAR_UI_FILES = ("src/** · *.component.ts *.component.html *.component.scss 
                     "*routing.module.ts styles.scss styles.css")
 
 
-def _glob_rx():
-    spec = importlib.util.spec_from_file_location("plumb_core_for_placement",
-                                                  REPO / "plugins/plumb/assets/skill/scripts/_plumb.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    return mod.glob_rx
+_AUDIT: list = []
+
+
+def _audit():
+    """audit.py, loaded once (registered in sys.modules first: its dataclasses look the module up)."""
+    if not _AUDIT:
+        spec = importlib.util.spec_from_file_location("plumb_audit_for_placement",
+                                                      REPO / "plugins/plumb/assets/skill/scripts/audit.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["plumb_audit_for_placement"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        _AUDIT.append(mod)
+    return _AUDIT[0]
 
 
 def _covered(ui_files: str, rel: str) -> bool:
-    """PLUMB.md `UI files:` as the audit reads it: folders (with a /) AND names (without)."""
-    glob_rx = _glob_rx()
-    items = [g for g in ui_files.replace(",", " ").split() if g != "·"]
-    dirs = [g for g in items if "/" in g]
-    names = [g for g in items if "/" not in g]
-    name = rel.rsplit("/", 1)[-1]
-    return ((not dirs or any(glob_rx(d).match(rel) for d in dirs))
-            and (not names or any(glob_rx(n).match(name) for n in names)))
+    """Whether the audit (and so the hooks) would check rel with PLUMB.md `UI files: <ui_files>`: its own matcher."""
+    root = Path("/plumb-project")
+    wanted = _audit().ui_matcher(root, root / ".claude/skills/x-design-system", {"UI files": ui_files})
+    return wanted(root / rel)
 
 
 def _angular(root: Path, suffix: bool = True) -> None:
@@ -729,3 +732,105 @@ def test_swift_files_without_swiftui_are_not_a_ui(tmp_path: Path) -> None:
     put(tmp_path, "Tool/main.swift", "import Foundation\nprint(1)")
     r = run(tmp_path)
     assert r["ui_packages"] == [] and r["layout"] == "single"
+
+
+WEB_DIRS = "app/**, src/**, components/**"
+WEB_NAMES = "*.tsx *.jsx *.vue *.svelte *.css"
+
+
+def test_web_and_ios_side_by_side_cover_the_ios_folder(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"next": "15", "react": "19"})
+    put(tmp_path, "app/page.tsx", "x")
+    put(tmp_path, "ios/App.xcodeproj/project.pbxproj", "")
+    put(tmp_path, "ios/App/ContentView.swift", "import SwiftUI\nstruct V: View {}")
+    r = run(tmp_path)
+    assert sorted(u["framework"] for u in r["ui_packages"]) == ["next", "swiftui"]
+    assert r["proposal"]["ui_files"] == f"{WEB_DIRS}, ios/** · {WEB_NAMES} *.swift"
+    for rel in ("ios/App/ContentView.swift", "app/page.tsx", "components/card.tsx"):
+        assert _covered(r["proposal"]["ui_files"], rel), rel
+    assert not _covered(r["proposal"]["ui_files"], "scripts/tool.swift")
+
+
+def test_web_and_android_side_by_side_cover_the_android_module(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"react": "18"})
+    put(tmp_path, "src/App.tsx", "x")
+    put(tmp_path, "android/app/build.gradle.kts", 'android {}\nimplementation("androidx.compose.ui:ui")')
+    r = run(tmp_path)
+    assert r["proposal"]["ui_files"] == f"{WEB_DIRS}, android/app/** · {WEB_NAMES} *.kt"
+    assert _covered(r["proposal"]["ui_files"], "android/app/src/main/java/a/Home.kt")
+
+
+def test_pure_mobile_keeps_the_platform_default(tmp_path: Path) -> None:
+    repo(tmp_path)
+    put(tmp_path, "App.xcodeproj/project.pbxproj", "")
+    put(tmp_path, "App/ContentView.swift", "import SwiftUI\nstruct V: View {}")
+    assert run(tmp_path)["proposal"]["ui_files"] is None
+
+
+def test_files_of_a_backend_package_are_not_counted_for_the_ui_above(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"next": "15", "react": "19"})
+    put(tmp_path, "app/page.tsx", "x")
+    pkg(tmp_path, "server/package.json", {"express": "4"})
+    put(tmp_path, "server/public/index.html", "<p>api</p>")
+    r = run(tmp_path)
+    assert r["no_ui"] == [{"path": "server", "stack": "express"}]
+    assert [u["files"] for u in r["ui_packages"]] == [1]
+
+
+WIDE = "src/** · *.ts *.html *.scss *.css"
+
+
+def test_angular_mixing_suffixed_and_angular_20_names_covers_both(tmp_path: Path) -> None:
+    repo(tmp_path)
+    _angular(tmp_path)
+    put(tmp_path, "src/app/billing/billing.ts", "@Component({templateUrl: './billing.html'})")
+    put(tmp_path, "src/app/billing/billing.html", "<h1>Billing</h1>")
+    r = run(tmp_path)
+    (ui,) = r["ui_packages"]
+    assert ui["ui_files"] == WIDE
+    assert ui["files"] == 7
+    assert _covered(ui["ui_files"], "src/app/billing/billing.ts")
+    assert _covered(ui["ui_files"], "src/app/notes/notes.component.scss")
+    assert any("without the .component suffix" in reason for reason in r["reasons"])
+
+
+def test_angular_inline_template_component_without_suffix_is_covered(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"@angular/core": "20"}, "notes")
+    put(tmp_path, "src/main.ts", "bootstrapApplication(App);")
+    put(tmp_path, "src/app/app.ts", "import { Component } from '@angular/core';\n@Component({template: '<h1>Hi</h1>'})\n"
+                                    "export class App {}\n")
+    put(tmp_path, "src/app/data.ts", "export class Data {}")
+    r = run(tmp_path)
+    (ui,) = r["ui_packages"]
+    assert ui["ui_files"] == WIDE
+    assert ui["files"] == 1  # app.ts (an @Component), not main.ts or data.ts
+
+
+def test_angular_workspace_projects_use_their_source_roots(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"@angular/core": "18"}, "suite")
+    put(tmp_path, "angular.json", json.dumps({"version": 1, "projects": {
+        "shop": {"root": "projects/shop", "sourceRoot": "projects/shop/src"},
+        "admin": {"root": "projects/admin", "sourceRoot": "projects/admin/src"},
+        "lib": {"root": "projects/lib"},
+    }}))
+    put(tmp_path, "projects/shop/src/app/cart/cart.component.ts", "@Component({})")
+    put(tmp_path, "projects/admin/src/app/users/users.component.html", "<h1>Users</h1>")
+    r = run(tmp_path)
+    (ui,) = r["ui_packages"]
+    assert ui["ui_files"] == ANGULAR_UI_FILES.replace("src/**", "projects/shop/src/**, projects/admin/src/**")
+    assert _covered(ui["ui_files"], "projects/shop/src/app/cart/cart.component.ts")
+    assert _covered(ui["ui_files"], "projects/admin/src/app/users/users.component.html")
+
+
+@pytest.mark.parametrize("text", ["{ // a comment\n}", "not json", "[]", '{"projects": {"a": {"sourceRoot": 3}}}',
+                                  '{"projects": {"a": {"sourceRoot": "../outside"}}}'])
+def test_angular_json_that_cannot_be_read_falls_back_to_src(tmp_path: Path, text: str) -> None:
+    repo(tmp_path)
+    _angular(tmp_path)
+    put(tmp_path, "angular.json", text)
+    assert run(tmp_path)["ui_packages"][0]["ui_files"] == ANGULAR_UI_FILES

@@ -15,11 +15,15 @@ the scan depth). Outside git, "enclosing" names the nearest folder above with mo
 confidence is low: the project may be that folder). Detection is a first guess; the init skill confirms it.
 
 UI files: each UI package has "files" (a count) and "ui_files" (the PLUMB.md `UI files:` value its stack needs, or
-null when scaffold.py's platform default fits). Only Angular needs its own: the component templates, classes and
-styles under src/ (*.component.ts/.html/.scss/.css), the route configs and the global stylesheet, never every .ts;
-with Angular 20 names (no .component suffix) every .ts/.html/.scss/.css under src/ (a medium-confidence reason says
-so). "proposal.ui_files" joins them for the project (null when no package needs one). An Angular package counts its
-templates plus the .ts/.scss/.css files that carry the .component suffix or pair by name with a template or style.
+null when scaffold.py's platform default fits). Angular needs its own: the component templates, classes and styles in
+its source folders (angular.json projects.*.sourceRoot, else src/: *.component.ts/.html/.scss/.css), the route configs
+and the global stylesheet, never every .ts; when any component is named without the .component suffix (Angular 20,
+alone or mixed, or an unpaired @Component class) every .ts/.html/.scss/.css there (a medium-confidence reason says so).
+"proposal.ui_files" joins the packages' values, and is also set when web packages sit next to iOS or Android ones
+(the web folders plus the mobile packages' folders, since the audit needs a file in a listed folder AND with a listed
+name); null otherwise. An Angular package counts its templates plus the .ts/.scss/.css files that carry the
+.component suffix or pair by name with a template or style, and unpaired @Component classes. A marker folder nested in
+a package (src/index.html) counts for the nearest package, never for a UI package above a backend one.
 SwiftUI sources (import SwiftUI) with no Package.swift or Xcode project are a UI package at the folder they share,
 with low confidence.
 
@@ -58,6 +62,7 @@ ANGULAR_UI_NAMES = ("*.component.ts", "*.component.html", "*.component.scss", "*
                     "*routing.module.ts", "styles.scss", "styles.css")
 # Angular 20 drops the .component suffix: no glob tells a component class from a service, so every source file counts.
 ANGULAR_UI_NAMES_UNSUFFIXED = ("*.ts", "*.html", "*.scss", "*.css")
+LONELY_TS_MAX = 400  # unpaired .ts files read for @Component( per package (Angular 20 inline-template components)
 SWIFTUI_GUESS_REASON = ("SwiftUI sources (import SwiftUI) without Package.swift or an Xcode project: {path} is a guess "
                         "for the app folder")
 MARKER_FILES = {
@@ -129,24 +134,31 @@ class Scan:
         self.angular_extra: Dict[str, int] = {}     # owner -> Angular component classes and styles (see ANGULAR_EXTS)
         self.component_suffix: Dict[str, int] = {}  # owner -> *.component.ts files (the pre-Angular-20 naming)
         self.loose_swift: List[str] = []            # .swift files outside every marker folder
+        self.unsuffixed_paired: Dict[str, int] = {}  # owner -> unsuffixed .ts paired with a template or style
+        self.lonely_ts: Dict[str, List[str]] = {}    # owner -> other unsuffixed .ts (up to LONELY_TS_MAX)
 
 
-def _angular_extra(names: List[str]) -> Tuple[int, int]:
-    """(component classes and styles, *.component.ts files) among one folder's file names (see ANGULAR_EXTS)."""
+def _angular_extra(names: List[str]) -> Tuple[int, int, int, List[str]]:
+    """Among one folder's file names (see ANGULAR_EXTS): (component classes and styles, *.component.ts files,
+    unsuffixed .ts files paired with a template or style (Angular 20 names), the other unsuffixed .ts files: read later
+    for @Component( when the package is Angular)."""
     stems: Dict[str, int] = {}
-    files = []
+    files = []  # (name, ext, stem), lower-case ext and stem
     for n in names:
         low = n.lower()
-        if low.endswith(".spec.ts"):
-            continue
         ext = os.path.splitext(low)[1]
-        if ext in ANGULAR_EXTS:
-            stem = low[: -len(ext)]
-            stems[stem] = stems.get(stem, 0) + 1
-            files.append((low, ext, stem))
-    extra = sum(1 for low, ext, stem in files
-                if ext != ".html" and (stem.endswith(".component") or stems.get(stem, 0) >= 2))
-    return extra, sum(1 for low, _, _ in files if low.endswith(".component.ts"))
+        if low.endswith(".spec.ts") or ext not in ANGULAR_EXTS:
+            continue
+        stem = low[: -len(ext)]
+        stems[stem] = stems.get(stem, 0) + 1
+        files.append((n, ext, stem))
+    extra = sum(1 for _, ext, stem in files
+                if ext != ".html" and (stem.endswith(".component") or stems[stem] >= 2))
+    suffixed = sum(1 for _, ext, stem in files if ext == ".ts" and stem.endswith(".component"))
+    plain = [(n, stem) for n, ext, stem in files if ext == ".ts" and not stem.endswith(".component")]
+    paired = sum(1 for _, stem in plain if stems[stem] >= 2)
+    lonely = [n for n, stem in plain if stems[stem] < 2]
+    return extra, suffixed, paired, lonely
 
 
 def walk(root: Path, max_depth: int = MAX_DEPTH) -> Scan:
@@ -170,9 +182,13 @@ def walk(root: Path, max_depth: int = MAX_DEPTH) -> Scan:
                         files.append(e.name)
                 except OSError:
                     continue
-            extra, suffixed = _angular_extra(files)
+            extra, suffixed, paired, lonely = _angular_extra(files)
             scan.angular_extra[own] = scan.angular_extra.get(own, 0) + extra
             scan.component_suffix[own] = scan.component_suffix.get(own, 0) + suffixed
+            scan.unsuffixed_paired[own] = scan.unsuffixed_paired.get(own, 0) + paired
+            if lonely:
+                lst = scan.lonely_ts.setdefault(own, [])
+                lst.extend(n if rel == "." else rel + "/" + n for n in lonely if len(lst) < LONELY_TS_MAX)
         if is_marker:
             scan.dirs[rel] = names
             owner = rel
@@ -346,17 +362,22 @@ def _ui(rel: str, framework: str, styling: str, shadcn: bool, platforms: List[st
     }
 
 
-def angular_ui_files(rel: str, suffixed: bool = True) -> str:
-    """PLUMB.md `UI files:` for an Angular package at rel: its src/ folder, component files only (see ANGULAR_UI_NAMES);
-    every source file when the project names components without the .component suffix (Angular 20)."""
+def angular_ui_files(rel: str, suffixed: bool = True, roots: Optional[List[str]] = None) -> str:
+    """PLUMB.md `UI files:` for an Angular package at rel: its source folders (angular.json sourceRoot, default src/),
+    component files only (see ANGULAR_UI_NAMES); every source file when any component is named without the .component
+    suffix (Angular 20 names, alone or mixed with the older ones, or an inline-template class)."""
     names = ANGULAR_UI_NAMES if suffixed else ANGULAR_UI_NAMES_UNSUFFIXED
-    return join(rel, "src/**") + " · " + " ".join(names)
+    return ", ".join(join(rel, r + "/**") for r in (roots or ["src"])) + " · " + " ".join(names)
 
 
 def ui_files_for(ui: List[dict]) -> Optional[str]:
-    """The PLUMB.md `UI files:` value these UI packages need, or None when scaffold.py's platform default fits (every
-    stack except Angular). With Angular next to other packages, their folders and names join its own."""
-    if not any(u.get("ui_files") for u in ui):
+    """The PLUMB.md `UI files:` value these UI packages need, or None when scaffold.py's platform default fits: only web
+    packages other than Angular, or only mobile ones. Angular needs its own; web next to iOS or Android needs the
+    mobile folders too (the audit takes a file only when it is in a listed folder AND has a listed name)."""
+    ui = [u for u in ui if u.get("supported", True)]  # React Native: no theme in 1.0.0, so no UI files of its own
+    web = any("web" in u["platforms"] for u in ui)
+    mobile = any("web" not in u["platforms"] for u in ui)
+    if not any(u.get("ui_files") for u in ui) and not (web and mobile):
         return None
     dirs: List[str] = []
     names: List[str] = []
@@ -479,29 +500,30 @@ def classify(root: Path, max_depth: int = MAX_DEPTH) -> Tuple[List[dict], List[d
             ui_dirs.append(rel)
         else:
             no_ui.append(res["no_ui"])
-    _absorb(scan, ui, no_ui)
+    _absorb(root, scan, ui, no_ui)
     loose = loose_swiftui(root, scan)
     if loose:
         ui.append(loose)
     return ui, no_ui
 
 
-def _absorb(scan: Scan, ui: List[dict], no_ui: List[dict]) -> None:
+def _absorb(root: Path, scan: Scan, ui: List[dict], no_ui: List[dict]) -> None:
     """Count each UI package's files with those of the marker folders nested in it that are not packages of their own
-    (src/index.html makes src/ a marker folder), and finish an Angular package's UI files from its component naming."""
-    packages = {u["path"] for u in ui} | {n["path"] for n in no_ui}
+    (src/index.html makes src/ a marker folder; a folder inside a backend package counts for nobody), and finish an
+    Angular package's UI files from its source roots and component naming."""
+    packages = [(u["path"], u) for u in ui] + [(n["path"], None) for n in no_ui]
+    paths = {p for p, _ in packages}
 
     def owner(rel: str) -> Optional[dict]:
-        best = None
-        for u in ui:
-            p = u["path"]
-            if (p == "." or rel.startswith(p + "/")) and (best is None or len(p) > len(best["path"])):
-                best = u
-        return best
+        best: Optional[Tuple[str, Optional[dict]]] = None
+        for p, u in packages:
+            if (p == "." or rel.startswith(p + "/")) and (best is None or len(p) > len(best[0])):
+                best = (p, u)
+        return best[1] if best else None  # None also when the nearest package is a backend
 
     members: Dict[str, List[str]] = {u["path"]: [u["path"]] for u in ui}
     for rel in scan.dirs:
-        if rel in packages:
+        if rel in paths:
             continue
         u = owner(rel)
         if u is not None:
@@ -510,13 +532,43 @@ def _absorb(scan: Scan, ui: List[dict], no_ui: List[dict]) -> None:
     for u in ui:
         if u["framework"] != "angular":
             continue
-        extra = sum(scan.angular_extra.get(r, 0) for r in members[u["path"]])
-        suffixed = sum(scan.component_suffix.get(r, 0) for r in members[u["path"]])
-        u["files"] += extra
-        unsuffixed = extra > 0 and suffixed == 0
-        u["ui_files"] = angular_ui_files(u["path"], not unsuffixed)
+        mine = members[u["path"]]
+        base = root if u["path"] == "." else root / u["path"]
+        extra = sum(scan.angular_extra.get(r, 0) for r in mine)
+        suffixed = sum(scan.component_suffix.get(r, 0) for r in mine)
+        paired = sum(scan.unsuffixed_paired.get(r, 0) for r in mine)
+        lonely = [f for r in mine for f in scan.lonely_ts.get(r, [])][:LONELY_TS_MAX]
+        inline = [f for f in lonely if "@Component(" in read_small(root / f, 16384)]
+        u["files"] += extra + len(inline)
+        unsuffixed = paired + len(inline) > 0
+        u["ui_files"] = angular_ui_files(u["path"], not unsuffixed, angular_source_roots(base))
         if unsuffixed:
-            u["naming"] = "unsuffixed"
+            u["naming"] = "mixed" if suffixed else "unsuffixed"
+
+
+def angular_source_roots(base: Path) -> List[str]:
+    """The source folders of an Angular workspace (angular.json projects.*.sourceRoot, relative to the workspace),
+    in file order; ["src"] when angular.json is missing, unreadable (JSON with comments), or names none inside it."""
+    try:
+        doc = json.loads(read_small(base / "angular.json", 1 << 20))
+    except ValueError:
+        return ["src"]
+    projects = doc.get("projects") if isinstance(doc, dict) else None
+    roots: List[str] = []
+    if isinstance(projects, dict):
+        for proj in projects.values():
+            sr = proj.get("sourceRoot") if isinstance(proj, dict) else None
+            if not isinstance(sr, str):
+                continue
+            sr = sr.replace("\\", "/").strip().strip("/")
+            if sr.startswith("./"):
+                sr = sr[2:]
+            parts = sr.split("/")
+            if not sr or ".." in parts or sr.startswith("/") or ":" in parts[0]:
+                continue
+            if sr not in roots:
+                roots.append(sr)
+    return roots or ["src"]
 
 
 def loose_swiftui(root: Path, scan: Scan) -> Optional[dict]:
@@ -643,9 +695,10 @@ def confidence(layout: str, marker: Optional[str], ui: List[dict], no_ui: List[d
             medium.append(u["path"] + ": " + u["note"])
         if u.get("guess"):
             low.append(u["guess"])
-        if u.get("naming") == "unsuffixed":
-            medium.append(u["path"] + ": Angular files without the .component suffix (Angular 20 names): UI files "
-                          "cover every .ts, .html, .scss and .css under src/")
+        if u.get("naming") in ("unsuffixed", "mixed"):
+            medium.append(u["path"] + ": Angular files without the .component suffix (Angular 20 names"
+                          + (", next to suffixed ones" if u["naming"] == "mixed" else "")
+                          + "): UI files cover every .ts, .html, .scss and .css in the source folders")
     if len(ui) > 1 and not marker:
         low.append("several UI packages without monorepo markers")
     if layout == "mixed":

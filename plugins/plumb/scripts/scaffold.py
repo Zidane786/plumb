@@ -47,8 +47,10 @@ answers.json (every key optional; unknown keys are ignored with a note):
     "python":      "python3",                          (the command PLUMB.md and the Makefile use)
     "role":        "home" | "linked",
     "ui_packages": ". (Next.js · Tailwind v4)",        (PLUMB.md)
-    "ui_files":    "app/**, components/** · *.tsx *.css",   (PLUMB.md; unanswered: detect.py's proposal for the stack
-                   (Angular: src/** · *.component.ts *.component.html ... styles.css), else the platform default)
+    "ui_files":    "app/**, components/** · *.tsx *.css",   (PLUMB.md; unanswered: detect.py's value for the chosen
+                   platforms' packages (Angular: src/** · *.component.ts ... styles.css; web next to iOS/Android: the
+                   mobile folders too; a chosen platform with no package keeps *.swift / *.kt), printed as a note;
+                   else the platform default)
     "allowed_raw": "components/ui/**",
     "web_copies":  ["app/globals.css"],                (project-relative copies of the generated CSS)
     "colors": {"light": {"primary": "#0f6b66", ...}, "dark": {"primary": "#4fb3c4", ...}},
@@ -399,26 +401,42 @@ def platform_values(platforms: List[str], styling: str) -> Dict[str, str]:
     }
 
 
-def detected_ui_files(root: Path) -> Optional[str]:
-    """The UI files the project's stack needs when the platform default does not fit (Angular: component templates,
-    classes and styles, not every .ts), from detect.py's scan of the project root; None when the default fits or the
-    scan is not possible."""
-    path = Path(__file__).resolve().parent / "detect.py"
+PLATFORM_UI_FILES = {"web": "app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css", "ios": "*.swift",
+                     "android": "*.kt"}
+PLATFORM_UI_NAMES = {"ios": "*.swift", "android": "*.kt"}
+DETECT = Path(__file__).resolve().parent / "detect.py"
+
+
+def detected_ui_files(root: Path, platforms: List[str]) -> Optional[str]:
+    """The UI files the project's stack needs when the platform default does not fit, from detect.py's scan of the
+    project root (only the packages of the chosen platforms): Angular's component files, or web next to iOS/Android
+    with the mobile folders. A chosen mobile platform with no package yet keeps its file names (*.swift, *.kt). None
+    when the default fits; when the scan fails, None with a note."""
     try:
-        spec = importlib.util.spec_from_file_location("plumb_detect_for_scaffold", path)
+        spec = importlib.util.spec_from_file_location("plumb_detect_for_scaffold", DETECT)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
         ui, _ = mod.classify(root)
-        return mod.ui_files_for(ui)
-    except Exception:  # noqa: BLE001 - detection is a convenience: fall back to the platform default
+        value = mod.ui_files_for([u for u in ui if set(u["platforms"]) & set(platforms)])
+    except Exception as exc:  # noqa: BLE001 - detection is a convenience: fall back to the platform default
+        print(f"note: UI files: the platform default (detecting the stack failed: {exc})", file=sys.stderr)
         return None
+    if value is None:
+        return None
+    names = value.partition(" · ")[2].split()
+    extra = [PLATFORM_UI_NAMES[p] for p in platforms if p in PLATFORM_UI_NAMES and PLATFORM_UI_NAMES[p] not in names]
+    return " ".join([value] + extra)
 
 
 def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: str, name: str, answers: dict,
                     base: Dict[str, str], root: Optional[Path] = None) -> Dict[str, str]:
-    default_files = {"web": "app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css", "ios": "*.swift", "android": "*.kt"}
-    ui_files = (answers.get("ui_files") or (detected_ui_files(root) if root is not None and "web" in platforms else None)
-                or " · ".join(default_files[p] for p in platforms))
+    ui_files = answers.get("ui_files")
+    if not ui_files and root is not None and "web" in platforms:
+        ui_files = detected_ui_files(root, platforms)
+        if ui_files:
+            print(f"note: UI files from the detected stack: {ui_files} (to change it, pass ui_files in --answers)",
+                  file=sys.stderr)
+    ui_files = ui_files or " · ".join(PLATFORM_UI_FILES[p] for p in platforms)
     return {
         "PROJECT": name, "SKILL_DIR": skill_dir + "/", "ROLE": base["ROLE"], "PLATFORMS": ", ".join(platforms),
         "UI_PACKAGES": answers.get("ui_packages") or (f". ({STYLING_LABEL[styling]})" if "web" in platforms else "."),
