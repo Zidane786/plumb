@@ -29,6 +29,7 @@ new = ("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
        "$i=New-Object System.Diagnostics.ProcessStartInfo; "
        "$i.FileName=[IO.Path]::Combine($env:SystemRoot,'System32','cmd.exe'); "
        "$i.Arguments='/d /s /c \"\"'+$s+'\" CODE\"'; "
+       "try { [Console]::InputEncoding=New-Object Text.UTF8Encoding $false } catch {}; "
        "$i.UseShellExecute=$false; $i.RedirectStandardInput=$true; $i.RedirectStandardOutput=$true; "
        "$i.RedirectStandardError=$true; $p=[Diagnostics.Process]::Start($i); "
        "$o=$p.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput()); "
@@ -37,11 +38,10 @@ new = ("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
        "$p.WaitForExit(); $o.Wait(); $e.Wait(); exit $p.ExitCode } catch { exit 0 }")
 variants = {}
 for code in ("2", "0"):
-    variants[f"old-{code}"] = "powershell -NoProfile -NonInteractive -EncodedCommand " + enc(old.replace("CODE", code))
     n = "powershell -NoProfile -NonInteractive -EncodedCommand " + enc(new.replace("CODE", code))
-    variants[f"new-{code}"] = n
-    variants[f"new-poly-{code}"] = n + " ; exit $LASTEXITCODE"
-    variants[f"new-out-{code}"] = n.replace("-NonInteractive", "-NonInteractive -OutputFormat Text")
+    variants[f"plain-{code}"] = n
+    variants[f"lf-{code}"] = n + "\nexit $LASTEXITCODE"
+    variants[f"crlf-{code}"] = n + "\r\nexit $LASTEXITCODE"
 shells = {"cmd": lambda c: ["cmd", "/d", "/c", c],
           "ps51": lambda c: [shutil.which("powershell"), "-NoProfile", "-NonInteractive", "-Command", c],
           "bash": lambda c: [shutil.which("bash") or "bash", "-c", c]}
