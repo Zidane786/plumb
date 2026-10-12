@@ -223,8 +223,9 @@ def run_hook(launcher: str, script: str, stdin: str, cwd: Path, env: Dict[str, s
     """Run a hook through a launcher as the CLI does: "sh" = `sh hooks/run.sh <script>` (hooks.json's command: Claude
     Code everywhere, Copilot CLI on macOS and Linux); "powershell" = hooks.json's powershell command (run.cmd), which
     only Copilot CLI runs (on Windows), so COPILOT_CLI=1 is set for it. r.copilot says which dialect to expect."""
+    hooks = Path(env.get("CLAUDE_PLUGIN_ROOT") or PLUGIN) / "hooks"  # a test may run a copy of the plugin
     if launcher == "sh":
-        cmd = [str(SH), str(HOOKS / "run.sh"), script]
+        cmd = [str(SH), str(hooks / "run.sh"), script]
     else:
         cmd = [str(POWERSHELL), "-NoProfile", "-NonInteractive", "-Command", _hook_entry(SCRIPT_EVENT[script])["powershell"]]
         env = {**env, "COPILOT_CLI": "1"}
@@ -235,6 +236,30 @@ def run_hook(launcher: str, script: str, stdin: str, cwd: Path, env: Dict[str, s
     assert "Traceback" not in r.stderr, r.stderr
     r.copilot = bool(env.get("COPILOT_CLI"))  # type: ignore[attr-defined]
     return r
+
+
+def plugin_copy(tmp_path: Path) -> Path:
+    """A copy of the installed plugin (hooks, the skill's scripts, the manifest), to break its scripts in a test."""
+    dest = tmp_path / "plugin-copy"
+    for part in ("hooks", ".claude-plugin", "assets/skill/scripts"):
+        shutil.copytree(str(PLUGIN / part), str(dest / part), ignore=shutil.ignore_patterns("__pycache__"))
+    return dest
+
+
+MARKER_CODE = """import pathlib as _pl
+_pl.Path({path!r}).write_text("ran", encoding="utf-8")
+"""
+
+
+def plant_markers(project: Path, folder: Path) -> List[Path]:
+    """Prepend code that writes a marker file to each of the project's copied scripts; returns the marker paths."""
+    markers = []
+    for name in ("audit.py", "build-prototype.py", "build-tokens.py", "_plumb.py"):
+        script = project / SKILL_REL / "scripts" / name
+        marker = folder / f"marker-{name}"
+        write(script, MARKER_CODE.format(path=str(marker)) + read(script))
+        markers.append(marker)
+    return markers
 
 
 def context(r: subprocess.CompletedProcess) -> str:

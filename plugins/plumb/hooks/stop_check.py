@@ -2,8 +2,8 @@
 """Plumb Stop hook: the end-of-turn check (PLUMB.md `End-of-turn check: on`).
 
 Compares the UI files and prototype screen files with the session snapshot session_start.py took (audit.changed_since;
-no snapshot yet: it takes one now and stays quiet). No UI file changed: silent. Otherwise it runs the project's
-audit on the changed files, in-process, as `audit.py --changed SNAPSHOT` does (audit.changed_findings): the errors each
+no snapshot yet: it takes one now and stays quiet). No UI file changed: silent. Otherwise it runs the plugin's own
+audit.py (never the project's copy: trust boundary, see _hooklib) on the changed files, in-process, as `audit.py --changed SNAPSHOT` does (audit.changed_findings): the errors each
 changed file gained this session, a new route with no prototype, and prototype sync (a built screen whose source files
 changed while its screen file did not; a screen that changed and is not approved).
 
@@ -57,9 +57,12 @@ def main() -> int:
     if proj is None or not proj.on("End-of-turn check") or not proj.skill_ok:
         return 0
     path = H.snapshot_path(proj.root, p.session_id)
-    A = H.load_script(proj, "audit.py", "plumb_audit")
+    A = H.load_script("audit.py", "plumb_audit")
     if A is None:
         return 0
+    scripts = H.scripts_note(proj)
+    if scripts:
+        H.note(scripts + " (checked with the plugin's scripts)")
     try:
         doc = A.load_doc(proj.skill_dir)
         settings = A.make_settings(proj.root, doc)

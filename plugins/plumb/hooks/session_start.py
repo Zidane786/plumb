@@ -5,12 +5,15 @@ Silent (no output, exit 0) in a project without a PLUMB.md. Otherwise prints
 
   Plumb: <skill name> <project's Plumb version> · tokens <up to date|stale> · <N> audit issues · read the skill before UI changes
 
+Every script it runs is the plugin's own copy (`--root <the project's skill>`), never the project's (trust boundary).
 - tokens: `build-tokens.py --check` (exit 0 up to date, 1 stale; "tokens not checked" when it cannot run, "no tokens
   yet" before the tokens file exists);
 - audit issues: errors + warnings of a full `audit.py --json` run, capped at 2 seconds (PLUMB_AUDIT_TIMEOUT, in
   seconds, changes the cap; 0 skips it): "audit not run" when it does not finish or fails. Both run at the same time;
 - a second line "Plumb X is installed; this project's design system is Y: run /plumb:upgrade" when PLUMB.md's version
   (its first line, `<!-- plumb vY`) is older than the plugin's;
+- "this project's Plumb scripts are vX; the plugin is vY — run /plumb:upgrade" when the project's copied scripts
+  (PLUMB_VERSION in its _plumb.py, read as text) differ from the plugin's;
 - when the design-system folder PLUMB.md names (`Design system:`) is missing, "design system not found" and a
   warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill).
 
@@ -40,11 +43,14 @@ TOKENS_TIMEOUT = 5.0
 
 
 def _start(proj: H.Project, script: str, *args: str) -> Optional[subprocess.Popen]:
-    path = proj.skill_dir / "scripts" / script  # type: ignore[operator]
-    if not path.is_file():
+    """The plugin's own copy of a script, pointed at the project's design-system skill (--root): never the project's
+    copy (trust boundary, see _hooklib)."""
+    path = os.path.join(H.PLUGIN_SCRIPTS, script)
+    if not os.path.isfile(path):
         return None
     try:
-        return subprocess.Popen([sys.executable, str(path), *args], cwd=proj.root_s, stdin=subprocess.DEVNULL,
+        return subprocess.Popen([sys.executable, path, *args, "--root", str(proj.skill_dir)], cwd=proj.root_s,
+                                stdin=subprocess.DEVNULL,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError:
         return None
@@ -109,7 +115,7 @@ def snapshot(proj: H.Project, session_id: str) -> None:
     path = H.snapshot_path(proj.root, session_id)
     if path.is_file():
         return  # a resumed session keeps the snapshot it started with
-    A = H.load_script(proj, "audit.py", "plumb_audit")
+    A = H.load_script("audit.py", "plumb_audit")
     if A is None:
         return
     try:
@@ -144,6 +150,9 @@ def main() -> int:
         lines.append(line)
         if nudge:
             lines.append(nudge)
+        scripts = H.scripts_note(proj)
+        if scripts:
+            lines.append(scripts)
         snapshot(proj, p.session_id)
     text = "\n".join(lines)
     print(json.dumps({"additionalContext": text}) if p.copilot else text)

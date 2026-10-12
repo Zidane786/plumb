@@ -21,7 +21,8 @@ import pytest
 
 from hook_support import (BUILD_PROTOTYPE, BUILD_TOKENS, CI, HOOKS, LAUNCHERS, MAP, PLUGIN, REPO, SCREENS, SKILL_REL,
                           actionable, allowed, context, git, git_init, hook_env, make_project, needs_git, notes, patch,
-                          payload, plumb_md, read, refused, run_hook, run_script, set_plumb, write)
+                          payload, plant_markers, plugin_copy, plumb_md, read, refused, run_hook, run_script,
+                          set_plumb, write)
 
 pytestmark = pytest.mark.skipif(not LAUNCHERS, reason="no hook launcher (sh or PowerShell) on this machine")
 
@@ -176,13 +177,39 @@ def test_session_start_snapshot_in_git_records_changed_files(launcher, tmp_path,
     assert data["files"]["components/draft.tsx"]["text"].startswith("export const Draft")
 
 
-def test_session_start_fails_open_with_a_broken_audit(launcher, tmp_path, proj):
-    write(proj / SKILL_REL / "scripts/audit.py", "raise RuntimeError('broken')\n")
-    r = session_start(launcher, tmp_path, proj)
+def test_session_start_fails_open_with_a_broken_plugin_audit(launcher, tmp_path, proj):
+    plugin = plugin_copy(tmp_path)
+    write(plugin / "assets/skill/scripts/audit.py", "raise RuntimeError('broken')\n")
+    r = session_start(launcher, tmp_path, proj, env={"CLAUDE_PLUGIN_ROOT": str(plugin)})
     text = context(r)
     assert text.startswith("Plumb: demo-design-system 1.0.0 · ")
     assert "audit not run" in text
     assert len(notes(r)) <= 1 and len(r.stderr.splitlines()) <= (1 if launcher == "sh" else 20)
+
+
+# ---------------------------------------------------------------- trust boundary: hooks run only the plugin's own code
+
+
+def test_hooks_never_run_the_projects_copied_scripts(launcher, tmp_path, proj):
+    markers = plant_markers(proj, tmp_path)
+    _start(launcher, tmp_path, proj)
+    # the checks still work, with the plugin's own scripts
+    assert "#ff0000" in refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW))
+    assert "/plumb:prototype billing" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    assert "#ff0000" in _block(stop(launcher, tmp_path, proj))
+    assert [m.name for m in markers if m.exists()] == []
+
+
+def test_project_scripts_of_another_version_get_one_note(launcher, tmp_path, proj):
+    core = proj / SKILL_REL / "scripts/_plumb.py"
+    write(core, read(core).replace('PLUMB_VERSION = "1.0.0"', 'PLUMB_VERSION = "0.9.0"'))
+    markers = plant_markers(proj, tmp_path)
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "this project's Plumb scripts are v0.9.0; the plugin is v1.0.0 — run /plumb:upgrade" in text
+    assert text.startswith("Plumb: demo-design-system 1.0.0 · tokens up to date · ")
+    assert [m.name for m in markers if m.exists()] == []
+    assert "Plumb scripts are" not in context(session_start(launcher, tmp_path, make_project(tmp_path, "other")))
 
 
 # ---------------------------------------------------------------- pre-edit: generated files
@@ -462,16 +489,23 @@ def test_garbage_input_is_allowed(launcher, tmp_path, proj, stdin):
     allowed(r)
 
 
-def test_broken_audit_fails_open_with_one_note(launcher, tmp_path, proj):
-    write(proj / SKILL_REL / "scripts/audit.py", "def broken(:\n")
-    r = edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW)
+def test_broken_plugin_audit_fails_open_with_one_note(launcher, tmp_path, proj):
+    plugin = plugin_copy(tmp_path)
+    write(plugin / "assets/skill/scripts/audit.py", "def broken(:\n")
+    env = {"CLAUDE_PLUGIN_ROOT": str(plugin)}
+    r = edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW, env=env)
     allowed(r)
     lines = notes(r)
     assert len(lines) == 1 and lines[0].split("plumb: ", 1)[1].startswith("cannot load ")
     if launcher == "sh":
         assert r.stderr.strip() == lines[0]
     # the guards need no audit: still on
-    refused(write_tool(launcher, tmp_path, proj, "app/globals.css", "x"))
+    refused(write_tool(launcher, tmp_path, proj, "app/globals.css", "x", env=env))
+
+
+def test_broken_project_scripts_do_not_matter(launcher, tmp_path, proj):
+    write(proj / SKILL_REL / "scripts/audit.py", "def broken(:\n")
+    assert "#ff0000" in refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW))
 
 
 def test_missing_design_system_fails_open(launcher, tmp_path, proj):
@@ -640,11 +674,12 @@ def test_stop_garbage_input_is_silent(launcher, tmp_path, proj, stdin):
     assert r.returncode == 0 and r.stdout == ""
 
 
-def test_stop_fails_open_with_a_broken_audit(launcher, tmp_path, proj):
+def test_stop_fails_open_with_a_broken_plugin_audit(launcher, tmp_path, proj):
     _start(launcher, tmp_path, proj)
     write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
-    write(proj / SKILL_REL / "scripts/audit.py", "raise RuntimeError('x')\n")
-    r = stop(launcher, tmp_path, proj)
+    plugin = plugin_copy(tmp_path)
+    write(plugin / "assets/skill/scripts/audit.py", "raise RuntimeError('x')\n")
+    r = stop(launcher, tmp_path, proj, env={"CLAUDE_PLUGIN_ROOT": str(plugin)})
     assert r.returncode == 0 and r.stdout == ""
     assert len(notes(r)) <= 1
 

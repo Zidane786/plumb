@@ -20,11 +20,13 @@ In such a project, in this order:
    covers it (same route, a source glob matching the file, or the route's slug as its id) and its current screen file
    is the approved one: `fix: /plumb:prototype <slug>`.
 3. Edit check (PLUMB.md `Edit check: on`): for a UI file (the audit's file types, inside PLUMB.md's `UI files`), the
-   file's text before and after the edit goes through the project's audit.quick(), and only the errors the edit adds
+   file's text before and after the edit goes through audit.quick(), and only the errors the edit adds
    are refused: at most 10, each `error: line N: ...` then `fix: ...`.
 
-Claude Code: a refusal is exit 2 with the reason on stderr. Copilot CLI: exit 0 with a JSON deny on stdout. Anything
-unexpected (bad input, no design-system skill, a broken audit.py or tokens file) allows the edit, with at most one
+The checks use the plugin's own audit.py (never the project's copy: trust boundary, see _hooklib); the project is
+only read as data. Claude Code: a refusal is exit 2 with the reason on stderr. Copilot CLI: exit 0 with a JSON deny on stdout. Anything
+unexpected (bad input, no design-system skill, a broken tokens file, the plugin's audit.py failing to load) allows the
+edit, with at most one
 stderr line. Standard library only.
 """
 
@@ -195,7 +197,7 @@ def checks(p: H.Payload, proj: H.Project, base: str) -> Optional[str]:
         items.append((c, path, rel))
     if not items:
         return None
-    A = H.load_script(proj, "audit.py", "plumb_audit")
+    A = H.load_script("audit.py", "plumb_audit")
     if A is None:
         return None
     try:

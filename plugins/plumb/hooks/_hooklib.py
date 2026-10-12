@@ -23,9 +23,13 @@ The project is the nearest folder holding a PLUMB.md (not a template), searched 
 sets it, else from the payload's cwd and the current directory. No PLUMB.md: every hook does nothing, so a repository
 without Plumb, and the Plumb repository itself, are never touched. PLUMB.md is read on every run (switches can change
 between two edits); its `Key: value` lines are parsed here with the same rules as _plumb.read_plumb_md, so the guards
-need no import of the project's scripts (a non-UI edit stays far under 150 ms). The checks load the project's own
-audit.py / build-prototype.py (the copies in the design-system skill, `Design system:` in PLUMB.md) with
-load_script(); when that fails they are skipped with one stderr line: hooks fail open.
+need no import at all (a non-UI edit stays far under 150 ms).
+
+Trust boundary: the checks load audit.py (and through it build-prototype.py, build-tokens.py, _plumb.py) only from the
+plugin's own install (PLUGIN_SCRIPTS, next to these hooks), never the copies in the project's design-system skill: the
+project is data (PLUMB.md, the tokens JSON, screens.json, screen and source files), so opening a repository never makes
+a hook run its code. When the project's copies are another version, scripts_note() says so (run /plumb:upgrade); the
+checks still use the plugin's. When loading fails the checks are skipped with one stderr line: hooks fail open.
 
 Python 3.9+, standard library only.
 """
@@ -44,6 +48,9 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+# The plugin's own copy of the design-system scripts, the only Python the hooks ever import or run (never the copies in
+# a project: those run only on an explicit command, see SECURITY.md "Trust boundary").
+PLUGIN_SCRIPTS = os.path.join(os.path.dirname(HOOKS_DIR), "assets", "skill", "scripts")
 PLUMB_MD = "PLUMB.md"
 SNAPSHOT_DAYS = 7
 UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
@@ -530,20 +537,21 @@ def load_project(payload: Optional[Payload]) -> Optional[Project]:
     return None
 
 
-def load_script(project: Project, file_name: str, module_name: str):
-    """One of the project's design-system scripts (audit.py, build-prototype.py) as a module, or None with one note.
-    The module is registered in sys.modules before it runs (its dataclasses need that); its folder goes on sys.path so
-    its own `import _plumb` finds the project's copy."""
-    if project.skill_dir is None:
-        return None
-    path = project.skill_dir / "scripts" / file_name
-    shown = f"{project.skill_rel}/scripts/{file_name}"
+def load_script(file_name: str, module_name: str):
+    """One of the plugin's own design-system scripts (audit.py, build-prototype.py) as a module, or None with one note.
+
+    Trust boundary: always the copy installed with the plugin (PLUGIN_SCRIPTS, next to these hooks), never the copy in
+    the project's skill folder, so opening a repository can never make a hook run that repository's code; the project
+    is only read as data (PLUMB.md, the tokens JSON, screens.json, the screen and source files). The module is
+    registered in sys.modules before it runs (its dataclasses need that); its folder goes first on sys.path so its own
+    `import _plumb` is the plugin's too."""
+    path = Path(PLUGIN_SCRIPTS) / file_name
     if not path.is_file():
-        note(f"{shown} is missing, so the design checks are skipped (the guards stay on); restore it with /plumb:upgrade")
+        note(f"the plugin's {file_name} is missing, so the design checks are skipped (the guards stay on); reinstall "
+             f"the Plumb plugin")
         return None
-    folder = str(path.parent)
-    if folder not in sys.path:
-        sys.path.insert(0, folder)
+    if sys.path[:1] != [PLUGIN_SCRIPTS]:
+        sys.path.insert(0, PLUGIN_SCRIPTS)
     try:
         spec = importlib.util.spec_from_file_location(module_name, str(path))
         mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
@@ -554,9 +562,31 @@ def load_script(project: Project, file_name: str, module_name: str):
         sys.modules.pop(module_name, None)
         if isinstance(exc, KeyboardInterrupt):
             raise
-        note(f"cannot load {shown} ({type(exc).__name__}: {exc}), so the design checks are skipped (the guards stay "
-             f"on); restore it with /plumb:upgrade")
+        note(f"cannot load the plugin's {file_name} ({type(exc).__name__}: {exc}), so the design checks are skipped "
+             f"(the guards stay on); reinstall the Plumb plugin")
         return None
+
+
+_SCRIPT_VERSION = re.compile(r"""^PLUMB_VERSION\s*=\s*["']([^"']+)["']""", re.M)
+
+
+def _script_version(path: Path) -> Optional[str]:
+    """PLUMB_VERSION of a _plumb.py, read as text (the project's copy is never imported)."""
+    text = _read(str(path))
+    m = _SCRIPT_VERSION.search(text or "")
+    return m.group(1) if m else None
+
+
+def scripts_note(project: Project) -> Optional[str]:
+    """One line when the project's copied scripts are another version than the plugin's (the hooks check with the
+    plugin's either way), else None."""
+    if project.skill_dir is None:
+        return None
+    mine = _script_version(project.skill_dir / "scripts" / "_plumb.py")
+    plugin = _script_version(Path(PLUGIN_SCRIPTS) / "_plumb.py")
+    if mine is None or plugin is None or mine == plugin:
+        return None
+    return f"this project's Plumb scripts are v{mine}; the plugin is v{plugin} \u2014 run /plumb:upgrade"
 
 
 # ---------------------------------------------------------------- session snapshots
