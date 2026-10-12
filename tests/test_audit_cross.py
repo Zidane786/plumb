@@ -112,10 +112,16 @@ def token_line(project: Path, name: str) -> int:
 # ---------------------------------------------------------------- the rule table
 
 
+FIDELITY_IDS = {"route-not-prototyped", "screen-drift", "screen-unapproved", "screen-not-built", "state-missing-in-code",
+                "synced-from-code", "copy-missing-in-code", "missing-state"}  # tests/test_audit_fidelity.py
+
+
 def test_cross_rules_are_in_the_one_rule_table() -> None:
     cross = {r.id: r for r in A.RULES if r.kind == "cross"}
-    assert set(cross) == CROSS_IDS
+    assert set(cross) == CROSS_IDS | FIDELITY_IDS
     for rule_id, r in cross.items():
+        if rule_id in FIDELITY_IDS:
+            continue
         assert r.severity == severity_of(rule_id), rule_id
         assert callable(r.check) and r.message and r.fix, rule_id
     assert {r.kind for r in A.RULES} == {"file", "cross"}

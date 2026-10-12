@@ -1,0 +1,16 @@
+<section data-screen="booking" data-title="New booking" data-order="2">
+  <h1>New booking</h1>
+  <div data-state="ready">
+    <form>
+      <label for="guests">Guests</label>
+      <input id="guests" type="number">
+      <button type="submit">Confirm booking</button>
+    </form>
+  </div>
+  <div data-state="loading">
+    <button type="submit" disabled>Saving…</button>
+  </div>
+  <div data-state="error">
+    <p role="alert">We could not save the booking</p>
+  </div>
+</section>

@@ -1,0 +1,12 @@
+@if (loading()) {
+  <app-skeleton />
+} @else if (tables().length === 0) {
+  <app-empty-state title="No tables booked yet" />
+} @else {
+  <h1>Today’s tables</h1>
+  <ul>
+    @for (table of tables(); track table) {
+      <li>{{ table }}</li>
+    }
+  </ul>
+}
