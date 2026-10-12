@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -158,3 +159,39 @@ def test_verify_reports_stale_agents_makefile_and_copies(tmp_path: Path) -> None
 def test_verify_without_plumb_md(tmp_path: Path) -> None:
     r = cli(tmp_path, "--verify")
     assert r.returncode == 1 and "problem: no PLUMB.md" in r.stdout and "fix: " in r.stdout
+
+
+def test_verify_reports_make_targets_that_do_not_exist(tmp_path: Path) -> None:
+    # PLUMB.md's Commands lines name `make tokens` etc.; a project whose user declined the Makefile must not keep them.
+    root = project_with_everything(tmp_path)
+    (root / "Makefile").unlink()
+    r = cli(root, "--verify")
+    assert r.returncode == 1, r.stdout
+    assert "problem: PLUMB.md names `make tokens`, `make tokens-check`, `make design-audit` but there is no Makefile" in r.stdout
+    assert "fix: " in r.stdout and "Makefile.snippet" in r.stdout and "direct commands" in r.stdout
+
+
+def test_verify_reports_a_make_target_missing_from_the_makefile(tmp_path: Path) -> None:
+    root = project_with_everything(tmp_path)
+    make = root / "Makefile"
+    text = make.read_text(encoding="utf-8")
+    make.write_text(text.split("# Check the UI code")[0].replace(" design-audit", ""), encoding="utf-8")
+    r = cli(root, "--verify")
+    assert r.returncode == 1, r.stdout
+    assert "problem: PLUMB.md names `make design-audit` but the Makefile has no design-audit target" in r.stdout
+    assert "ok: PLUMB.md's make targets" not in r.stdout
+
+
+def test_verify_accepts_direct_commands_without_a_makefile(tmp_path: Path) -> None:
+    root = project_with_everything(tmp_path)
+    (root / "Makefile").unlink()
+    plumb = root / "PLUMB.md"
+    plumb.write_text(re.sub(r" ?\(make [a-z-]+\)", "", plumb.read_text(encoding="utf-8")), encoding="utf-8")
+    r = cli(root, "--verify")
+    assert r.returncode == 0, r.stdout
+    assert "make" not in plumb.read_text(encoding="utf-8").split("## Commands")[1].split("##")[0]
+
+
+def test_verify_accepts_make_targets_that_exist(tmp_path: Path) -> None:
+    r = cli(project_with_everything(tmp_path), "--verify")
+    assert r.returncode == 0 and "ok: PLUMB.md's make targets exist in the Makefile" in r.stdout

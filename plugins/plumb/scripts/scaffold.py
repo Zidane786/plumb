@@ -27,8 +27,8 @@ Ownership (spec 5.1):
       design-system skill (needs SKILL.md and assets/tokens/*.tokens.json). --dry-run lists every change, writes nothing.
 
   scaffold.py --verify --project-root P
-      Check that PLUMB.md's skill path exists, that the AGENTS.md / CLAUDE.md row and the Makefile point at it, and that
-      the copy targets resolve. Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
+      Check that PLUMB.md's skill path exists, that the AGENTS.md / CLAUDE.md row and the Makefile point at it, that
+      every `make <target>` PLUMB.md names exists in the Makefile, and that the copy targets resolve. Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
       suggested --relocate command. Exit 0 when there is no problem, 1 otherwise.
 
@@ -733,6 +733,37 @@ def find_skills(root: Path) -> List[str]:
     return found
 
 
+MAKE_REF = re.compile(r"[(`]make ([A-Za-z0-9_.-]+)")
+MAKEFILES = ("Makefile", "makefile", "GNUmakefile")
+MAKE_RULE = re.compile(r"^([A-Za-z0-9_.-][A-Za-z0-9_. \t-]*?)[ \t]*::?(?!=)", re.M)
+
+
+def makefile_targets(root: Path) -> "Optional[set]":
+    """The targets the project's Makefile defines, or None when there is no Makefile."""
+    for name in MAKEFILES:
+        path = root / name
+        if path.is_file():
+            return {t for m in MAKE_RULE.finditer(read_keep(path)) for t in m.group(1).split()}
+    return None
+
+
+def check_make_targets(text: str, root: Path) -> Optional[str]:
+    """PLUMB.md must not send anyone to a `make` target that does not exist (the user may have declined the Makefile).
+    Returns the problem text, or None (printing `ok:` when PLUMB.md names targets and they all exist)."""
+    named = list(dict.fromkeys(MAKE_REF.findall(text)))
+    if not named:
+        return None
+    targets = makefile_targets(root)
+    if targets is None:
+        return f"PLUMB.md names {', '.join(f'`make {t}`' for t in named)} but there is no Makefile"
+    missing = [t for t in named if t not in targets]
+    if not missing:
+        print("ok: PLUMB.md's make targets exist in the Makefile")
+        return None
+    return (f"PLUMB.md names {', '.join(f'`make {t}`' for t in missing)} but the Makefile has no "
+            f"{', '.join(missing)} target{'s' if len(missing) != 1 else ''}")
+
+
 def verify(root: Path) -> int:
     problems = 0
 
@@ -750,7 +781,8 @@ def verify(root: Path) -> int:
         else:
             print("fix: run /plumb:init, then /plumb:create or /plumb:extract")
         return 1
-    m = DESIGN_LINE.search(read_keep(plumb_md))
+    plumb_text = read_keep(plumb_md)
+    m = DESIGN_LINE.search(plumb_text)
     skill_rel = ""
     if not m or not m.group(1).strip():
         problem("PLUMB.md has no `Design system:` line")
@@ -785,7 +817,7 @@ def verify(root: Path) -> int:
                         problem(f"the Plumb row in {name} does not name {marker}SKILL.md")
                         print(f"fix: change the path in that row to {marker}SKILL.md")
         if not rows:
-            print("note: no Plumb row in AGENTS.md or CLAUDE.md (optional; /plumb:init offers to add it)")
+            print("note: no Plumb row in AGENTS.md or CLAUDE.md (/plumb:init step 4 asks the user whether to add it)")
         makefile = root / "Makefile"
         if makefile.is_file():
             lines = [l for l in read_keep(makefile).splitlines() if "build-tokens.py" in l or "audit.py" in l]
@@ -814,6 +846,11 @@ def verify(root: Path) -> int:
                 print(f"note: web copy {rel} is not written yet (run the tokens build)")
             else:
                 print(f"ok: web copy {rel} resolves")
+    make_problem = check_make_targets(plumb_text, root)
+    if make_problem:
+        problem(make_problem)
+        print("fix: ask the user: add the Plumb targets (templates/Makefile.snippet) to the Makefile, or change "
+              "PLUMB.md's Commands lines to the direct commands (drop each \"(make ...)\")")
     print("verify: ok" if not problems else f"verify: {problems} problem{'s' if problems != 1 else ''}")
     return 0 if not problems else 1
 
