@@ -283,6 +283,64 @@ def test_unused_tokens_are_not_reported_for_an_early_project(tmp_path: Path) -> 
     assert not [f for f in audit_json(project)["findings"] if f["rule"] == "unused-token"]
 
 
+def _created(project: Path, days_ago: int) -> None:
+    import datetime
+    day = (datetime.date.today() - datetime.timedelta(days=days_ago)).isoformat()
+    text = (project / "PLUMB.md").read_text(encoding="utf-8")
+    write(project / "PLUMB.md", text + f"\n## Plumb updates\n- {day} created with Plumb 1.0.0 (web; direction \"x\")\n")
+
+
+def test_a_just_created_system_gets_no_housekeeping_suggestions_about_its_own_tokens(tmp_path: Path) -> None:
+    for days, quiet in ((0, True), (A.FRESH_DAYS - 1, True), (A.FRESH_DAYS, False), (90, False)):
+        project = make_project(tmp_path / f"p{days}", CROSS / "unused-token/bad")
+        doc = json.loads((project / TOKENS_REL).read_text(encoding="utf-8"))
+        doc["color"]["surface-copy"] = dict(doc["color"]["surface"])  # a duplicate token
+        write(project / TOKENS_REL, json.dumps(doc, indent=2))
+        _created(project, days)
+        rules = {f["rule"] for f in audit_json(project)["findings"]}
+        assert ("unused-token" in rules) is not quiet and ("duplicate-tokens" in rules) is not quiet, (days, rules)
+
+
+def _named_steps_case(tmp_path: Path) -> Path:
+    case = tmp_path / "case"
+    doc = json.loads((CROSS / "clean.tokens.json").read_text(encoding="utf-8"))
+    doc["radius"] = {"$type": "dimension", "sm": {"$value": "4px"}, "lg": {"$value": "10px"}}
+    doc["spacing"]["4"] = {"$value": "20px"}  # gap-4 is 20px in this project, not Tailwind's 16px
+    write(case / "tokens.json", json.dumps(doc, indent=2))
+    for i in range(3):
+        write(case / f"app/card{i}.tsx",
+              f'export const C{i} = () => <div className="rounded-lg gap-4 p-4 text-sm">x</div>;\n')
+    return case
+
+
+def test_named_tailwind_steps_count_at_the_projects_token_values(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", _named_steps_case(tmp_path))
+    found = audit_json(project)["findings"]
+    assert not [f for f in found if f["rule"] == "missing-token"], found  # rounded-lg is radius.lg = 10px here
+    assert not [f for f in found if f["rule"] in ("off-scale-spacing", "off-scale-radius")], found
+    inv = A.Project(project, project / SKILL_REL, json.loads((project / TOKENS_REL).read_text(encoding="utf-8")), {},
+                    [A.make_ctx("app/card0.tsx", (project / "app/card0.tsx").read_text(encoding="utf-8"),
+                                json.loads((project / TOKENS_REL).read_text(encoding="utf-8")), {})],
+                    False, None).inventory
+    assert set(inv["radius"]) == {"10px"} and set(inv["spacing"]) == {"20px"} and set(inv["font-size"]) == {"14px"}
+
+
+def test_the_audit_skips_only_plumbs_block_in_a_web_copy(tmp_path: Path) -> None:
+    case = tmp_path / "case"
+    doc = json.loads((CROSS / "clean.tokens.json").read_text(encoding="utf-8"))
+    doc["$extensions"]["plumb"]["web"]["copies"] = ["app/globals.css"]
+    write(case / "tokens.json", json.dumps(doc, indent=2))
+    write(case / "app/globals.css", '@import "tailwindcss";\n\nbody {\n  color: #123456;\n}\n')
+    write(case / "app/page.tsx", 'export default () => <p className="text-sm">x</p>;\n')
+    project = make_project(tmp_path / "p", case)  # the build adds the block to app/globals.css
+    text = (project / "app/globals.css").read_text(encoding="utf-8")
+    assert "/* plumb:start" in text
+    line = text.splitlines().index("  color: #123456;") + 1
+    found = [f for f in audit_json(project, "app")["findings"] if f["file"] == "app/globals.css"]
+    assert [(f["rule"], f["line"]) for f in found] == [("raw-colour", line)], found  # the project's line, not the block's
+    assert not [f for f in audit_json(project)["findings"] if f["rule"] == "generated-drift"]
+
+
 def test_focus_inconsistency_names_the_majority(tmp_path: Path) -> None:
     project = make_project(tmp_path / "p", CROSS / "focus-state/bad-inconsistent")
     found = [f for f in audit_json(project)["findings"] if f["rule"] == "focus-state"]

@@ -146,7 +146,12 @@ Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt
 (.next dist build out coverage Pods DerivedData ...), never files over 5 MB. A `GENERATED ... do not edit` header exempts
 a file only on the paths Plumb's generators own: <skill>/assets/platforms/** (not starter/), the copies listed in
 $extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, screens.html,
-tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited. With no PATHS the project
+tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited.
+In a web copy only Plumb's block (/* plumb:start ... */ to /* plumb:end */) is skipped (blanked, so line numbers stay):
+the rest of the file is the project's and is audited. Tailwind's named steps (text-sm, rounded-lg, gap-4, p-0.5) count
+at the project's token value when the tokens define that step (the rules and the inventory behind missing-token), never
+at Tailwind's default. unused-token and duplicate-tokens wait FRESH_DAYS (14) after PLUMB.md's
+`- YYYY-MM-DD created with Plumb` line. With no PATHS the project
 is walked: PLUMB.md `UI files:` narrows it, the design-system skill's own folder is left out except
 assets/platforms/*/starter/, and docs/design is left to the prototype checks. PATHS given are always checked.
 
@@ -280,7 +285,7 @@ def num(x: float) -> str:
 
 def varname(path: str) -> str:
     """The CSS custom property build-tokens.py writes for a token path (kept in step with build-tokens.varname)."""
-    parts = path.split(".")
+    parts = [P.css_name(p) for p in P.path_parts(path)]
     group, rest = parts[0], "-".join(parts[1:])
     if group == "motion" and len(parts) > 2:
         sub = "-".join(parts[2:])
@@ -332,7 +337,7 @@ class Scales:
         for path, tok, ttype in P.iter_tokens(doc):
             if isinstance(tok.get("$value"), str) and tok["$value"].startswith("{"):
                 self.aliases.add(path)
-            parts = path.split(".")
+            parts = P.path_parts(path)
             group, name = parts[0], "-".join(parts[1:])
             try:
                 value = P.resolve(doc, path)
@@ -374,6 +379,9 @@ class Scales:
         self.duration_ms = {d[2] for d in self.durations}
         self.easing_names = {e[1] for e in self.easings}
         self.spacing_px = set(self.spacing.values())
+        # The project's own Tailwind steps: rounded-lg, text-sm, gap-4 mean these values here, not Tailwind's defaults.
+        self.named = {"text": dict(self.type), "radius": dict(self.radius), "spacing": dict(self.spacing),
+                      "spacing_base": self.base}
 
     # ---- nearest tokens (memoised: a minified file repeats the same values thousands of times)
 
@@ -624,7 +632,7 @@ def _dimension_fix(ctx: Ctx, group: str, px: float, utility: Optional[str]) -> O
     if near is None:
         return f"no {group} tokens yet: {ADD_TOKEN}"
     path, tokpx, dist = near
-    name = "-".join(path.split(".")[1:])
+    name = "-".join(P.path_parts(path)[1:])
     if group == "spacing" and utility not in (None, "theme") and s.base:
         step = tokpx / s.base  # Tailwind spacing utilities are steps of the base, whatever the token is called
         name = num(step) if (step * 2).is_integer() else name
@@ -962,8 +970,10 @@ def check_off_scale_spacing(ctx: Ctx) -> Iterator[Hit]:
         if not ctx.class_ok(m.start()):
             continue
         step = m.group(2)
+        if step in s.spacing:
+            continue  # a step the tokens define: Tailwind uses the project's --spacing-<step>, whatever its value
         px = float(step) * s.base
-        if px == 0 or px in s.spacing_px:  # the utility's px (step x base), never its name
+        if px == 0 or px in s.spacing_px:  # otherwise the utility's px (step x base)
             continue
         yield Hit(m.start(), m.group(0), fix=_dimension_fix(ctx, "spacing", px, m.group(1)))
 
@@ -1435,6 +1445,18 @@ class Project:
         self._inv_findings: Optional[List[Tuple[str, XHit]]] = None
         self._fidelity: Optional["Fidelity"] = None
 
+    @property
+    def fresh(self) -> bool:
+        """The design system was created less than FRESH_DAYS ago (PLUMB.md's `- YYYY-MM-DD created with Plumb` line):
+        its tokens were all just chosen on purpose and the UI is still being built, so the token-housekeeping
+        suggestions about the tokens themselves (unused-token, duplicate-tokens) wait."""
+        created = self.settings.get("_created")
+        try:
+            day = datetime.date.fromisoformat(str(created))
+        except ValueError:
+            return False
+        return 0 <= (datetime.date.today() - day).days < FRESH_DAYS
+
     # ---- tokens
 
     def is_primitive(self, ctx: "Ctx") -> bool:
@@ -1448,7 +1470,7 @@ class Project:
             except OSError:
                 self._tokens_text = ""
         text, pos, found = self._tokens_text, 0, None
-        for part in path.split("."):
+        for part in P.path_parts(path):
             found = re.compile(r"\"" + re.escape(part) + r"\"\s*:").search(text, pos)
             if found is None:
                 return 1
@@ -1482,8 +1504,9 @@ class Project:
             tailwind = (any(c.tailwind for c in self.ctxs) or any(P.uses_tailwind(c.text) for c in self.ctxs)
                         or P.tailwind_project(self.root))
             inv = P.new_inventory()
+            named = self.scales.named if self.scales is not None else None
             for c in self.ctxs:
-                P.inventory_add(inv, c.path, c.text, tailwind, code=c.code)
+                P.inventory_add(inv, c.path, c.text, tailwind, code=c.code, named=named)
             self._inventory = P.finish_inventory(inv)
         return self._inventory
 
@@ -1663,15 +1686,17 @@ def check_contrast_headroom(proj: Project) -> Iterator[XHit]:
     bt = load_build_tokens()
     if not pairs or isinstance(pairs, PlumbError) or bt is None:
         return
+    headroom = getattr(bt, "HEADROOM", 0.3)
+    spare = getattr(bt, "FIX_SPARE", 0.5)
     for pair in pairs:
         for mode in proj.modes():
             ratio = pair.light if mode == "light" else pair.dark
-            if not pair.need <= ratio < pair.need + 0.3:
+            if not pair.need <= ratio < pair.need + headroom:
                 continue
             fg, bg = pair.hex[mode]
-            better = bt.nearest_passing(fg, bg, pair.need + 0.5, lighten=(mode == "dark"))
-            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, 0.5 to spare) with /plumb:update, "
-                   f"then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
+            better = bt.nearest_passing(fg, bg, pair.need + spare, lighten=(mode == "dark"))
+            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, {num(spare)} to spare) with "
+                   f"/plumb:update, then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
             yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
                        f"{pair.fg} on {pair.bg} passes at {ratio:.2f}:1 in {mode} mode, only {ratio - pair.need:.2f} "
                        f"above the {num(pair.need)}:1 minimum: thin fonts and dim screens push it under", fix)
@@ -1721,7 +1746,7 @@ def check_generated_drift(proj: Project) -> Iterator[XHit]:
             current = normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.is_file() else None
         except OSError:
             current = None
-        if current == text:
+        if current == normalise_text(text):
             continue
         state = "missing" if current is None else "stale: it does not match the tokens (edited by hand, or tokens changed since)"
         yield XHit(rel(path, proj.root), 1, rel(path, proj.root), f"generated file is {state}", proj.build_command)
@@ -2226,7 +2251,7 @@ _UTIL = re.compile(
     r"|accent|caret|placeholder|shadow|inset-shadow|drop-shadow|rounded(?:-[trblse]{1,2})?|font|leading|tracking|ease"
     r"|duration|delay|animate|p[xytrblse]?|m[xytrblse]?|gap(?:-[xy])?|space-[xy]|[wh]|size|min-[wh]|max-[wh]|inset(?:-[xy])?"
     r"|top|left|right|bottom|translate-[xy]|scroll-[mp][xytrblse]?)-(.+)$")
-_WORD = re.compile(r"-{0,2}[A-Za-z][\w-]*")
+_WORD = re.compile(r"-{0,2}[A-Za-z](?:[\w-]|\.(?=\d))*")  # p-0.5 is one word (a decimal step)
 _FAMILY_OF_PREFIX = (("rounded", "radius"), ("shadow", "shadow"), ("inset-shadow", "shadow"), ("drop-shadow", "shadow"),
                      ("duration", "duration"), ("delay", "duration"), ("ease", "easing"), ("font", "font"))
 _COLOUR_PREFIXES = re.compile(r"^(?:bg|text|border|ring|outline|fill|stroke|from|via|to|decoration|divide|accent|caret|placeholder|shadow)")
@@ -2234,13 +2259,14 @@ _SPACING_PREFIXES = re.compile(r"^(?:p[xytrblse]?|m[xytrblse]?|gap|space|[wh]|si
 
 
 UNUSED_MIN_FILES = 5
+FRESH_DAYS = 14  # unused-token and duplicate-tokens wait this long after the design system was created
 _GROUP_LABEL = {"color": "colour", "typography": "type", "radius": "radius", "spacing": "spacing", "shadow": "shadow",
                 "motion": "motion", "font": "font"}
 
 
 def check_unused_token(proj: Project) -> Iterator[XHit]:
-    if proj.doc is None or proj.explicit or len(proj.ctxs) < UNUSED_MIN_FILES:
-        return  # partial scans and early projects use few tokens yet: not worth a suggestion
+    if proj.doc is None or proj.explicit or len(proj.ctxs) < UNUSED_MIN_FILES or proj.fresh:
+        return  # partial scans, early projects and a just-created system use few tokens yet: not worth a suggestion
     words, mobile = set(), set()
     for c in proj.ctxs:
         found = set(_WORD.findall(c.code))
@@ -2268,12 +2294,12 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
         raw = tok.get("$value")
         if isinstance(raw, str) and raw.strip().startswith("{") and raw.strip().endswith("}"):
             aliases[path] = raw.strip()[1:-1]
-        group = path.split(".")[0]
+        group = P.path_parts(path)[0]
         var = varname(path)
         if group not in ("color", "typography", "radius", "spacing", "shadow", "motion", "font"):
             continue
         candidates.append(path)
-        camel = re.sub(r"[-_.]+([a-zA-Z0-9])", lambda x: x.group(1).upper(), "-".join(path.split(".")[1:]))
+        camel = re.sub(r"[-_.]+([a-zA-Z0-9])", lambda x: x.group(1).upper(), "-".join(P.path_parts(path)[1:]))
         hit = var in words or (camel and camel in mobile)
         if not hit:
             if ttype == "color":
@@ -2288,7 +2314,7 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
                 hit = var[len("--font-"):] in used["font"]
             elif group == "spacing":
                 px = s.px_of.get(path) if s else None
-                hit = "-".join(path.split(".")[1:]) in used["spacing"] or (
+                hit = "-".join(P.path_parts(path)[1:]) in used["spacing"] or (
                     px is not None and s.base and num(px / s.base) in used["spacing"])
             elif group == "motion" and var.startswith("--duration-"):
                 ms = next((d[2] for d in s.durations if d[0] == path), None) if s else None
@@ -2309,7 +2335,7 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
     unused: Dict[str, List[str]] = {}
     for path in candidates:
         if path not in referenced:
-            unused.setdefault(path.split(".")[0], []).append(path)
+            unused.setdefault(P.path_parts(path)[0], []).append(path)
     for group, paths in unused.items():
         n = len(paths)
         label = _GROUP_LABEL.get(group, group)
@@ -2322,8 +2348,8 @@ def check_unused_token(proj: Project) -> Iterator[XHit]:
 
 
 def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
-    if proj.doc is None:
-        return
+    if proj.doc is None or proj.fresh:
+        return  # a just-created system's tokens were all chosen on purpose: no housekeeping on them yet
     doc = proj.doc
     colours = []
     for path, tok in proj.colour_tokens():
@@ -2335,7 +2361,7 @@ def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
             dark = P.parse_color(P.resolve(doc, path, "dark"))
         except PlumbError:
             continue
-        colours.append((path, light, dark, P.is_text_name("-".join(path.split(".")[1:]))))
+        colours.append((path, light, dark, P.is_text_name("-".join(P.path_parts(path)[1:]))))
     for i, (path, light, dark, texty) in enumerate(colours):
         for other, olight, odark, otexty in colours[:i]:
             if texty != otexty or abs(light[1] - olight[1]) > 0.02:
@@ -2355,7 +2381,7 @@ def check_duplicate_tokens(proj: Project) -> Iterator[XHit]:
     groups: Dict[str, List[Tuple[str, float]]] = {}
     for path, px in s.px_of.items():
         if px and not (path in s.aliases):
-            groups.setdefault(path.split(".")[0], []).append((path, px))
+            groups.setdefault(P.path_parts(path)[0], []).append((path, px))
     def style(path: str) -> object:
         """A type token's other fields: the same size with another line height or weight is a different style (label
         vs body); sizes 1px apart are near-duplicate steps whatever the other fields say."""
@@ -3492,8 +3518,11 @@ def make_ctx(path_name: str, text: str, doc: Optional[dict], settings: dict) -> 
     if file_ext(path_name) is None or in_build_output(path_name):
         return None
     text = normalise_text(text or "")
-    if is_generated(text) and generator_owned(path_name, settings or {}):
+    owned = generator_owned(path_name, settings or {})
+    if is_generated(text) and owned:
         return None
+    if owned:
+        text = P.mask_block(text)  # a web copy: Plumb's block is generated, the rest of the file is audited
     return Ctx(path_name, text, doc, settings)
 
 
@@ -3604,12 +3633,22 @@ def load_doc(skill_dir: Path) -> Optional[dict]:
     return P.load_tokens(path) if path is not None else None
 
 
+_CREATED = re.compile(r"^\s*-\s*(\d{4}-\d{2}-\d{2})\s+created with Plumb\b", re.M)
+
+
 def make_settings(root: Path, doc: Optional[dict]) -> dict:
-    """PLUMB.md's Key: value lines merged over the tokens file's $extensions.plumb settings.
+    """PLUMB.md's Key: value lines merged over the tokens file's $extensions.plumb settings, plus "_created": the date
+    of PLUMB.md's `- YYYY-MM-DD created with Plumb` line (Plumb updates), when there is one.
 
     Adds "_shadcn": True when the project has shadcn primitives (components/ui/select or checkbox, at the root or in
     src/), so native <select> and checkbox/radio inputs are reported as hand-rolled."""
     settings = {**P.plumb_settings(doc or {}), **P.read_plumb_md(root / "PLUMB.md")}
+    try:
+        created = _CREATED.search((root / "PLUMB.md").read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError):
+        created = None
+    if created:
+        settings["_created"] = created.group(1)
     for base in (root, root / "src"):
         for name in ("select", "checkbox"):
             if any((base / "components" / "ui" / f"{name}{ext}").is_file() for ext in (".tsx", ".jsx")):
@@ -4658,6 +4697,9 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
         if is_generated(normalise_text(text[:1500])) and generator_owned(name, settings):
             generated.append(text)  # a header counts only on the paths the generators own
             continue
+        block = P.block_text(normalise_text(text)) if generator_owned(name, settings) else None
+        if block:
+            generated.append(block)  # a web copy's Plumb block (its reduced-motion rule counts); the rest is audited
         ctx = make_ctx(name, text, doc, settings)
         if ctx is None:
             continue
