@@ -84,6 +84,13 @@ newer. It never overwrites an existing design system.
 
 ### 3.2 `/plumb:create`
 
+**Nothing is written without the user's OK.** Every fact Plumb detects (project root, framework,
+styling, platforms, brand colours and fonts found in the code) is a suggestion the user confirms or
+corrects. Before generating, the user approves the full token set (light and dark); before writing,
+the dry-run list of every file and path; each contrast fix; and which components are written, in
+which framework and where. The same applies to extract (each token group, the screens to prototype,
+the files to write) and to init's wire-in steps.
+
 **A. The product first** (questions grouped up to four at a time, each with suggestions drawn from
 the brief, README, `AGENTS.md`/`CLAUDE.md`, `SLATE.md` and any prototype or brand files found):
 
