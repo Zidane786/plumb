@@ -651,11 +651,17 @@ def test_reduced_motion_keep_fades_keeps_opacity_and_colour_and_stops_movement(p
     assert run(project).returncode == 0
     css = css_out(project).read_text(encoding="utf-8")
     block = css.split("@media (prefers-reduced-motion: reduce) {", 1)[1].split("\n}\n", 1)[0]
-    assert "transition-property" not in block  # nothing gains a transition it did not have
     keep = ":not(.transition-opacity, .transition-colors, .motion-fade)"
-    stop = block.split(f"{keep}, {keep}::before, {keep}::after {{", 1)[1]
-    assert "transition-duration: 0s !important;" in stop  # every transition but a fade-only one stops
+    stop = block.split(f"{keep}, {keep}::before, {keep}::after {{", 1)[1].split("}", 1)[0]
+    assert "transition-duration: 0s !important;" in stop  # every transition but a fade-only one stops, pseudos too
     assert "animation-duration: 0s !important;" in block  # keyframe movement stops
+    # a fade element's ::before / ::after keep only opacity and colour transitions (they may move otherwise)
+    pseudos = ", ".join(f"{c}::{p}" for c in (".transition-opacity", ".transition-colors", ".motion-fade")
+                        for p in ("before", "after"))
+    fade = block.split(f"{pseudos} {{", 1)[1].split("}", 1)[0]
+    assert "transition-property: opacity, color, background-color, border-color" in fade and "!important" in fade
+    assert "transform" not in fade and "duration" not in fade  # no element gains a duration it did not have
+    assert block.count("transition-property") == 1  # an element itself keeps its own transition as it is
     assert "keep the fades" in css
 
 

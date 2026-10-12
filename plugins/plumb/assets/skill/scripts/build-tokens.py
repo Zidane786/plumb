@@ -362,25 +362,33 @@ def dark_variant_css(doc: dict) -> List[str]:
 # Elements whose transition is only a fade: Tailwind's transition-opacity and transition-colors (they transition
 # nothing else), and .motion-fade, the class a plain-CSS project puts on an element whose own transition is a fade.
 FADE_CLASSES = (".transition-opacity", ".transition-colors", ".motion-fade")
+# What a fade animates: opacity and the colours (Tailwind's transition-colors list).
+FADE_PROPERTIES = ("opacity", "color", "background-color", "border-color", "outline-color", "text-decoration-color",
+                   "fill", "stroke")
 
 
 def reduced_motion_css(doc: dict) -> List[str]:
     """The prefers-reduced-motion block for the {{@reduced-motion}} directive, as $extensions.plumb.motion.reduced
     says: none = no animation or transition at all; keep-fades = an element whose transition is only a fade
-    (FADE_CLASSES) keeps it as it is, every other transition and every animation stops; no element gains a transition
-    it did not have."""
+    (FADE_CLASSES) keeps it as it is, and its ::before / ::after keep only their opacity and colour transitions (they
+    are not marked, so they may move); every other transition and every animation stops; no element gains a
+    transition it did not have."""
     _switch, reduced = web_switches(doc)
     if reduced == "keep-fades":
         keep = ", ".join(FADE_CLASSES)
         head = ["/* Motion is an enhancement. If the user asked for less, keep the fades and stop every movement: an",
-                f"   element whose transition is only a fade ({keep}) keeps it; every other transition and",
-                "   every animation stops. Nothing gains a transition it did not have. Never override this block. */"]
+                f"   element whose transition is only a fade ({keep}) keeps it, its ::before and",
+                "   ::after keep only opacity and colour; every other transition and every animation stops. Nothing",
+                "   gains a transition it did not have. Never override this block. */"]
         rules = ["animation-duration: 0s !important;", "animation-iteration-count: 1 !important;",
                  "scroll-behavior: auto !important;"]
         moving = f":not({keep})"
         stop = ["transition-duration: 0s !important;", "transition-delay: 0s !important;"]
+        pseudos = ", ".join(f"{c}::{p}" for c in FADE_CLASSES for p in ("before", "after"))
+        fade_only = [f"transition-property: {', '.join(FADE_PROPERTIES)} !important;"]
         return (head + ["@media (prefers-reduced-motion: reduce) {"] + _rule("*, ::before, ::after", rules, "  ")
-                + _rule(f"{moving}, {moving}::before, {moving}::after", stop, "  ") + ["}"])
+                + _rule(f"{moving}, {moving}::before, {moving}::after", stop, "  ")
+                + _rule(pseudos, fade_only, "  ") + ["}"])
     else:
         head = ["/* Motion is an enhancement. If the user asked for less, give them none. Never override this block. */"]
         rules = ["animation-duration: 0s !important;", "animation-iteration-count: 1 !important;",
