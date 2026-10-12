@@ -6,6 +6,14 @@
 Finds where the project and its UI live, so init can show "Plumb found: ..." and wait for the
 user's confirmation. It only reads; it never writes anything.
 
+Layouts: monorepo, mixed, frontend, backend, single (nothing recognised), parent (outside git, the folder has no
+project markers but child folders do), new (outside git and empty, or only dotfiles: a new project starts here).
+git is optional: outside a repo, a folder with project markers is itself the project root ("in_repo": false, with a
+reason, so confidence is at most medium). A folder that holds other git repos is never a project root: it is a
+parent, and "children" lists the project folders found under it (git repos and folders with markers, by path, up to
+the scan depth). Outside git, "enclosing" names the nearest folder above with monorepo markers or a PLUMB.md (then
+confidence is low: the project may be that folder). Detection is a first guess; the init skill confirms it.
+
 Standard library only, Python 3.9+.
 """
 
@@ -25,6 +33,9 @@ EXCLUDE = {
     "node_modules", ".git", "dist", "build", ".next", "Pods", "DerivedData", ".venv", "venv",
     "__pycache__", "target", ".turbo", ".nuxt", ".svelte-kit", ".gradle", ".idea", "coverage",
 }
+# Folders never searched for nested projects or repos: build output plus vendored and dependency code
+# (a git checkout under vendor/ is a dependency of the project, not a project of its own).
+NOT_PROJECTS = EXCLUDE | {"vendor", "vendors", "third_party", "third-party", "external", "externals", "out"}
 MAX_DEPTH = 5
 MAX_ENTRIES = 60000
 UI_EXTS = {".tsx", ".jsx", ".vue", ".svelte", ".html", ".swift", ".kt"}
@@ -378,28 +389,58 @@ def classify(root: Path, max_depth: int = MAX_DEPTH) -> Tuple[List[dict], List[d
     return ui, no_ui
 
 
-def list_children(cwd: Path) -> List[dict]:
-    """Immediate child folders that are repos or look like projects (cheap: markers only, no full scan)."""
+def list_children(cwd: Path, max_depth: int = MAX_DEPTH) -> List[dict]:
+    """Project folders under cwd, up to max_depth levels down (cheap: markers only, no full scan).
+
+    A git repo or a folder with project markers is listed (path relative to cwd) and is not searched for more
+    projects; only a nested git repo inside a non-repo project folder is still listed, because a project root must
+    never contain another repo. Folders with no markers are searched deeper."""
     kids: List[dict] = []
-    try:
-        entries = sorted(os.scandir(str(cwd)), key=lambda e: e.name.lower())
-    except OSError:
-        return kids
-    for e in entries:
+    budget = [MAX_ENTRIES]
+
+    def visit(folder: Path, rel: str, depth: int, repos_only: bool) -> None:
         try:
-            if not e.is_dir(follow_symlinks=False):
-                continue
+            entries = sorted(os.scandir(str(folder)), key=lambda e: e.name.lower())
         except OSError:
-            continue
-        if e.name.startswith(".") or e.name in EXCLUDE:
-            continue
-        child = Path(e.path)
-        is_repo = (child / ".git").exists()
-        names = [x.name for x in _safe_iter(child)]
-        looks_like_project = any(n in MARKER_FILES or n.endswith(".xcodeproj") for n in names if n != "index.html")
-        if is_repo or looks_like_project:
-            kids.append({"name": e.name, "path": e.name, "is_repo": is_repo, "has_ui": _quick_ui(child, names)})
+            return
+        budget[0] -= len(entries)
+        for e in entries:
+            try:
+                if not e.is_dir(follow_symlinks=False):
+                    continue
+            except OSError:
+                continue
+            if e.name.startswith(".") or e.name in NOT_PROJECTS or e.name.endswith(".xcodeproj"):
+                continue
+            child = Path(e.path)
+            child_rel = e.name if not rel else rel + "/" + e.name
+            names = [x.name for x in _safe_iter(child)]
+            is_repo = ".git" in names
+            looks_like_project = any(n in MARKER_FILES or n.endswith(".xcodeproj") for n in names if n != "index.html")
+            if is_repo or (looks_like_project and not repos_only):
+                kids.append({"name": child_rel, "path": child_rel, "is_repo": is_repo,
+                             "has_ui": _quick_ui(child, names)})
+            if is_repo or depth + 1 >= max_depth or budget[0] <= 0:
+                continue
+            visit(child, child_rel, depth + 1, repos_only or looks_like_project)
+
+    visit(cwd, "", 0, False)
     return kids
+
+
+def enclosing_project(cwd: Path) -> Optional[dict]:
+    """Outside git: the nearest folder above cwd with monorepo markers or a PLUMB.md (the project may be that one)."""
+    for d in cwd.parents:
+        markers = [n for n in MONOREPO_FILES if (d / n).is_file()]
+        pj = d / "package.json"
+        if pj.is_file() and "workspaces" in load_package_json(pj):
+            markers.append("package.json workspaces")
+        plumb = (d / "PLUMB.md").is_file()
+        if markers or plumb:
+            return {"root": d.as_posix(), "markers": markers, "plumb_md": plumb}
+        if (d / ".git").exists():
+            break
+    return None
 
 
 def _top_ui(folder: Path, ns: List[str]) -> bool:
@@ -465,13 +506,24 @@ def detect(cwd) -> dict:
     cwd = Path(cwd).resolve()
     root, git_ok = find_root(cwd)
     existing = {"plumb_md": False, "skill": None, "role": None}
+    in_repo = root is not None
     if root is None:
-        return {
-            "root": cwd.as_posix(), "opened": ".", "layout": "parent", "monorepo": None,
-            "ui_packages": [], "no_ui": [], "children": list_children(cwd), "git": False,
-            "git_available": git_ok, "existing": existing, "proposal": None,
-            "confidence": "low", "reasons": ["not inside a repo: the folder is a parent of projects"],
-        }
+        # Not inside git (git is optional): the opened folder is the project when it has project markers, a parent
+        # of projects when only its children do, and a new project when it is empty (or holds only dotfiles).
+        # A folder that holds other git repos is never a project root.
+        names = [x.name for x in _safe_iter(cwd)]
+        own = _has_markers(cwd, names)
+        children = list_children(cwd)
+        if children and (not own or any(c["is_repo"] for c in children)):
+            return {
+                "root": cwd.as_posix(), "opened": ".", "layout": "parent", "monorepo": None,
+                "ui_packages": [], "no_ui": [], "children": children, "git": False, "in_repo": False,
+                "git_available": git_ok, "existing": existing, "proposal": None, "enclosing": None,
+                "confidence": "low", "reasons": ["not inside a repo: the folder is a parent of projects"],
+            }
+        if not own and not [n for n in names if not n.startswith(".")]:
+            return _new_project(cwd, git_ok)
+        root = cwd
     root = root.resolve()
     try:
         opened = cwd.relative_to(root).as_posix()
@@ -500,18 +552,57 @@ def detect(cwd) -> dict:
         for p in u["platforms"]:
             if p not in platforms:
                 platforms.append(p)
-    skill = ".claude/skills/" + name + "-design-system"
     conf, reasons = confidence(layout, marker, ui, no_ui)
+    enclosing = None
+    if not in_repo:
+        reasons.append(NO_GIT_REASON)
+        conf = "medium" if conf == "high" else conf
+        enclosing = enclosing_project(root)
+        if enclosing:
+            reasons.append(_enclosing_reason(enclosing))
+            conf = "low"
     return {
         "root": root.as_posix(), "opened": opened, "layout": layout, "monorepo": marker,
-        "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok, "git_available": git_ok,
-        "existing": read_existing(root),
-        "proposal": {
-            "project": name, "skill_dir": skill, "plumb_md": "PLUMB.md", "copies": copies,
-            "platforms": platforms,
-            "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
-        },
-        "confidence": conf, "reasons": reasons,
+        "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok and in_repo, "in_repo": in_repo,
+        "git_available": git_ok, "existing": read_existing(root), "proposal": _proposal(name, copies, platforms),
+        "enclosing": enclosing, "confidence": conf, "reasons": reasons,
+    }
+
+
+def _enclosing_reason(enc: dict) -> str:
+    what = ", ".join(enc["markers"] + (["PLUMB.md"] if enc["plumb_md"] else []))
+    return "enclosing folder " + enc["root"] + " has " + what + ": the project may be that folder"
+
+
+NO_GIT_REASON = "not a git repo: the folder you opened is taken as the project root (git is optional)"
+
+
+def _proposal(name: str, copies: List[str], platforms: List[str]) -> dict:
+    return {
+        "project": name, "skill_dir": ".claude/skills/" + name + "-design-system", "plumb_md": "PLUMB.md",
+        "docs_dir": "docs/design", "copies": copies, "platforms": platforms,
+        "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
+    }
+
+
+def _has_markers(folder: Path, names: List[str]) -> bool:
+    """The folder itself looks like a project: a manifest, an Xcode project or a monorepo marker."""
+    if any(n in MARKER_FILES or n in MONOREPO_FILES or n.endswith(".xcodeproj") for n in names):
+        return True
+    return monorepo_marker(folder) is not None
+
+
+def _new_project(cwd: Path, git_ok: bool) -> dict:
+    """An empty folder (or only dotfiles) outside git: a new project starts here."""
+    enclosing = enclosing_project(cwd)
+    reasons = ["empty folder: a new project starts here", NO_GIT_REASON]
+    if enclosing:
+        reasons.append(_enclosing_reason(enclosing))
+    return {
+        "root": cwd.as_posix(), "opened": ".", "layout": "new", "monorepo": None,
+        "ui_packages": [], "no_ui": [], "children": [], "git": False, "in_repo": False,
+        "git_available": git_ok, "existing": read_existing(cwd), "proposal": _proposal(project_name(cwd), [], []),
+        "enclosing": enclosing, "confidence": "low" if enclosing else "medium", "reasons": reasons,
     }
 
 
@@ -531,7 +622,12 @@ def human(r: dict) -> str:
             lines.append("No projects found under it.")
         lines.append("Which one? Nothing is written in the parent.")
         return "\n".join(lines) + "\n"
-    note = "git root" if r["git"] else "repo root, git not available"
+    if not r.get("in_repo", True):
+        note = "the folder you opened; not a git repo, git is optional"
+        if r["layout"] == "new":
+            note = "empty folder: a new project starts here; " + note
+    else:
+        note = "git root" if r["git"] else "repo root, git not available"
     if r["opened"] != ".":
         note += "; you opened " + r["opened"]
     lines.append("Plumb found:")
@@ -551,10 +647,16 @@ def human(r: dict) -> str:
     if ex["plumb_md"]:
         lines.append("  existing   PLUMB.md" + (" → " + ex["skill"] if ex["skill"] else "")
                      + (" (role: " + ex["role"] + ")" if ex["role"] else ""))
+    enc = r.get("enclosing")
+    if enc:
+        lines.append("  enclosing  " + enc["root"] + "   ("
+                     + ", ".join(enc["markers"] + (["PLUMB.md"] if enc["plumb_md"] else [])) + ": the project?)")
     p = r["proposal"]
     lines.append("I'll create:")
-    lines.append("  " + p["skill_dir"] + "/   at the repo root")
-    lines.append("  " + p["plumb_md"] + "   at the repo root")
+    lines.append("  " + p["skill_dir"] + "/   in " + r["root"])
+    lines.append("  " + p["plumb_md"] + "   in " + r["root"])
+    lines.append("  " + p["docs_dir"] + "/   in " + r["root"]
+                 + "   (directions or extract page, decision log, prototype, reports)")
     for c in p["copies"]:
         lines.append("  generated copy → " + c)
     for u in r["ui_packages"]:

@@ -827,7 +827,7 @@ def run(args: argparse.Namespace) -> int:
     slug = slugify(name)
     if not name or not slug or re.search(r"[\x00-\x1f]", args.name.replace("\n", " ").replace("\t", " ")):
         raise ScaffoldError(f"the name {args.name!r} has no letters or digits to build a project id from",
-                            "pass --name with the product's name, e.g. --name \"CareDesk\"")
+                            "pass --name with the product's name, e.g. --name \"Acme Notes\"")
     platforms = parse_platforms(args.platforms)
     if args.styling not in STYLINGS:
         raise ScaffoldError(f"the styling {args.styling!r} is not one of {', '.join(STYLINGS)}",

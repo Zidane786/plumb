@@ -437,9 +437,139 @@ def test_backend_plus_ui_without_markers_is_mixed(tmp_path: Path) -> None:
 
 
 def test_parent_git_flags(tmp_path: Path) -> None:
+    pkg(tmp_path, "shop/package.json", {"react": "18"})
     r = run(tmp_path)
-    assert r["layout"] == "parent" and r["git"] is False
+    assert r["layout"] == "parent" and r["git"] is False and r["in_repo"] is False
     assert r["git_available"] is (shutil.which("git") is not None)
+
+
+# Not inside git (git is optional): the opened folder is the project when it has markers, a new project when empty.
+
+
+def test_non_git_project_folder_is_the_project(tmp_path: Path) -> None:
+    pkg(tmp_path, "package.json", {"next": "14", "react": "18"}, "loose-app")
+    put(tmp_path, "app/globals.css", '@import "tailwindcss";\n')
+    put(tmp_path, "app/page.tsx", "x")
+    r = run(tmp_path)
+    assert r["layout"] == "frontend" and r["git"] is False and r["in_repo"] is False
+    assert Path(r["root"]).resolve() == tmp_path.resolve() and r["opened"] == "."
+    assert r["ui_packages"][0]["framework"] == "next" and r["ui_packages"][0]["styling"] == "tailwind-v4"
+    assert r["proposal"]["skill_dir"] == ".claude/skills/loose-app-design-system"
+    assert r["proposal"]["copies"] == ["app/globals.css"] and r["children"] == []
+    assert r["confidence"] == "medium" and any("not a git repo" in x for x in r["reasons"])
+
+
+def test_non_git_monorepo_and_backend(tmp_path: Path) -> None:
+    mono, api = tmp_path / "mono", tmp_path / "api"
+    put(mono, "turbo.json", "{}")
+    pkg(mono, "apps/web/package.json", {"react": "18"})
+    put(api, "pyproject.toml", "[project]\ndependencies=['fastapi']\n")
+    assert run(mono)["layout"] == "monorepo"
+    assert run(api)["layout"] == "backend"
+
+
+def test_empty_folder_is_a_new_project(tmp_path: Path) -> None:
+    new = tmp_path / "Fresh Idea"
+    put(new, ".DS_Store", "x")
+    r = run(new)
+    assert r["layout"] == "new" and r["git"] is False and r["in_repo"] is False
+    assert r["ui_packages"] == [] and r["no_ui"] == [] and r["children"] == []
+    assert r["proposal"]["skill_dir"] == ".claude/skills/fresh-idea-design-system" and r["proposal"]["copies"] == []
+    assert any("new project" in x for x in r["reasons"])
+    human = detect.human(r)
+    assert "new project" in human and "OK, or change something?" in human
+
+
+def test_folder_without_markers_or_marked_children_is_a_single_project(tmp_path: Path) -> None:
+    put(tmp_path, "notes/readme.txt", "hi")
+    put(tmp_path, "sketch.md", "hi")
+    r = run(tmp_path)
+    assert r["layout"] == "single" and Path(r["root"]).resolve() == tmp_path.resolve()
+    assert r["confidence"] == "low"
+
+
+def test_non_git_desktop_with_nested_projects_is_a_parent(tmp_path: Path) -> None:
+    """~/Desktop with Projects/{acme (git), shop, blog} and OldProjects/api: never a project rooted at the Desktop."""
+    desk = tmp_path / "Desktop"
+    repo(desk / "Projects/acme")
+    put(desk / "Projects/acme", "turbo.json", "{}")
+    pkg(desk / "Projects/acme", "apps/web/package.json", {"next": "14"})
+    pkg(desk, "Projects/shop/package.json", {"react": "18"}, "shop")
+    pkg(desk, "Projects/blog/package.json", {"astro": "4"}, "blog")
+    put(desk, "Saved Pages/article/index.html", "<html></html>")  # a stray page is not a project
+    put(desk, "OldProjects/api/pyproject.toml", "[project]\ndependencies=['fastapi']\n")
+    put(desk, "notes.txt", "hi")
+    r = run(desk)
+    assert r["layout"] == "parent" and r["proposal"] is None
+    kids = {c["path"]: c for c in r["children"]}
+    assert set(kids) == {"Projects/acme", "Projects/shop", "Projects/blog", "OldProjects/api"}
+    assert kids["Projects/acme"]["is_repo"] is True and kids["Projects/shop"]["is_repo"] is False
+    assert kids["Projects/shop"]["has_ui"] is True and kids["OldProjects/api"]["has_ui"] is False
+    human = detect.human(r)
+    assert "Projects/acme" in human and "OldProjects/api" in human
+
+
+def test_non_git_folder_with_markers_and_nested_repos_is_a_parent(tmp_path: Path) -> None:
+    put(tmp_path, "index.html", "<html></html>")
+    repo(tmp_path / "work/site")
+    pkg(tmp_path, "work/site/package.json", {"react": "18"})
+    r = run(tmp_path)
+    assert r["layout"] == "parent" and [c["path"] for c in r["children"]] == ["work/site"]
+
+
+@pytest.mark.parametrize("vendored", ["app/vendor/lib", "third_party/x", "external/y", "node_modules/z",
+                                      "Pods/p", ".venv/src/q", "dist/w"])
+def test_vendored_repos_do_not_make_a_parent(tmp_path: Path, vendored: str) -> None:
+    pkg(tmp_path, "package.json", {"react": "18"}, "q")
+    pkg(tmp_path, "app/package.json", {"react": "18"})
+    repo(tmp_path / vendored)
+    pkg(tmp_path, vendored + "/package.json", {"left-pad": "1"})
+    r = run(tmp_path)
+    assert r["layout"] != "parent" and Path(r["root"]).resolve() == tmp_path.resolve()
+    assert r["proposal"]["skill_dir"] == ".claude/skills/q-design-system"
+
+
+def test_vendored_folders_are_not_listed_under_a_parent(tmp_path: Path) -> None:
+    repo(tmp_path / "Projects/acme")
+    repo(tmp_path / "Projects/vendor/other")
+    r = run(tmp_path)
+    assert r["layout"] == "parent" and [c["path"] for c in r["children"]] == ["Projects/acme"]
+
+
+def test_non_git_monorepo_with_markers_is_still_a_monorepo(tmp_path: Path) -> None:
+    put(tmp_path, "pnpm-workspace.yaml", "packages: ['apps/*']\n")
+    pkg(tmp_path, "apps/web/package.json", {"next": "14"})
+    pkg(tmp_path, "apps/admin/package.json", {"react": "18"})
+    put(tmp_path, "services/api/go.mod", "module api\n")
+    r = run(tmp_path)
+    assert r["layout"] == "monorepo" and r["in_repo"] is False and r["enclosing"] is None
+    assert sorted(u["path"] for u in r["ui_packages"]) == ["apps/admin", "apps/web"]
+
+
+def test_non_git_package_reports_its_enclosing_monorepo(tmp_path: Path) -> None:
+    put(tmp_path, "turbo.json", "{}")
+    pkg(tmp_path, "apps/web/package.json", {"next": "14"})
+    r = run(tmp_path / "apps/web")
+    enc = r["enclosing"]
+    assert enc is not None and Path(enc["root"]).resolve() == tmp_path.resolve()
+    assert enc["markers"] == ["turbo.json"] and enc["plumb_md"] is False
+    assert r["confidence"] == "low" and any("enclosing" in x for x in r["reasons"])
+    put(tmp_path, "PLUMB.md", "Design system: `.claude/skills/x-design-system/`\nRole: home\n")
+    enc = run(tmp_path / "apps/web")["enclosing"]
+    assert enc["plumb_md"] is True
+
+
+def test_human_block_names_the_root(tmp_path: Path) -> None:
+    pkg(tmp_path, "package.json", {"react": "18"}, "loose")
+    out = detect.human(run(tmp_path))
+    assert "at the repo root" not in out and "in " + Path(run(tmp_path)["root"]).as_posix() in out
+
+
+def test_in_repo_flag(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"react": "18"})
+    r = run(tmp_path)
+    assert r["in_repo"] is True and "not a git repo" not in " ".join(r["reasons"])
 
 
 def test_parent_listing_does_not_deep_scan(tmp_path: Path) -> None:

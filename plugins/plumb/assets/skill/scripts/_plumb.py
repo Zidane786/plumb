@@ -1042,7 +1042,8 @@ def finish_inventory(inv: dict) -> dict:
     return inv
 
 
-def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Optional[bool] = None) -> dict:
+def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Optional[bool] = None,
+                   seen: Optional[list] = None) -> dict:
     """Every design value used under roots: {kind: {value: {"count": n, "where": ["file:line", ...]}}}.
 
     kinds: color (lowercase #rrggbb, #rrggbbaa when translucent), font-family (lowercase stack), font-size, spacing,
@@ -1050,7 +1051,8 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
     class), duration (ms), easing (keyword or cubic-bezier(a, b, c, d)). Reads CSS/SCSS (and @apply), <style> blocks
     and style attributes, JS style objects, Tailwind classes (only when the project uses Tailwind; tailwind=None
     detects it), Swift and Kotlin. Comments, node_modules and build output, generated files, files over 5 MB and
-    paths matching an exclude glob are skipped. "where" paths are relative to base (default: the folder the roots share)."""
+    paths matching an exclude glob are skipped. "where" paths are relative to base (default: the folder the roots share).
+    seen, when given, receives the name of every file read (audit.py --inventory counts them)."""
     roots = [Path(r) for r in roots]
     if base is None:
         dirs = [str((r if r.is_dir() else r.parent).resolve()) for r in roots]
@@ -1089,6 +1091,8 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
                 continue
             detected = detected or uses_tailwind(text)
             found.append((name, text))
+            if seen is not None:
+                seen.append(name)
     inv = new_inventory()
     use_tw = detected if tailwind is None else tailwind
     for name, text in found:
