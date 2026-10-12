@@ -115,13 +115,17 @@ system. Each variant comes as **both views**, so states are compared, not only t
 
 ## Approvals and the map
 
-- `build-prototype.py --approve <id>` records the user's yes to a screen (who, when, a hash of the screen file). Run it
-  only after the user approved **that** screen in this conversation. Editing the screen file afterwards makes the
-  approval stale (`screen-unapproved`): show the change and approve again.
-- `--map <id> --route <route> --files <globs>` links a screen to its route and source files once they exist (or are
-  agreed); the screen is `to-build` until every glob matches, then `built`.
+- `build-prototype.py --approve <id>` records the user's yes to a screen (who, when, a hash of the screen file).
+  **Never run `--approve` (or record an approval) without the user's explicit yes to that screen** in this
+  conversation: show the screen (its `prototype.html#screen-<id>` link), ask "Approve <screen> as the reference to
+  build?", wait for the answer. Never chain it after another command (`--synced x && --approve x`), never approve on
+  the user's behalf because a flow "usually" ends approved. Editing the screen file afterwards makes the approval
+  stale (`screen-unapproved`): show the change and ask again.
+- `--map <id> --route=<route> --files <globs>` links a screen to its route and source files once they exist (or are
+  agreed); the screen is `to-build` until every glob matches, then `built`. Pass the route as one argument
+  (`--route=/`, `--route=/billing`): Copilot CLI reads a bare `/` as a path and asks for access to it.
 - `--synced <id>`: the screen file was updated to match code that was already built (a small fix, code written before
-  Plumb). Listed for the user to confirm with `--approve`; it never blocks.
+  Plumb). Listed for the user to confirm later with `--approve` (their yes, asked); it never blocks.
 - **Prototype first.** A new screen or route is created in the prototype, approved, then built; the edit check refuses a
   new page file with no approved screen (`fix: /plumb:prototype <name>`). Changing what an existing screen shows or how
   it behaves starts with its screen file and the user's approval. Small fixes that change neither (logic bugs, typos,

@@ -63,7 +63,8 @@ each; one pointer per step plus at most a callout or a set of labels. Ask: "Writ
 Every target must exist in that screen file's markup (it may be hidden in its state). Prefer the hooks the screen
 already has (`[data-test=…]`, a class). If a step needs an element the screen file lacks, say so: adding a hook changes
 the screen file, which makes its approval stale, so ask before touching it and ask for the approval again afterwards
-(`build-prototype.py --approve <id>`).
+(`build-prototype.py --approve <id>`). **Never run `--approve` (or record an approval) without the
+user's explicit yes to that screen** in this conversation.
 
 ## Step 3: write and build
 

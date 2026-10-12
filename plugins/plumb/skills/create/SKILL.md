@@ -9,6 +9,7 @@ allowed-tools: Bash(python3 *scripts/detect.py*), Bash(python *scripts/detect.py
 # /plumb:create — from an idea to a design system
 
 Only run when the user typed `/plumb:create` (or `/plumb:init` routed here). Other skills offer it, never run it.
+These instructions are already loaded: don't load this skill again with a skill tool.
 
 ```
 placement ─▶ A product ─▶ "Right?" ─▶ B platforms ─▶ C decisions (one at a time) ─▶ D directions ─▶ you pick
@@ -24,7 +25,12 @@ following from what the user said. Every question and how to derive its recommen
 [reference/interview.md](../../reference/interview.md). Light **and** dark are designed by default; light-only is an
 explicit, recorded decision. **Never install or download anything** (no packages, fonts, icon sets, images); if
 something seems needed, say so, **ask the user and wait**. Pre-approved commands (`allowed-tools`): Plumb's `detect.py`,
-`scaffold.py`, `build-tokens.py`, `audit.py`, and the read-only git calls; anything else asks first.
+`scaffold.py`, `build-tokens.py`, `audit.py`, and the read-only git calls; anything else asks first (Copilot CLI asks
+for every command: join a step's script calls with `&&` in one shell call, as shown below). **Never run
+`--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation: show the
+screen, ask, wait. `audit.py`: **exit 1 means errors found, not a crash** (your tool may show it as a failed command);
+read the findings. **End-of-turn check:** if Plumb's end-of-turn check stops you after the user said not to fix now,
+don't fix: report and stop.
 
 **Plugin root (`ROOT`):** `${CLAUDE_PLUGIN_ROOT}` (Claude Code and Copilot CLI fill this in for plugin skills).
 If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base directory (printed when the skill loads,
@@ -32,8 +38,9 @@ If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base di
 [reference/tokens-format.md](../../reference/tokens-format.md). Placement: [reference/placement.md](../../reference/placement.md).
 
 **Project root (`<root>`):** the absolute root the user confirmed in `/plumb:init`. Every path below is relative to
-`<root>` and every command names it explicitly; never write outside it, never use `.` for it. The one exception: the
-answers JSON for `scaffold.py` goes to the system temp folder and is deleted right after the scaffold.
+`<root>` and every command names it explicitly; never write outside it, never use `.` for it. The answers JSON for
+`scaffold.py` goes in `<root>/.plumb-tmp/` (git-ignored, deleted right after the scaffold; "Temporary files" in
+placement.md), never `/tmp`.
 
 ## Step 0: placement and Python
 
@@ -63,8 +70,10 @@ C1–C16 from interview.md, **one question each**, each with options, the recomm
 register · density · accent · neutrals · semantic colours · label colours · type family and scale · spacing · radius ·
 elevation · motion and reduced motion · icons · dark mode · accessibility target (WCAG 2.2 AA by default) · vocabulary
 and voice · UX patterns (navigation, page anatomy, forms, feedback, empty/loading/error states, destructive actions,
-onboarding: one sub-question each). Show colours as hex with their dark value. **OK?** Show every decision on one
-screen and ask to continue.
+onboarding: one sub-question each). Show colours as hex with their dark value. C11 also asks how reduced motion
+behaves (keep fades, recommended, or none) and C13 how the app switches themes (system · class · both, recommended
+both); they become the tokens settings `$extensions.plumb.motion.reduced` and `$extensions.plumb.web.theme_switch`
+(E3), which the generator honours. **OK?** Show every decision on one screen and ask to continue.
 
 ## D. Directions
 
@@ -84,18 +93,25 @@ change something.
    `directions.html` as the preview. Change what the user asks; continue only on their OK.
 2. **OK? The files.** Write the answers JSON (keys in interview.md, including the confirmed placement: `ui_packages`,
    `ui_files` as confirmed in init (detect's `proposal.ui_files`, else the platform default), `allowed_raw`,
-   `web_copies`, `python`, `role`) to a file in the system temp folder (deleted after the scaffold). Run
+   `web_copies`, `python`, `role`) to `<root>/.plumb-tmp/answers.json` (its `.gitignore` first). Run
    `python3 "<ROOT>/scripts/scaffold.py" --project-root "<root>" --name "<Name>" --skill-dir <skill dir>
-   --platforms <list> --styling <mode> --answers <file> --docs-dir docs/design --dry-run`, show its **full** list of
-   files and paths, and run it without `--dry-run` only on the user's OK.
+   --platforms <list> --styling <mode> --answers "<root>/.plumb-tmp/answers.json" --docs-dir docs/design --dry-run`,
+   show its **full** list of files and paths, and run it without `--dry-run` only on the user's OK; then delete
+   `<root>/.plumb-tmp/`.
 3. Add what the scaffold has no key for to the tokens file (warning, info, `label.*`, `md` values, sizes), exactly as
-   approved in E1 (tokens-format.md). Write `design.md`, `references/ux.md`, `vocabulary.md`, `motion.md`,
-   `accessibility.md` from the answers, replacing every "to fill" prompt.
-4. `python3 "<root>/<skill dir>/scripts/build-tokens.py"` writes the themes, the copies, the contrast block and
-   `docs/design/specimen.html`.
-5. **OK? Each contrast fix.** `python3 "<root>/<skill dir>/scripts/audit.py" --json`; for each `contrast` error show
-   the failing pair, its ratio (light or dark) and the proposed passing value; apply each only on the user's OK,
-   rebuild, repeat until none is left.
+   approved in E1 (tokens-format.md), and the two settings from C11 and C13: `$extensions.plumb.motion.reduced`
+   (`"keep-fades"` | `"none"`) and `$extensions.plumb.web.theme_switch` (`"both"` | `"system"` | `"class"`). Write
+   `design.md`, `references/ux.md`, `vocabulary.md`, `motion.md`, `accessibility.md` from the answers, replacing
+   every "to fill" prompt.
+4. **OK? Existing files the build changes.** When a web copy (`$extensions.plumb.web.copies`) is a file that already
+   exists (e.g. `app/globals.css`), show before the first build: the file, what changes (Plumb adds a marked
+   `plumb:start … plumb:end` block with the generated theme and owns only that block; the rest stays the project's,
+   still edited by hand), and ask; build only on yes (no → another path for the copy, or none). Then
+   `python3 "<root>/<skill dir>/scripts/build-tokens.py" && python3 "<root>/<skill dir>/scripts/audit.py" --json`
+   in one shell call: the themes, the copies, the contrast block, `docs/design/specimen.html`, then the findings.
+5. **OK? Each contrast fix.** For each `contrast` error in that `--json` output show the failing pair, its ratio
+   (light or dark) and the proposed passing value; apply each only on the user's OK, rebuild, repeat until none is
+   left.
 6. **OK? The components.** Propose which starter components (button, input, select, checkbox, card, chip/badge,
    dialog, sheet, menu, tabs, toast, tooltip, empty state, error state, skeleton, page header, app shell), the
    framework and primitives (shadcn/Radix on React when the project has them, native controls on SwiftUI and
@@ -105,7 +121,8 @@ change something.
 7. **The design system must pass:** `python3 "<root>/<skill dir>/scripts/audit.py" "<root>/<folder of each component
    you wrote>"` (e.g. `"<root>/components/ui"` or the `starter/` folder) exits 0. Contrast, missing dark values and
    generated-file drift are cross-file rules: they run with these PATHS too. A "no prototype yet" warning is expected
-   until F. `build-tokens.py --check` exits 0. Give the path of `docs/design/specimen.html`.
+   until F. `build-tokens.py --check` exits 0 (run both in one shell call). Give the path of
+   `docs/design/specimen.html`.
 
 ## G. Record (before F, so the prototype's "Why it looks like this" panels show the decisions)
 
@@ -121,18 +138,21 @@ project keeps one, and add a line to `design.md`'s revision notes.
 **OK?** "Prototype the key screens now? Each comes as 2–3 variants to choose from, and the chosen ones become the main
 prototype (`docs/design/prototype.html` + `screens.html`)." (a) Yes, the key screens from A4 (Recommended) (b) pick
 which (c) later with `/plumb:prototype`. On yes, follow `ROOT/skills/prototype/SKILL.md` for each screen or flow, one
-at a time; it records its own decisions.
+at a time; it records its own decisions and approves a screen only on the user's explicit yes.
 
 ## Finish
 
-- Routed from init: return to `/plumb:init` step 4. Run directly: do init's step 4 now (each item asked).
+- Routed from init: return to `/plumb:init` step 4 now. Run directly: do init's step 4 now. Never skip it: every
+  wire-in item is asked, also when `AGENTS.md` or the `Makefile` does not exist yet.
 - Summary: the design-system folder, `PLUMB.md`, `docs/design/` (directions, specimen, decisions, prototype), the
   audit result, and `git -C "<root>" status --short`. Suggest committing.
 
 ## Checklist
 
 - [ ] Product questions came before design questions; every question offered a recommendation and why
-- [ ] The user approved the token set, the scaffold's file list, each contrast fix and the component plan
+- [ ] The user approved the token set, the scaffold's file list, the change to an existing copy file, each contrast
+      fix, the component plan and each screen (`--approve` only on their yes)
+- [ ] `motion.reduced` and `web.theme_switch` are in the tokens file; `.plumb-tmp/` is gone; init step 4 was asked
 - [ ] Tokens have a dark value for every colour (or a recorded light-only decision)
 - [ ] Components written by you from `components.md`; the audit on them exits 0; `build-tokens.py --check` exits 0
 - [ ] Every decision is in `docs/design/decisions.md` with who decided; nothing written outside `<root>`, nothing

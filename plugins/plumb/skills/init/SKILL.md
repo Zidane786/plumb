@@ -8,6 +8,9 @@ allowed-tools: Bash(python3 *scripts/detect.py*), Bash(python *scripts/detect.py
 
 # /plumb:init — find the home, route, wire it in
 
+These instructions are already loaded: follow them; don't load this skill again with a skill tool (Copilot CLI then
+shows a harmless `Skill not found: plumb:init`).
+
 ```
 already set up? ─▶ status · resume a half-finished setup · offer /plumb:upgrade ─▶ STOP
 find the home (detect → explore → "Plumb found … I'll create …" → you confirm) ─▶ linked? ─▶ linked PLUMB.md ─▶ wire in
@@ -22,7 +25,9 @@ missing (Python, a package), say what and why, **ask the user and wait** for the
 overwrite an existing design system. Announce each step in one line. Pre-approved commands (`allowed-tools`): Plumb's
 `detect.py`, `scaffold.py`, `build-tokens.py`, `audit.py` and `build-prototype.py` (with `python3`, `python` or
 `py -3`; init's list governs while it runs create or extract), `git rev-parse`,
-`git -C <root> status --short`, `git config user.name`; anything else asks first.
+`git -C <root> status --short`, `git config user.name`; anything else asks first. Copilot CLI ignores `allowed-tools`
+and asks for each command: run each step's script calls in **one shell call** where this file shows them joined with
+`&&` ([reference/copilot.md](../../reference/copilot.md)).
 
 **Plugin root (`ROOT`):** `${CLAUDE_PLUGIN_ROOT}` (Claude Code and Copilot CLI fill this in for plugin skills).
 If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base directory (printed when the skill loads,
@@ -37,13 +42,14 @@ for which `<cmd> -c "import sys; print(sys.version_info >= (3, 9))"` prints `Tru
 **Project root (`<root>`):** the absolute `root` from detect.py's JSON, as corrected and confirmed by the user in
 step 1. **From step 1 on, every path is relative to `<root>` and every command names it explicitly
 (`--project-root "<root>"`); never write outside it**, and never use `.` for it: the session may be open in a
-subfolder or a parent folder. Two exceptions, each only as stated: the answers JSON for `scaffold.py` goes to the
-system temp folder and is deleted after the scaffold; and a backend repo's linked `PLUMB.md` (step 1.4) is written
-there only when the user says yes to that question.
+subfolder or a parent folder. Temporary files (the answers JSON for `scaffold.py`) go in `<root>/.plumb-tmp/`, never
+`/tmp` or another session's folder ("Temporary files" in placement.md). One exception: a backend repo's linked
+`PLUMB.md` (step 1.4) is written there only when the user says yes to that question.
 
 ## Step 0: already set up?
 
-Run `python3 "<ROOT>/scripts/detect.py" --cwd . --json` (the folder the session opened in). When
+Run, in one shell call (the folder the session opened in): `python3 "<ROOT>/scripts/detect.py" --cwd . --json &&
+python3 "<ROOT>/scripts/detect.py" --cwd .` — the JSON for you, then the text block you print in step 1.7. When
 `existing.plumb_md` is true (a `PLUMB.md` at `root`), take that `root` as `<root>`; when `enclosing.plumb_md` is
 true (outside git, a `PLUMB.md` in a folder above), say so and take `enclosing.root` as `<root>` (never offer a
 second setup inside a project that has one). Then:
@@ -88,8 +94,13 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
 6. **Inside a bigger project?** (`enclosing` is set: outside git, a folder above has monorepo markers or a
    `PLUMB.md`): "Is the project `<enclosing.root>` (this folder is one of its packages)?" (a) Yes, use the enclosing
    folder (Recommended) (b) No, this folder is the project. On (a) run detect with `--cwd <enclosing.root>` and use it.
-7. **Always** show the block and wait, even at high confidence. It lists **everything** that will be written,
-   including the docs folder, so the first page written later (directions or extract page) is covered by this OK:
+7. **Always print the block in the chat, in full, then ask** — even at high confidence. Paste detect.py's text
+   block (step 0; after a change of folder run `detect.py --cwd "<root>"` again) **verbatim** as your own message, in
+   a code block, every line: project, layout, each UI / no-UI line, "I'll create:", the skill dir, `PLUMB.md`,
+   `docs/design/`, each generated copy, the UI files. **Never summarise it** in prose, never put only part of it in
+   the question, and never ask about "the setup above" unless the full block is printed above. Mark lines you corrected
+   by exploring `(corrected: <why>)`, and add the `exists:` line under a generated copy whose file already exists. It
+   lists **everything** that will be written, so the first page written later is covered by this OK:
 
    ```
    Plumb found:
@@ -102,13 +113,14 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
      PLUMB.md       in <root>
      docs/design/   in <root>   (directions or extract page, decision log, prototype, reports)
      generated copy → <global css path>
+       <global css path> exists: Plumb adds and owns only a marked plumb:start … plumb:end block; the rest stays yours
      UI files   <proposal.ui_files, else the platform default>   (what the audit and the checks cover)
    OK, or change something?
    ```
 
-   Options: OK (Recommended) · change where the skill goes (`.github/skills/…`, another name) · change the project
-   root · change the UI packages, the copy path, the UI files or the docs folder · something else. Repeat until the
-   user says OK.
+   Then ask "OK, or change something?": OK (Recommended) · change where the skill goes (`.github/skills/…`, another
+   name) · change the project root · change the UI packages, the copy path, the UI files or the docs folder ·
+   something else. Repeat until the user says OK.
 8. Keep the confirmed **placement**: `<root>`, project name and id, skill dir, platforms, styling per package, UI
    packages (`PLUMB.md` `UI packages:`), copy paths, UI file globs, allowed raw paths (`components/ui/**` where
    primitives live), docs dir (`docs/design`), Python command, role, and whether it is **design only**. Create or
@@ -133,19 +145,26 @@ Pre-fill from detection and your own look: UI files exist → extract, none → 
 marked (Recommended). Then read `ROOT/skills/extract/SKILL.md` or `ROOT/skills/create/SKILL.md` and do every step of
 it with the confirmed placement and `<root>` (it skips its own placement step). Come back here for step 4.
 
-## Step 4: wire it in (each asked, one at a time)
+## Step 4: wire it in (each asked, one at a time; never skipped)
+
+After create or extract, in the same session. **Ask every item even when the file does not exist yet** (no
+`AGENTS.md` → offer to create it; no `Makefile` → offer to create one): a missing file, or a `note:` from
+`scaffold.py --verify`, is never a reason to skip the question.
 
 1. **PLUMB.md.** Show `<root>/PLUMB.md`. Check the placement lines match what the user confirmed; change only what
    they agree. Keep the first line exactly `<!-- plumb v<plugin version> · written by /plumb:init, safe to edit values -->`.
 2. **Checks.** "Turn on both checks? The edit check refuses edits that add design-system errors; the end-of-turn check
    reviews changed screens before the agent hands back." (a) Both on (Recommended) (b) edit check only (c) end-of-turn
    only (d) both off → set `Edit check:` and `End-of-turn check:` in `PLUMB.md`.
-3. **The rest, each asked on its own** as [reference/wire-in.md](../../reference/wire-in.md) says: the AGENTS.md /
-   CLAUDE.md row, the Makefile targets, the Slate review check (when `kanban/board.py` exists), Kiro steering (when
-   Kiro is used; Kiro's skills and hooks: [reference/kiro.md](../../reference/kiro.md)), and the monorepo package
-   pointer (when opened inside a package).
+3. **The AGENTS.md / CLAUDE.md row** ([reference/wire-in.md](../../reference/wire-in.md)).
+4. **The Makefile targets.** On no, `PLUMB.md` must not name `make` targets: change its `## Commands` lines to the
+   direct commands (wire-in.md shows them; the user's no covers this edit, say so).
+5. **The rest, each asked on its own** as wire-in.md says: the Slate review check (only when `<root>/kanban/board.py`
+   exists), Kiro steering (when Kiro is used; Kiro's skills and hooks: [reference/kiro.md](../../reference/kiro.md)),
+   and the monorepo package pointer (when opened inside a package).
 
-Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` and fix what it reports (asked).
+Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` and fix what it reports (asked). A
+`problem: PLUMB.md names make …` line means item 4 was skipped: ask it now.
 
 ## Step 5: show what you did
 
@@ -155,8 +174,10 @@ Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"`
 
 ## Checklist before you finish
 
-- [ ] The user confirmed the "Plumb found … I'll create …" block before anything was written; every command named
+- [ ] The full "Plumb found … I'll create …" block was printed in the chat and confirmed before anything was
+      written; every command named
       `<root>` and nothing was written outside it
 - [ ] `PLUMB.md` records the confirmed layout and starts with the version line
-- [ ] Each wire-in item was asked; nothing outside the agreed lines changed in AGENTS.md, CLAUDE.md, SLATE.md, Makefile
+- [ ] Each wire-in item was asked (also when the file did not exist); `PLUMB.md` names no missing `make` target;
+      nothing outside the agreed lines changed in AGENTS.md, CLAUDE.md, SLATE.md, Makefile
 - [ ] `scaffold.py --verify` shows no `problem:` lines; nothing was installed or downloaded

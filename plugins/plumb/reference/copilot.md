@@ -31,10 +31,44 @@ check says when).
 - **Hooks:** the same three hooks run in both (session start, edit check before edits and shell writes, end-of-turn
   check). In Copilot CLI edits arrive as `apply_patch` text, input uses `toolName`/`toolArgs`, a refusal is a
   `{"permissionDecision": "deny", …}` answer on stdout (Copilot hides exit-2 stderr), and session start returns
-  `{"additionalContext": …}`. Whether the end-of-turn check can make Copilot continue depends on Copilot's `agentStop`
-  support; where it cannot, Copilot shows the end-of-turn summary only and the edit check remains the hard guard.
+  `{"additionalContext": …}`. The end-of-turn check makes Copilot continue: its `agentStop` answer arrives as a new
+  prompt, which can override what the user said earlier. So when it stops you after the user said not to fix now,
+  don't fix: report what it found and stop.
 - **Browser tool:** if the Copilot session has no browser tool, `/plumb:ux` and `/plumb:audit` use
   `scripts/screenshot.py` (a Chrome, Edge or Chromium already installed) or skip the visual part with a note.
+
+## Permission prompts
+
+Copilot CLI ignores the `allowed-tools` line in a skill's frontmatter (Claude Code honours it), so every script run
+asks for permission: about 30 prompts in one extract, plus "Allow path access" when the plugin folder sits outside
+the project. The skills keep the count down:
+
+- **One shell call per step.** Where a step runs several scripts, join them with `&&` in one shell call (e.g. the
+  build and the audit, or every `--map` of a step); `;` when each must run even after a failure (status checks).
+  Windows PowerShell 5.1 has no `&&`: use `;` and read each output.
+- **Temporary files stay in the project:** `<root>/.plumb-tmp/` (git-ignored by its own `.gitignore`, deleted after
+  the step), never `/tmp` ("Temporary files" in [placement.md](placement.md)).
+- **Routes as one argument:** `--route=/`, never a separate `/` after `--route`; Copilot reads a bare `/` as a path
+  and offers to allow access to it (and "remember for this session" would grant the whole disk).
+
+The user may choose fewer prompts; the agent never changes Copilot's permissions. They can answer "Yes, and remember
+… for this session", or start Copilot with `--allow-tool 'shell(python3)'` (every `python3` command runs without
+asking, not only Plumb's: their call) and `--add-dir <plugin folder>` (e.g.
+`~/.copilot/installed-plugins/plumb/plumb`).
+
+## Other live-test notes
+
+- **"Skill not found: plumb:init".** Copilot's skill tool lists only skills the model may start. `/plumb:init`,
+  `/plumb:create`, `/plumb:extract`, `/plumb:update` and `/plumb:upgrade` run only when typed
+  (`disable-model-invocation: true`), so they are not in that list. Typing the command has already loaded the skill;
+  when the model also calls its skill tool for it, Copilot prints `✗ skill(plumb:init) Skill not found` and the flow
+  goes on. Harmless; those skills say they are already loaded so the model skips the call. Keeping them user-only is
+  deliberate. (Copilot names plugin skills by their bare name, `audit`, unless two plugins share one: `plumb:status`.)
+- **Exit 1 shows as "✗ Shell".** `audit.py` (and `--check`) exit 1 when they find errors or stale files: a result,
+  not a crash. Read the output; don't retry.
+- **Never probe servers.** For screenshots of built screens, ask the user for the dev server's URL; never probe with
+  `curl`, `wget` or guessed `localhost` ports.
+- **Slate** is mentioned only when the project has it (`kanban/board.py`); otherwise no Slate tickets are offered.
 
 ## Windows needs Python
 

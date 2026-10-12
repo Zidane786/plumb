@@ -7,6 +7,7 @@ disable-model-invocation: true
 # /plumb:upgrade — bring the project's copied files up to the plugin's version
 
 Only run when the user typed `/plumb:upgrade` (other skills and the session-start check offer it, never run it).
+These instructions are already loaded: don't load this skill again with a skill tool.
 How the version files work: `<ROOT>/upgrades/README.md`. Commands: [`scripts.md`](../../reference/scripts.md). Copilot CLI (update commands, hooks): [`copilot.md`](../../reference/copilot.md).
 
 **Ownership** (what an upgrade may touch): `[P]` Plumb's files (`<skill>/scripts/*`, `<skill>/templates/*`,
@@ -115,8 +116,9 @@ PY SKILL/scripts/build-prototype.py --check                       # when the pro
 PY SKILL/scripts/audit.py
 ```
 
-A new audit rule may find things the old version did not: those are not part of the upgrade. List the counts and offer
-`/plumb:audit fix`.
+`audit.py`: **exit 1 means errors found, not a crash** (your tool may show it as a failed command). A new audit rule
+may find things the old version did not: those are not part of the upgrade. List the counts and offer
+`/plumb:audit fix`. Run these checks in one shell call where you can (Copilot CLI asks for every command).
 
 ## Step 6: show the result, then stop
 

@@ -32,6 +32,10 @@ PY SKILL/scripts/build-prototype.py --check        # only when <docs>/prototype/
 git status --short                                   # skip it when the project is not a git repo
 ```
 
+Run them in one shell call (`;` between them, so each still runs: Copilot CLI asks for every command). `audit.py`:
+**exit 1 means errors found, not a crash** (Claude Code shows "Error: Exit code 1", Copilot CLI "✗ Shell"); report
+the counts, never as a failure of status.
+
 - `Role: linked` → check that the `Design system:` path exists (a missing path is the first thing to report, with
   "the home repo is not where PLUMB.md says: clone it there or correct the path"); the audit and generator commands are
   the home skill's.
