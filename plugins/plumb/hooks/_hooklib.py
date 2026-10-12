@@ -389,6 +389,8 @@ def read_payload(text: Optional[str] = None) -> Optional[Payload]:
             text = sys.stdin.buffer.read().decode("utf-8", "replace")
         except Exception:  # noqa: BLE001
             return None
+    if isinstance(text, str) and text.startswith("\ufeff"):  # a UTF-8 BOM some Windows launchers write first
+        text = text[1:]
     try:
         raw = json.loads(text)
     except (ValueError, TypeError):

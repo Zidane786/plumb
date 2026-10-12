@@ -47,9 +47,11 @@ session start prints one line: the checks are off, run `kiro.py install` again.
 - **Stop:** the block is `{"decision": "block", "reason": …}` on stdout, exit 0. Kiro's docs show that JSON for CLI v3;
   elsewhere exit-0 stdout is only added to the agent's context, so the live check confirms the agent really continues.
   The report-only follow-up (`{"systemMessage": …}`) may show as raw JSON there.
-- **Windows:** each command is `powershell -NoProfile -NonInteractive -EncodedCommand …` (the same fail-open body as
-  the Copilot hooks, printed by `install`), so it runs the same from cmd.exe, PowerShell and Git Bash; PowerShell's
-  start-up adds about 0.3 s per hook. No `-ExecutionPolicy Bypass`: it is not needed, and endpoint protection flags it.
+- **Windows:** each command is `powershell -NoProfile -NonInteractive -EncodedCommand …` and a second line
+  `exit $LASTEXITCODE` (the script is printed by `install`). It runs the launcher through cmd.exe and passes stdin,
+  stdout and stderr through byte for byte with the hook's exit code (2 refuses), from cmd.exe, PowerShell 5.1 and 7
+  and Git Bash alike (cmd.exe stops at the line break; the second line keeps the exit code under PowerShell and Git
+  Bash); a launcher that is gone exits 0. PowerShell's start-up adds about 0.3 s per hook. No `-ExecutionPolicy Bypass`: it is not needed, and endpoint protection flags it.
 - **Home and workspace:** Kiro CLI runs both hooks files side by side. A home hook stands down only where the
   workspace's own file (in the workspace root) runs the same plugin with that hook enabled; otherwise both run, which
   is never less safe.

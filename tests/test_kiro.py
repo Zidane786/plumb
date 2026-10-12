@@ -344,44 +344,61 @@ def test_hooks_template_and_constants_agree_with_hooklib():
 
 
 def _decode(command: str) -> str:
-    words = command.split(" ")
+    line, tail = command.split("\n")
+    # line 2 is for PowerShell and Git Bash, which would otherwise exit 1 for any failure; cmd.exe stops at line 1
+    assert tail == "exit $LASTEXITCODE"
+    words = line.split(" ")
     # no -ExecutionPolicy Bypass: -EncodedCommand and run.cmd need no script policy, and that flag pattern is what
     # endpoint protection flags (a blocked hook would fail closed)
     assert words[:4] == ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"]
     assert len(words) == 5 and "bypass" not in command.lower()
+    assert re.fullmatch(r"[A-Za-z0-9 +/=-]+", line), line
     return base64.b64decode(words[4]).decode("utf-16-le")
 
 
 @pytest.mark.parametrize("global_file", [True, False])
 def test_windows_command_is_bare_words_and_fails_open(global_file):
-    """cmd.exe, Windows PowerShell 5.1, pwsh 7 and Git Bash all read the command the same way: every token is a bare
-    word (no quotes, parentheses, %, & or $ for the host shell); the script inside is the fail-open body hooks.json
-    ships for Copilot, with the launcher path made literal."""
+    """cmd.exe, Windows PowerShell 5.1, pwsh 7 and Git Bash all read the command the same way: line 1 is bare words (no
+    quotes, parentheses, %, & or $ for the host shell). The script inside starts the launcher by absolute path through
+    cmd.exe with its own pipes and copies the bytes through unchanged (PowerShell itself never touches the hook's stderr,
+    which it would otherwise wrap as CLIXML), returns the hook's exit code, and exits 0 when the launcher is gone or
+    anything fails."""
     mod = _load_kiro()
     command = mod.hook_command("pre_edit.py", global_file=global_file, windows=True)
-    assert re.fullmatch(r"[A-Za-z0-9 +/=-]+", command), command
     script = _decode(command)
     run = str(PureWindowsPath(str(PLUGIN.resolve() / "hooks" / "run.cmd")))
     flags = "--kiro --kiro-global" if global_file else "--kiro"
-    assert script == (f"$s='{run}'; if (Test-Path -LiteralPath $s) {{ & $s pre_edit.py {flags}; exit $LASTEXITCODE }}; "
-                      f"exit 0")
+    assert script.startswith(f"$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $s='{run}'; "
+                             f"if (-not (Test-Path -LiteralPath $s)) {{ exit 0 }}; try {{ ")
+    assert f"""$i.Arguments='/d /s /c ""'+$s+'" pre_edit.py {flags}"'""" in script
+    for part in ("[IO.Path]::Combine($env:SystemRoot,'System32','cmd.exe')", "[Console]::OpenStandardInput().CopyTo(",
+                 "CopyToAsync([Console]::OpenStandardOutput())", "CopyToAsync([Console]::OpenStandardError())",
+                 "[Console]::InputEncoding=New-Object Text.UTF8Encoding $false", "exit $p.ExitCode"):
+        assert part in script, part
+    assert script.endswith("} catch { exit 0 }") and "& $s" not in script
 
 
 def test_windows_command_quotes_the_path_and_notes_a_missing_launcher_at_session_start(monkeypatch):
     mod = _load_kiro()
     monkeypatch.setattr(mod, "PLUGIN", Path("C:/Users/o'neil/plumb/1.0.0"))
     script = _decode(mod.hook_command("session_start.py", global_file=True, windows=True))
-    assert script.startswith("$s='C:\\Users\\o''neil\\plumb\\1.0.0\\hooks\\run.cmd'; "), script
-    assert "else { Write-Output 'Plumb: the Kiro hooks point at a Plumb folder that is gone" in script
-    assert "kiro.py install again" in script and script.endswith("exit 0")
+    assert "$s='C:\\Users\\o''neil\\plumb\\1.0.0\\hooks\\run.cmd'; " in script, script
+    gone = script.split("if (-not (Test-Path -LiteralPath $s)) { ", 1)[1].split("}", 1)[0]
+    assert gone.startswith("$b=[Text.Encoding]::UTF8.GetBytes('Plumb: the Kiro hooks point at a Plumb folder that is gone")
+    assert "kiro.py install again'+[char]10); [Console]::OpenStandardOutput().Write($b,0,$b.Length); exit 0" in gone
 
 
 def run_installed(command: str, stdin: str, cwd: Path, env, shell: str = "default") -> subprocess.CompletedProcess:
     """Run a hook command from a Kiro hooks file as Kiro does: through the system shell (sh -c; on Windows cmd /c or
     PowerShell)."""
     if WINDOWS:
-        argv = ([str(POWERSHELL), "-NoProfile", "-NonInteractive", "-Command", command] if shell == "powershell"
-                else ["cmd", "/d", "/c", command])
+        if shell in ("powershell", "pwsh"):
+            argv = [str(POWERSHELL if shell == "powershell" else shutil.which("pwsh")), "-NoProfile", "-NonInteractive",
+                    "-Command", command]
+        elif shell == "bash":
+            argv = [str(GIT_BASH), "-c", command]
+        else:
+            argv = ["cmd", "/d", "/c", command]
     else:
         argv = [str(SH), "-c", command]
     r = subprocess.run(argv, input=stdin, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
@@ -407,18 +424,24 @@ def plugin_folder(dest: Path, version: str = None) -> Path:
     return dest
 
 
+GIT_BASH = shutil.which("bash") if WINDOWS else None
+WINDOWS_SHELLS = ["cmd", "powershell"] + (["pwsh"] if WINDOWS and shutil.which("pwsh") else []) + (
+    ["bash"] if GIT_BASH else [])
+
+
 @windows_only
-@pytest.mark.parametrize("shell", ["cmd", "powershell"])
+@pytest.mark.parametrize("shell", WINDOWS_SHELLS)
 def test_windows_installed_commands_run_and_fail_open(tmp_path, proj, shell):
     copy = plugin_folder(tmp_path / "plugin-copy")
     install(project=proj, plugin=copy)
     env = kiro_env(tmp_path)
     stdin = payload("kiro", "fs_write_create", CWD=str(proj), FILE="app/globals.css", CONTENT="x")
     write_cmd = _command(proj, "PreToolUse", "write")
-    assert kiro_refused(run_installed(write_cmd, stdin, proj, env, shell)).startswith("error: app/globals.css is generated")
+    reason = kiro_refused(run_installed(write_cmd, stdin, proj, env, shell))
+    assert reason.startswith("error: app/globals.css is generated") and "CLIXML" not in reason
     start = _command(proj, "SessionStart")
     r = run_installed(start, payload("kiro", "session_start", CWD=str(proj)), proj, env, shell)
-    assert "Plumb: demo-design-system 1.0.0 · " in r.stdout
+    assert r.returncode == 0 and "Plumb: demo-design-system 1.0.0 · " in r.stdout and "CLIXML" not in r.stdout + r.stderr
     shutil.rmtree(str(copy))
     r = run_installed(write_cmd, stdin, proj, env, shell)
     assert r.returncode == 0, (r.stdout, r.stderr)
@@ -855,7 +878,9 @@ def test_installed_command_fails_open_when_the_plugin_moved_and_session_start_sa
     assert r.returncode == 0
     (line,) = r.stdout.splitlines()
     assert line.startswith(f"Plumb: the Kiro hooks point at a Plumb folder that is gone ({copy.resolve()})")
-    assert "ask the user to run python3" in line and "kiro.py install" in line and "again" in line
+    # the interpreter the user would start Python with: what kiro.py writes (py -3 on Windows, python3 elsewhere)
+    assert f"ask the user to run {'py -3' if WINDOWS else 'python3'} " in line
+    assert "kiro.py install" in line and "again" in line
     assert f'--project "{proj}"' in line or f"--project {proj}" in line
 
 

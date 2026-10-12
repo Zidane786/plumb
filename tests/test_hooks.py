@@ -1275,3 +1275,9 @@ def test_git_that_hangs_on_config_is_cut_short(launcher, tmp_path, proj):
     assert r.returncode == 0
     took = time.perf_counter() - t
     assert took < 12, f"session start + stop took {took:.1f} s with a git that hangs"
+
+
+def test_payload_with_a_utf8_bom_is_read(H):
+    """A launcher that writes the payload through a .NET StreamWriter may put a UTF-8 BOM first; it is still JSON."""
+    p = H.read_payload('﻿{"tool_name": "Write", "tool_input": {"file_path": "a.css", "content": "x"}}')
+    assert p is not None and p.file_path == "a.css"

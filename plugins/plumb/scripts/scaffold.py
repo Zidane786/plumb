@@ -509,6 +509,8 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
                platforms: List[str], answers: dict) -> List[Item]:
     values, extras, _ = resolve_answers(answers, name, platforms)
     values.update(platform_values(platforms, args.styling))
+    # The interpreter init detected; else python on Windows (python.org with PATH, the Store and conda all have it; the
+    # py launcher only comes with python.org) and python3 elsewhere.
     python_default = "python" if os.name == "nt" else "python3"
     values["PYTHON"] = str(answers.get("python") or python_default)
     values["DATE"] = datetime.date.today().isoformat()

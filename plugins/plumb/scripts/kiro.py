@@ -17,11 +17,15 @@ without --project the home folder (<home>/.kiro: global skills for the Kiro IDE,
   absolute path with --kiro (the hook then answers in Kiro's dialect) and, in the home file, --kiro-global (those hooks
   stand down where the workspace's own Plumb hooks file runs the same plugin: Kiro CLI runs both side by side):
     POSIX    [ -f '<plugin>/hooks/run.sh' ] && exec sh '<plugin>/hooks/run.sh' <script> --kiro ... || exit 0
-    Windows  powershell -NoProfile -NonInteractive -EncodedCommand <base64 UTF-16LE of
-             $s='<plugin>\\hooks\\run.cmd'; if (Test-Path -LiteralPath $s) { & $s <script> --kiro ...;
-             exit $LASTEXITCODE }; exit 0>
-  Every word of the Windows command is bare (no quotes, parentheses, %, & or $), so cmd.exe, Windows PowerShell 5.1,
-  pwsh 7 and Git Bash all run it the same way (verify live which one Kiro uses). A launcher that is gone (the plugin
+    Windows  powershell -NoProfile -NonInteractive -EncodedCommand <base64 UTF-16LE of a script that runs
+             cmd.exe /d /s /c "<plugin>\\hooks\\run.cmd" <script> --kiro ... with its own pipes, copies stdin, stdout
+             and stderr through byte for byte, and exits with the hook's code (0 when run.cmd is gone or anything
+             fails)>
+             exit $LASTEXITCODE
+  Line 1 is bare words (no quotes, parentheses, %, & or $), so cmd.exe, Windows PowerShell 5.1, pwsh 7 and Git Bash
+  all run it the same way (verify live which one Kiro uses). Line 2 keeps the exit code (2 refuses) where the shell is
+  PowerShell or Git Bash: PowerShell's -Command turns any failure into 1; cmd.exe stops at the line break. Running the
+  launcher through PowerShell's own `&` would wrap its stderr as CLIXML and lose exit code 2, so the script does not. A launcher that is gone (the plugin
   moved or was updated) exits 0, so a hook never blocks Kiro (it blocks a PreToolUse on any non-zero exit); the
   SessionStart command then prints one line saying the checks are off and to run kiro.py install again.
 
@@ -201,21 +205,35 @@ def hook_command(script: str, global_file: bool, windows: bool = WINDOWS, projec
     note = gone_note(project) if script == "session_start.py" else None
     run = launcher(windows)
     if windows:
-        missing = f" else {{ Write-Output {_ps_quote(note)} }};" if note else ";"
-        body = (f"$s={_ps_quote(run)}; if (Test-Path -LiteralPath $s) {{ & $s {args}; exit $LASTEXITCODE }}"
-                f"{missing} exit 0")
+        gone = (f"$b=[Text.Encoding]::UTF8.GetBytes({_ps_quote(note)}+[char]10); "
+                f"[Console]::OpenStandardOutput().Write($b,0,$b.Length); ") if note else ""
+        # PowerShell would wrap a native command's stderr (as CLIXML under -EncodedCommand) and turn its exit code into
+        # 1: the launcher runs through cmd.exe with its own pipes, and the bytes are copied through unchanged.
+        body = ("$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; "
+                f"$s={_ps_quote(run)}; if (-not (Test-Path -LiteralPath $s)) {{ {gone}exit 0 }}; try {{ "
+                "try { [Console]::InputEncoding=New-Object Text.UTF8Encoding $false } catch {}; "
+                "$i=New-Object Diagnostics.ProcessStartInfo; "
+                "$i.FileName=[IO.Path]::Combine($env:SystemRoot,'System32','cmd.exe'); "
+                f"""$i.Arguments='/d /s /c ""'+$s+'" {args}"'; """
+                "$i.UseShellExecute=$false; $i.RedirectStandardInput=$true; $i.RedirectStandardOutput=$true; "
+                "$i.RedirectStandardError=$true; $p=[Diagnostics.Process]::Start($i); "
+                "$o=$p.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput()); "
+                "$e=$p.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError()); "
+                "[Console]::OpenStandardInput().CopyTo($p.StandardInput.BaseStream); $p.StandardInput.Close(); "
+                "$p.WaitForExit(); $o.Wait(); $e.Wait(); exit $p.ExitCode } catch { exit 0 }")
         encoded = base64.b64encode(body.encode("utf-16-le")).decode("ascii")
         # No -ExecutionPolicy Bypass: an encoded command and run.cmd need no script policy, and that flag is what
-        # endpoint protection flags (a blocked hook would fail closed).
-        return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+        # endpoint protection flags (a blocked hook would fail closed). Line 2 keeps the exit code where PowerShell or
+        # Git Bash is the shell (PowerShell's -Command would make any failure 1); cmd.exe stops at the line break.
+        return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}\nexit $LASTEXITCODE"
     quoted = _sh_quote(run)
     tail = f"{{ printf '%s\\n' {_sh_quote(note)}; exit 0; }}" if note else "exit 0"
     return f"[ -f {quoted} ] && exec sh {quoted} {args} || {tail}"
 
 
 def windows_script(command: str) -> str:
-    """The PowerShell a Windows hook command runs (it is base64-encoded in the command)."""
-    return base64.b64decode(command.rsplit(" ", 1)[-1]).decode("utf-16-le")
+    """The PowerShell a Windows hook command runs (it is base64-encoded in the command's first line)."""
+    return base64.b64decode(command.split("\n", 1)[0].rsplit(" ", 1)[-1]).decode("utf-16-le")
 
 
 def hooks_json(global_file: bool, project: Optional[Path]) -> str:
