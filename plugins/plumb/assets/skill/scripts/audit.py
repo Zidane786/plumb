@@ -2953,7 +2953,7 @@ def check_route_not_prototyped(proj: Project) -> Iterator[XHit]:
                    f"route {r.route}{shown} is not prototyped: no screen in {fid.map_rel} has this route or its file, so "
                    f"nobody has seen or approved what it shows{note}",
                    f"prototype it first: /plumb:prototype {slug}, approve it, then map it: {fid.command} --map {slug} "
-                   f"--route {_arg(r.route)} --files {_q(target)}",
+                   f"--route={_arg(r.route)} --files {_q(target)}",
                    severity="error" if fid.sync_on else "warn")
 
 
@@ -2993,7 +2993,7 @@ def check_screen_not_built(proj: Project) -> Iterator[XHit]:
         yield XHit(s.file, s.line, s.id,
                    f"screen {s.id} ({s.title}) is in the prototype but not built yet: {why} (expected before it is built; "
                    f"it stays listed until its route exists)",
-                   f"build it to match {s.file}, then map it: {fid.command} --map {s.id} --route {_arg(route)} "
+                   f"build it to match {s.file}, then map it: {fid.command} --map {s.id} --route={_arg(route)} "
                    f"--files {files}")
 
 

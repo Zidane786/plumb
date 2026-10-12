@@ -437,15 +437,15 @@ def test_temp_folder_is_named_where_it_is_used() -> None:
 
 
 SPEC = REPO / "docs/specs/2026-10-11-plumb-design.md"
-ROUTE_DOCS = skill_files() + [p for p in sorted(REFERENCE.glob("*.md")) if p.name != "scripts.md"] + [
-    SPEC, USAGE, REPO / "TEST.md"]  # scripts.md belongs to the engine change and follows separately
+ROUTE_DOCS = skill_files() + sorted(REFERENCE.glob("*.md")) + [SPEC, USAGE, REPO / "TEST.md"] + [
+    PLUGIN / "assets/skill/scripts" / name for name in ("build-prototype.py", "audit.py")]  # usage text and fix lines
 
 
 @pytest.mark.parametrize("path", ROUTE_DOCS, ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
 def test_routes_are_passed_as_one_argument(path: Path) -> None:
     # `--route /` made Copilot ask for path access to `/`.
     text = path.read_text(encoding="utf-8")
-    assert not re.search(r"--route [</A-Z]", text), f"{path.relative_to(REPO)}: write --route=<route>"
+    assert not re.search(r"--route [</A-Z{\"']", text), f"{path.relative_to(REPO)}: write --route=<route>"
 
 
 @pytest.mark.parametrize("path", [p for p in skill_files() if "`&&`" in p.read_text(encoding="utf-8")],

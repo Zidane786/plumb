@@ -225,7 +225,7 @@ def test_new_screen_file_with_no_map_entry_is_to_build(tmp_path: Path) -> None:
     assert where(out, "screen-not-built") == [(screen_rel("billing"), 1)]
     f = fidelity(out, "screen-not-built")[0]
     assert "no route" in f["message"]
-    assert f"{BP_CMD} --map billing --route" in f["fix"]
+    assert f"{BP_CMD} --map billing --route=" in f["fix"]
 
 
 # ---------------------------------------------------------------- route-not-prototyped
@@ -244,7 +244,7 @@ def test_next_page_with_no_screen_is_not_prototyped(sync: str, severity: str, tm
     f = fidelity(out, "route-not-prototyped")[0]
     assert f["severity"] == severity
     assert "/billing" in f["message"] and "not prototyped" in f["message"]
-    assert "/plumb:prototype billing" in f["fix"] and f"{BP_CMD} --map billing --route /billing" in f["fix"]
+    assert "/plumb:prototype billing" in f["fix"] and f"{BP_CMD} --map billing --route=/billing" in f["fix"]
     assert out["_code"] == (1 if severity == "error" else 0)
 
 
@@ -254,7 +254,7 @@ def test_dynamic_route_is_quoted_in_the_fix(tmp_path: Path) -> None:
     out = audit(project)
     f = fidelity(out, "route-not-prototyped")[0]
     assert (f["file"], f["line"]) == ("app/invoices/[invoiceId]/page.tsx", 1)
-    assert '--route "/invoices/[invoiceId]" --files "app/invoices/[invoiceId]/page.tsx"' in f["fix"]
+    assert '--route="/invoices/[invoiceId]" --files "app/invoices/[invoiceId]/page.tsx"' in f["fix"]
     assert "/plumb:prototype invoices" in f["fix"]
 
 
