@@ -46,20 +46,26 @@ Cross-file rules (full mode only; one table with the per-file rules, kind "cross
   contrast-headroom (a pair passing by less than 0.3: a value with 0.5 to spare), consistency (the same component or
   control with different padding or radius across files: pick the majority).
 
-Prototype fidelity (cross-file rules, full mode; they run only when the project has a prototype: screen files in
+Prototype fidelity (cross-file rules, full mode; they run when the project has a prototype: screen files in
 <docs_dir>/prototype/screens/ or a screens.json). The screen files, screens.json and the source hashing are read with
 build-prototype.py's own functions (load_screens, read_map, map_entry, files_state, glob_files), imported from this
 script's folder; without it the checks are skipped with a note. A broken screens.json or screen file exits 2 naming the
-file, as build-prototype.py does. Findings sit on the screen file's <section data-screen> line unless said otherwise.
+file, as build-prototype.py does; an unexpected failure inside a check also exits 2, naming the screen file or
+screens.json it was reading. Findings sit on the screen file's <section data-screen> line unless said otherwise.
+  no-prototype (warn, at PLUMB.md's Prototype sync line) PLUMB.md says `Prototype sync: on` but there are no screen files
+                            and no screens.json: one notice, "no prototype yet: run /plumb:extract or /plumb:prototype".
+                            Silent when sync is off or not set.
   route-not-prototyped (error; warn unless PLUMB.md says `Prototype sync: on`) a route in the audited files that no
                             screen has: neither a screen's route (/b/:id = /b/[id]) nor one of its source globs matches it.
-                            Reported at the page file (line 1) or the router entry's line.
+                            Reported at the page file (line 1) or the router entry's line. With PATHS, only the routes in
+                            the files given are checked; the screen rules always check every screen.
   screen-drift (error)      a built screen whose source files (screens.json files) hash differently from the baseline
                             recorded at --map / --approve / --synced (CRLF ignored) while its screen file still matches
                             its approval (or it is synced from code): update the prototype screen, then --approve. A built
                             screen with no baseline (files_hash null) is a warning.
-  screen-unapproved (error) the screen file changed after its approval (approved.hash differs), or the code of a screen
-                            that was never approved changed since its baseline: review it, then --approve.
+  screen-unapproved (error once built, warn while to-build) the screen file changed after its approval (approved.hash
+                            differs): a screen not built yet is "awaiting approval again: don't build from it yet"; or the
+                            code of a screen that was never approved changed since its baseline: review it, then --approve.
   screen-not-built (warn)   a screen with no route or source files, or whose globs match no file yet (expected before it
                             is built: listed until the route exists).
   synced-from-code (warn)   a screen marked synced from code: confirm it in the prototype, then --approve.
@@ -69,22 +75,31 @@ file, as build-prototype.py does. Findings sit on the screen file's <section dat
                             isLoading, <Skeleton, <EmptyState, isError, status === "error"; Angular *ngIf="loading",
                             @if (isEmpty()), <ng-template #errorTpl>; Vue v-if="error"; Svelte {#if loading}), or a construct
                             (loading: <Suspense, @defer, {#await}, aria-busy; empty: .length === 0, !items.length, @empty,
-                            {:else}; error: {:catch}). An Angular templateUrl in a source file is read too. Synonyms:
-                            loading = pending, fetching, skeleton, spinner, loader, busy, saving, submitting, progress;
-                            empty = no results, no items, no data; error = failed, failure, fault; success = succeeded,
-                            saved, confirmed, complete(d); offline = online / navigator.onLine.
+                            {:else}; error: {:catch}). Synonyms: loading = pending, fetching, skeleton, spinner, loader,
+                            busy, saving, submitting, progress; empty = no results, no items, no data; error = failed,
+                            failure, fault; success = succeeded, saved, confirmed, complete(d); offline = online /
+                            navigator.onLine. State names map to these families by their words (empty-search -> empty)
+                            and aliases (no-results, no-data, no-items -> empty; not-found, timeout -> error). The source
+                            read is the mapped files, plus an Angular templateUrl, plus for a Next.js app-router page the
+                            loading.*, error.* and not-found.* beside it and in every folder above it up to app/.
   copy-missing-in-code (suggest, at the element's line) a heading (h1-h6) or button, field (label) or group (legend) label
                             of the screen's first state or its shared content not found in its source files (compared
                             without case, extra spaces, HTML entities or typographic quotes).
-  missing-state (suggest)   references/ux.md asks for a state the screen file lacks. Under a heading naming states
-                            ("## States", "## Every state"), `- **Loading**: ...` (a known state name, or any name in
-                            backticks) asks it of every screen and `- booking: loading, empty, error` of that screen.
+  component-missing-in-code (suggest, at the attribute's line) a component the screen file names with
+                            data-component="BookingCard" (any state) not used in its source files (BookingCard,
+                            booking-card, app-booking-card all count). Screens that name no components are not compared.
+  missing-state (suggest)   a state references/ux.md requires of a screen that its screen file lacks. Only the
+                            "### States per screen" subsection requires anything: `- booking: loading, empty, error` (or a
+                            `| Screen | States |` table row) lists a screen's states, `- settings: none (reason)` exempts
+                            it, and a screen not listed is not checked. The table under "## States (every screen has all
+                            that apply)" is the catalogue of states (first cell = the state), never a requirement.
 Routes are found in the audited files: Next.js app router (app/**/page.tsx|jsx|ts|js; (groups) and @slots are not in the
-URL, _private folders are not routes), Next.js pages router (pages/**, not _app/_document/api, only in a Next project:
-next.config.* or "next" in package.json), SvelteKit (src/routes/**/+page.svelte), Nuxt (pages/**/*.vue), and router
-configs (*.routes.ts, *routing.module.ts, routes.ts, router.ts, router/index.ts: Angular Routes and Vue Router objects with
-a path and a component or loadComponent; children paths join their parents'; redirects and ** are skipped; the component
-file comes from its import, relative or @/ and ~/ for src/). Best-effort: anything else is not seen as a route.
+URL, _private folders are not routes) and pages router (pages/**, not _app/_document/api), both only in a Next project
+(next.config.* or "next" in package.json); Nuxt (pages/**/*.vue, only in a Nuxt project: nuxt.config.* or "nuxt" in
+package.json, so a plain Vue app's src/pages/ components are not routes); SvelteKit (src/routes/**/+page.svelte); and
+router configs (*.routes.ts, *routing.module.ts, routes.ts, router.ts, router/index.ts: Angular Routes and Vue Router
+objects with a path and a component or loadComponent; children paths join their parents'; redirects and ** are skipped;
+the component file comes from its import, relative or @/ and ~/ for src/). Best-effort: anything else is not a route.
 
 Inconsistency-only mode: when there is no tokens file (a prototype, code before /plumb:extract) or with --no-tokens. The
 de-facto scales are inferred from the inventory (_plumb.scan_inventory's scanner, the one /plumb:extract uses) and
@@ -2416,7 +2431,7 @@ class Route(NamedTuple):
 
 
 _PAGE_EXT = (".tsx", ".jsx", ".ts", ".js")
-_NEXT_CONFIG = ("next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs")
+_CONFIG_EXT = ("js", "mjs", "ts", "cjs", "mts")
 _ROUTER_FILE = re.compile(r"(?:^|/)(?:[\w.-]+\.routes|[\w.-]*routing\.module|routes|router(?:/index)?)\.(?:ts|js|mjs)$")
 _ROUTE_PATH = re.compile(r"(?<![\w$.])path\s*:\s*(['\"`])([^'\"`\n]*)\1")
 _ROUTE_COMPONENT = re.compile(r"(?<![\w$.])component\s*:\s*([A-Za-z_$][\w$]*)(?![\w$])")
@@ -2426,18 +2441,22 @@ _RESOLVE_EXT = ("", ".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", "/index.ts"
 _ROUTE_PARAM = re.compile(r"^(?::.+|\[{1,2}(?:\.\.\.)?[^\]]+\]{1,2}|\{[^}]+\}|\$.+)$")
 
 
-def _is_next_project(root: Path) -> bool:
-    if any((root / name).is_file() for name in _NEXT_CONFIG):
-        return True
+def project_frameworks(root: Path) -> frozenset:
+    """The file-routing frameworks of the project: "next" (next.config.* or `next` in package.json) and "nuxt"
+    (nuxt.config.* or `nuxt`). Their file conventions (app/**/page.*, pages/**) are routes only in such a project."""
+    found = set()
+    deps: dict = {}
     try:
         pkg = json.loads((root / "package.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, UnicodeDecodeError):
-        return False
-    deps: dict = {}
+        pkg = None
     for key in ("dependencies", "devDependencies"):
         if isinstance(pkg, dict) and isinstance(pkg.get(key), dict):
             deps.update(pkg[key])
-    return "next" in deps
+    for name in ("next", "nuxt"):
+        if name in deps or any((root / f"{name}.config.{ext}").is_file() for ext in _CONFIG_EXT):
+            found.add(name)
+    return frozenset(found)
 
 
 def _route_of(segments: List[str]) -> Optional[str]:
@@ -2453,17 +2472,20 @@ def _route_of(segments: List[str]) -> Optional[str]:
     return "/" + "/".join(kept)
 
 
-def file_route(path: str, next_project: bool) -> Optional[str]:
-    """The route a file defines by where it is (Next.js app and pages routers, SvelteKit, Nuxt), or None."""
+def file_route(path: str, frameworks: Iterable[str]) -> Optional[str]:
+    """The route a file defines by where it is, or None: SvelteKit +page.svelte always; Next.js app/**/page.* and
+    pages/** only in a Next project; Nuxt pages/**/*.vue only in a Nuxt project (a plain Vue app keeps components in
+    src/pages/ that are not routes)."""
+    frameworks = frozenset(frameworks)
     parts = path.replace("\\", "/").split("/")
     name, dirs = parts[-1], parts[:-1]
     stem, dot, ext = name.rpartition(".")
     ext = f".{ext}" if dot else ""
     if name == "+page.svelte" and "routes" in dirs:
         return _route_of(dirs[dirs.index("routes") + 1:])
-    if stem == "page" and ext in _PAGE_EXT and "app" in dirs:
+    if "next" in frameworks and stem == "page" and ext in _PAGE_EXT and "app" in dirs:
         return _route_of(dirs[dirs.index("app") + 1:])
-    if "pages" in dirs and (ext == ".vue" or (next_project and ext in _PAGE_EXT)):
+    if "pages" in dirs and (("nuxt" in frameworks and ext == ".vue") or ("next" in frameworks and ext in _PAGE_EXT)):
         rest = dirs[dirs.index("pages") + 1:]
         if rest[:1] == ["api"] or stem.startswith("_"):
             return None
@@ -2584,13 +2606,14 @@ def router_routes(root: Path, name: str, text: str) -> List[Route]:
 
 def discover_routes(root: Path, files: Iterable[Tuple[str, str]]) -> List[Route]:
     """Every route in the given (project-relative path, text) files: file-based routes (Next.js app router
-    app/**/page.*, Next.js pages router pages/** in a Next project, SvelteKit src/routes/**/+page.svelte, Nuxt
-    pages/**/*.vue) and router configs (*.routes.ts, *routing.module.ts, routes.ts, router.ts, router/index.ts)."""
-    next_project = _is_next_project(root)
+    app/**/page.* and pages/** in a Next project, Nuxt pages/**/*.vue in a Nuxt project, SvelteKit
+    src/routes/**/+page.svelte) and router configs (*.routes.ts, *routing.module.ts, routes.ts, router.ts,
+    router/index.ts)."""
+    frameworks = project_frameworks(root)
     out: List[Route] = []
     for name, text in files:
         name = name.replace("\\", "/")
-        route = file_route(name, next_project)
+        route = file_route(name, frameworks)
         if route is not None:
             out.append(Route(route, name, 1, name))
         elif _ROUTER_FILE.search(name):
@@ -2627,12 +2650,32 @@ class ScreenInfo:
     states: List[str]
     hash: str
     entry: dict  # the screens.json entry as build-prototype.py reads it (status recomputed from the files on disk)
-    _changed: object = None
-    _source: Optional[Tuple[str, List[str]]] = None
+    changed_checked: bool = False  # code_changed() has run; `changed` holds its answer (None: no baseline)
+    changed: Optional[bool] = None
+    source_cache: Optional[Tuple[str, List[str]]] = None
 
 
 _ON = re.compile(r"^\s*(?:on|yes|true)\b", re.I)
 _TEMPLATE_URL = re.compile(r"(?<![\w$])templateUrl\s*:\s*['\"`]([^'\"`]+)['\"`]")
+_NEXT_PAGE = re.compile(r"(?:^|/)page\.(?:tsx|jsx|ts|js)$")
+_NEXT_SPECIAL = ("loading", "error", "not-found")  # Next.js shows these for the pages below them
+
+
+def next_special_files(root: Path, page: str) -> List[str]:
+    """loading.*, error.* and not-found.* beside a Next.js app-router page and in each folder above it up to app/."""
+    parts = page.split("/")
+    if "app" not in parts[:-1]:
+        return []
+    top = parts.index("app")
+    out = []
+    for depth in range(len(parts) - 1, top, -1):
+        folder = "/".join(parts[:depth])
+        for name in _NEXT_SPECIAL:
+            for ext in _PAGE_EXT:
+                candidate = f"{folder}/{name}{ext}"
+                if (root / candidate).is_file():
+                    out.append(candidate)
+    return out
 
 
 class Fidelity:
@@ -2641,27 +2684,32 @@ class Fidelity:
 
     def __init__(self, proj: Project) -> None:
         self.active = False
+        self.no_prototype = False  # no screen files and no screens.json (the no-prototype notice reads it)
         self.screens: List[ScreenInfo] = []
+        self.where = ""  # the file being checked, named when a check fails unexpectedly
         root, settings = proj.root, proj.settings
+        self.sync_on = _ON.match(str(settings.get("Prototype sync", "") or "")) is not None
         docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip().strip("/") or "docs/design"
         if re.match(r"^[A-Za-z]:", docs) or ".." in docs.split("/"):
             return  # build-prototype.py refuses such a docs_dir; there is no prototype to compare
         folder = root / docs / "prototype" / "screens"
         map_path = root / docs / "prototype" / "screens.json"
         has_files = folder.is_dir() and any(p.is_file() for p in folder.glob("*.html"))
+        self.map_rel = rel(map_path, root)
         if not has_files and not map_path.is_file():
+            self.no_prototype = True
             return
         bp = load_build_prototype()
         if bp is None:
             print(f"note: {_BUILD_PROTOTYPE} is not next to audit.py: prototype fidelity checks skipped", file=sys.stderr)
             return
         self.bp, self.root, self.docs = bp, root, docs
-        self.map_rel = rel(map_path, root)
         self.command = f"python3 {rel(proj.skill_dir / 'scripts' / _BUILD_PROTOTYPE, root)}"
-        self.sync_on = _ON.match(str(settings.get("Prototype sync", "") or "")) is not None
         self.ux_path = proj.skill_dir / "references" / "ux.md"
+        self.where = self.map_rel
         old = bp.read_map(map_path, self.map_rel)
         for s in bp.load_screens(folder, root, rel) if has_files else []:
+            self.where = s.rel
             entry = bp.map_entry(s, old.get(s.id), root, self.map_rel)
             try:
                 text = normalise_text(read_source(root / s.rel))
@@ -2675,17 +2723,22 @@ class Fidelity:
     def code_changed(self, s: ScreenInfo) -> Optional[bool]:
         """Whether the screen's source files differ from the baseline recorded at --map/--approve/--synced; None when
         there is no baseline."""
-        if s._changed is None:
+        if not s.changed_checked:
             base = s.entry.get("files_hash")
-            s._changed = "none" if not isinstance(base, str) else self.bp.files_state(self.root, s.entry["files"])[0] != base
-        return None if s._changed == "none" else bool(s._changed)
+            s.changed = None if not isinstance(base, str) else self.bp.files_state(self.root, s.entry["files"])[0] != base
+            s.changed_checked = True
+        return s.changed
 
     def source(self, s: ScreenInfo) -> Tuple[str, List[str]]:
-        """The screen's source files (comments blanked, joined) and their names; an Angular templateUrl is followed."""
-        if s._source is None:
+        """The screen's source files (comments blanked, joined) and their names. An Angular templateUrl is followed, and
+        a Next.js app-router page brings its loading.*, error.* and not-found.* (beside it and above it up to app/)."""
+        if s.source_cache is None:
             queue: List[str] = []
             for glob in s.entry["files"]:
-                queue += self.bp.glob_files(self.root, glob)
+                for name in self.bp.glob_files(self.root, glob):
+                    queue.append(name)
+                    if _NEXT_PAGE.search(name):
+                        queue += next_special_files(self.root, name)
             texts, names, seen = [], [], set()
             while queue:
                 name = queue.pop(0)
@@ -2708,8 +2761,8 @@ class Fidelity:
                     target = posixpath.normpath(posixpath.join(posixpath.dirname(name), m.group(1)))
                     if not target.startswith("../"):
                         queue.append(target)
-            s._source = ("\n".join(texts), names)
-        return s._source
+            s.source_cache = ("\n".join(texts), names)
+        return s.source_cache
 
     def approved_now(self, s: ScreenInfo) -> bool:
         approved = s.entry.get("approved")
@@ -2719,10 +2772,48 @@ class Fidelity:
         return f"{self.docs}/prototype.html#screen-{s.id}"
 
 
-def _fid(proj: Project) -> Optional[Fidelity]:
+_UNEXPECTED = (KeyError, TypeError, ValueError, AttributeError, IndexError)
+
+
+def _fidelity_error(exc: Exception, where: str) -> PlumbError:
+    what = where or "the prototype files"
+    return PlumbError(f"error: the prototype fidelity check failed on {what} ({type(exc).__name__}: {exc})\n"
+                      f"fix: rebuild the prototype with build-prototype.py (it checks the screen files and is the only "
+                      f"writer of screens.json); if {what} was edited by hand, restore the last good version")
+
+
+def _fidelity_of(proj: Project) -> Fidelity:
     if proj._fidelity is None:
-        proj._fidelity = Fidelity(proj)
-    return proj._fidelity if proj._fidelity.active else None
+        try:
+            proj._fidelity = Fidelity(proj)
+        except _UNEXPECTED as exc:
+            raise _fidelity_error(exc, "") from None
+    return proj._fidelity
+
+
+def _fid(proj: Project) -> Optional[Fidelity]:
+    fid = _fidelity_of(proj)
+    return fid if fid.active else None
+
+
+def fidelity_rule(check: Callable[[Project], Iterator[XHit]]) -> Callable[[Project], Iterator[XHit]]:
+    """Wraps a fidelity check so an unexpected failure names the screen file or screens.json it was reading (a
+    PlumbError: error + fix, exit 2) instead of the generic "unexpected token structure"."""
+    def run(proj: Project) -> Iterator[XHit]:
+        try:
+            yield from check(proj)
+        except _UNEXPECTED as exc:
+            raise _fidelity_error(exc, proj._fidelity.where if proj._fidelity is not None else "") from None
+    run.__name__ = check.__name__
+    run.__doc__ = check.__doc__
+    return run
+
+
+def _screens(fid: Fidelity) -> Iterator[ScreenInfo]:
+    """The screens, recording which one is being checked (named if a check fails)."""
+    for s in fid.screens:
+        fid.where = s.file
+        yield s
 
 
 def _list_names(names: Iterable[str]) -> str:
@@ -2759,11 +2850,29 @@ def check_route_not_prototyped(proj: Project) -> Iterator[XHit]:
                    severity="error" if fid.sync_on else "warn")
 
 
+def check_no_prototype(proj: Project) -> Iterator[XHit]:
+    """One notice when PLUMB.md turns Prototype sync on but there are no screen files and no screens.json yet."""
+    fid = _fidelity_of(proj)
+    if not (fid.no_prototype and fid.sync_on):
+        return
+    line = 1
+    try:
+        lines = normalise_text(read_source(proj.root / "PLUMB.md")).split("\n")
+        line = next((i for i, text in enumerate(lines, 1) if re.match(r"\s*Prototype sync\s*:", text)), 1)
+    except OSError:
+        pass
+    yield XHit("PLUMB.md", line, "Prototype sync",
+               "no prototype yet: run /plumb:extract or /plumb:prototype. PLUMB.md turns Prototype sync on, but there are "
+               f"no screen files and no {fid.map_rel}, so no route or screen can be checked against one",
+               "run /plumb:extract (an app that already exists) or /plumb:prototype <screen> (new screens); if this "
+               "project has no prototype by decision, set Prototype sync: off in PLUMB.md")
+
+
 def check_screen_not_built(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for s in fid.screens:
+    for s in _screens(fid):
         e = s.entry
         if e["status"] == "built":
             continue
@@ -2785,7 +2894,7 @@ def check_screen_drift(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for s in fid.screens:
+    for s in _screens(fid):
         e = s.entry
         if e["status"] != "built" or not (e["synced_from_code"] or fid.approved_now(s)):
             continue  # not built yet, or the screen itself changed since approval (screen-unapproved)
@@ -2811,16 +2920,24 @@ def check_screen_unapproved(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for s in fid.screens:
+    for s in _screens(fid):
         e = s.entry
         if e["synced_from_code"]:
             continue
         approved = e.get("approved")
-        code = e["status"] == "built" and fid.code_changed(s) is True
+        built = e["status"] == "built"
+        code = built and fid.code_changed(s) is True
+        severity = None
         if isinstance(approved, dict) and approved.get("hash") != s.hash:
             who = f"{approved.get('by') or 'someone'} approved it on {approved.get('at') or 'an unknown date'}"
-            also = "; its source files changed too, so the code may follow a prototype nobody approved" if code else ""
-            message = f"screen {s.id} changed after {who}{also}: the prototype is the reference to build, so it needs approval again"
+            if built:
+                also = "; its source files changed too, so the code may follow a prototype nobody approved" if code else ""
+                message = (f"screen {s.id} changed after {who}{also}: the prototype is the reference to build, so it "
+                           f"needs approval again")
+            else:
+                severity = "warn"
+                message = (f"screen {s.id} changed after {who} and is awaiting approval again: don't build from it yet "
+                           f"(it is not built, so this is a warning; it becomes an error once the code exists)")
         elif approved is None and code:
             message = (f"the source files of screen {s.id} changed, but its prototype was never approved: code should "
                        f"follow an approved screen")
@@ -2828,14 +2945,14 @@ def check_screen_unapproved(proj: Project) -> Iterator[XHit]:
             continue
         yield XHit(s.file, s.line, s.id, message,
                    f"review it in {fid.review(s)} (rebuild with {fid.command}), then approve it: {fid.command} --approve "
-                   f"{s.id}")
+                   f"{s.id}", severity=severity)
 
 
 def check_synced_from_code(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for s in fid.screens:
+    for s in _screens(fid):
         if s.entry["synced_from_code"]:
             yield XHit(s.file, s.line, s.id,
                        f"screen {s.id} was synced from code, not approved: confirm in the prototype that it shows what "
@@ -2865,8 +2982,6 @@ _STATE_CONSTRUCTS: Dict[str, "re.Pattern[str]"] = {
 }
 _CONTENT_STATES = frozenset(("ready", "default", "loaded", "idle", "normal", "filled", "populated", "long-text", "long",
                              "longtext", "overflow"))
-_KNOWN_STATES = frozenset(_STATE_TERMS) | _CONTENT_STATES | frozenset(("no-results", "first-run", "partial", "refreshing",
-                                                                       "not-found", "forbidden", "timeout", "validation"))
 _COPY_TAGS = {"h1": "heading", "h2": "heading", "h3": "heading", "h4": "heading", "h5": "heading", "h6": "heading",
               "button": "button label", "label": "field label", "legend": "group label"}
 _VOID_TAGS = frozenset("area base br col embed hr img input link meta param source track wbr".split())
@@ -2899,14 +3014,29 @@ def _term_in(code: str, term: str) -> bool:
     return False
 
 
+_STATE_FAMILY = {"no-results": "empty", "no-data": "empty", "no-items": "empty", "nothing-found": "empty",
+                 "not-found": "error", "timeout": "error", "timed-out": "error"}
+
+
+def state_families(state: str) -> List[str]:
+    """The known states a state name belongs to: itself, any known word in it (empty-search -> empty), and the aliases
+    (no-results, no-data -> empty; not-found, timeout -> error)."""
+    key = norm_state(state)
+    words = key.split("-")
+    found = [k for k in _STATE_TERMS if k == key or k in words]
+    if key in _STATE_FAMILY:
+        found.append(_STATE_FAMILY[key])
+    return list(dict.fromkeys(found))
+
+
 def state_handled(state: str, code: str) -> bool:
     """Whether the code has a branch, early return, component or name for a state (heuristic: see the docstring)."""
     key = norm_state(state)
-    words = key.split("-")
-    terms = [key] + [t for k, ts in _STATE_TERMS.items() if k == key or k in words for t in ts]
+    families = state_families(state)
+    terms = [key] + [t for k in families for t in _STATE_TERMS[k]]
     if any(_term_in(code, t) for t in dict.fromkeys(terms)):
         return True
-    return any(rx.search(code) for k, rx in _STATE_CONSTRUCTS.items() if k == key or k in words)
+    return any(_STATE_CONSTRUCTS[k].search(code) for k in families if k in _STATE_CONSTRUCTS)
 
 
 class _CopyParser(HTMLParser):
@@ -2977,7 +3107,7 @@ def check_state_missing_in_code(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for s in fid.screens:
+    for s in _screens(fid):
         if s.entry["status"] != "built":
             continue
         code, names = fid.source(s)
@@ -2997,7 +3127,7 @@ def check_copy_missing_in_code(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for s in fid.screens:
+    for s in _screens(fid):
         if s.entry["status"] != "built" or not s.states:
             continue
         code, names = fid.source(s)
@@ -3016,18 +3146,43 @@ def check_copy_missing_in_code(proj: Project) -> Iterator[XHit]:
 
 _UX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
 _UX_BULLET = re.compile(r"^\s*[-*+]\s+(.*\S)\s*$")
-_UX_LABEL = re.compile(r"^(.*?)(?:\s*:\s+|\s*:$|\s+[—–-]\s+)(.*)$")
+_UX_LABEL = re.compile(r"^(.*?)(?:\s*:\s+|\s*:$|\s+[\u2014\u2013-]\s+)(.*)$")
+_UX_NONE = re.compile(r"^\s*none\b\s*(?:\((.*)\)|[:\u2014\u2013-]\s*(.*))?", re.I)
+UX_PER_SCREEN = "### States per screen"
 
 
-def ux_required_states(text: str, ids: Iterable[str]) -> Tuple[List[str], Dict[str, List[str]]]:
-    """(states every screen needs, {screen id casefolded: its states}) from the bullets under a ux.md heading that
-    names states: `- **Loading**: ...` (a known state name, or any name in backticks) asks it of every screen;
-    `- booking: loading, empty, error` asks those of that screen."""
-    known = {i.casefold() for i in ids}
-    general: List[str] = []
+class UxStates(NamedTuple):
+    """What references/ux.md says about states. catalogue: the state names in the table under the "States" heading
+    (what states exist; no screen is required to have them all). per_screen: {screen id casefolded: the states that
+    screen must have} from the "States per screen" subsection, [] for an exemption (`none (reason)`)."""
+
+    catalogue: List[str]
+    per_screen: Dict[str, List[str]]
+    exempt: Dict[str, str]
+
+
+def _cells(line: str) -> Optional[List[str]]:
+    s = line.strip()
+    if not s.startswith("|"):
+        return None
+    cells = [c.strip() for c in s.strip("|").split("|")]
+    if all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
+        return None  # the separator row
+    return cells
+
+
+def _clean(label: str) -> str:
+    return label.strip().strip("*`_").strip()
+
+
+def ux_states(text: str) -> UxStates:
+    """Reads ux.md: rows of the table under a heading naming states (first cell = the state; the header row is
+    skipped) are the catalogue; under "### States per screen", `- booking: loading, empty, error` (or a
+    `| Screen | States |` table row) lists a screen's required states and `- settings: none (reason)` exempts it."""
+    catalogue: List[str] = []
     per: Dict[str, List[str]] = {}
-    level: Optional[int] = None
-    fence = False
+    exempt: Dict[str, str] = {}
+    section, level, fence = None, 0, False
     for line in normalise_text(text).split("\n"):
         if line.strip().startswith(("```", "~~~")):
             fence = not fence
@@ -3036,27 +3191,43 @@ def ux_required_states(text: str, ids: Iterable[str]) -> Tuple[List[str], Dict[s
             continue
         head = _UX_HEADING.match(line)
         if head:
-            depth = len(head.group(1))
-            if level is not None and depth <= level:
-                level = None
-            if level is None and re.search(r"\bstates?\b", head.group(2), re.I):
-                level = depth
+            depth, title = len(head.group(1)), head.group(2)
+            if re.search(r"\bstates?\s+(?:per|by|for each)\s+screens?\b", title, re.I):
+                section, level = "per", depth
+            elif re.search(r"\bstates?\b", title, re.I):
+                section, level = "catalogue", depth
+            elif section is not None and depth <= level:
+                section = None
             continue
-        bullet = _UX_BULLET.match(line) if level is not None else None
-        if bullet is None:
+        if section == "catalogue":
+            cells = _cells(line)
+            if cells and _clean(cells[0]) and _clean(cells[0]).casefold() != "state":
+                catalogue.append(norm_state(_clean(cells[0])))
             continue
-        m = _UX_LABEL.match(bullet.group(1))
-        label, rest = (m.group(1), m.group(2)) if m else (bullet.group(1), "")
-        explicit = label.strip().startswith("`")
-        key = label.strip().strip("*`_").strip().casefold()
-        if key in known:
-            names = [norm_state(n) for n in re.split(r",|;|\band\b", rest)]
-            per.setdefault(key, []).extend(n for n in names if re.fullmatch(r"[\w-]{1,40}", n))
+        if section != "per":
+            continue
+        cells = _cells(line)
+        if cells is not None:
+            if len(cells) < 2 or _clean(cells[0]).casefold() in ("screen", "screen id", ""):
+                continue
+            label, rest = cells[0], cells[1]
         else:
-            name = norm_state(label)
-            if re.fullmatch(r"[\w-]{1,40}", name) and (explicit or name in _KNOWN_STATES):
-                general.append(name)
-    return general, per
+            bullet = _UX_BULLET.match(line)
+            m = _UX_LABEL.match(bullet.group(1)) if bullet else None
+            if m is None:
+                continue
+            label, rest = m.group(1), m.group(2)
+        key = _clean(label).casefold()
+        if not key:
+            continue
+        none = _UX_NONE.match(rest)
+        if none:
+            per[key] = []
+            exempt[key] = (none.group(1) or none.group(2) or "").strip()
+            continue
+        names = [norm_state(n) for n in re.split(r",|;|\band\b", re.sub(r"\([^)]*\)", "", rest))]
+        per.setdefault(key, []).extend(n for n in names if re.fullmatch(r"[\w-]{1,40}", n))
+    return UxStates(list(dict.fromkeys(catalogue)), per, exempt)
 
 
 def check_missing_state(proj: Project) -> Iterator[XHit]:
@@ -3068,17 +3239,64 @@ def check_missing_state(proj: Project) -> Iterator[XHit]:
     except OSError:
         return
     ux_rel = rel(fid.ux_path, proj.root)
-    general, per = ux_required_states(text, (s.id for s in fid.screens))
-    for s in fid.screens:
+    ux = ux_states(text)
+    for s in _screens(fid):
+        required = ux.per_screen.get(s.id.casefold())
+        if not required:
+            continue  # not listed (nothing asked), or exempt (none)
         have = {norm_state(x) for x in s.states}
-        missing = [n for n in dict.fromkeys(general + per.get(s.id.casefold(), [])) if n not in have]
+        missing = [n for n in dict.fromkeys(required) if n not in have]
         if not missing:
             continue
         yield XHit(s.file, s.line, s.id,
                    f"screen {s.id} has no {', '.join(missing)} state{'s' if len(missing) > 1 else ''}, which {ux_rel} "
-                   f"asks for",
+                   f"asks for under \"{UX_PER_SCREEN}\"",
                    f"add a <div data-state=\"{missing[0]}\"> block{' (and the others)' if len(missing) > 1 else ''} to "
-                   f"{s.file} with /plumb:prototype {s.id}, then approve it; or say in {ux_rel} why this screen has none")
+                   f"{s.file} with /plumb:prototype {s.id}, then approve it; or, if the screen does not need it, change "
+                   f"its line under \"{UX_PER_SCREEN}\" in {ux_rel} (`- {s.id}: none (reason)` exempts it)")
+
+
+# ---- components (light: only for screens that name theirs with data-component)
+
+
+_DATA_COMPONENT = re.compile(r"\bdata-component\s*=\s*([\"'])\s*([^\"'<>]+?)\s*\1")
+
+
+def screen_components(text: str) -> List[Tuple[str, int]]:
+    """(name, line) of every component a screen file names with data-component="...", once each."""
+    out: Dict[str, int] = {}
+    for m in _DATA_COMPONENT.finditer(text):
+        out.setdefault(m.group(2), text.count("\n", 0, m.start()) + 1)
+    return list(out.items())
+
+
+def _component_term(name: str) -> str:
+    """BookingCard, booking-card and booking_card all become the words "booking card" (matched as BookingCard,
+    booking-card, bookingCard, app-booking-card ...)."""
+    return " ".join(re.split(r"[\s_.-]+", re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name))).strip()
+
+
+def check_component_missing_in_code(proj: Project) -> Iterator[XHit]:
+    fid = _fid(proj)
+    if fid is None:
+        return
+    for s in _screens(fid):
+        if s.entry["status"] != "built":
+            continue
+        components = screen_components(s.text)
+        if not components:
+            continue  # the screen file names no components: nothing to compare
+        code, names = fid.source(s)
+        if not names:
+            continue
+        for name, line in components:
+            if _term_in(code, _component_term(name)):
+                continue
+            yield XHit(s.file, line, name,
+                       f"component {name} (data-component on screen {s.id}) is not used in its source files "
+                       f"({_list_names(names)}): the built screen may use a different component",
+                       f"use {name} in the code (see references/components.md), or, if the screen should use another "
+                       f"component, change the screen file and approve it ({fid.command} --approve {s.id})")
 
 
 # ---------------------------------------------------------------- the rule table
@@ -3153,17 +3371,19 @@ RULES: List[Rule] = [
     Rule("reduced-motion", "warn", WEB, "cross", check_reduced_motion, "no reduced-motion handling",
          "add a prefers-reduced-motion block"),
     # prototype fidelity (cross file): screens.json and the screen files against the routes and the code
-    Rule("route-not-prototyped", "error", WEB, "cross", check_route_not_prototyped, "route {match} is not prototyped",
+    Rule("route-not-prototyped", "error", WEB, "cross", fidelity_rule(check_route_not_prototyped), "route {match} is not prototyped",
          "prototype it with /plumb:prototype, then map it with build-prototype.py --map"),
-    Rule("screen-drift", "error", ALL, "cross", check_screen_drift, "the code of screen {match} changed after approval",
+    Rule("no-prototype", "warn", ALL, "cross", fidelity_rule(check_no_prototype), "no prototype yet",
+         "run /plumb:extract or /plumb:prototype"),
+    Rule("screen-drift", "error", ALL, "cross", fidelity_rule(check_screen_drift), "the code of screen {match} changed after approval",
          "update the prototype screen, then approve it with build-prototype.py --approve"),
-    Rule("screen-unapproved", "error", ALL, "cross", check_screen_unapproved, "screen {match} changed since approval",
+    Rule("screen-unapproved", "error", ALL, "cross", fidelity_rule(check_screen_unapproved), "screen {match} changed since approval",
          "review the screen, then approve it with build-prototype.py --approve"),
-    Rule("screen-not-built", "warn", ALL, "cross", check_screen_not_built, "screen {match} is not built yet",
+    Rule("screen-not-built", "warn", ALL, "cross", fidelity_rule(check_screen_not_built), "screen {match} is not built yet",
          "build it, then map it with build-prototype.py --map"),
-    Rule("state-missing-in-code", "warn", WEB, "cross", check_state_missing_in_code, "state {match} is not in the code",
+    Rule("state-missing-in-code", "warn", WEB, "cross", fidelity_rule(check_state_missing_in_code), "state {match} is not in the code",
          "build the state as the screen file shows it"),
-    Rule("synced-from-code", "warn", ALL, "cross", check_synced_from_code, "screen {match} was synced from code",
+    Rule("synced-from-code", "warn", ALL, "cross", fidelity_rule(check_synced_from_code), "screen {match} was synced from code",
          "confirm it in the prototype, then approve it with build-prototype.py --approve"),
     Rule("missing-token", "suggest", ALL, "cross", check_missing_token, "{match} has no token",
          "add a token with /plumb:update", weight=3,
@@ -3189,11 +3409,16 @@ RULES: List[Rule] = [
          "pick one value", weight=2,
          why="The same control with a different padding or radius on different screens makes the product feel "
              "unfinished, and it can no longer be changed in one place."),
-    Rule("copy-missing-in-code", "suggest", WEB, "cross", check_copy_missing_in_code, "\"{match}\" is not in the code",
+    Rule("copy-missing-in-code", "suggest", WEB, "cross", fidelity_rule(check_copy_missing_in_code), "\"{match}\" is not in the code",
          "use the prototype's words, or update the screen file and approve it", weight=2,
          why="The approved screen is what people agreed the product says; a heading or button worded differently in "
              "code means the prototype no longer shows the real product."),
-    Rule("missing-state", "suggest", ALL, "cross", check_missing_state, "screen {match} lacks a state ux.md asks for",
+    Rule("component-missing-in-code", "suggest", WEB, "cross", fidelity_rule(check_component_missing_in_code),
+         "component {match} is not in the code", "use the component the screen names, or update the screen file",
+         weight=2,
+         why="The prototype names the component a screen is built from; a different one in code drifts from the "
+             "design system and from what was approved."),
+    Rule("missing-state", "suggest", ALL, "cross", fidelity_rule(check_missing_state), "screen {match} lacks a state ux.md asks for",
          "add the state to the screen file with /plumb:prototype", weight=2,
          why="A state nobody designed (loading, empty, error, offline ...) gets improvised in code; designing it in the "
              "prototype first keeps it consistent with the rest of the product."),

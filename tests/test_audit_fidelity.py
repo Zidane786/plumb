@@ -33,7 +33,8 @@ BP_CMD = f"python3 {SKILL_REL}/scripts/build-prototype.py"
 
 FIDELITY = {"route-not-prototyped": "error", "screen-drift": "error", "screen-unapproved": "error",
             "screen-not-built": "warn", "state-missing-in-code": "warn", "synced-from-code": "warn",
-            "copy-missing-in-code": "suggest", "missing-state": "suggest"}
+            "copy-missing-in-code": "suggest", "missing-state": "suggest", "no-prototype": "warn",
+            "component-missing-in-code": "suggest"}
 FRAMEWORKS = ("next", "angular")
 UNICODE_ID = {"next": "menü", "angular": "réglages"}
 
@@ -141,7 +142,8 @@ def section_line(project: Path, sid: str) -> int:
 
 def assert_shape(findings: list) -> None:
     for f in findings:
-        assert f["severity"] == FIDELITY[f["rule"]] or f["rule"] in ("route-not-prototyped", "screen-drift"), f
+        assert f["severity"] == FIDELITY[f["rule"]] or f["rule"] in ("route-not-prototyped", "screen-drift",
+                                                                      "screen-unapproved"), f
         assert f["message"] and f["fix"], f
 
 
@@ -154,7 +156,7 @@ def test_fidelity_rules_are_cross_rules_in_the_one_table() -> None:
         assert rule_id in rules, rule_id
         assert rules[rule_id].kind == "cross" and rules[rule_id].severity == severity, rule_id
         assert rules[rule_id].message and rules[rule_id].fix
-    for rule_id in ("copy-missing-in-code", "missing-state"):
+    for rule_id in ("copy-missing-in-code", "missing-state", "component-missing-in-code"):
         assert rules[rule_id].why and rules[rule_id].weight >= 1
 
 
@@ -170,12 +172,31 @@ def test_clean_baseline_reports_no_fidelity_finding(fw: str, crlf: bool, tmp_pat
     assert "build-prototype" not in out["_stderr"]
 
 
-def test_no_prototype_means_no_fidelity_checks(tmp_path: Path) -> None:
+def test_no_prototype_with_sync_on_is_one_notice_on_the_plumb_md_line(tmp_path: Path) -> None:
     project = make_project(tmp_path, "next")
     shutil.rmtree(project / "docs")
     write(project / "app/billing/page.tsx", "export default function Billing() {\n  return <h1>Billing</h1>;\n}\n")
     out = audit(project)
+    assert [(f["rule"], f["file"], f["line"], f["severity"]) for f in fidelity(out)] == [
+        ("no-prototype", "PLUMB.md", line_of(project / "PLUMB.md", "Prototype sync:"), "warn")]
+    f = fidelity(out)[0]
+    assert f["message"].startswith("no prototype yet: run /plumb:extract or /plumb:prototype")
+    assert "Prototype sync: off" in f["fix"]
+    assert out["_code"] == 0
+
+
+@pytest.mark.parametrize("plumb_md", ["sync off", "no sync line"])
+def test_no_prototype_with_sync_off_is_silent(plumb_md: str, tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    shutil.rmtree(project / "docs")
+    if plumb_md == "sync off":
+        edit(project / "PLUMB.md", "Prototype sync: on", "Prototype sync: off")
+    else:
+        write(project / "PLUMB.md", "Project: demo\n")
+    write(project / "app/billing/page.tsx", NEW_PAGE)
+    out = audit(project)
     assert fidelity(out) == []
+    assert out["_code"] == 0
 
 
 # ---------------------------------------------------------------- screen-not-built
@@ -341,6 +362,19 @@ def test_screen_file_changed_after_approval_is_unapproved(fw: str, tmp_path: Pat
     assert out["_code"] == 1
 
 
+@pytest.mark.parametrize("fw,gone", [("next", "app/menu"), ("angular", "src/app/settings")])
+def test_screen_changed_after_approval_but_not_built_is_a_warning(fw: str, gone: str, tmp_path: Path) -> None:
+    project = make_project(tmp_path, fw)
+    sid = UNICODE_ID[fw]
+    shutil.rmtree(project / gone)
+    edit(screen_file(project, sid), "<div data-state=\"ready\">", "<div data-state=\"ready\">\n    <p>New line</p>")
+    out = audit(project)
+    found = fidelity(out, "screen-unapproved")
+    assert [(f["file"], f["line"], f["severity"]) for f in found] == [(screen_rel(sid), section_line(project, sid), "warn")]
+    assert "awaiting approval again: don't build from it yet" in found[0]["message"]
+    assert f"{BP_CMD} --approve {sid}" in found[0]["fix"]
+
+
 def test_never_approved_screen_with_changed_code_is_unapproved(tmp_path: Path) -> None:
     project = make_project(tmp_path, "next")
     edit_map(project, "booking", approved=None)
@@ -381,6 +415,43 @@ def test_next_loading_state_missing_in_code(tmp_path: Path) -> None:
     out = audit(project)
     path = screen_file(project, "booking")
     assert where(out, "state-missing-in-code") == [(screen_rel("booking"), line_of(path, 'data-state="loading"'))]
+
+
+@pytest.mark.parametrize("special", ["app/loading.tsx", "app/(shop)/loading.tsx", "app/(shop)/booking/loading.tsx"])
+def test_next_loadingtsx_beside_or_above_the_page_handles_loading(special: str, tmp_path: Path) -> None:
+    """booking's own files lose every loading branch; Next.js shows loading.tsx from the page's folder or any folder
+    above it up to app/, so that file is the loading state."""
+    project = make_project(tmp_path, "next")
+    form = project / "components/booking-form.tsx"
+    edit(form, "{status === \"saving\" ? <Spinner /> : \"Confirm booking\"}", "Confirm booking")
+    edit(form, 'import { Spinner } from "@/components/ui/spinner";\n', "")
+    write(form, read(form).replace('"saving"', '"sent"'))
+    assert where(audit(project), "state-missing-in-code")  # the failing case first
+    write(project / special, 'export default function Loading() {\n  return <TableList.Skeleton />;\n}\n')
+    assert where(audit(project), "state-missing-in-code") == []
+
+
+def test_next_error_tsx_handles_the_error_state_of_a_page_mapped_alone(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    edit_map(project, "booking", files=["app/(shop)/booking/page.tsx"], files_hash=None)
+    out = audit(project)
+    states = [f["message"].split()[1] for f in fidelity(out, "state-missing-in-code")]
+    assert "error" in states
+    write(project / "app/(shop)/booking/error.tsx", '"use client";\nexport default function Failed() {\n'
+                                                    '  return <p>We could not save the booking</p>;\n}\n')
+    states = [f["message"].split()[1] for f in fidelity(audit(project), "state-missing-in-code")]
+    assert "error" not in states and "loading" in states
+
+
+def test_state_families_and_synonyms() -> None:
+    assert A.state_handled("no-results", "if (items.length === 0) return null;")
+    assert A.state_handled("no-data", "<EmptyState />")
+    assert A.state_handled("empty-search", "const isEmpty = true;")
+    assert A.state_handled("not-found", "if (isError) return <ErrorState />;")
+    assert A.state_handled("not-found", "notFound();")
+    assert A.state_handled("timeout", "{status === 'error' && <Retry />}")
+    assert not A.state_handled("timeout", "return <Table />;")
+    assert not A.state_handled("no-results", "return <Table rows={rows} />;")
 
 
 def test_angular_empty_state_missing_in_template(tmp_path: Path) -> None:
@@ -477,37 +548,84 @@ def test_synced_screen_whose_code_changed_since_is_drift(tmp_path: Path) -> None
 # ---------------------------------------------------------------- missing-state (ux.md)
 
 
-UX = """# UX
-
-## Every state
-- **Loading**: a skeleton in the shape of the content
-- booking: loading, error, success, offline
-- Menü: empty
-
-## Voice
-- loading: never say "please wait"
-"""
+UX_TEMPLATE = REPO / "plugins/plumb/assets/skill/references/ux.md.tmpl"
 
 
-def test_ux_md_state_missing_from_a_screen_is_a_suggestion(tmp_path: Path) -> None:
+def filled_ux(lines: str) -> str:
+    """The real ux.md template with its "### States per screen" lines filled in."""
+    text = read(UX_TEMPLATE)
+    marker = "a screen not listed is not checked.\n"
+    assert marker in text
+    return text.replace(marker, marker + "\n" + lines, 1)
+
+
+def test_ux_template_states_table_is_the_catalogue_and_lists_no_screen() -> None:
+    ux = A.ux_states(read(UX_TEMPLATE))
+    assert ux.catalogue == ["loading", "empty", "error", "success", "disabled", "long-text", "zero-and-one", "offline"]
+    assert ux.per_screen == {} and ux.exempt == {}
+    assert A.UX_PER_SCREEN in read(UX_TEMPLATE)
+
+
+def test_ux_states_per_screen_lines_table_and_exemptions() -> None:
+    text = filled_ux("- booking: loading, error, success (after saving), offline\n- `Menü`: empty\n"
+                     "- settings: none (a static form)\n\n| Screen | States |\n|---|---|\n| home | loading, empty |\n"
+                     "| ticket | none: printed only |\n")
+    ux = A.ux_states(text)
+    assert ux.per_screen == {"booking": ["loading", "error", "success", "offline"], "menü": ["empty"], "settings": [],
+                             "home": ["loading", "empty"], "ticket": []}
+    assert ux.exempt == {"settings": "a static form", "ticket": "printed only"}
+    assert len(ux.catalogue) == 8
+
+
+def test_template_ux_md_gives_no_missing_state(tmp_path: Path) -> None:
+    """The template's "every screen has all that apply" catalogue is not a requirement: no noise."""
     project = make_project(tmp_path, "next")
-    write(project / SKILL_REL / "references/ux.md", UX)
+    write(project / SKILL_REL / "references/ux.md", read(UX_TEMPLATE))
+    assert where(audit(project), "missing-state") == []
+
+
+def test_ux_md_state_missing_from_a_listed_screen_is_a_suggestion(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    write(project / SKILL_REL / "references/ux.md",
+          filled_ux("- booking: loading, error, success, offline\n- Menü: empty, loading\n- home: none (a summary)\n"))
     out = audit(project)
     got = {f["file"]: f for f in fidelity(out, "missing-state")}
     assert sorted(got) == [screen_rel("booking"), screen_rel("menü")]
-    assert "offline" in got[screen_rel("booking")]["message"]
-    assert "loading" not in got[screen_rel("booking")]["message"].split("asks")[0].split("no ")[1]
-    assert "loading" in got[screen_rel("menü")]["message"]
+    assert "has no offline state," in got[screen_rel("booking")]["message"]
+    assert "has no loading state," in got[screen_rel("menü")]["message"]
     for f in got.values():
         assert f["severity"] == "suggest" and f["line"] == section_line(project, Path(f["file"]).stem)
-        assert "references/ux.md" in f["message"] + f["fix"]
+        assert "references/ux.md" in f["message"] and "### States per screen" in f["fix"]
+        assert "none (reason)" in f["fix"]
     assert out["_code"] == 0
 
 
-def test_ux_md_states_every_screen_has_give_nothing(tmp_path: Path) -> None:
-    project = make_project(tmp_path, "angular")
-    write(project / SKILL_REL / "references/ux.md", "# UX\n\n## States\n- `ready`: the content\n- booking: loading, error\n")
+def test_ux_md_exemption_clears_the_suggestion(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    write(project / SKILL_REL / "references/ux.md", filled_ux("- booking: none (offline is handled app-wide)\n"))
     assert where(audit(project), "missing-state") == []
+
+
+# ---------------------------------------------------------------- component-missing-in-code
+
+
+def test_components_named_by_the_screen_are_looked_for_in_code(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    path = screen_file(project, "home")
+    edit(path, "    <ul>\n", '    <ul data-component="TableList">\n')
+    edit(path, '    <p>No tables booked yet</p>', '    <div data-component="empty-state"><p>No tables booked yet</p></div>\n'
+                                                  '    <div data-component="DatePicker"></div>')
+    out = audit(project)
+    assert where(out, "component-missing-in-code") == [(screen_rel("home"), line_of(path, "DatePicker"))]
+    f = fidelity(out, "component-missing-in-code")[0]
+    assert f["severity"] == "suggest" and "DatePicker" in f["message"] and "app/page.tsx" in f["message"]
+    assert f"{BP_CMD} --approve home" in f["fix"]
+
+
+def test_screen_without_data_component_is_not_compared(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "angular")
+    assert "data-component" not in read(screen_file(project, "booking"))
+    assert where(audit(project), "component-missing-in-code") == []
 
 
 # ---------------------------------------------------------------- bad input
@@ -538,6 +656,20 @@ def test_unsafe_glob_in_screens_json_exits_2(tmp_path: Path) -> None:
     assert r.returncode == 2 and "error: " in r.stderr and "\nfix: " in r.stderr, r.stderr
 
 
+def test_an_unexpected_failure_names_the_screen_file(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = make_project(tmp_path, "next")
+
+    def broken(self, s):
+        raise KeyError("files")
+
+    monkeypatch.setattr(A.Fidelity, "code_changed", broken)
+    code = A.main(["--json", "--root", str(project / SKILL_REL)])
+    err = capsys.readouterr().err
+    assert code == 2, err
+    assert "error: the prototype fidelity check failed on docs/design/prototype/screens/" in err
+    assert "unexpected token structure" not in err and "\nfix: " in err
+
+
 def test_missing_build_prototype_skips_with_a_note(tmp_path: Path) -> None:
     project = make_project(tmp_path, "next")
     (project / SKILL_REL / "scripts/build-prototype.py").unlink()
@@ -547,12 +679,29 @@ def test_missing_build_prototype_skips_with_a_note(tmp_path: Path) -> None:
     assert "build-prototype.py" in out["_stderr"] and "skipped" in out["_stderr"]
 
 
+# ---------------------------------------------------------------- PATHS
+
+
+def test_paths_limit_routes_to_the_audited_files_but_screens_are_all_checked(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    write(project / "app/billing/page.tsx", NEW_PAGE)
+    write(project / "components/booking-form.tsx", read(project / "components/booking-form.tsx") + "\n// changed\n")
+    out = audit(project, "app/menu")
+    assert where(out, "route-not-prototyped") == []  # app/billing was not audited
+    assert where(out, "screen-drift") == [(screen_rel("booking"), section_line(project, "booking"))]
+    out = audit(project, "app/billing")
+    assert where(out, "route-not-prototyped") == [("app/billing/page.tsx", 1)]
+    assert where(out, "screen-drift") == [(screen_rel("booking"), section_line(project, "booking"))]
+
+
 # ---------------------------------------------------------------- route discovery (pure)
 
 
-def routes(tmp_path: Path, files: dict, next_project: bool = False) -> list:
+def routes(tmp_path: Path, files: dict, next_project: bool = False, nuxt_project: bool = False) -> list:
     if next_project:
         write(tmp_path / "next.config.js", "module.exports = {};\n")
+    if nuxt_project:
+        write(tmp_path / "package.json", '{"dependencies": {"nuxt": "^3.0.0"}}\n')
     for name, text in files.items():
         write(tmp_path / name, text)
     found = A.discover_routes(tmp_path, [(name, text) for name, text in files.items()])
@@ -565,7 +714,8 @@ def test_next_app_router_routes(tmp_path: Path) -> None:
         "src/app/blog/[slug]/page.jsx": "", "app/_private/secret/page.tsx": "", "app/@modal/login/page.tsx": "",
         "app/api/route.ts": "", "app/settings/loading.tsx": "",
     }
-    assert routes(tmp_path, files) == [
+    assert routes(tmp_path / "plain", files) == []
+    assert routes(tmp_path / "next", files, next_project=True) == [
         ("/", "app/page.tsx", 1, "app/page.tsx"),
         ("/about", "app/(marketing)/about/page.tsx", 1, "app/(marketing)/about/page.tsx"),
         ("/blog/[slug]", "src/app/blog/[slug]/page.jsx", 1, "src/app/blog/[slug]/page.jsx"),
@@ -583,7 +733,39 @@ def test_next_pages_router_routes_only_in_a_next_project(tmp_path: Path) -> None
 def test_sveltekit_and_nuxt_file_routes(tmp_path: Path) -> None:
     files = {"src/routes/+page.svelte": "", "src/routes/(app)/settings/+page.svelte": "",
              "src/routes/+layout.svelte": "", "pages/about.vue": "", "pages/index.vue": ""}
-    assert [r[0] for r in routes(tmp_path, files)] == ["/", "/", "/about", "/settings"]
+    assert [r[0] for r in routes(tmp_path / "nuxt", files, nuxt_project=True)] == ["/", "/", "/about", "/settings"]
+    assert [r[0] for r in routes(tmp_path / "plain", files)] == ["/", "/settings"]  # pages/*.vue: Nuxt only
+
+
+def test_plain_vue_app_with_components_in_src_pages_has_no_route_findings(tmp_path: Path) -> None:
+    """A Vue + vue-router app keeps page components in src/pages/; only the router config declares routes."""
+    project = tmp_path / "Vue Café"
+    write(project / "PLUMB.md", "Project: vue\n\n## Prototype\nPrototype sync: on\n")
+    write(project / "package.json", '{"dependencies": {"vue": "^3.4.0", "vue-router": "^4.3.0"}}\n')
+    write(project / "src/pages/HomePage.vue", "<template>\n  <h1>Home</h1>\n</template>\n")
+    write(project / "src/pages/AboutPage.vue", "<template>\n  <h1>About</h1>\n</template>\n")
+    write(project / "src/router/index.ts",
+          "import { createRouter } from 'vue-router';\nimport HomePage from '../pages/HomePage.vue';\n"
+          "import AboutPage from '../pages/AboutPage.vue';\n\nexport default createRouter({\n  routes: [\n"
+          "    { path: '/', component: HomePage },\n    { path: '/about', component: AboutPage },\n  ],\n});\n")
+    for sid, title in (("home", "Home"), ("about", "About")):
+        write(project / SCREENS / f"{sid}.html",
+              f'<section data-screen="{sid}" data-title="{title}">\n  <div data-state="ready"><h1>{title}</h1></div>\n'
+              f'</section>\n')
+    write(project / MAP, json.dumps({"version": 1, "screens": [
+        {"id": "home", "title": "Home", "states": ["ready"], "route": "/", "files": ["src/pages/HomePage.vue"],
+         "files_hash": None, "approved": None, "synced_from_code": False, "status": "built"},
+        {"id": "about", "title": "About", "states": ["ready"], "route": "/about", "files": ["src/pages/AboutPage.vue"],
+         "files_hash": None, "approved": None, "synced_from_code": False, "status": "built"}]}, indent=2) + "\n")
+    scripts = project / SKILL_REL / "scripts"
+    scripts.mkdir(parents=True)
+    for name in ("_plumb.py", "audit.py", "build-tokens.py", "build-prototype.py"):
+        shutil.copy(SCRIPTS / name, scripts / name)
+    assert routes(tmp_path / "plain-vue", {"src/pages/HomePage.vue": ""}) == []
+    out = audit(project)
+    assert where(out, "route-not-prototyped") == [], fidelity(out)
+    write(project / "src/pages/Settings.vue", "<template>\n  <h1>Settings</h1>\n</template>\n")
+    assert where(audit(project), "route-not-prototyped") == []  # a component, not a route
 
 
 def test_vue_router_routes(tmp_path: Path) -> None:

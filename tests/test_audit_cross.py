@@ -113,6 +113,7 @@ def token_line(project: Path, name: str) -> int:
 
 
 FIDELITY_IDS = {"route-not-prototyped", "screen-drift", "screen-unapproved", "screen-not-built", "state-missing-in-code",
+                "no-prototype", "component-missing-in-code",
                 "synced-from-code", "copy-missing-in-code", "missing-state"}  # tests/test_audit_fidelity.py
 
 
