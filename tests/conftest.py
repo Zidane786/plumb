@@ -1,7 +1,8 @@
 """Shared pytest hooks.
 
-Strict skips: with PLUMB_STRICT_SKIPS=1 (set in CI only) any skipped test whose reason is not a
-platform / tool-availability reason fails the session. Browser tests skip locally when Playwright is
+Strict skips: with PLUMB_STRICT_SKIPS=1 (set in CI only) any skipped test whose reason does not start
+with one of ALLOWED_SKIP_REASONS (a platform or platform-tool reason, e.g. "requires POSIX: FIFO",
+"requires Windows: real PowerShell/cmd launcher") fails the session. Browser tests skip locally when Playwright is
 missing ("requires Playwright"); on CI that must never happen silently.
 """
 
@@ -12,11 +13,16 @@ import pytest
 ALLOWED_SKIP_REASONS = (
     "requires macOS",
     "requires Windows",
-    "requires POSIX shell",
+    "requires POSIX",
     "requires xcrun",
 )
 
 _unexpected_skips: list = []
+
+
+def allowed_skip(reason: str) -> bool:
+    """A skip reason CI accepts: it starts with one of ALLOWED_SKIP_REASONS."""
+    return reason.startswith(ALLOWED_SKIP_REASONS)
 
 
 def _strict() -> bool:
@@ -30,7 +36,7 @@ def pytest_runtest_logreport(report) -> None:
     reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)
     if reason.startswith("Skipped: "):
         reason = reason[len("Skipped: "):]
-    if not any(a in reason for a in ALLOWED_SKIP_REASONS):
+    if not allowed_skip(reason):
         _unexpected_skips.append((report.nodeid, reason))
 
 

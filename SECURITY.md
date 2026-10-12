@@ -35,9 +35,10 @@ and write files in the project.
   git command run there does. The overrides cover every configured command we know these read-only calls can reach;
   they are not a sandbox. A repository whose `.git/config` you didn't create yourself (an archive, a shared folder, a
   devcontainer) deserves the same care as its scripts.
-- **The session snapshots** live in a folder private to you in the OS temp folder (`plumb-<uid>`, created 0700; on
-  Windows the per-user temp folder). If that folder is a symlink, someone else's, or writable by others, the hooks
-  keep no snapshot and never read, write or delete there. Snapshot files are written 0600 without following
+- **The session snapshots** live in a folder private to you in the OS temp folder: `plumb-<uid>`, created 0700 (on
+  Windows `plumb` in the per-user temp folder, `%LOCALAPPDATA%\Temp`, where permission bits mean nothing). If that
+  folder is a symlink (or on Windows any reparse point, such as a junction), someone else's, or writable by others
+  (POSIX), the hooks keep no snapshot and never read, write or delete there. Snapshot files are written 0600 without following
   symlinks; cleanup only removes your own regular files in that folder. A snapshot's commit hash is checked before it
   reaches git.
 - **Windows launcher.** `hooks/run.cmd` sets `NoDefaultCurrentDirectoryInExePath`, so cmd.exe never runs a `py`,

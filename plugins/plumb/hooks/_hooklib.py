@@ -613,19 +613,21 @@ def scripts_note(project: Project) -> Optional[str]:
 
 
 def _private_dir_name() -> str:
-    if hasattr(os, "getuid"):
-        return f"plumb-{os.getuid()}"
-    import getpass
-    try:
-        user = getpass.getuser()
-    except Exception:  # noqa: BLE001
-        user = ""
-    return "plumb-" + (re.sub(r"[^\w.-]", "_", user or "") or "user")
+    """plumb-<uid> on POSIX (a shared /tmp needs the uid in the name). On Windows the temp folder is already the user's
+    own (%LOCALAPPDATA%\\Temp), so it is just plumb (never a name taken from an environment variable)."""
+    return f"plumb-{os.getuid()}" if hasattr(os, "getuid") else "plumb"
+
+
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: a symlink, junction or mount point on Windows
 
 
 def _ours(st: os.stat_result, folder: bool) -> bool:
-    """A real directory (folder) or regular file, not a symlink, owned by this user and not writable by others."""
+    """A real directory (folder) or regular file: not a symlink (nor, on Windows, any reparse point such as a
+    junction); on POSIX also owned by this user and not writable by group or others. On Windows ownership and mode bits
+    mean nothing to os.stat; the per-user temp folder is what keeps others out."""
     if stat.S_ISLNK(st.st_mode) or not (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)):
+        return False
+    if getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
         return False
     if hasattr(os, "getuid"):
         return st.st_uid == os.getuid() and not st.st_mode & 0o022
@@ -636,8 +638,9 @@ _DIR_CHECKED: List[Optional[Path]] = []
 
 
 def snapshot_dir() -> Optional[Path]:
-    """The hooks' private folder in the OS temp folder: plumb-<uid> (plumb-<user> on Windows), created 0700. None (with
-    one note) when it is a symlink, someone else's, or writable by others: then nothing is read, written or deleted."""
+    """The hooks' private folder in the OS temp folder: plumb-<uid>, created 0700 (on Windows plumb in the per-user temp
+    folder). None (with one note) when it is a symlink or reparse point, someone else's, or writable by others: then
+    nothing is read, written or deleted."""
     if _DIR_CHECKED:
         return _DIR_CHECKED[0]
     folder = Path(tempfile.gettempdir()) / _private_dir_name()

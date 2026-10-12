@@ -184,7 +184,9 @@ claude plugin validate --strict plugins/plumb
   `scripts/**`, `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes
   (README, TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code
   changed". CI installs Playwright + Chromium and runs the browser tests on every OS; unexpected
-  skips fail the run (`PLUMB_STRICT_SKIPS=1`, `tests/conftest.py`). A manual run always runs
+  skips fail the run (`PLUMB_STRICT_SKIPS=1`, `tests/conftest.py`: a skip reason must start with
+  `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`, e.g.
+  `requires POSIX: FIFO`; `tests/test_skip_reasons.py` pins the list). A manual run always runs
   everything. Keep this list and the workflow's list in step.
 - `tests/test_docs_consistency.py` (being written in Task 17) will fail if a skill/doc mentions
   a command that doesn't exist, or a skill doesn't link the reference — keep it green.

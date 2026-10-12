@@ -160,7 +160,7 @@ def _symlink_or_skip(link: Path, target: Path) -> None:
     try:
         link.symlink_to(target, target_is_directory=True)
     except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"requires symlinks ({exc})")
+        pytest.skip(f"requires POSIX: symlinks ({exc})")
 
 
 def test_a_variant_or_proposal_linked_outside_is_refused(proposal: Path, tmp_path: Path) -> None:

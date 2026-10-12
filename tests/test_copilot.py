@@ -266,7 +266,7 @@ def test_run_cmd_has_crlf_endings_and_tries_each_python():
     assert "exit /b 0" in text and "slate" not in text.lower()
 
 
-windows_only = pytest.mark.skipif(not WINDOWS, reason="runs the real PowerShell/cmd launcher")
+windows_only = pytest.mark.skipif(not WINDOWS, reason="requires Windows: real PowerShell/cmd launcher")
 
 
 @windows_only

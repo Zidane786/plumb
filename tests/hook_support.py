@@ -164,7 +164,7 @@ def git(project: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=str(project), check=True, capture_output=True, env=env, timeout=60)
 
 
-needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="requires git (not installed)")
 
 
 # ---------------------------------------------------------------- payloads
@@ -201,14 +201,9 @@ def payload(tool: str, name: str, stringify: Optional[str] = None, **values: Any
 
 
 def plumb_tmp(tmp_path: Path) -> Path:
-    """The hooks' private folder in the OS temp folder hook_env() sets: plumb-<uid> (plumb-<user> on Windows)."""
-    if hasattr(os, "getuid"):
-        name = f"plumb-{os.getuid()}"
-    else:
-        import getpass
-        import re
-        name = "plumb-" + (re.sub(r"[^\w.-]", "_", getpass.getuser() or "") or "user")
-    return tmp_path / "os-tmp" / name
+    """The hooks' private folder in the OS temp folder hook_env() sets: plumb-<uid> (Windows: plumb, in the per-user
+    temp folder)."""
+    return tmp_path / "os-tmp" / (f"plumb-{os.getuid()}" if hasattr(os, "getuid") else "plumb")
 
 
 def hook_env(tmp_path: Path, copilot: bool = False, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
