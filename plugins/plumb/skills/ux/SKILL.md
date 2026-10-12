@@ -68,7 +68,7 @@ Write `<docs>/ux-review-YYYY-MM-DD.html` (the output this command was asked for;
 toggle, no horizontal scroll at 390 px, the project's token block (`PY SKILL/scripts/build-tokens.py --css-vars`), the
 screenshots side by side, findings ranked by impact. Follow Effective HTML's `design-artifact` when that skill is
 available (optional; never install it); otherwise Plumb's built-in quality bar in
-[prototypes.md](../../reference/prototypes.md#the-quality-bar-effective-html). If a browser is available, open the report at 390 and 1280 px in both themes and fix what looks wrong.
+[prototypes.md](../../reference/prototypes.md). If a browser is available, open the report at 390 and 1280 px in both themes and fix what looks wrong.
 
 ## Step 5: summary and offers, then stop
 

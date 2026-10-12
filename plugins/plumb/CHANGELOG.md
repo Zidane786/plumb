@@ -62,7 +62,7 @@
   and why, append-only with collision-free ids so several teams can add decisions on separate branches. The prototype
   shows each screen's decisions.
 - **Three hooks**, in Claude Code and Copilot CLI: a status line at session start (with an upgrade nudge), a check
-  before each edit and shell write (refuses hand edits to generated files and Plumb's own files, a new page with no
+  before each edit and shell write (refuses hand edits to, or removal of, generated files and Plumb's own files, a new page with no
   approved prototype, and an edit that adds design-system errors), and an end-of-turn check of the files changed in
   the session that stops the agent once when there are new errors. The edit, prototype-first and end-of-turn checks
   are switched in `PLUMB.md` (`Edit check`, `Prototype sync`, `End-of-turn check`); the session-start line and the

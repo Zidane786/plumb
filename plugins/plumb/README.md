@@ -30,7 +30,7 @@ then `/restart`. The commands are the same.
 
 **Kiro (preview, live check pending):** `python3 <plumb>/scripts/kiro.py install` (your home folder) or
 `… install --project <folder>` (that workspace only) copies the skills (`/plumb-init`, …) and the hook files, asking
-first (`--yes` skips the question); run it again after updating Plumb. Details: `reference/kiro.md`.
+first (`--yes` skips the question); run it again after updating Plumb. Details: [reference/kiro.md](reference/kiro.md).
 
 Needs Python 3.9+ (standard library only; `py -3`, `python` or `python3` on Windows). git is optional.
 
@@ -59,7 +59,7 @@ in each project (the session-start line says when). What changed: [CHANGELOG.md]
 ## Hooks
 
 Three hooks run in both tools, only in projects with a `PLUMB.md`: a status line at session start; a check before each
-edit and shell write (refuses hand edits to generated files and Plumb's own files, a new page with no approved
+edit and shell write (refuses hand edits to, or removal of, generated files and Plumb's own files, a new page with no approved
 prototype, and an edit that adds design-system errors); and an end-of-turn check of the files changed in the session,
 which stops the agent once when there are new errors. Switch them in `PLUMB.md` (`Edit check`, `End-of-turn check`,
 `Prototype sync`). They run only the plugin's own scripts, never the copies in a project (see SECURITY.md, "Trust
@@ -85,6 +85,9 @@ reports it.
 /plugin marketplace add plannotator/effective-html
 /plugin install plannotator-effective-html@effective-html
 ```
+
+Copilot CLI and other agents: see [Effective HTML's README](https://github.com/plannotator/effective-html#install)
+for how to install it there.
 
 Every script command and flag for agents: [reference/scripts.md](reference/scripts.md); every audit rule:
 [reference/rules.md](reference/rules.md). Full docs, design and source: https://github.com/Zidane786/plumb

@@ -70,7 +70,7 @@ proposed dark value.
 
 **OK?** "I'll write the proposal page to `<root>/docs/design/extract.html`" (a) Write it (Recommended) (b) Another
 path. Then write it (with Effective HTML's `design-artifact` when available, otherwise Plumb's built-in quality bar in
-[prototypes.md](../../reference/prototypes.md#the-quality-bar-effective-html); one self-contained page, light and
+[prototypes.md](../../reference/prototypes.md); one self-contained page, light and
 dark, nothing from the network): per group, **before** (every value with swatch, count
 and a few `file:line`) and **after** (the proposed token, its value in light and dark, what merges into it), and how
 many values become how many tokens. **OK? Each group, one at a time:** accept (Recommended) · rename · merge with

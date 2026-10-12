@@ -61,7 +61,7 @@ git status --short                                   # skip it when the project 
 7. **Checks:** edit check on/off, end-of-turn check on/off (from `PLUMB.md`).
    **Effective HTML:** "available in this session" when its skills (`design-artifact`, `html-prototype`, `html`) are
    listed in this session, else "not available — using Plumb's built-in quality bar" (optional; never install it;
-   [prototypes.md](../../reference/prototypes.md#the-quality-bar-effective-html)).
+   [prototypes.md](../../reference/prototypes.md)).
 8. **Uncommitted** design files from `git status`, when there are any.
 9. **Next:** the one most useful next step (e.g. "approve the booking screen", "build `billing` (to build)",
    "`/plumb:audit fix` for 3 errors", "`/plumb:upgrade`"). Say "healthy" in one word when there is nothing.

@@ -68,7 +68,7 @@ plugins/plumb/                        the installed plugin (only this folder shi
                                       proposal index templates, player.js / player.css (the walkthrough player)
   scripts/                            plugin-side helpers the skills run (not copied into projects)
     detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
-    version.py  screenshot.py  kiro.py   in progress (Tasks 12b, 16)
+    version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install
   hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
   templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,
                                       directions.html (the fallback directions page)
@@ -142,7 +142,6 @@ TEST.md                               hands-on test guide for any machine
   directions, variants, screens, light-only. The prototype shows it.
 - **Kiro is supported too** (skills via `scripts/kiro.py`, hooks through an adapter in
   `_hooklib.py`), built from Kiro's documented formats; the live check on a real Kiro is pending.
-  Not built yet.
 - **Lean skills.** `SKILL.md` files stay short; details go in `reference/` and are loaded only
   when needed.
 - **Product text never mentions internal projects.** Plumb is generic.

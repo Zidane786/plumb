@@ -115,7 +115,7 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
    extract writes it into `PLUMB.md` and the tokens file, so no later command guesses again.
 9. Say once, no question: whether the Effective HTML skills (`design-artifact`, `html-prototype`, `html`) are available
    in this session; they are optional and only raise the craft of the pages; without them Plumb uses its built-in
-   quality bar ([prototypes.md](../../reference/prototypes.md#the-quality-bar-effective-html)). Never install them.
+   quality bar ([prototypes.md](../../reference/prototypes.md)). Never install them.
 
 **Design only** (a backend repo, a React Native app, or the user's choice) and moving an existing system
 (`scaffold.py --relocate`, never by hand): "Design only" and "Moving it later" in placement.md.

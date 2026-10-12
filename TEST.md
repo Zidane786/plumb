@@ -49,10 +49,11 @@ uv run --with pytest pytest -q -rs                      # or: PY -m pip install 
 uv run --python 3.9 --with pytest pytest -q -rs         # the oldest supported Python, if available
 ```
 
-**Expected:** every test passes. Skips are listed with their reason (`-rs`). Every platform or tool skip reason starts
-with one of `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun` (for example the Windows-only
-`run.cmd` and PowerShell hook tests, and, on macOS with xcrun, the Swift type-check of the generated theme); browser
-tests skip with `requires Playwright` when Playwright isn't installed. Report the last line (`N passed, M skipped …`).
+**Expected:** every test passes. Skips are listed with their reason (`-rs`). Platform skips start with one of
+`requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun` (for example the Windows-only `run.cmd` and
+PowerShell hook tests, and, on macOS with xcrun, the Swift type-check of the generated theme). Other skips name what is
+missing on this machine: `requires Playwright` for the browser tests, and a missing git, hook launcher (`sh` or
+PowerShell) or Python command. Report the last line (`N passed, M skipped …`).
 
 To run the browser tests too (they render every generated page in light and dark, headless):
 
@@ -64,7 +65,8 @@ uv run --with pytest --with playwright pytest -q -rs
 **CI** (`.github/workflows/test.yml`) runs the whole suite on Ubuntu, macOS and Windows × Python 3.9 and 3.13, installs
 Playwright and Chromium on every runner, and sets `PLUMB_STRICT_SKIPS=1`: `tests/conftest.py` allows only skips whose
 reason starts with `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`; any other skip (such as
-`requires Playwright`) fails the run.
+`requires Playwright`) fails the run. A missing git, hook launcher or Python command is not an allowed skip: in strict
+mode it fails the run on purpose, because CI must have them.
 To reproduce that locally: `PLUMB_STRICT_SKIPS=1 uv run --with pytest --with playwright pytest -q -rs`.
 
 **Windows notes:** run from Git Bash or PowerShell. If many JSON or golden-file tests fail, check
@@ -226,6 +228,8 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       The agent then uses a token instead.
 - [ ] Ask the agent to edit the generated CSS copy (e.g. `app/globals.css`) by hand, and then with
       `sed -i` → both **refused** (`… is generated from the design tokens; a hand edit is lost on the next build`).
+      Then ask it to delete that file (`rm`, or `Remove-Item` on Windows) and to `mv` it away → both **refused** the
+      same way.
 - [ ] Ask the agent to create a new page (`app/reports/page.tsx`) → **refused**:
       `error: app/reports/page.tsx is a new screen with no approved prototype` / `fix: /plumb:prototype reports …`.
 - [ ] `/plumb:prototype reports` → 2–3 variants, `proposals/reports/index.html` side by side, both views each; you pick
@@ -303,9 +307,12 @@ PY <repo>/plugins/plumb/scripts/kiro.py install --project <scratch project>
       makes the agent continue and fix it, or only adds the text to its context; and whether the report-only follow-up
       (`{"systemMessage": …}`) shows as raw JSON. Either is acceptable for now; record which, in the IDE and the CLI.
 - [ ] Ask the agent to edit `.kiro/hooks/plumb.json` by hand → refused (change the checks in `PLUMB.md`, refresh with
-      `kiro.py install`).
+      `kiro.py install`). Ask it to run `rm .kiro/hooks/plumb.json` (Windows: `Remove-Item .kiro\hooks\plumb.json`) →
+      refused too.
+- [ ] In another scratch folder, make `.kiro` a symlink to some other folder, then run `kiro.py install --project
+      <that folder>` → it refuses to write through the symlink, with `error:` and `ask the user:` lines; nothing written.
 - [ ] **Windows:** run the same install from cmd.exe, PowerShell and Git Bash; each hook command is a
-      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand …` line. Check the refusals and the
+      `powershell -NoProfile -NonInteractive -EncodedCommand …` line. Check the refusals and the
       session line work, note the extra start-up time (about 0.3 s per hook is expected), and check that a machine
       without Python never blocks a tool call.
 - [ ] `PY <repo>/plugins/plumb/scripts/kiro.py uninstall --project <scratch project>` removes only Plumb's files (your

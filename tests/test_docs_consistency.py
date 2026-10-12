@@ -137,7 +137,7 @@ def test_skill_keeps_the_user_in_the_loop(path: Path) -> None:
 # Skills that write HTML pages follow Effective HTML when installed and Plumb's built-in quality bar otherwise
 # (owner requirement): each says so and links the bar. Init and status say whether it is available.
 HTML_WRITERS = ("create", "extract", "prototype", "ux", "tour")
-QUALITY_BAR_LINK = "](../../reference/prototypes.md#the-quality-bar-effective-html)"
+QUALITY_BAR_LINK = "](../../reference/prototypes.md)"  # no #anchor: test_kiro checks each copied link as a file
 
 
 @pytest.mark.parametrize("name", HTML_WRITERS)

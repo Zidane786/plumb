@@ -91,7 +91,9 @@ Each run writes `.kiro/skills/plumb-<name>/SKILL.md` for every command and `.kir
 (`--project` is that workspace only; it never also writes your home folder). It lists every path first and asks
 `[y/N]`; `--yes` skips the question. Run without a terminal (by an agent) and without `--yes`, it writes nothing and
 says `ask the user: run … --yes yourself, or tell me to run it`: an agent never confirms for you. It never overwrites
-a file it didn't write. `uninstall` removes only the files `kiro.py` installed in that scope.
+a file it didn't write, or writes through a symlink (`.kiro` itself included). `--home DIR` names another folder that
+holds `.kiro` instead of your home (not with `--project`). `uninstall` removes only the files `kiro.py` installed in
+that scope. Every flag and what differs in Kiro: [reference/kiro.md](../plugins/plumb/reference/kiro.md).
 
 In Kiro the commands are `/plumb-init`, `/plumb-create`, `/plumb-prototype`, and so on (Kiro skill names can't hold
 `:`), and every hook message names them that way. Kiro reads `AGENTS.md` as steering, so Plumb's "read before you
@@ -125,6 +127,7 @@ I'll create:
   PLUMB.md                             in ~/Projects/acme
   docs/design/                         in ~/Projects/acme   (directions or extract page, decision log, prototype, reports)
   generated copy → apps/web/app/globals.css
+  UI files   apps/web/app/**, apps/web/components/** · *.tsx *.jsx *.css   (what the audit and the checks cover)
 OK, or change something?
 ```
 
@@ -134,7 +137,8 @@ When the result is uncertain, empty or odd, the agent also looks through the fol
 stylesheets, routes, screens) and corrects the picture. Either way it always shows you the block above, even when it
 is sure, and nothing it found is used until you confirm it.
 
-Say OK, or correct anything: the folder, the skill's name or place, the UI packages, the copy path. What you confirm is
+Say OK, or correct anything: the folder, the skill's name or place, the UI packages, the copy path, the UI files (which
+files the audit and the checks treat as UI) or the docs folder. What you confirm is
 written into `PLUMB.md`, so no later command guesses again.
 
 Then init asks whether the project is **new** (no UI yet, so `/plumb:create`) or **existing** (UI code already there,
@@ -292,7 +296,9 @@ python3 <plugin>/scripts/scaffold.py --relocate .github/skills/acme-design-syste
 
 **Use it when** you start using Plumb in a project, or come back to one and want to see where it stands.
 
-**What it asks:** the "Plumb found … I'll create …" block (OK or change something); whether the design system lives in
+**What it asks:** the "Plumb found … I'll create …" block, including the UI files the audit and the checks will cover
+(OK, or change the skill's place, the project root, the UI packages, the copy path, the UI files or the docs folder);
+whether the design system lives in
 another repo (linked); new or existing; then each wire-in item: the `PLUMB.md` values, both checks on or off, the
 `AGENTS.md`/`CLAUDE.md` row, the Makefile targets, the Slate review check, Kiro steering, the monorepo package pointer.
 
@@ -899,7 +905,9 @@ end-of-turn check only looks at what this session changed. The audit count is ca
 Three checks, in this order:
 
 1. **The guard (always on):** hand edits to generated files and to Plumb's own files are refused, including through the
-   shell (`>`, `tee`, `sed -i`, `cp`, `Set-Content`, …). Running `build-tokens.py` or `build-prototype.py` is allowed.
+   shell (`>`, `tee`, `sed -i`, `cp`, `Set-Content`, …). Removing or moving away a guarded file (`rm`, `rmdir`, `del`,
+   `Remove-Item`, `git rm`, `mv` / `Move-Item` / `git mv` from it), or a folder holding one, is refused the same way.
+   Running `build-tokens.py` or `build-prototype.py` is allowed.
 
    ```
    error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build
@@ -972,8 +980,10 @@ the plugin.
   status line; the edit check runs on Kiro's `write` and `shell` tools and refuses with exit 2 and the `error:` and
   `fix:` (or `ask the user:`) lines; the end-of-turn check answers `{"decision": "block", "reason": …}`. Kiro's docs
   show that JSON for CLI v3; whether it makes the agent continue is part of the pending live check. On Windows each
-  hook starts through PowerShell, which adds about 0.3 s per hook. Hand edits to Plumb's own `.kiro/hooks/plumb.json`
-  and `.kiro/skills/plumb-*/` are refused too: change the checks in `PLUMB.md` and refresh with `kiro.py install`.
+  hook starts through PowerShell, which adds about 0.3 s per hook. Plumb's own `.kiro/hooks/plumb.json` and
+  `.kiro/skills/plumb-*/` are guarded too: hand edits to them, shell writes and removals (`rm`, `mv`, `Remove-Item`,
+  …) are refused, in the project and in your home folder (`~`, `$HOME` and `%USERPROFILE%` paths included). Change
+  the checks in `PLUMB.md` and refresh with `kiro.py install`.
 
 ---
 
@@ -1048,6 +1058,9 @@ Plumb never installs them. To add them, run these yourself in Claude Code (from 
 /plugin marketplace add plannotator/effective-html
 /plugin install plannotator-effective-html@effective-html
 ```
+
+Copilot CLI and other agents: see [Effective HTML's README](https://github.com/plannotator/effective-html#install)
+for how to install it there.
 
 ### Operating systems, SSH and tmux
 

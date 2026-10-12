@@ -73,7 +73,7 @@ screen and ask to continue.
 screen of a key task, each in light and dark. When the Effective HTML skills
 (`design-artifact`, `html`, `html-prototype`) are available in this session, follow them; otherwise use Plumb's
 built-in quality bar: start from `ROOT/templates/directions.html` and its rules, and
-[prototypes.md](../../reference/prototypes.md#the-quality-bar-effective-html) "The quality bar". Effective HTML is
+[prototypes.md](../../reference/prototypes.md) "The quality bar". Effective HTML is
 optional; never install it. Nothing from the network. **OK?** pick one · combine (which parts) ·
 change something.
 

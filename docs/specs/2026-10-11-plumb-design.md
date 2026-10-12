@@ -679,7 +679,7 @@ turns the dark rules off.
 Three scripts behind Slate's launchers: `run.sh` (python3 / python / py -3, 3.9+), `run.cmd` and
 a `powershell` command on every hook for Windows Copilot. All three apply in **both tools**.
 In Kiro (§12b) the same scripts run with `--kiro`; on Windows each Kiro hook starts through PowerShell
-(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand …`, the same fail-open body as the
+(`powershell -NoProfile -NonInteractive -EncodedCommand …`, the same fail-open body as the
 Copilot hooks), which adds about 0.3 s per hook.
 
 | Script | Event · matcher | Job |

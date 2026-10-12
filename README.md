@@ -160,7 +160,7 @@ Three hooks run in Claude Code and Copilot CLI, only in projects with a `PLUMB.m
 - **Session start:** one status line
   (`Plumb: acme-design-system 1.0.0 · tokens up to date · 0 audit issues · read the skill before UI changes`) and a nudge
   when the project is older than the plugin.
-- **Before each edit and shell write:** refuses hand edits to generated files and to Plumb's own files; refuses a new
+- **Before each edit and shell write:** refuses hand edits to, or removal of, generated files and Plumb's own files; refuses a new
   page or route with no approved prototype (`fix: /plumb:prototype <screen>`); refuses an edit that **adds**
   design-system errors (a raw colour, an off-scale size…), each with the token to use. Older code never blocks you.
 - **End of the turn:** checks the UI files changed in the session, including a built screen that changed without its
