@@ -68,7 +68,8 @@ Commands (every call rebuilds the three files, so the pages always show the curr
                                     (CRLF-normalised). status is "built" once every glob matches a file.
   --approve ID                      record the approval: git user.name (else $USER / %USERNAME%), today's ISO date,
                                     the sha256 of the screen file (CRLF-normalised); clears synced_from_code. Editing
-                                    the screen afterwards makes the approval stale: the build reports it.
+                                    the screen afterwards makes the approval stale: the build reports it. Run it only after the
+                                    user said yes to that screen; every message that names it says "ask the user" first.
   --synced ID                       mark a screen as updated to match code that was already built.
   --map, --approve and --synced also refresh files_hash: the source baseline the audit compares against. A broken
                                     tour does not block them: the map is written, the pages are left as they were, and
@@ -2007,7 +2008,10 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         e = entries[args.synced]
         e["synced_from_code"] = True
         e["files_hash"] = files_state(root, e["files"])[0]
-        done.append(f"marked {args.synced} as synced from code: confirm it with --approve {args.synced}")
+        done.append(f"marked {args.synced} as synced from code\n"
+                    f"ask the user: does screen {args.synced} in {rel(proto_path, root)}#screen-{args.synced} show what "
+                    f"they want? Only after their yes to that screen, record it: "
+                    f"{command} --approve {args.synced}")
     if args.approve:
         e = entries[args.approve]
         e["approved"] = {"by": approver(root), "at": datetime.date.today().isoformat(), "hash": by_id[args.approve].hash}
@@ -2132,8 +2136,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     for s in screens:
         appr = entries[s.id]["approved"]
         if states[s.id] == "stale":
-            print(f"note: screen {s.id} changed since {appr['by']} approved it on {appr['at']}: review it, then run "
-                  f"{command} --approve {s.id}")
+            print(f"note: screen {s.id} changed since {appr['by']} approved it on {appr['at']}\n"
+                  f"ask the user: approve screen {s.id} as it is now ({rel(proto_path, root)}#screen-{s.id})? Only after "
+                  f"their yes to that screen, record it: {command} --approve {s.id}")
     counts = {k: sum(1 for v in states.values() if v == k) for k in APPROVAL_TEXT}
     to_build = sum(1 for s in screens if entries[s.id]["status"] == "to-build")
     if not wrote:

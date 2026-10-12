@@ -741,6 +741,8 @@ def test_stop_blocks_once_on_a_prototype_sync_miss(launcher, tmp_path, proj, mod
     assert f"error: {SCREENS}/home.html line " in reason
     assert "update prototype screen home: states ready, loading, empty" in reason
     assert "--approve home" in reason
+    ask = next(ln for ln in reason.splitlines() if "--approve home" in ln)
+    assert ask.startswith("ask the user: ") and "Only after their yes to that screen" in ask  # never a bare --approve
     assert stop(launcher, tmp_path, proj, active=True).stdout == ""  # blocked once; the same summary is not repeated
 
 

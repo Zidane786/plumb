@@ -47,7 +47,7 @@ def _listing(proj: H.Project, errors: list) -> List[str]:
     lines = []
     for f in errors[:MAX_ISSUES]:
         lines.append(f"error: {f.file} line {f.line}: {f.message}")
-        lines.append(f"fix: {f.fix}")
+        lines.append(f.fix if f.fix.startswith("ask the user:") else f"fix: {f.fix}")
     if len(errors) > MAX_ISSUES:
         lines.append(f"... and {len(errors) - MAX_ISSUES} more: {proj.script('audit.py')} lists them all")
     return lines

@@ -85,14 +85,14 @@ screens.json it was reading. Findings sit on the screen file's <section data-scr
                             the files given are checked; the screen rules always check every screen.
   screen-drift (error)      a built screen whose source files (screens.json files) hash differently from the baseline
                             recorded at --map / --approve / --synced (CRLF ignored) while its screen file still matches
-                            its approval (or it is synced from code): update the prototype screen, then --approve. A built
+                            its approval (or it is synced from code): update the prototype screen, then ask the user (--approve only after their yes). A built
                             screen with no baseline (files_hash null) is a warning.
   screen-unapproved (error once built, warn while to-build) the screen file changed after its approval (approved.hash
                             differs): a screen not built yet is "awaiting approval again: don't build from it yet"; or the
-                            code of a screen that was never approved changed since its baseline: review it, then --approve.
+                            code of a screen that was never approved changed since its baseline: the user reviews it; --approve only after their yes.
   screen-not-built (warn)   a screen with no route or source files, or whose globs match no file yet (expected before it
                             is built: listed until the route exists).
-  synced-from-code (warn)   a screen marked synced from code: confirm it in the prototype, then --approve.
+  synced-from-code (warn)   a screen marked synced from code: the user confirms it in the prototype; --approve only after their yes.
   state-missing-in-code (warn, at the data-state line) a state of a built screen (not its first state, nor a content
                             variant: ready, default, long-text ...) with no handling in its source files. Heuristic, the
                             same for every framework: the state's word or a synonym as a name or part of one (React/Next
@@ -2995,17 +2995,28 @@ def check_screen_drift(proj: Project) -> Iterator[XHit]:
             yield XHit(s.file, s.line, s.id,
                        f"screen {s.id} is built but {fid.map_rel} has no source baseline for it, so a change to its code "
                        f"cannot be noticed",
-                       f"check that {_list_names(fid.source(s)[1]) or 'its code'} matches {s.file}, then record the baseline: "
-                       f"{fid.command} --approve {s.id}", severity="warn")
+                       _ask_approve(fid, s, f"check that {_list_names(fid.source(s)[1]) or 'its code'} matches "
+                                    f"{s.file}, then "), severity="warn")
         elif changed:
             since = "it was synced from code" if e["synced_from_code"] else "its approval"
             yield XHit(s.file, s.line, s.id,
                        f"the source of screen {s.id} ({_list_names(fid.source(s)[1]) or _list_names(e['files'])}) changed after "
                        f"{since} but {s.file} did not: update prototype screen {s.id} so the prototype shows what the code "
                        f"does",
-                       f"update prototype screen {s.id} ({s.file}) to match the change and rebuild with {fid.command}, "
-                       f"then approve it: {fid.command} --approve {s.id} (if the change does not alter what the screen "
-                       f"shows, approving records the new baseline)")
+                       _ask_approve(fid, s, f"update prototype screen {s.id} ({s.file}) to match the change and "
+                                    f"rebuild with {fid.command}, then "))
+
+
+def _ask_approve(fid: "Fidelity", s: "ScreenInfo", before: str = "") -> str:
+    """The way out for a screen that needs the user's approval: never a bare --approve. The finding prints it as an
+    `ask the user:` line; the agent records the approval only after the user's yes to that screen."""
+    return (f"ask the user: {before}approve screen {s.id} in {fid.review(s)}? Only after their yes to that screen, "
+            f"record it: {fid.command} --approve {s.id}")
+
+
+def fix_line(fix: str) -> str:
+    """A finding's way out as printed: `ask the user: ...` stays as it is, anything else is `fix: ...`."""
+    return fix if fix.startswith("ask the user:") else f"fix: {fix}"
 
 
 def check_screen_unapproved(proj: Project) -> Iterator[XHit]:
@@ -3036,8 +3047,7 @@ def check_screen_unapproved(proj: Project) -> Iterator[XHit]:
         else:
             continue
         yield XHit(s.file, s.line, s.id, message,
-                   f"review it in {fid.review(s)} (rebuild with {fid.command}), then approve it: {fid.command} --approve "
-                   f"{s.id}", severity=severity)
+                   _ask_approve(fid, s, f"rebuild with {fid.command}, then "), severity=severity)
 
 
 def check_synced_from_code(proj: Project) -> Iterator[XHit]:
@@ -3049,8 +3059,7 @@ def check_synced_from_code(proj: Project) -> Iterator[XHit]:
             yield XHit(s.file, s.line, s.id,
                        f"screen {s.id} was synced from code, not approved: confirm in the prototype that it shows what "
                        f"you want",
-                       f"open {fid.review(s)}, check it, then confirm it: {fid.command} --approve {s.id} (or change it "
-                       f"first with /plumb:prototype {s.id})")
+                       _ask_approve(fid, s) + f" (Or change it first with /plumb:prototype {s.id}.)")
 
 
 # ---- states and copy
@@ -3233,7 +3242,8 @@ def check_copy_missing_in_code(proj: Project) -> Iterator[XHit]:
                        f"\"{words}\" ({_COPY_TAGS[tag]} on screen {s.id}) is not in its source files ({_list_names(names)}): "
                        f"the built screen says something else",
                        f"use the prototype's words in the code, or change the screen file to the code's words and "
-                       f"approve it ({fid.command} --approve {s.id}); text from a translation file can be ignored")
+                       f"ask the user to approve it (only after their yes: {fid.command} --approve {s.id}); text from a "
+                       f"translation file can be ignored")
 
 
 _UX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
@@ -3388,7 +3398,8 @@ def check_component_missing_in_code(proj: Project) -> Iterator[XHit]:
                        f"component {name} (data-component on screen {s.id}) is not used in its source files "
                        f"({_list_names(names)}): the built screen may use a different component",
                        f"use {name} in the code (see references/components.md), or, if the screen should use another "
-                       f"component, change the screen file and approve it ({fid.command} --approve {s.id})")
+                       f"component, change the screen file and ask the user to approve it (only after their yes: "
+                       f"{fid.command} --approve {s.id})")
 
 
 # ---------------------------------------------------------------- the rule table
@@ -3470,15 +3481,15 @@ RULES: List[Rule] = [
     Rule("no-prototype", "warn", ALL, "cross", fidelity_rule(check_no_prototype), "no prototype yet",
          "run /plumb:extract or /plumb:prototype"),
     Rule("screen-drift", "error", ALL, "cross", fidelity_rule(check_screen_drift), "the code of screen {match} changed after approval",
-         "update the prototype screen, then approve it with build-prototype.py --approve"),
+         "update the prototype screen, then ask the user to approve it (build-prototype.py --approve only after their yes)"),
     Rule("screen-unapproved", "error", ALL, "cross", fidelity_rule(check_screen_unapproved), "screen {match} changed since approval",
-         "review the screen, then approve it with build-prototype.py --approve"),
+         "ask the user to review and approve the screen (build-prototype.py --approve only after their yes)"),
     Rule("screen-not-built", "warn", ALL, "cross", fidelity_rule(check_screen_not_built), "screen {match} is not built yet",
          "build it, then map it with build-prototype.py --map"),
     Rule("state-missing-in-code", "warn", WEB, "cross", fidelity_rule(check_state_missing_in_code), "state {match} is not in the code",
          "build the state as the screen file shows it"),
     Rule("synced-from-code", "warn", ALL, "cross", fidelity_rule(check_synced_from_code), "screen {match} was synced from code",
-         "confirm it in the prototype, then approve it with build-prototype.py --approve"),
+         "ask the user to confirm it in the prototype (build-prototype.py --approve only after their yes)"),
     Rule("missing-token", "suggest", ALL, "cross", check_missing_token, "{match} has no token",
          "add a token with /plumb:update", weight=3,
          why="A raw value repeated across files drifts the moment one copy changes; a token keeps every use in step "
@@ -4244,16 +4255,15 @@ def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Itera
                     s.file, s.line, s.id,
                     f"the source of screen {s.id} ({_list_names(mine)}) changed this session but {s.file} did not: "
                     f"update prototype screen {s.id}: states {states}",
-                    f"update {s.file} to show what the code now does, rebuild with {fid.command}, then ask the user to "
-                    f"approve it: {fid.command} --approve {s.id} (if the change does not alter what the screen shows, "
-                    f"approving records the new baseline)"))
+                    _ask_approve(fid, s, f"update {s.file} to show what the code now does, rebuild with "
+                                 f"{fid.command}, then ")))
             elif ((mine or screen_changed) and e["status"] == "built" and not e["synced_from_code"]
                   and not fid.approved_now(s)):
                 yield _finding("screen-unapproved", XHit(
                     s.file, s.line, s.id,
                     f"screen {s.id} ({s.file}) changed this session and its current prototype is not approved: the code "
                     f"must follow a screen the user approved",
-                    f"ask the user to review {fid.review(s)} and approve it: {fid.command} --approve {s.id}"))
+                    _ask_approve(fid, s)))
     except _UNEXPECTED as exc:
         raise _fidelity_error(exc, fid.where) from None
 
@@ -4608,7 +4618,7 @@ def _report(findings: List[Finding], checked: int, as_json: bool, mode: Optional
     else:
         for f in findings:
             print(f"{f.file}:{f.line}: {f.severity} {f.rule}: {f.message}")
-            print(f"  fix: {f.fix}")
+            print(f"  {fix_line(f.fix)}")
         if mode == MODE_INCONSISTENCY:
             print("mode: inconsistency-only (no tokens yet): the scales below are inferred from the code; near-duplicates "
                   "and one-off values are warnings, raw values are not errors")

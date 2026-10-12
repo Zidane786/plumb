@@ -86,7 +86,8 @@ def _prototype_output(proj: H.Project, shown: str) -> str:
 def _map_output(proj: H.Project, shown: str) -> str:
     cmd = proj.script("build-prototype.py")
     return (f"error: {shown} is generated: build-prototype.py is its only writer\n"
-            f"fix: change it through {cmd} --map ID --route ROUTE --files GLOB, {cmd} --approve ID or {cmd} --synced ID")
+            f"fix: change it through {cmd} --map ID --route=ROUTE --files GLOB or {cmd} --synced ID; {cmd} --approve ID "
+            f"only after the user said yes to that screen")
 
 
 def _kiro_own(proj: H.Project, shown: str, base: str) -> str:
@@ -296,7 +297,7 @@ def edit_refusal(proj: H.Project, rel: str, errors: list) -> str:
     lines = [f"Plumb edit check: this edit adds {n} design-system error{'' if n == 1 else 's'} to {rel}"]
     for f in errors[:MAX_ISSUES]:
         lines.append(f"error: line {f.line}: {f.message}")
-        lines.append(f"fix: {f.fix}")
+        lines.append(f.fix if f.fix.startswith("ask the user:") else f"fix: {f.fix}")
     if n > MAX_ISSUES:
         more = n - MAX_ISSUES
         lines.append(f"... and {more} more error{'' if more == 1 else 's'}: {proj.script('audit.py')} {rel} lists them all")
