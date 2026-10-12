@@ -94,9 +94,22 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         run: python -m pip install --upgrade pip pytest
 
+      - name: Install Playwright and Chromium (browser tests run on every runner)
+        if: steps.changes.outputs.code == 'true'
+        run: |
+          python -m pip install playwright
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            python -m playwright install --with-deps chromium
+          else
+            python -m playwright install chromium
+          fi
+
       - name: Run tests
         if: steps.changes.outputs.code == 'true'
-        run: python -m pytest -q
+        env:
+          # an unexpected skip (e.g. "requires Playwright") fails the run; see tests/conftest.py
+          PLUMB_STRICT_SKIPS: "1"
+        run: python -m pytest -q -rs
 
       - name: No code changed
         if: steps.changes.outputs.code != 'true'
