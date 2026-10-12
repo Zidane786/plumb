@@ -40,9 +40,26 @@ def test_detect_first_guess_matches_each_app(app, tmp_path):
     (ui,) = found["ui_packages"]
     assert (ui["path"], ui["framework"], ui["styling"], ui["platforms"]) == (".", app.framework, app.styling,
                                                                             app.platforms)
+    assert ui["files"] == app.files
     assert found["proposal"]["skill_dir"] == app.skill
     assert found["proposal"]["copies"] == app.copies
     assert found["proposal"]["platforms"] == app.platforms
+    # only Angular needs its own UI files (component files, not every .ts); the others keep scaffold.py's default
+    assert found["proposal"]["ui_files"] == (app.ui_files if app.framework == "angular" else None)
+
+
+def test_swiftui_app_without_a_package_file_is_found_and_audited(tmp_path):
+    app = APPS["swiftui"]
+    proj = copy_app(app, tmp_path / app.slug)
+    (proj / "Package.swift").unlink()
+    found = detect(proj)
+    (ui,) = found["ui_packages"]
+    assert (ui["path"], ui["framework"], ui["platforms"], ui["files"]) == ("SampleHabits", "swiftui", ["ios"], 3)
+    assert found["confidence"] == "low" and found["proposal"]["skill_dir"] == app.skill
+    scaffold(proj, app, found)
+    code, report = audit(proj, app)
+    assert code == 1
+    assert sorted((f["file"], f["rule"]) for f in errors(report)) == sorted((r, rule) for r, rule, _ in app.violations)
 
 
 def test_full_flow_finds_every_violation_then_passes_after_the_fixes(app, tmp_path):
@@ -51,7 +68,8 @@ def test_full_flow_finds_every_violation_then_passes_after_the_fixes(app, tmp_pa
     out = scaffold(proj, app, found).stdout
     assert "wrote: PLUMB.md" in out and f"wrote: {app.tokens}" in out
     plumb = read(proj / "PLUMB.md")
-    assert f"Design system: `{app.skill}/`" in plumb and f"UI files: {app.ui_files}" in plumb
+    # no ui_files answer is passed: the stack-aware default must cover the violations (Angular: component files)
+    assert f"Design system: `{app.skill}/`" in plumb and f"\nUI files: {app.ui_files}\n" in plumb
     ok(skill_script(proj, app, "build-tokens.py", "--check"))
 
     code, report = audit(proj, app)

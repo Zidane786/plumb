@@ -59,7 +59,8 @@ class App:
     styling: str
     platforms: List[str]
     copies: List[str]        # generated copies of the web theme in the app
-    ui_files: str            # PLUMB.md UI files, as the user confirms them at init
+    files: int               # the UI file count detect.py reports
+    ui_files: str            # PLUMB.md UI files: scaffold.py's default for the stack (no ui_files answer is given)
     # (file, rule, text the finding's message names): every error the first audit must report, nothing else
     violations: List[Tuple[str, str, str]]
     # (file, old, new): the fixes, as an agent applies them from the audit's fix lines
@@ -78,7 +79,8 @@ class App:
 
 NEXT = App(
     folder="next-tailwind", slug="sample-tasks", name="Sample Tasks", framework="next", styling="tailwind-v4",
-    platforms=["web"], copies=["app/globals.css"], ui_files="app/**, components/** · *.tsx *.css",
+    platforms=["web"], copies=["app/globals.css"], files=5,
+    ui_files="app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css",
     violations=[
         ("components/task-card.tsx", "raw-colour", "#1f7a8c"),
         ("components/task-card.tsx", "arbitrary-value", "rounded-[6px]"),
@@ -111,7 +113,9 @@ NEXT = App(
 
 ANGULAR = App(
     folder="angular", slug="sample-notes", name="Sample Notes", framework="angular", styling="css",
-    platforms=["web"], copies=["src/styles.scss"], ui_files="src/** · *.ts *.html *.scss *.css",
+    platforms=["web"], copies=["src/styles.scss"], files=5,
+    ui_files=("src/** · *.component.ts *.component.html *.component.scss *.component.css *.routes.ts "
+              "*routing.module.ts styles.scss styles.css"),
     violations=[
         ("src/app/notes/notes.component.scss", "off-scale-type", "15px"),
         ("src/app/notes/notes.component.scss", "raw-colour", "#1f7a8c"),
@@ -143,7 +147,7 @@ ANGULAR = App(
 
 SWIFTUI = App(
     folder="swiftui", slug="sample-habits", name="Sample Habits", framework="swiftui", styling="css",
-    platforms=["ios"], copies=[], ui_files="SampleHabits/** · *.swift",
+    platforms=["ios"], copies=[], files=4, ui_files="*.swift",
     violations=[
         ("SampleHabits/HabitListView.swift", "swift-font-size", ".system(size: 15)"),
         ("SampleHabits/HabitListView.swift", "swift-raw-colour", "Color(red: 0.12, green: 0.48, blue: 0.55)"),
@@ -240,7 +244,7 @@ LABELS = {("next", "tailwind-v4"): "Next.js · Tailwind v4", ("angular", "css"):
 
 def answers(app: App) -> dict:
     return {"description": f"{app.name}: a sample app for Plumb's integration tests", "direction": "Calm",
-            "ui_files": app.ui_files, "web_copies": app.copies, "icons": ICONS,
+            "web_copies": app.copies, "icons": ICONS,
             "ui_packages": f". ({LABELS[(app.framework, app.styling)]})"}
 
 

@@ -47,7 +47,8 @@ answers.json (every key optional; unknown keys are ignored with a note):
     "python":      "python3",                          (the command PLUMB.md and the Makefile use)
     "role":        "home" | "linked",
     "ui_packages": ". (Next.js · Tailwind v4)",        (PLUMB.md)
-    "ui_files":    "app/**, components/** · *.tsx *.css",
+    "ui_files":    "app/**, components/** · *.tsx *.css",   (PLUMB.md; unanswered: detect.py's proposal for the stack
+                   (Angular: src/** · *.component.ts *.component.html ... styles.css), else the platform default)
     "allowed_raw": "components/ui/**",
     "web_copies":  ["app/globals.css"],                (project-relative copies of the generated CSS)
     "colors": {"light": {"primary": "#0f6b66", ...}, "dark": {"primary": "#4fb3c4", ...}},
@@ -70,6 +71,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -397,10 +399,26 @@ def platform_values(platforms: List[str], styling: str) -> Dict[str, str]:
     }
 
 
+def detected_ui_files(root: Path) -> Optional[str]:
+    """The UI files the project's stack needs when the platform default does not fit (Angular: component templates,
+    classes and styles, not every .ts), from detect.py's scan of the project root; None when the default fits or the
+    scan is not possible."""
+    path = Path(__file__).resolve().parent / "detect.py"
+    try:
+        spec = importlib.util.spec_from_file_location("plumb_detect_for_scaffold", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        ui, _ = mod.classify(root)
+        return mod.ui_files_for(ui)
+    except Exception:  # noqa: BLE001 - detection is a convenience: fall back to the platform default
+        return None
+
+
 def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: str, name: str, answers: dict,
-                    base: Dict[str, str]) -> Dict[str, str]:
+                    base: Dict[str, str], root: Optional[Path] = None) -> Dict[str, str]:
     default_files = {"web": "app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css", "ios": "*.swift", "android": "*.kt"}
-    ui_files = answers.get("ui_files") or " · ".join(default_files[p] for p in platforms)
+    ui_files = (answers.get("ui_files") or (detected_ui_files(root) if root is not None and "web" in platforms else None)
+                or " · ".join(default_files[p] for p in platforms))
     return {
         "PROJECT": name, "SKILL_DIR": skill_dir + "/", "ROLE": base["ROLE"], "PLATFORMS": ", ".join(platforms),
         "UI_PACKAGES": answers.get("ui_packages") or (f". ({STYLING_LABEL[styling]})" if "web" in platforms else "."),
@@ -502,7 +520,7 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
             y(f"references/mobile/android/{ref}.md.tmpl", f"references/mobile/android/{ref}.md")
 
     # PLUMB.md, the decision log, the screens folder
-    plumb_values = plumb_md_values(platforms, args.styling, docs, skill_rel, name, answers, values)
+    plumb_values = plumb_md_values(platforms, args.styling, docs, skill_rel, name, answers, values, root)
     plan.append(Item(root / "PLUMB.md", render(read_source(TEMPLATES_SRC / "PLUMB.md"), plumb_values, "templates/PLUMB.md"), "Y"))
     entry = read_source(TEMPLATES_SRC / "decision-entry.md").strip()
     log = (f"# Design decisions\n\nPlumb's design decision log for {name}. Append-only: one entry per decision, "

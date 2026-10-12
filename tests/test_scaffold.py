@@ -463,3 +463,58 @@ def test_an_existing_tokens_file_under_another_name_is_kept_and_not_duplicated(t
     assert r.returncode == 0, r.stderr
     assert sorted(p.name for p in tokens.iterdir()) == ["other.tokens.json"]
     assert f"skip: {SKILL_REL}/assets/tokens/other.tokens.json (yours, kept)" in r.stdout
+
+
+# ---------------------------------------------------------------- UI files: stack-aware default
+
+WEB_DEFAULT = "app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css"
+ANGULAR = ("src/** · *.component.ts *.component.html *.component.scss *.component.css *.routes.ts *routing.module.ts "
+           "styles.scss styles.css")
+
+
+def ui_files_line(root: Path) -> str:
+    m = re.search(r"^UI files: (.*)$", (root / "PLUMB.md").read_text(encoding="utf-8"), re.M)
+    assert m
+    return m.group(1).strip()
+
+
+def angular_app(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "package.json").write_text(json.dumps({"name": "notes", "dependencies": {"@angular/core": "18"}}),
+                                       encoding="utf-8")
+    comp = root / "src/app/notes"
+    comp.mkdir(parents=True)
+    for name in ("notes.component.ts", "notes.component.html", "notes.component.scss"):
+        (comp / name).write_text("x\n", encoding="utf-8")
+
+
+def test_angular_project_gets_component_ui_files_by_default(tmp_path: Path) -> None:
+    angular_app(tmp_path)
+    r = run(tmp_path, styling="css")
+    assert r.returncode == 0, r.stderr
+    assert ui_files_line(tmp_path) == ANGULAR
+
+
+def test_ui_files_answer_wins_over_the_detected_stack(tmp_path: Path) -> None:
+    angular_app(tmp_path / "p")
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"ui_files": "src/** · *.ts *.html *.scss"}), encoding="utf-8")
+    assert run(tmp_path / "p", "--answers", str(path), styling="css").returncode == 0
+    assert ui_files_line(tmp_path / "p") == "src/** · *.ts *.html *.scss"
+
+
+@pytest.mark.parametrize("deps", [{"next": "15", "react": "19"}, {"react": "18"}, {"vue": "3"}, {"svelte": "5"}, None])
+def test_other_stacks_keep_the_platform_default(tmp_path: Path, deps: Optional[dict]) -> None:
+    if deps is not None:
+        (tmp_path / "package.json").write_text(json.dumps({"dependencies": deps}), encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert ui_files_line(tmp_path) == WEB_DEFAULT
+
+
+def test_mobile_defaults_are_unchanged(tmp_path: Path) -> None:
+    assert run(tmp_path, platforms="ios").returncode == 0
+    assert ui_files_line(tmp_path) == "*.swift"
+    other = tmp_path / "droid"
+    other.mkdir()
+    assert run(other, platforms="web,android").returncode == 0
+    assert ui_files_line(other) == WEB_DEFAULT + " · *.kt"
