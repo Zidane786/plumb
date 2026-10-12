@@ -394,6 +394,13 @@ Init never assumes the folder it was opened in is the project.
 | Backend-only repo | Python/Go/Java/… markers, no UI | Asks: (a) the frontend is in another repo (give the path; set up there), (b) the frontend will live here (create here), (c) design only for now (create here, platforms later). |
 | Several UI repos share one system | Named at init | One **home** repo owns the system. Other repos get only `PLUMB.md` with `Design system: <path to the home skill>` and the AGENTS/CLAUDE row pointing there; agents read it there. The home's `build-tokens.py` can write generated copies into those repos (paths in its tokens JSON). |
 
+**Detection is a first guess, never the decision.** `detect.py` only looks for well-known marker
+files and folders, and no script can know every layout. The init skill must not rely on it alone:
+it reads the result, and when the result is uncertain, empty or odd it looks through the folders
+itself; it then always shows the user what it found and asks them to confirm or correct it. What
+the user confirms is what gets written, and it is recorded in `PLUMB.md` so later commands never
+guess again.
+
 Before writing, init shows what it found and what it will create, and waits for confirmation:
 
 ```
