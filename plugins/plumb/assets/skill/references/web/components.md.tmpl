@@ -1,0 +1,25 @@
+# Web components
+
+The web building blocks behind the shared spec in [../components.md](../components.md). Only what differs on the web is here.
+
+## Layers
+
+1. **Tokens** (`assets/tokens/{{SLUG}}.tokens.json`, generated CSS): every value.
+2. **Primitives** (`components/ui/`): one file per component from the spec, built on the framework's accessible primitive,
+   styled only with token utilities. Variants are named props inside the primitive.
+3. **Patterns** (`components/patterns/`): compositions with no styling of their own beyond layout.
+4. **Pages**: arrange patterns; never restyle a primitive from the outside.
+
+## Rules
+
+- Variants (size, tone, state) are declared in one place per component (a variants map or class helper), never by ad-hoc class strings at the call site.
+- Focus ring: the solid `primary` ring on every focusable element; never `outline: none` without a replacement.
+- Hover effects only on pointer devices; nothing depends on hover alone.
+- Responsive: design for 390px first; test at 320px, 768px and wide screens.
+- Icons come from the icon map, rendered by one `Icon` component; icon-only buttons carry an accessible label and a tooltip.
+- Light and dark: tokens switch by themselves; a component never writes a `dark:` override.
+
+## Recipes
+
+Add a recipe here when a pattern is used three times (for example "confirm destructive action", "table with empty state").
+Each recipe lists the primitives, the states and the copy from [../vocabulary.md](../vocabulary.md).

@@ -1,0 +1,65 @@
+# {{NAME}}: design
+
+The look of {{NAME}} in words. When this file and any other file disagree, this file wins; then fix the other file.
+Values (hex, px, ms) live in [assets/tokens/{{SLUG}}.tokens.json](assets/tokens/{{SLUG}}.tokens.json); this file says what they are for.
+
+{{DEFAULTS_NOTE}}
+
+## What it is
+
+{{DESCRIPTION}}
+
+Audience: {{AUDIENCE}}.
+Direction: **{{DIRECTION}}**. Character comes from hierarchy, whitespace and real content, never from extra colours,
+sizes, radii, shadows or durations.
+
+## Colour
+
+One accent, neutral surfaces, status colours that always come with a word and an icon. Every colour has a light and a dark
+value; components use the token, never the hex.
+
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `background` | {{COLOR_BACKGROUND}} | {{COLOR_BACKGROUND_DARK}} | The page. |
+| `surface` | {{COLOR_SURFACE}} | {{COLOR_SURFACE_DARK}} | Cards, dialogs, menus. |
+| `sunk` | {{COLOR_SUNK}} | {{COLOR_SUNK_DARK}} | Wells, columns, table stripes. |
+| `on-surface` | {{COLOR_ON_SURFACE}} | {{COLOR_ON_SURFACE_DARK}} | Body text and icons. |
+| `on-surface-muted` | {{COLOR_ON_SURFACE_MUTED}} | {{COLOR_ON_SURFACE_MUTED_DARK}} | Secondary text. |
+| `primary` | {{COLOR_PRIMARY}} | {{COLOR_PRIMARY_DARK}} | The accent: focus ring, active, primary action. |
+| `on-primary` | {{COLOR_ON_PRIMARY}} | {{COLOR_ON_PRIMARY_DARK}} | Text and icons on `primary`. |
+| `outline-input` | {{COLOR_OUTLINE_INPUT}} | {{COLOR_OUTLINE_INPUT_DARK}} | Control boundaries (3:1). |
+| `outline` | {{COLOR_OUTLINE}} | {{COLOR_OUTLINE_DARK}} | Dividers and card borders. |
+| `danger` / `on-danger` | {{COLOR_DANGER}} / {{COLOR_ON_DANGER}} | {{COLOR_DANGER_DARK}} / {{COLOR_ON_DANGER_DARK}} | Errors, destructive actions. |
+| `success` / `on-success` | {{COLOR_SUCCESS}} / {{COLOR_ON_SUCCESS}} | {{COLOR_SUCCESS_DARK}} / {{COLOR_ON_SUCCESS_DARK}} | Done, saved. |
+| `link` | primary | primary | Inline links. |
+
+Text is at least 4.5:1 and control boundaries 3:1, in both themes; [references/dark-mode.md](references/dark-mode.md) has the computed evidence.
+
+## Type
+
+Font: {{FONT_SANS}}, then the system stack. Mono: {{FONT_MONO}}. Scale (closed): display, h1, h2, h3, body-lg, body,
+sm, xs. Body is {{TYPE_BODY_SIZE}} on {{TYPE_BODY_LINE}}. Numbers are tabular.
+
+## Space, radius, elevation
+
+Spacing is the 4px scale (`spacing.1` = 4px, `spacing.2` = 8px, ...). Radii: sm {{RADIUS_SM}}, md {{RADIUS_MD}}, lg {{RADIUS_LG}}.
+Elevation is two steps (`shadow.card`, `shadow.popover`); in dark mode shadows deepen rather than glow.
+
+## Motion
+
+Quick and quiet: {{DURATION_FAST}}, {{DURATION_MID}}, {{DURATION_SLOW}}; `ease-out` for entrances. Reduced motion makes everything
+instant ([references/motion.md](references/motion.md)).
+
+## Icons and voice
+
+One icon set, mapped in [assets/icons/icon-map.json](assets/icons/icon-map.json). Voice: {{VOICE}}. Words are fixed in
+[references/vocabulary.md](references/vocabulary.md).
+
+## Still banned
+
+Decorative gradients and glows, blur, continuous animation (except skeletons and in-button spinners), colour-only status,
+a second icon set, emoji in the UI, hand-rolled accessibility primitives.
+
+## Revision notes
+
+- {{DATE}}: created with Plumb 1.0.0 ({{PLATFORMS}}; direction "{{DIRECTION}}").

@@ -1,0 +1,22 @@
+# iOS components
+
+The SwiftUI building block for each component in [../../components.md](../../components.md), where iOS differs. Mobile
+behaviour: [../components.md](../components.md). Conventions: [ios.md](ios.md).
+
+| Component | SwiftUI |
+|---|---|
+| Button | `Button` with a project `ButtonStyle` built from the theme; height at least 44pt. |
+| Input | `TextField` / `SecureField` with a label above; `.keyboardType` and `.submitLabel` set. |
+| Select | `Picker` (menu or wheel) or `Menu`; long lists use a pushed list. |
+| Checkbox, radio, switch | `Toggle` (switch); checkbox and radio are `Toggle` or a `Picker` with a custom style. |
+| Card | A `VStack` on the theme's surface colour and radius. |
+| Badge, chip | A small `Label` view: icon plus word. |
+| Dialog | `.alert` or `.confirmationDialog`. |
+| Sheet | `.sheet` with detents only when needed. |
+| Menu | `Menu` or `.contextMenu`. |
+| Tabs | `TabView` (top-level) or a `Picker` with `.segmented`. |
+| Toast | A small overlay view, announced with an accessibility notification. |
+| Empty / error state | `ContentUnavailableView` styled with the theme. |
+| Skeleton | `.redacted(reason: .placeholder)`. |
+
+Add the project's own SwiftUI components here, with the file they live in; update [../../inventory.md](../../inventory.md).
