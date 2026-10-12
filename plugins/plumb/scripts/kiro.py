@@ -17,7 +17,7 @@ without --project the home folder (<home>/.kiro: global skills for the Kiro IDE,
   absolute path with --kiro (the hook then answers in Kiro's dialect) and, in the home file, --kiro-global (those hooks
   stand down where the workspace's own Plumb hooks file runs the same plugin: Kiro CLI runs both side by side):
     POSIX    [ -f '<plugin>/hooks/run.sh' ] && exec sh '<plugin>/hooks/run.sh' <script> --kiro ... || exit 0
-    Windows  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <base64 UTF-16LE of
+    Windows  powershell -NoProfile -NonInteractive -EncodedCommand <base64 UTF-16LE of
              $s='<plugin>\\hooks\\run.cmd'; if (Test-Path -LiteralPath $s) { & $s <script> --kiro ...;
              exit $LASTEXITCODE }; exit 0>
   Every word of the Windows command is bare (no quotes, parentheses, %, & or $), so cmd.exe, Windows PowerShell 5.1,
@@ -27,7 +27,7 @@ without --project the home folder (<home>/.kiro: global skills for the Kiro IDE,
 
 Every file written carries "installed by Plumb's kiro.py" (the SKILL.md as a comment, the hooks in each description,
 which also says what the hook runs): install updates only such files and refuses to overwrite anything else, or to
-write through a symlink below .kiro; uninstall removes only such files (and a skill folder left empty), never the
+write through a symlink (.kiro itself included); uninstall removes only such files (and a skill folder left empty), never the
 user's own skills or hooks.
 
 It prints every path it will write or remove, then writes only after --yes or a "y" typed at the prompt. Without a
@@ -205,7 +205,9 @@ def hook_command(script: str, global_file: bool, windows: bool = WINDOWS, projec
         body = (f"$s={_ps_quote(run)}; if (Test-Path -LiteralPath $s) {{ & $s {args}; exit $LASTEXITCODE }}"
                 f"{missing} exit 0")
         encoded = base64.b64encode(body.encode("utf-16-le")).decode("ascii")
-        return f"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+        # No -ExecutionPolicy Bypass: an encoded command and run.cmd need no script policy, and that flag is what
+        # endpoint protection flags (a blocked hook would fail closed).
+        return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
     quoted = _sh_quote(run)
     tail = f"{{ printf '%s\\n' {_sh_quote(note)}; exit 0; }}" if note else "exit 0"
     return f"[ -f {quoted} ] && exec sh {quoted} {args} || {tail}"
@@ -279,14 +281,16 @@ def ours(path: Path) -> bool:
 
 
 def symlinks_below(base: Path, path: Path) -> List[Path]:
-    """path and its parents below <base>/.kiro that are symlinks (a dangling one included): writing there could land
-    anywhere the link points."""
+    """path and its parents up to <base>/.kiro itself that are symlinks (a dangling one included): writing there could
+    land anywhere the link points."""
     kiro = base / ".kiro"
     found = []
     p = path
-    while p != kiro and kiro in p.parents:
+    while p == kiro or kiro in p.parents:
         if os.path.islink(str(p)):
             found.append(p)
+        if p == kiro:
+            break
         p = p.parent
     return found
 

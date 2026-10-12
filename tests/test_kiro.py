@@ -275,6 +275,18 @@ def test_install_refuses_a_symlinked_kiro_folder_below_kiro(tmp_path):
     assert files_under(elsewhere) == [] and not (project / ".kiro" / "skills").exists()
 
 
+@posix_only
+def test_install_refuses_a_symlinked_kiro_folder(tmp_path):
+    project, out = tmp_path / "app", tmp_path / "out"
+    project.mkdir()
+    out.mkdir()
+    os.symlink(str(out), str(project / ".kiro"))
+    r = kiro("install", "--project", str(project), "--yes")
+    assert r.returncode == 2 and "symlink" in r.stderr
+    actionable(r.stderr)
+    assert files_under(out) == []
+
+
 def test_install_refuses_a_missing_project_folder(tmp_path):
     r = kiro("install", "--project", str(tmp_path / "nope"), "--yes")
     assert r.returncode == 2
@@ -333,9 +345,11 @@ def test_hooks_template_and_constants_agree_with_hooklib():
 
 def _decode(command: str) -> str:
     words = command.split(" ")
-    assert words[:6] == ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"]
-    assert len(words) == 7
-    return base64.b64decode(words[6]).decode("utf-16-le")
+    # no -ExecutionPolicy Bypass: -EncodedCommand and run.cmd need no script policy, and that flag pattern is what
+    # endpoint protection flags (a blocked hook would fail closed)
+    assert words[:4] == ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand"]
+    assert len(words) == 5 and "bypass" not in command.lower()
+    return base64.b64decode(words[4]).decode("utf-16-le")
 
 
 @pytest.mark.parametrize("global_file", [True, False])
@@ -694,6 +708,31 @@ def test_home_kiro_plumb_files_are_refused_too(tmp_path, proj):
         reason = kiro_refused(pre(tmp_path, proj, "fs_write_str_replace", env=env, FILE=str(home / rel), OLD="a",
                                   NEW="b"))
         assert "is Plumb's Kiro file" in reason and "kiro.py" in reason and "--project" not in reason
+
+
+@needs_sh
+@pytest.mark.parametrize("command", ["sed -i 's/true/false/' $HOME/.kiro/hooks/plumb.json",
+                                     'echo x > "${HOME}/.kiro/skills/plumb-audit/SKILL.md"',
+                                     "echo x > %USERPROFILE%\\.kiro\\hooks\\plumb.json",
+                                     "Set-Content -Path $env:USERPROFILE/.kiro/hooks/plumb.json -Value x",
+                                     "rm $HOME/.kiro/hooks/plumb.json"])
+def test_shell_writes_through_home_variables_are_refused(tmp_path, proj, command):
+    home = tmp_path / "home"
+    install(home)
+    env = kiro_env(tmp_path, {"HOME": str(home), "USERPROFILE": str(home)})
+    reason = kiro_refused(pre(tmp_path, proj, "execute_bash", env=env, COMMAND=command))
+    assert "is Plumb's Kiro file" in reason
+
+
+@needs_sh
+@pytest.mark.parametrize("command", ["rm .kiro/hooks/plumb.json", "mv .kiro/hooks/plumb.json /tmp/x.json",
+                                     "rm -rf .kiro/skills/plumb-init", "rm -rf .kiro",
+                                     "Remove-Item .kiro\\hooks\\plumb.json", "del .kiro\\hooks\\plumb.json",
+                                     "Move-Item .kiro/skills/plumb-init/SKILL.md C:\\temp\\x.md"])
+def test_removing_kiros_plumb_files_is_refused(tmp_path, proj, command):
+    install(project=proj, home=tmp_path / "home")
+    reason = kiro_refused(pre(tmp_path, proj, "execute_bash", COMMAND=command))
+    assert "is Plumb's Kiro file" in reason
 
 
 @needs_sh

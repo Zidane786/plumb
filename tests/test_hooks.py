@@ -335,6 +335,63 @@ def test_shell_writes_to_plumb_files_are_refused(launcher, tmp_path, proj):
     assert OWN_FIX in reason
 
 
+@pytest.mark.parametrize("command, name, what", [
+    ("rm app/globals.css", "bash", " is generated"),
+    ("rm -f docs/design/prototype.html", "bash", " is generated"),
+    ("mv docs/design/prototype/screens.json /tmp/x.json", "bash", " is generated"),
+    ("rm -rf docs/design", "bash", " is generated"),  # a folder that holds generated files
+    (f"rm {SKILL_REL}/scripts/audit.py", "bash", "is Plumb's file"),
+    (f"git rm -q {SKILL_REL}/templates/player.js", "bash", "is Plumb's file"),
+    (f"rm -rf {SKILL_REL}/templates", "bash", "is Plumb's file"),
+    (f"unlink {SKILL_REL}/assets/platforms/README.md", "bash", "is Plumb's file"),
+    (f"rm -rf {PLUGIN / 'hooks'}", "bash", "is Plumb's file"),
+    ("Remove-Item -Path app/globals.css", "powershell", " is generated"),
+    ("del app\\globals.css", "powershell", " is generated"),
+    ("Move-Item docs/design/specimen.html C:\\temp\\s.html", "powershell", " is generated"),
+    (f"ri -Recurse -Force {SKILL_REL}\\scripts", "powershell", "is Plumb's file"),
+])
+def test_shell_removals_of_guarded_files_are_refused(launcher, tmp_path, proj, command, name, what):
+    reason = refused(bash(launcher, tmp_path, proj, command, name=name))
+    actionable(reason)
+    assert what in reason
+
+
+@pytest.mark.parametrize("command", ["rm notes.txt", "rm -rf node_modules /tmp/build", "mv README.md docs/README.md",
+                                     "git rm --cached README.md", "Remove-Item -Recurse dist", "rm -rf components/ui"])
+def test_shell_removals_of_your_files_are_allowed(launcher, tmp_path, proj, command):
+    allowed(bash(launcher, tmp_path, proj, command))
+
+
+@pytest.mark.parametrize("command", ["sed -i 's/a/b/' $HOME/.plumb-test/x.css", "echo x > ${HOME}/.plumb-test/x.css",
+                                     "rm $HOME/.plumb-test/x.css"])
+def test_shell_paths_under_home_variables_are_expanded(H, command, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    expected = os.path.normpath(str(tmp_path / "home" / ".plumb-test" / "x.css"))
+    found = H.shell_targets(command, str(tmp_path)) + H.shell_removals(command, str(tmp_path))
+    assert expected in found, found
+
+
+@pytest.mark.parametrize("command, removed", [
+    ("rm -rf a b", ["a", "b"]),
+    ("rm -- -odd", ["-odd"]),
+    ("mv a b", ["a"]),
+    ("mv a b c dest", ["a", "b", "c"]),
+    ("git rm -r --cached x", ["x"]),
+    ("git mv x y", ["x"]),
+    ("unlink z", ["z"]),
+    ("rmdir d", ["d"]),
+    ("Remove-Item -LiteralPath a.css -Force", ["a.css"]),
+    ("Remove-Item a.css, b.css", ["a.css", "b.css"]),
+    ("del /q /s a.css", ["a.css"]),
+    ("Move-Item -Path a.css -Destination b.css", ["a.css"]),
+    ("cat a; ls b", []),
+])
+def test_shell_removal_targets(H, command, removed, tmp_path):
+    found = [Path(t) for t in H.shell_removals(command, str(tmp_path))]
+    assert [str(p.relative_to(tmp_path)).replace("\\", "/") for p in found] == removed
+
+
 def test_running_plumb_scripts_is_allowed(launcher, tmp_path, proj):
     allowed(bash(launcher, tmp_path, proj, f"python3 {SKILL_REL}/scripts/audit.py app"))
     allowed(bash(launcher, tmp_path, proj, f"python3 {PLUGIN / 'scripts' / 'scaffold.py'} --help"))

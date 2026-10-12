@@ -16,7 +16,9 @@ In such a project, in this order:
      marked, in the project or the home folder): editing them could switch the checks off.
    Shell commands are read for writes (>, >>, tee, sed -i, perl -i, cp / mv / install / rsync onto, Set-Content,
    Add-Content, Out-File, Copy-Item / Move-Item onto, Python writes); running build-tokens.py or build-prototype.py is
-   allowed, as are reads, git and anything that writes elsewhere.
+   allowed, as are reads, git and anything that writes elsewhere. Removing or moving away a guarded file (rm, rmdir,
+   unlink, del, Remove-Item, git rm, the sources of mv / Move-Item / git mv), or a folder that holds one, is refused
+   the same way; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config: the audit's route discovery for the project's framework) unless a screen in screens.json
    covers it (same route, a source glob matching the file, or the route's slug as its id) and its current screen file
@@ -132,6 +134,42 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
             return _prototype_output(proj, shown)
     if _THEME.search(in_project) and os.path.isfile(path) and _generated_header(path):
         return _tokens_output(proj, shown)
+    return None
+
+
+def guarded_files(proj: H.Project, cwd: str) -> List[str]:
+    """The guarded files that exist now (the plugin root as one entry), for a removal of a folder that may hold them."""
+    found: List[str] = [H.plugin_root()]
+    if proj.skill_dir is not None:
+        skill = proj.skill_dir
+        for pattern in ("scripts/*.py", "templates/**/*", "assets/platforms/README.md",
+                        "assets/platforms/web/tokens.css", "assets/platforms/web/tailwind.tokens.js",
+                        "assets/platforms/mobile/ios/*Theme.swift", "assets/platforms/mobile/android/*Theme.kt"):
+            found += [str(f) for f in skill.glob(pattern) if f.is_file()]
+    home = proj.home_root()
+    found += [os.path.join(home, c) for c in proj.copies]
+    docs = os.path.join(proj.root_s, proj.docs_rel)
+    found += [os.path.join(docs, n) for n in ("specimen.html", "prototype.html", "screens.html",
+                                               os.path.join("prototype", "screens.json"))]
+    found += [str(f) for f in Path(docs, "tours").glob("*.html")]
+    for kiro_base in {proj.root_s, os.path.expanduser("~"), cwd}:
+        kiro = Path(kiro_base, ".kiro")
+        found.append(str(kiro / "hooks" / "plumb.json"))
+        found += [str(f) for f in kiro.glob("skills/plumb-*/SKILL.md")]
+    return [os.path.realpath(f) for f in found if os.path.exists(f)]
+
+
+def removal_guard(proj: H.Project, path: str, cwd: str) -> Optional[str]:
+    """The refusal for removing (or moving away) this absolute path by hand: a guarded file, or a folder that holds
+    one; else None."""
+    why = guard(proj, path)
+    if why or not os.path.isdir(path):
+        return why
+    for f in guarded_files(proj, cwd):
+        if H.under(f, path) is not None:
+            why = guard(proj, f)
+            if why:
+                return why
     return None
 
 
@@ -263,6 +301,10 @@ def main() -> int:
             return 0
         for target in H.shell_targets(p.command, base):
             why = guard(proj, os.path.realpath(target))
+            if why:
+                return H.refuse(why, p.copilot)
+        for target in H.shell_removals(p.command, base):
+            why = removal_guard(proj, os.path.realpath(target), p.cwd or base)
             if why:
                 return H.refuse(why, p.copilot)
         return 0

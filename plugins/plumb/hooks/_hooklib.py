@@ -861,7 +861,9 @@ def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
 # A cheap first look: a command with none of these cannot write a file.
 WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\brsync\b|\bln\b|\bdd\b|\btruncate\b|"
                         r"write|\bopen\(|\.dump|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|::|"
-                        r"append|copyfile|\bfs\.|rename",
+                        r"append|copyfile|\bfs\.|rename|"
+                        # removals and moves: rm, rmdir, unlink, del, erase, rd, Remove-Item, ri, move, mi
+                        r"\brm\b|\brmdir\b|\bunlink\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b",
                         re.I)
 _WORD = r"(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+)"
 _REDIR = re.compile(r"\d?>>?\|?\s*" + _WORD)
@@ -921,12 +923,15 @@ _PS_VALUE_FLAGS = ("-value", "-encoding", "-filter", "-include", "-exclude", "-i
 
 
 def _positional(words: List[str], value_flags: Tuple[str, ...]) -> List[str]:
-    out, skip = [], False
+    out, skip, ended = [], False, False
     for w in words:
         if skip:
             skip = False
             continue
-        if w.startswith("-") and len(w) > 1:
+        if w == "--" and not ended:  # end of options: what follows is positional
+            ended = True
+            continue
+        if w.startswith("-") and len(w) > 1 and not ended:
             skip = w.lower() in value_flags
             continue
         out.append(w)
@@ -1043,11 +1048,53 @@ def _stage_targets(stage: str) -> List[str]:
     return targets
 
 
-def shell_targets(command: str, cwd: str) -> List[str]:
-    """The files a shell command (Bash or PowerShell) looks like it writes, as absolute paths (best effort). What
-    build-tokens.py and build-prototype.py write themselves does not count (that is how generated files are meant to
-    change), only the redirects of the pipeline stage that runs them; every other stage is read as usual.
-    `cd DIR` moves the base for the commands after it."""
+_REMOVERS = ("rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri")
+_PS_REMOVERS = ("remove-item", "ri", "del", "erase", "rd")
+_MOVERS = ("mv", "move", "move-item", "mi")
+
+
+def _stage_removals(stage: str) -> List[str]:
+    """The files or folders one pipeline stage removes or moves away (best effort): rm, rmdir, unlink, del / erase /
+    rd (cmd), Remove-Item (ri, del), git rm, and the sources of mv / move, Move-Item (mi) and git mv."""
+    rest = _TEE.sub(" ", _REDIR.sub(" ", _NO_WRITE.sub(" ", stage)))
+    words = [_unquote(w) for w in re.findall(_WORD, rest)]
+    while words and re.match(r"^[A-Za-z_]\w*=", words[0]):  # FOO=bar cmd
+        words.pop(0)
+    if words and words[0] in ("sudo", "command", "env", "nohup", "time"):
+        words.pop(0)
+    if not words:
+        return []
+    name, args = _command_name(words[0]), words[1:]
+    if name == "git" and args and args[0] in ("rm", "mv"):
+        name, args = args[0], args[1:]
+    if name in ("del", "erase", "rd"):  # cmd's /q /s /f switches
+        args = [a for a in args if not re.fullmatch(r"/[A-Za-z](?::\S*)?", a)]
+    if name in _PS_REMOVERS:
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
+        items = ([value] if value else []) + pos
+    elif name in _REMOVERS:
+        items = _positional(args, ())
+    elif name in ("move-item", "mi"):
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))
+        items = [value] if value else pos[:1]
+    elif name in _MOVERS:
+        pos = _positional(args, ("-t", "--target-directory", "-S", "--suffix"))
+        into = any(a in ("-t", "--target-directory") or a.startswith("--target-directory=") for a in args)
+        items = pos if into else pos[:-1]
+    else:
+        return []
+    if name in _PS_REMOVERS + ("move-item", "mi"):  # PowerShell lists: a.css, b.css
+        items = [x.strip() for item in items for x in item.split(",")]
+    return [i for i in items if i]
+
+
+# $HOME, ${HOME} (sh), %USERPROFILE% (cmd), $env:USERPROFILE / $env:HOME (PowerShell) at the start of a path: read as ~.
+_HOME_VAR = re.compile(r"^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|\$env:HOME)(?=[/\\]|$)", re.I)
+
+
+def _shell_paths(command: str, cwd: str, stage_paths: Callable[[str], List[str]]) -> List[str]:
     out: List[str] = []
     base = cwd
     for part in _split(command, ("&&", "||", ";", "\n")):
@@ -1057,12 +1104,28 @@ def shell_targets(command: str, cwd: str) -> List[str]:
             base = os.path.normpath(os.path.join(base, target.replace("\\", "/") if os.sep == "/" else target))
             continue
         for stage in _split(part, ("|",)):
-            for t in _stage_targets(stage):
+            for t in stage_paths(stage):
                 if not t or t in ("-", "/dev/null"):
                     continue
                 p = t.replace("\\", "/") if os.sep == "/" else t
+                p = _HOME_VAR.sub(lambda _m: "~", p)
                 p = os.path.expanduser(p)
                 full = os.path.normpath(p if os.path.isabs(p) else os.path.join(base, p))
                 if full not in out:
                     out.append(full)
     return out
+
+
+def shell_targets(command: str, cwd: str) -> List[str]:
+    """The files a shell command (Bash or PowerShell) looks like it writes, as absolute paths (best effort). What
+    build-tokens.py and build-prototype.py write themselves does not count (that is how generated files are meant to
+    change), only the redirects of the pipeline stage that runs them; every other stage is read as usual.
+    `cd DIR` moves the base for the commands after it; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE are the
+    home folder."""
+    return _shell_paths(command, cwd, _stage_targets)
+
+
+def shell_removals(command: str, cwd: str) -> List[str]:
+    """The files or folders a shell command looks like it removes or moves away (rm, del, Remove-Item, git rm, the
+    sources of mv / Move-Item / git mv), as absolute paths (best effort), read like shell_targets."""
+    return _shell_paths(command, cwd, _stage_removals)

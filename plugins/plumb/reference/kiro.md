@@ -25,8 +25,8 @@ python3 "<ROOT>/scripts/kiro.py" uninstall [--project <folder>]
 | `--yes` | Write or remove without asking. Without it, `kiro.py` lists every path and asks `[y/N]`; with no terminal it writes nothing and says `ask the user: run … --yes yourself, or tell me to run it`. |
 
 It never downloads, installs or runs anything. It refuses to overwrite a file it did not write, or to write through a
-symlink inside `.kiro`. It writes into the user's folders: an agent tells the user the command and runs it only when
-the user says so.
+symlink (`.kiro` itself included). It writes into the user's folders: an agent tells the user the command and runs it
+only when the user says so.
 
 **After updating the Plumb plugin**, run `install` again: the copies point at one plugin folder. The Kiro session start
 says so when a newer Plumb sits next to that folder ("Plumb X is installed but Kiro still uses Y: ask the user to run
@@ -47,11 +47,12 @@ session start prints one line: the checks are off, run `kiro.py install` again.
 - **Stop:** the block is `{"decision": "block", "reason": …}` on stdout, exit 0. Kiro's docs show that JSON for CLI v3;
   elsewhere exit-0 stdout is only added to the agent's context, so the live check confirms the agent really continues.
   The report-only follow-up (`{"systemMessage": …}`) may show as raw JSON there.
-- **Windows:** each command is `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand …` (the
-  same fail-open body as the Copilot hooks, printed by `install`), so it runs the same from cmd.exe, PowerShell and Git
-  Bash; PowerShell's start-up adds about 0.3 s per hook.
+- **Windows:** each command is `powershell -NoProfile -NonInteractive -EncodedCommand …` (the same fail-open body as
+  the Copilot hooks, printed by `install`), so it runs the same from cmd.exe, PowerShell and Git Bash; PowerShell's
+  start-up adds about 0.3 s per hook. No `-ExecutionPolicy Bypass`: it is not needed, and endpoint protection flags it.
 - **Home and workspace:** Kiro CLI runs both hooks files side by side. A home hook stands down only where the
   workspace's own file (in the workspace root) runs the same plugin with that hook enabled; otherwise both run, which
   is never less safe.
 - **Guarded:** the edit check refuses hand edits to the marked `.kiro/hooks/plumb.json` and `.kiro/skills/plumb-*/`
-  (project and home), file edits and shell writes alike: change the checks in `PLUMB.md`, refresh with `kiro.py install`.
+  (project and home), file edits, shell writes and removals (`rm`, `mv`, `Remove-Item`, …; paths under `~`, `$HOME`,
+  `%USERPROFILE%` included) alike: change the checks in `PLUMB.md`, refresh with `kiro.py install`.
