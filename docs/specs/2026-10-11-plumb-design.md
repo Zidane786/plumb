@@ -889,8 +889,11 @@ hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE
   Windows), with real hook input in both Claude Code and Copilot CLI formats, on fixture projects,
   and the exit code, stdout JSON and stderr are asserted (refusals, passes, fail-open, timing).
   Browser checks of the generated pages (specimen, prototype, screens, walkthrough player) run
-  in the same suite when Playwright is installed; CI installs it on the Ubuntu jobs only (a test
-  dependency, never a runtime one), and the tests skip with a reason elsewhere. What CI cannot
+  in the same suite when Playwright is installed; CI installs it with Chromium on every runner (a
+  test dependency, never a runtime one), and with `PLUMB_STRICT_SKIPS=1` any skip that is not a
+  platform skip (`requires macOS`, `requires Windows`, `requires POSIX shell`, `requires xcrun`)
+  fails the run (`tests/conftest.py`); locally the browser tests skip with a reason when
+  Playwright is missing. What CI cannot
   run: the two CLIs themselves (they need sign-in), so the live tmux runs below are done by hand
   before every release and recorded in the PR.
 - **Three small sample apps:** a minimal Next.js + Tailwind v4 app, a minimal Angular app (plain
