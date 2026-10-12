@@ -109,9 +109,16 @@ _PATH_SPLIT = re.compile(r"(?<!\d)\.|\.(?!\d)")
 _DECIMAL_NAME = re.compile(r"^\d+(?:\.\d+)+$")
 
 
+# Paths iter_tokens has seen where a numeric group holds a numeric name ("z": {"1": {"2": ...}} is z.1.2, three
+# names): the decimal rule would read "1.2" as one name, so these keep the names the file really has.
+_NESTED_NUMERIC: dict = {}
+
+
 def path_parts(path: str) -> list:
-    """A token path split into its names: "spacing.0.5" -> ["spacing", "0.5"], "typography.sm.fontSize" -> 3 parts."""
-    return _PATH_SPLIT.split(path)
+    """A token path split into its names: "spacing.0.5" -> ["spacing", "0.5"], "typography.sm.fontSize" -> 3 parts.
+    A path iter_tokens met as nested numeric groups ("z.1.2" from {"z": {"1": {"2": ...}}}) keeps its three names."""
+    known = _NESTED_NUMERIC.get(path)
+    return list(known) if known is not None else _PATH_SPLIT.split(path)
 
 
 def css_name(part: str) -> str:
@@ -125,7 +132,7 @@ def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
 
     A name may contain a dot only as a decimal step ("0.5", "1.5"); any other dot is refused."""
 
-    def walk(node: dict, prefix: str, inherited: Optional[str]) -> Iterator[Tuple[str, dict, Optional[str]]]:
+    def walk(node: dict, prefix: str, names: list, inherited: Optional[str]) -> Iterator[Tuple[str, dict, Optional[str]]]:
         gtype = node.get("$type", inherited) if isinstance(node.get("$type"), str) else inherited
         for key, child in node.items():
             if key.startswith("$") or not isinstance(child, dict):
@@ -135,20 +142,34 @@ def iter_tokens(doc: dict) -> Iterator[Tuple[str, dict, Optional[str]]]:
                 raise _err(f"{where}: the name {key!r} has a dot; a token or group name may hold one only as a decimal "
                            f"step such as \"0.5\"", f"rename it in the tokens file, e.g. {key.replace('.', '-')!r}")
             path = f"{prefix}.{key}" if prefix else key
+            parts = names + [key]
+            if _PATH_SPLIT.split(path) != parts:
+                _NESTED_NUMERIC[path] = tuple(parts)
             if is_token(child):
                 ttype = child.get("$type") if isinstance(child.get("$type"), str) else gtype
                 yield path, child, ttype
             else:
-                yield from walk(child, path, gtype)
+                yield from walk(child, path, parts, gtype)
 
-    yield from walk(doc, "", None)
+    yield from walk(doc, "", [], None)
 
 
 def _find(doc: dict, path: str) -> Tuple[dict, list, Optional[str]]:
-    """(token, rest-of-path into its $value, inherited $type) for a dotted path."""
+    """(token, rest-of-path into its $value, inherited $type) for a dotted path. A decimal name ("0.5") is one name;
+    when the file nests numeric groups instead ("z.1.2"), the plain split by dots is tried too."""
+    first = path_parts(path)
+    plain = path.split(".")
+    if plain != first:
+        try:
+            return _find_parts(doc, path, first)
+        except PlumbError:
+            return _find_parts(doc, path, plain)
+    return _find_parts(doc, path, first)
+
+
+def _find_parts(doc: dict, path: str, parts: list) -> Tuple[dict, list, Optional[str]]:
     node: object = doc
     gtype: Optional[str] = None
-    parts = path_parts(path)
     for i, key in enumerate(parts):
         if not isinstance(node, dict) or key not in node or key.startswith("$"):
             raise _err(f"unknown token: {path}", "check the name against the tokens file (group.token, e.g. color.primary)")
@@ -579,6 +600,41 @@ def block_text(text: str) -> Optional[str]:
     """The block itself (markers included), or None."""
     span = block_span(text)
     return text[span[0]:span[1]] if span else None
+
+
+def remove_block(text: str) -> str:
+    """text without Plumb's block and the line break that joins it to the rest (the one after it, else the one before
+    it): exactly the file as it was before the block was first added."""
+    span = block_span(text)
+    if span is None:
+        return text
+    start, end = span
+    for nl in ("\r\n", "\n"):
+        if text.startswith(nl, end):
+            return text[:start] + text[end + len(nl):]
+    for nl in ("\r\n", "\n"):
+        if text.endswith(nl, 0, start):
+            return text[:start - len(nl)] + text[end:]
+    return text[:start] + text[end:]
+
+
+# Outside Plumb's block, a stylesheet that defines Tailwind's dark variant again, or sets the tokens' variables in an
+# @theme block, overrides the design system without anyone seeing it (the later definition wins).
+_OVERRIDE_VARIANT = re.compile(r"@custom-variant\s+dark\b")
+_OVERRIDE_THEME = re.compile(r"@theme\b[^{;]*\{([^{}]*)\}")
+_OVERRIDE_VAR = re.compile(r"(--(?:color|radius|shadow|text|font|ease|spacing|duration)(?:-[\w*-]*)?)\s*:")
+
+
+def block_overrides(text: str) -> list:
+    """(position, what) for each place outside Plumb's block that overrides it: a `@custom-variant dark` of the
+    project's own, or a variable of the tokens' namespaces set in an `@theme` block. Comments are ignored; the block
+    itself is skipped."""
+    code = mask_comments(mask_block(text), ".css")
+    out = [(m.start(), "@custom-variant dark") for m in _OVERRIDE_VARIANT.finditer(code)]
+    for m in _OVERRIDE_THEME.finditer(code):
+        for v in _OVERRIDE_VAR.finditer(m.group(1)):
+            out.append((m.start(1) + v.start(1), v.group(1)))
+    return sorted(out)
 
 
 def mask_block(text: str) -> str:

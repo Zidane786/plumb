@@ -11,6 +11,9 @@ from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins/plumb/assets/skill/scripts"))
+import _plumb as P  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "plugins/plumb/assets/skill/scripts"
 WEB_TEMPLATES = REPO / "plugins/plumb/assets/skill/assets/platforms/web"
@@ -480,6 +483,81 @@ def test_broken_markers_are_refused_and_nothing_is_written(project: Path) -> Non
     assert_refusal(run(project, "--check"), "broken Plumb block")
 
 
+GOOGLE = '@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap");\n'
+
+
+def _import_order(project: Path, own: str, styling: str = "tailwind-v4") -> str:
+    if styling != "tailwind-v4":
+        set_mode(project, styling)
+    globals_css(project).write_text(own, encoding="utf-8")
+    assert run(project).returncode == 0
+    text = globals_css(project).read_text(encoding="utf-8")
+    assert P.remove_block(text) == own  # the project's file comes back exactly
+    return text
+
+
+@pytest.mark.parametrize("second", ['@import "tailwindcss";\n', '@import "./reset.css";\n'])
+def test_a_semicolon_inside_an_import_url_does_not_end_the_leading_statements(project: Path, second: str) -> None:
+    own = GOOGLE + second + "\nbody { margin: 0; }\n"
+    text = _import_order(project, own, "tailwind-v4" if "tailwindcss" in second else "css")
+    assert text.startswith(GOOGLE + second + START)  # both imports stay above the block
+
+
+@pytest.mark.parametrize("own,lead", [
+    ('@charset "utf-8";\n@layer theme, base, components, utilities;\nh1 { margin: 0; }\n',
+     '@charset "utf-8";\n@layer theme, base, components, utilities;\n'),
+    ("@import 'a.css' /* why; */ screen;\n@import url(b.css);\nh1 { margin: 0; }\n",
+     "@import 'a.css' /* why; */ screen;\n@import url(b.css);\n"),
+])
+def test_the_block_goes_after_every_statement_that_must_stay_first(project: Path, own: str, lead: str) -> None:
+    assert _import_order(project, own, "css").startswith(lead + START)
+
+
+def test_tailwind_v3_directives_stay_above_the_block(project: Path) -> None:
+    own = "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n.btn { margin: 0; }\n"
+    assert _import_order(project, own, "tailwind-v3").startswith(own.split("\n\n", 1)[0] + "\n" + START)
+
+
+def test_a_file_without_a_trailing_newline_comes_back_exactly(project: Path) -> None:
+    text = _import_order(project, '@import "tailwindcss";')
+    assert text.startswith('@import "tailwindcss";\n' + START) and text.endswith(END)
+
+
+def test_check_shows_the_exact_change_before_the_first_block_is_added(project: Path) -> None:
+    globals_css(project).write_text(GLOBALS, encoding="utf-8")
+    r = run(project, "--check")
+    assert r.returncode == 1
+    assert "would add Plumb's block to app/globals.css (first time; every other line stays as it is)" in r.stdout
+    assert "--- a/app/globals.css" in r.stdout and "+++ b/app/globals.css" in r.stdout
+    assert "+" + START in r.stdout and "-body" not in r.stdout
+    assert globals_css(project).read_text(encoding="utf-8") == GLOBALS  # nothing written
+    assert run(project).returncode == 0
+    again = run(project, "--check")
+    assert again.returncode == 0 and "would add" not in again.stdout
+
+
+def test_an_override_outside_the_block_is_never_silent(project: Path) -> None:
+    globals_css(project).write_text(GLOBALS + "@custom-variant dark (&:is(.dark *));\n@theme inline {\n"
+                                    "  --color-background: var(--bg);\n}\n", encoding="utf-8")
+    r = run(project)
+    assert r.returncode == 0
+    assert "sets @custom-variant dark, --color-background outside Plumb's block" in r.stderr
+    assert "/plumb:update" in r.stderr and "block-override" in r.stderr
+
+
+def test_missing_theme_switch_and_reduced_motion_get_a_note_and_the_defaults(project: Path) -> None:
+    def drop(d):
+        d["$extensions"]["plumb"]["web"].pop("theme_switch")
+        d["$extensions"]["plumb"].pop("motion")
+    edit_tokens(project, drop)
+    r = run(project)
+    assert r.returncode == 0
+    assert 'web.theme_switch is not set, so the default "both"' in r.stderr
+    assert 'motion.reduced is not set, so the default "none"' in r.stderr
+    assert set(dark_rules(css_out(project).read_text(encoding="utf-8"))) == {"media", "class", "light"}
+    assert "not set" not in run(project, "--check").stderr  # --check stays quiet about it
+
+
 def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
     globals_css(project).write_bytes(GLOBALS.replace("\n", "\r\n").encode("utf-8"))
     assert run(project).returncode == 0
@@ -546,8 +624,10 @@ def test_reduced_motion_keep_fades_keeps_opacity_and_colour_and_stops_movement(p
     assert run(project).returncode == 0
     css = css_out(project).read_text(encoding="utf-8")
     block = css.split("@media (prefers-reduced-motion: reduce) {", 1)[1].split("\n}\n", 1)[0]
-    assert "transition-property: opacity, color, background-color" in block and "!important" in block
-    assert "transition-duration: 0s" not in block  # fades keep their duration
+    assert "transition-property" not in block  # nothing gains a transition it did not have
+    keep = ":not(.transition-opacity, .transition-colors, .motion-fade)"
+    stop = block.split(f"{keep}, {keep}::before, {keep}::after {{", 1)[1]
+    assert "transition-duration: 0s !important;" in stop  # every transition but a fade-only one stops
     assert "animation-duration: 0s !important;" in block  # keyframe movement stops
     assert "keep the fades" in css
 
@@ -589,6 +669,29 @@ def test_a_decimal_spacing_step_works_end_to_end(project: Path) -> None:
     assert run(project).returncode == 0
     js = (skill(project) / "assets/platforms/web/tailwind.tokens.js").read_text(encoding="utf-8")
     assert '"0.5": "var(--spacing-0_5)"' in js  # p-0.5 in Tailwind v3
+
+
+def test_decimal_steps_get_readable_collision_free_mobile_names(project: Path) -> None:
+    edit_tokens(project, lambda d: d["spacing"].update({"0.5": {"$value": "2px"}, "1.5": {"$value": "6px"},
+                                                       "15": {"$value": "60px"}}))
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"].__setitem__("platforms", ["web", "ios", "android"]))
+    r = run(project)
+    assert r.returncode == 0, r.stderr
+    mobile = skill(project) / "assets/platforms/mobile"
+    swift = (mobile / "ios/DemoTheme.swift").read_text(encoding="utf-8")
+    kotlin = (mobile / "android/DemoTheme.kt").read_text(encoding="utf-8")
+    for name, px in (("s0_5", 2), ("s1_5", 6), ("s15", 60)):
+        assert f"public static let {name}: CGFloat = {px}" in swift
+        assert f"val {name} = {px}.dp" in kotlin
+
+
+def test_nested_numeric_groups_build_as_before(project: Path) -> None:
+    edit_tokens(project, lambda d: d.update({"z": {"$type": "dimension", "1": {"2": {"$value": "3px"}}},
+                                            "size": {"$type": "dimension", "nudge": {"$value": "{z.1.2}"}}}))
+    r = run(project)
+    assert r.returncode == 0, r.stderr
+    css = css_out(project).read_text(encoding="utf-8")
+    assert "--z-1-2: 3px;" in css and "--size-nudge: var(--z-1-2);" in css
 
 
 def test_a_dot_that_is_not_a_decimal_step_is_refused(project: Path) -> None:

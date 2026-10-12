@@ -180,11 +180,27 @@ def _has_block(path: str) -> bool:
         return False
 
 
+def copy_shown(proj: H.Project, path: str) -> str:
+    """How a web copy's path is shown in a refusal: relative to the project that owns the skill when that is this
+    project, else in full (as guard() shows it)."""
+    home = proj.home_root()
+    in_home = H.under(path, home)
+    return in_home if in_home and home == proj.root_s else path
+
+
 def _copy_block_output(proj: H.Project, shown: str) -> str:
     return (f"error: {shown} is generated from the design tokens between its /* plumb:start ... */ and /* plumb:end */ "
             f"lines, and this edit changes that block; a hand edit there is lost on the next build\n"
             f"fix: edit only outside the block (the rest of {shown} is yours), or change the tokens with /plumb:update, "
             f"then rebuild: {proj.script('build-tokens.py')}")
+
+
+def _copy_shell_output(proj: H.Project, shown: str) -> str:
+    return (f"error: {shown} is generated only between its /* plumb:start ... */ and /* plumb:end */ lines (the rest of "
+            f"the file is yours), and a shell command that writes, moves or removes the file cannot be checked for what "
+            f"it does to that block\n"
+            f"fix: change the lines outside the block with the edit tool (Edit / apply_patch / str_replace), and the "
+            f"block through the tokens with /plumb:update, then rebuild: {proj.script('build-tokens.py')}")
 
 
 def guarded_files(proj: H.Project, cwd: str) -> List[str]:
@@ -350,11 +366,17 @@ def main() -> int:
         if not H.WRITE_HINT.search(p.command):
             return 0
         for target in H.shell_targets(p.command, base):
-            why = guard(proj, os.path.realpath(target))
+            path = os.path.realpath(target)
+            why = guard(proj, path)
+            if why and is_copy(proj, path) and _has_block(path):
+                why = _copy_shell_output(proj, copy_shown(proj, path))
             if why:
                 return H.refuse(why, p.copilot)
         for target in H.shell_removals(p.command, base):
-            why = removal_guard(proj, os.path.realpath(target), p.cwd or base)
+            path = os.path.realpath(target)
+            why = removal_guard(proj, path, p.cwd or base)
+            if why and is_copy(proj, path) and _has_block(path):
+                why = _copy_shell_output(proj, copy_shown(proj, path))
             if why:
                 return H.refuse(why, p.copilot)
         return 0
@@ -367,7 +389,7 @@ def main() -> int:
             if copy_edit_keeps_block(path, c):
                 why = None  # an edit outside Plumb's block: the rest of a web copy is the project's
             elif _has_block(path):
-                why = _copy_block_output(proj, why.split(" is generated", 1)[0][len("error: "):])
+                why = _copy_block_output(proj, copy_shown(proj, path))
         if why:
             return H.refuse(why, p.copilot)
     why = checks(p, proj, base)

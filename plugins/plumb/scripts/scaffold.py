@@ -28,7 +28,8 @@ Ownership (spec 5.1):
 
   scaffold.py --verify --project-root P
       Check that PLUMB.md's skill path exists, that the AGENTS.md / CLAUDE.md row and the Makefile point at it, and that
-      the copy targets resolve. Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
+      the copy targets resolve, and that every `(make X)` PLUMB.md names is a target in the Makefile (no Makefile, or no
+      such target, is a problem). Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
       suggested --relocate command. Exit 0 when there is no problem, 1 otherwise.
 
@@ -571,6 +572,8 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
 
 
 BLOCK_MARK = "/* plumb:start"
+MAKE_NAMED = re.compile(r"\(make ([A-Za-z0-9_.-]+)\)")  # PLUMB.md's Commands lines: "(make tokens)"
+MAKE_TARGET = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?!=)", re.M)  # a Makefile rule "tokens:" (not "X := ...")
 
 
 def copy_notes(root: Path, answers: dict, dry_run: bool) -> None:
@@ -831,6 +834,13 @@ def verify(root: Path) -> int:
         if not rows:
             print("note: no Plumb row in AGENTS.md or CLAUDE.md (optional; /plumb:init offers to add it)")
         makefile = root / "Makefile"
+        defined = set(MAKE_TARGET.findall(read_keep(makefile))) if makefile.is_file() else set()
+        for target in dict.fromkeys(MAKE_NAMED.findall(read_keep(root / "PLUMB.md"))):
+            if target not in defined:
+                where = "the Makefile has no such target" if makefile.is_file() else "there is no Makefile"
+                problem(f"PLUMB.md names `make {target}`, but {where}")
+                print("fix: add the Plumb targets from the plugin's templates/Makefile.snippet (the wire-in step of "
+                      f"/plumb:init offers it), or take `(make {target})` out of PLUMB.md's Commands lines")
         if makefile.is_file():
             lines = [l for l in read_keep(makefile).splitlines() if "build-tokens.py" in l or "audit.py" in l]
             if not lines:

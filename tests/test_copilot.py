@@ -106,6 +106,28 @@ def test_patch_moving_a_file_onto_a_generated_file_is_denied(launcher, tmp_path,
     assert denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=body)).startswith(f"error: {MAP} is generated")
 
 
+END = "/* plumb:end */"
+
+
+def test_patch_to_a_web_copy_is_judged_by_plumbs_block(launcher, tmp_path, proj):
+    css = proj / "app/globals.css"
+    text = read(css)
+    inside = next(ln for ln in text.splitlines() if "color-scheme: dark;" in ln)
+    # after the block: the project's own CSS
+    allowed(pre(launcher, tmp_path, proj, "apply_patch", PATCH=patch(update("app/globals.css", END, END + "\n+body { margin: 0; }"))))
+    # a line inside the block, the end marker itself, a whole file without the block: denied with the block message
+    for body in (update("app/globals.css", inside, inside.replace("dark", "light")),
+                 update("app/globals.css", END, "/* the end */"),
+                 "*** Add File: app/globals.css\n+body { margin: 0; }\n"):
+        reason = denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=patch(body)))
+        assert reason.startswith("error: app/globals.css is generated from the design tokens between its /* plumb:start")
+        actionable(reason)
+    # a shell write: denied, saying only the block is Plumb's
+    reason = denied(pre(launcher, tmp_path, proj, "bash", COMMAND="echo 'body{}' >> app/globals.css"))
+    assert "is generated only between its /* plumb:start ... */ and /* plumb:end */ lines" in reason
+    assert "the rest of the file is yours" in reason and "edit tool" in reason
+
+
 def test_multi_file_patch_is_denied_when_any_file_is_guarded(launcher, tmp_path, proj):
     body = patch("*** Add File: notes.txt\n+hi\n", f"*** Update File: {SKILL_REL}/scripts/audit.py\n@@\n-a\n+b\n")
     assert "is Plumb's file; upgrades replace it" in denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=body))

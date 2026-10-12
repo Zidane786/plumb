@@ -43,7 +43,8 @@ file was found or the input is bad.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
-emoji in UI source, the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values, stale
+emoji in UI source, block-override (in a web copy, the project's own @custom-variant dark or token
+variables in an @theme block outside Plumb's block), the Swift / Kotlin raw values, and (cross-file) contrast failures, missing dark values, stale
 generated files and the prototype fidelity errors (screen drift, a screen changed since approval, a route not prototyped
 while Prototype sync is on). Errors fail the audit (exit 1) and the edit check refuses them.
 **warn** is softer and only reported: `dark:` outside the primitives, a hand-rolled accessibility primitive, a primitive
@@ -557,6 +558,7 @@ class Ctx:
         self._transitions: Optional[List[Tuple[int, int]]] = None
         self._styles: Optional[List[Tuple[int, int]]] = None
         self._nl = [m.start() for m in re.finditer("\n", text)]
+        self.block_copy = False  # a web copy whose Plumb block was blanked (make_ctx): block-override applies
 
     def class_ok(self, pos: int) -> bool:
         """Tailwind classes count anywhere in markup and scripts; in a stylesheet only after @apply."""
@@ -1032,6 +1034,23 @@ def check_off_token_easing(ctx: Ctx) -> Iterator[Hit]:
 
 _OUTLINE_CLASS = re.compile(CLS + r"outline-none(?![\w-])")
 _OUTLINE_DECL = re.compile(r"(?<![\w-])outline\s*:\s*[\"']?(?:none|0)(?![\w.%-])")
+
+
+def check_block_override(ctx: Ctx) -> Iterator[Hit]:
+    """In a web copy, outside Plumb's block: a `@custom-variant dark` of the project's own, or a token variable set in
+    an `@theme` block. Either overrides the design system silently (the later definition wins)."""
+    if not ctx.block_copy:
+        return
+    for pos, what in P.block_overrides(ctx.text):
+        if what == "@custom-variant dark":
+            msg = (f"{what} outside Plumb's block overrides the design system's dark variant, so dark: no longer "
+                   f"follows $extensions.plumb.web.theme_switch")
+            fix = ("delete it here; choose how dark mode switches with $extensions.plumb.web.theme_switch "
+                   "(/plumb:update), then rebuild")
+        else:
+            msg = f"{what} set in an @theme block outside Plumb's block overrides the design tokens"
+            fix = "move the value into the tokens with /plumb:update and delete it here, then rebuild"
+        yield Hit(pos, what, message=msg, fix=fix)
 
 
 def check_outline_none(ctx: Ctx) -> Iterator[Hit]:
@@ -3392,6 +3411,8 @@ RULES: List[Rule] = [
          "use a motion.duration token; to turn a transition off use transition-none"),
     Rule("off-token-easing", "error", WEB, "file", check_off_token_easing, "easing {match} is not a motion token",
          "use a motion.easing token"),
+    Rule("block-override", "error", WEB, "file", check_block_override, "{match} overrides Plumb's block",
+         "move the value into the tokens with /plumb:update and delete it here", skip_allowed=False),
     Rule("outline-none", "error", WEB, "file", check_outline_none, "{match} removes the focus outline",
          "keep a forced-colors outline (outline-hidden / outline: 2px solid transparent) with the focus ring token",
          skip_allowed=False),
@@ -3521,9 +3542,12 @@ def make_ctx(path_name: str, text: str, doc: Optional[dict], settings: dict) -> 
     owned = generator_owned(path_name, settings or {})
     if is_generated(text) and owned:
         return None
-    if owned:
+    has_block = owned and P.block_span(text) is not None
+    if has_block:
         text = P.mask_block(text)  # a web copy: Plumb's block is generated, the rest of the file is audited
-    return Ctx(path_name, text, doc, settings)
+    ctx = Ctx(path_name, text, doc, settings)
+    ctx.block_copy = has_block
+    return ctx
 
 
 def file_findings(ctx: Ctx, skip: frozenset = frozenset()) -> List[Finding]:

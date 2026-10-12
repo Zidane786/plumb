@@ -54,6 +54,7 @@ Python 3.9+, standard library only. Declarations follow the order of the tokens 
 from __future__ import annotations
 
 import argparse
+import difflib
 import html as _html
 import json
 import re
@@ -353,20 +354,28 @@ def dark_variant_css(doc: dict) -> List[str]:
             "@custom-variant dark {", "  &:where(.dark, .dark *) { @slot; }"] + media + ["}"]
 
 
-_FADE_PROPERTIES = "opacity, color, background-color, border-color, outline-color, text-decoration-color, fill, stroke"
+# Elements whose transition is only a fade: Tailwind's transition-opacity and transition-colors (they transition
+# nothing else), and .motion-fade, the class a plain-CSS project puts on an element whose own transition is a fade.
+FADE_CLASSES = (".transition-opacity", ".transition-colors", ".motion-fade")
 
 
 def reduced_motion_css(doc: dict) -> List[str]:
     """The prefers-reduced-motion block for the {{@reduced-motion}} directive, as $extensions.plumb.motion.reduced
-    says: none = no animation or transition at all; keep-fades = transitions of opacity and colour stay (a fade is not
-    movement), every other transition and every animation stops."""
+    says: none = no animation or transition at all; keep-fades = an element whose transition is only a fade
+    (FADE_CLASSES) keeps it as it is, every other transition and every animation stops; no element gains a transition
+    it did not have."""
     _switch, reduced = web_switches(doc)
     if reduced == "keep-fades":
-        head = ["/* Motion is an enhancement. If the user asked for less, keep the fades (opacity and colour) and stop "
-                "every movement. Never override this block. */"]
+        keep = ", ".join(FADE_CLASSES)
+        head = ["/* Motion is an enhancement. If the user asked for less, keep the fades and stop every movement: an",
+                f"   element whose transition is only a fade ({keep}) keeps it; every other transition and",
+                "   every animation stops. Nothing gains a transition it did not have. Never override this block. */"]
         rules = ["animation-duration: 0s !important;", "animation-iteration-count: 1 !important;",
-                 f"transition-property: {_FADE_PROPERTIES} !important;", "transition-delay: 0s !important;",
                  "scroll-behavior: auto !important;"]
+        moving = f":not({keep})"
+        stop = ["transition-duration: 0s !important;", "transition-delay: 0s !important;"]
+        return (head + ["@media (prefers-reduced-motion: reduce) {"] + _rule("*, ::before, ::after", rules, "  ")
+                + _rule(f"{moving}, {moving}::before, {moving}::after", stop, "  ") + ["}"])
     else:
         head = ["/* Motion is an enhancement. If the user asked for less, give them none. Never override this block. */"]
         rules = ["animation-duration: 0s !important;", "animation-iteration-count: 1 !important;",
@@ -575,8 +584,12 @@ def pascal(name: str) -> str:
 
 
 def camel(name: str, keywords: frozenset = frozenset()) -> str:
-    words = [w for w in re.split(r"[^A-Za-z0-9]+", str(name)) if w]
+    """'control-md' -> 'controlMd'. A decimal point between digits becomes "_" (spacing 0.5 -> s0_5, 1.5 -> s1_5), so
+    a half step never collides with a whole one (15 -> s15)."""
+    text = re.sub(r"(?<=\d)\.(?=\d)", "\x00", str(name))
+    words = [w for w in re.split(r"[^A-Za-z0-9\x00]+", text) if w]
     out = (words[0][:1].lower() + words[0][1:] if words else "") + "".join(w[:1].upper() + w[1:] for w in words[1:])
+    out = out.replace("\x00", "_")
     if out[:1].isdigit() or not out:
         out = "n" + out
     return f"`{out}`" if out in keywords else out
@@ -1117,7 +1130,12 @@ def safe_copy_path(root: Path, copy: object, setting: str = "$extensions.plumb.w
 BLOCK_START, BLOCK_END = P.BLOCK_START, P.BLOCK_END
 # Statements that must stay at the top of a stylesheet (CSS @charset / @import / @layer order, Sass @use / @forward,
 # Tailwind's @tailwind / @config / @plugin / @source / @reference): the block goes after them.
-_PREAMBLE = re.compile(r"@(?:charset|import|use|forward|tailwind|layer|config|plugin|source|reference)\b[^;{}]*;", re.I)
+# A statement is read token by token, so a ";" inside a string, a url(...) or a comment does not end it
+# (@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;700");).
+_PREAMBLE = re.compile(
+    r"@(?:charset|import|use|forward|tailwind|layer|config|plugin|source|reference)\b"
+    r"(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|url\(\s*(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|[^)]*)\s*\)"
+    r"|/\*.*?\*/|[^;{}\"'])*;", re.I | re.S)
 _SPACE_OR_COMMENT = re.compile(r"(?:\s+|/\*.*?\*/|//[^\n]*)*", re.S)
 _TAILWIND_IMPORT = re.compile(r"@import\s+(?:url\(\s*)?[\"']tailwindcss(?:/[^\"']*)?[\"']", re.I)
 _IMPORT_LINE = re.compile(r"^@import\s+[\"']tailwindcss[\"'];[ \t]*\n(?:[ \t]*\n)?", re.M)
@@ -1149,43 +1167,68 @@ def copy_block(css: str, outside: str, nl: str = "\n") -> str:
     return block.replace("\n", nl) if nl != "\n" else block
 
 
-def copy_output(path: Path, css: str, root: Path) -> Tuple[str, Optional[str]]:
-    """(the copy's new text, a note for the person or None). Plumb owns only its block: a new file is the block alone;
-    an existing file keeps every byte outside the block (a file with no block gets it at the top, after the statements
-    that must stay first); a whole file Plumb generated before (its GENERATED header, no block) becomes the block."""
+class CopyPlan:
+    """What the build does to one web copy: its new text, the notes for the person, and whether this is the first time
+    the block goes into a file that already had the project's content (so --check can show the change first)."""
+
+    def __init__(self, text: str, notes: List[str], first: bool = False) -> None:
+        self.text, self.notes, self.first = text, notes, first
+
+
+def _override_notes(shown: str, text: str) -> List[str]:
+    found = P.block_overrides(text)
+    if not found:
+        return []
+    what = ", ".join(dict.fromkeys(w for _pos, w in found))
+    return [f"note: {shown} sets {what} outside Plumb's block, which overrides the design system's own (the later "
+            f"definition wins); move the value into the tokens with /plumb:update and delete it there (the audit reports "
+            f"it as block-override)"]
+
+
+def copy_output(path: Path, css: str, root: Path) -> CopyPlan:
+    """What the build writes to a web copy. Plumb owns only its block: a new file is the block alone; an existing file
+    keeps every byte outside the block (a file with no block gets it at the top, after the statements that must stay
+    first, and P.remove_block gives the file back exactly); a whole file Plumb generated before (its GENERATED header,
+    no block) becomes the block."""
     shown = rel(path, root)
     try:
         current = path.read_bytes().decode("utf-8") if path.is_file() else None
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{shown}: cannot read the web copy ({exc})", f"save {shown} as UTF-8, then run build-tokens.py again") from None
     if current is None or not current.strip("﻿ \t\r\n"):
-        return copy_block(css, "") + "\n", None
+        return CopyPlan(copy_block(css, "") + "\n", [])
     nl = "\r\n" if "\r\n" in current else "\n"
     span = P.block_span(current)
     if span is not None:
         outside = current[:span[0]] + current[span[1]:]
-        return current[:span[0]] + copy_block(css, outside, nl) + current[span[1]:], None
+        text = current[:span[0]] + copy_block(css, outside, nl) + current[span[1]:]
+        return CopyPlan(text, _override_notes(shown, text))
     if P.has_block_markers(current):
         raise _err(f"{shown} has a broken Plumb block (the /* plumb:start ... */ and /* plumb:end */ lines must appear once each, "
                    f"start first)",
                    f"fix the marker lines in {shown} by hand (keep one of each around Plumb's CSS), or delete both "
                    f"markers and the CSS between them so the build adds the block again")
     if P.is_generated_text(current) and "build-tokens.py" in "\n".join(current.splitlines()[:5]):
-        return copy_block(css, "") + "\n", (f"note: {shown} was a whole file generated by build-tokens.py; it is now "
-                                             f"Plumb's block only, so you can add your own CSS outside the block")
+        return CopyPlan(copy_block(css, "") + "\n", [f"note: {shown} was a whole file generated by build-tokens.py; it "
+                                                      f"is now Plumb's block only, so you can add your own CSS outside the block"])
     at = _preamble_end(current)
     before, after = current[:at], current[at:]
-    lead = nl if before and not before.endswith("\n") else ""
-    text = before + lead + copy_block(css, current, nl) + nl + after
-    return text, (f"note: added Plumb's block to {shown}, which already had content: Plumb owns only the lines from "
-                  f"/* plumb:start ... */ to /* plumb:end */; everything else in the file is kept as it was and stays yours")
+    block = copy_block(css, current, nl)
+    if before and not before.endswith("\n"):  # the file ends on its last statement: the block follows on a new line
+        text = before + nl + block + after
+    else:
+        text = before + block + nl + after
+    notes = [f"note: added Plumb's block to {shown}, which already had content: Plumb owns only the lines from "
+             f"/* plumb:start ... */ to /* plumb:end */; everything else in the file is kept as it was and stays yours"]
+    return CopyPlan(text, notes + _override_notes(shown, text), first=True)
 
 
 def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_file: Optional[Path] = None,
-            notes: Optional[List[str]] = None) -> Dict[Path, str]:
+            notes: Optional[List[str]] = None, firsts: Optional[List[Path]] = None) -> Dict[Path, str]:
     """Every generated file as {absolute path: content}: web CSS, copies (their whole text, with Plumb's block brought
-    up to date and the rest kept), and the mobile themes for the listed platforms. notes, when given, receives a line
-    for each copy whose block would be added to existing content."""
+    up to date and the rest kept), and the mobile themes for the listed platforms. notes, when given, receives the
+    copies' notes (a block added to existing content, a whole old copy converted, an override outside the block);
+    firsts receives each copy whose block would be added to the project's content for the first time."""
     skill_dir = Path(skill_dir).resolve()
     root = find_project_root(skill_dir, project)
     tokens_file = tokens_file or find_tokens_file(skill_dir)
@@ -1205,10 +1248,12 @@ def outputs(doc: dict, skill_dir: Path, project: Optional[Path] = None, tokens_f
         raise _err("web.copies must be a list of paths", "write it as [\"app/globals.css\"]")
     for copy in copies:
         path = safe_copy_path(root, copy)
-        text, note = copy_output(path, css, root)
-        out[path] = text
-        if note and notes is not None:
-            notes.append(note)
+        plan = copy_output(path, css, root)
+        out[path] = plan.text
+        if notes is not None:
+            notes.extend(plan.notes)
+        if firsts is not None and plan.first:
+            firsts.append(path)
     out.update(mobile_outputs(doc, skill_dir, header))
     dark = contrast_output(doc, skill_dir, required=False)
     if dark:
@@ -2127,9 +2172,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
 
-def template_notes(doc: dict, skill_dir: Path) -> List[str]:
+def print_first_block(path: Path, new: str, root: Path) -> None:
+    """For --check: the exact change the build would make to a stylesheet that gets Plumb's block for the first time,
+    as a unified diff, so it can be shown to the person and agreed before anything is written."""
+    shown = rel(path, root)
+    try:
+        old = path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        old = ""
+    print(f"would add Plumb's block to {shown} (first time; every other line stays as it is). The change:")
+    diff = difflib.unified_diff(P.normalise_text(old).splitlines(), P.normalise_text(new).splitlines(),
+                                f"a/{shown}", f"b/{shown}", lineterm="")
+    for line in diff:
+        print(line)
+
+
+def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str]:
     """A note when the tokens set theme_switch or motion.reduced but the project's web template predates the
-    {{@dark}} / {{@reduced-motion}} directives, so the setting has no effect yet."""
+    {{@dark}} / {{@reduced-motion}} directives, so the setting has no effect yet; and (missing) when the template has
+    the directive but the tokens do not say, so the default (both / none) applies without a recorded choice."""
     settings = P.plumb_settings(doc)
     try:
         template = read_template(skill_dir, settings["web"]["styling"])
@@ -2139,12 +2200,23 @@ def template_notes(doc: dict, skill_dir: Path) -> List[str]:
     out = []
     for key, directive, given in (("web.theme_switch", "dark", "theme_switch" in settings["web"]),
                                   ("motion.reduced", "reduced-motion", "reduced" in motion)):
-        if given and f"{{{{@{directive}}}}}" not in template:
+        has = f"{{{{@{directive}}}}}" in template
+        if given and not has:
             out.append(f"note: $extensions.plumb.{key} is set, but assets/platforms/web/{TEMPLATE_NAME} has no "
                        f"{{{{@{directive}}}}} line, so it has no effect; /plumb:upgrade offers the current template "
                        f"(or copy {TEMPLATE_NAME}.{settings['web']['styling']} from the Plumb plugin's "
                        f"assets/skill/assets/platforms/web/)")
+        elif missing and has and not given:
+            default, choices = MISSING_DEFAULTS[key]
+            out.append(f"note: $extensions.plumb.{key} is not set, so the default {default} applies; record the "
+                       f"choice ({choices}) in the tokens file with /plumb:update")
     return out
+
+
+MISSING_DEFAULTS = {
+    "web.theme_switch": ('"both" (dark from the system setting and from the .dark class)', '"both", "system" or "class"'),
+    "motion.reduced": ('"none" (no animation or transition when the user asks for less motion)', '"none" or "keep-fades"'),
+}
 
 
 def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> int:
@@ -2181,8 +2253,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"{fails} pair(s) fail: see the nearest passing values in {rel(path, root)}")
         return 0
     notes: List[str] = []
-    files = outputs(doc, skill_dir, project, tokens_file, notes)
-    for line in template_notes(doc, skill_dir):
+    firsts: List[Path] = []
+    files = outputs(doc, skill_dir, project, tokens_file, notes, firsts)
+    for line in template_notes(doc, skill_dir, missing=not args.check):
         print(line, file=sys.stderr)
     if P.find_template(skill_dir, SPECIMEN_TEMPLATE) is None:
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
@@ -2213,6 +2286,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             for path in stale:
                 note = " (prototype token block)" if path in prototype_pages else ""
                 print(f"stale: {rel(path, root)}{note}")
+            for path in firsts:
+                if path in stale:
+                    print_first_block(path, files[path], root)
             print(f"fix: {command}")
             return 1
         print(f"ok: {len(files)} generated files are up to date")

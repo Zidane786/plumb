@@ -5,7 +5,8 @@
       "schema": 1,
       "project": "demo",
       "platforms": ["web"],
-      "web": { "styling": "tailwind-v4", "copies": ["app/globals.css"] }
+      "web": { "styling": "tailwind-v4", "copies": ["app/globals.css"], "theme_switch": "both" },
+      "motion": { "reduced": "none" }
     }
   },
   "color": {
