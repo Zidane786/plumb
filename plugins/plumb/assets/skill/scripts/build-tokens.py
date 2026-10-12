@@ -61,6 +61,7 @@ import argparse
 import difflib
 import html as _html
 import json
+import os
 import re
 import sys
 import unicodedata
@@ -541,6 +542,10 @@ GENERIC_FAMILIES = frozenset(
     "-apple-system blinkmacsystemfont segoe-ui".split()
 )
 GENERIC_FAMILIES = GENERIC_FAMILIES | {"segoe ui", "helvetica neue", "arial", "roboto"}
+# Families every system has (a "system stack"): a font token made only of these names has no font of its own.
+SYSTEM_FAMILIES = GENERIC_FAMILIES | {"sfmono-regular", "sf mono", "menlo", "monaco", "consolas", "liberation mono",
+                                      "courier new", "courier", "helvetica", "noto sans", "ubuntu", "cantarell",
+                                      "georgia", "times new roman", "times", "apple color emoji", "segoe ui emoji"}
 SWIFT_WEIGHTS = {100: ".ultraLight", 200: ".thin", 300: ".light", 400: ".regular", 500: ".medium", 600: ".semibold",
                  700: ".bold", 800: ".heavy", 900: ".black"}
 _ON = ("on-surface", "on-background", "text", "ink")  # neutral text, the last resort for a foreground role
@@ -1570,12 +1575,19 @@ _NS_GROUP = {"color": "color", "radius": "radius", "shadow": "shadow", "text": "
              "ease": "motion.easing", "spacing": "spacing", "duration": "motion.duration"}
 _GROUP_TYPE = {"color": "color", "font": "fontFamily"}
 # A colour name a project gives (create-next-app, shadcn) -> the token roles it means, the first that exists wins.
+_SUNK = ("sunk", "surface", "background")
+_ON_SUNK = ("on-sunk", "on-surface")
 _ROLE_NAMES = {"background": ("background", "surface"), "bg": ("background", "surface"), "page": ("background", "surface"),
                "foreground": ("on-surface", "on-background", "text"), "fg": ("on-surface", "on-background", "text"),
                "text": ("on-surface", "on-background", "text"), "card": ("surface", "background"),
-               "popover": ("surface", "background"), "border": ("outline",), "input": ("outline-input", "outline"),
-               "ring": ("primary",), "destructive": ("danger",), "error": ("danger",),
-               "muted-foreground": ("on-surface-muted",)}
+               "popover": ("surface", "background"), "sidebar": ("surface", "background"),
+               "secondary": _SUNK, "muted": _SUNK, "accent": _SUNK,
+               "secondary-foreground": _ON_SUNK, "accent-foreground": _ON_SUNK,
+               "muted-foreground": ("on-surface-muted", "on-sunk", "on-surface"),
+               "border": ("outline",), "input": ("outline-input", "outline"), "ring": ("primary",),
+               "destructive": ("danger",), "error": ("danger",)}
+# Prefixes whose names map like the name without them (shadcn's sidebar-primary is primary, sidebar-border is border).
+_ROLE_PREFIXES = ("sidebar-",)
 _FONT_STACKS = {"mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
                 "serif": ["Georgia", "serif"],
                 "sans": ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]}
@@ -1584,7 +1596,8 @@ _VAR_ONLY = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,[^()]*)?\)")
 
 
 def _role_token(colors: dict, name: str) -> Optional[str]:
-    """The colour token a project's colour name means: its own role table, or on-X for X-foreground."""
+    """The colour token a project's colour name means: its own role table, on-X for X-foreground, and a sidebar-<x>
+    name as <x> (sidebar-primary -> primary)."""
     for cand in _ROLE_NAMES.get(name, ()):
         if P.is_token(colors.get(cand)):
             return cand
@@ -1593,7 +1606,27 @@ def _role_token(colors: dict, name: str) -> Optional[str]:
         for cand in (f"on-{base}",) + tuple(f"on-{r}" for r in _ROLE_NAMES.get(base, ())):
             if P.is_token(colors.get(cand)):
                 return cand
+    for prefix in _ROLE_PREFIXES:
+        if name.startswith(prefix) and len(name) > len(prefix):
+            rest = name[len(prefix):]
+            return rest if P.is_token(colors.get(rest)) else _role_token(colors, rest)
     return None
+
+
+def _colour_value(text: str) -> str:
+    """A project's colour as a token value: #rrggbb, or #rrggbbaa when it is translucent (oklch(... / 10%))."""
+    hexv, alpha = P.parse_color(text)
+    return hexv if alpha >= 1 else hexv + f"{round(alpha * 255):02x}"
+
+
+_CALC_RADIUS = re.compile(r"^(?:var\(\s*(--[\w-]+)\s*\)|calc\(\s*var\(\s*(--[\w-]+)\s*\)\s*([+-])\s*(\d*\.?\d+)px\s*\))$")
+
+
+def _px(text: str) -> Optional[float]:
+    m = re.fullmatch(r"\s*(\d*\.?\d+)(px|rem)\s*", text or "")
+    if not m:
+        return None
+    return float(m.group(1)) * (16 if m.group(2) == "rem" else 1)
 
 
 def _font_stack(name: str) -> List[str]:
@@ -1645,6 +1678,38 @@ class _Lines:
 
 def _enclosing(blocks: list, pos: int) -> List[tuple]:
     return [b for b in blocks if b[1] < pos < b[2]]
+
+
+USES_SHOWN = 20  # per variable
+
+
+def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict]) -> None:
+    """Fill each project variable's used_in with the other UI files (file:line) that still read var(--x): the plan
+    removes it from the copy, so the skill shows these and points them at the token's variable too, after asking."""
+    if not project_vars:
+        return
+    pattern = re.compile(r"var\(\s*(" + "|".join(re.escape(v["name"]) for v in project_vars) + r")\s*[),]")
+    by_name = {v["name"]: v for v in project_vars}
+    skip = copy.resolve()
+    for dirpath, dirnames, filenames in os.walk(root):
+        here = Path(dirpath)
+        dirnames[:] = sorted(d for d in dirnames if d not in P.SKIP_DIRS and not (d == "skills" and here.name == ".claude"))
+        for fname in sorted(filenames):
+            path = here / fname
+            if P.source_ext(fname) is None or path.resolve() == skip:
+                continue
+            try:
+                if path.stat().st_size > P.MAX_SOURCE_BYTES:
+                    continue
+                text = path.read_bytes().decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            if "var(" not in text or P.is_generated_text(text[:2000]):
+                continue
+            for m in pattern.finditer(text):
+                used = by_name[m.group(1)]["used_in"]
+                if len(used) < USES_SHOWN:
+                    used.append(f"{rel(path, root)}:{text.count(chr(10), 0, m.start()) + 1}")
 
 
 def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
@@ -1699,14 +1764,14 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             if ttype == "fontFamily" and src and not decls:
                 fams = P.resolve(doc, token)
                 fams = fams if isinstance(fams, list) else [fams]
-                first = next((str(f) for f in fams if str(f).lower() not in GENERIC_FAMILIES), "")
+                first = next((str(f) for f in fams if str(f).lower() not in SYSTEM_FAMILIES), "")
                 if f"var({src})" in [str(f) for f in fams]:
                     pass
-                elif first and _squash(first) in _squash(src[2:].replace("font-", "", 1)):
+                elif not first or _squash(first) in _squash(src[2:].replace("font-", "", 1)):
+                    # the tokens name only a system stack (or this very font): the app's own font goes first
                     change = {"prepend": token, "family": f"var({src})"}
                 else:
-                    is_ = f"is {first!r}" if first else "the system font"
-                    note = (f"line {line}: the app loads its font through var({src}), but {token} {is_}: "
+                    note = (f"line {line}: the app loads its font through var({src}), but {token} is {first!r}: "
                             f"ask the user which font to keep; to keep the app's, put var({src}) first in {token} "
                             f"(/plumb:update)")
         else:
@@ -1717,12 +1782,26 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                     change = {"add": token, "$value": f"{{color.{role}}}"}
                 else:
                     try:
-                        light = P.parse_color(values.get("light") or value)[0]
-                        change = {"add": token, "$value": light}
+                        change = {"add": token, "$value": _colour_value(values.get("light") or value)}
                         if values.get("dark"):
-                            change["$extensions"] = {"plumb": {"dark": P.parse_color(values["dark"])[0]}}
+                            change["$extensions"] = {"plumb": {"dark": _colour_value(values["dark"])}}
                     except PlumbError:
                         change = None
+            elif ns == "radius" and rest:
+                calc = _CALC_RADIUS.match(value)
+                base_var = (calc.group(1) or calc.group(2)) if calc else None
+                base = None
+                if base_var:
+                    for d in re.finditer(r"(?<![\w-])" + re.escape(base_var) + r"\s*:\s*([^;{}]*);?", code):
+                        if not in_theme(d.start()):
+                            base = _px(text[d.start(1):d.end(1)])
+                            break
+                if base is None and _px(value) is not None:
+                    base, calc = _px(value), None
+                if base is not None:
+                    px = base if not (calc and calc.group(3)) else (
+                        base + float(calc.group(4)) if calc.group(3) == "+" else base - float(calc.group(4)))
+                    change = {"add": token, "$value": f"{num(max(px, 0))}px"}
             elif ns == "font" and rest:
                 if src and not decls:
                     change = {"add": token, "$value": [f"var({src})"] + _font_stack(rest)}
@@ -1762,7 +1841,8 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                 continue  # an override that goes (a use left in one that stays, calc(var(--radius) - 4px), changes)
             replace.append({"line": L.line(u.start()), "old": text[u.start():u.end()], "new": f"var({name}{u.group(1)}",
                             "why": f"{src} fed {name}, which is now the token's variable"})
-        project_vars.append({"name": src, "declared": lines, "maps_to": name})
+        project_vars.append({"name": src, "declared": lines, "maps_to": name, "used_in": []})
+    _uses_elsewhere(root, path, project_vars)
     # a literal font stack outside the tokens (body { font-family: Arial, ... }) uses the font token instead
     for f in re.finditer(r"(?<![\w-])font-family\s*:\s*([^;{}]+)", code):
         val = text[f.start(1):f.end(1)].strip()
@@ -1880,7 +1960,9 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
                 fh.write(new)
             print(f"wrote {plan['file']}")
         for v in plan["project_variables"]:
-            print(f"note: other files may still use var({v['name']}): point them at var({v['maps_to']})")
+            if v["used_in"]:
+                print(f"note: var({v['name']}) is gone from {plan['file']} but still read at {', '.join(v['used_in'])}: "
+                      f"ask the user, then point those at var({v['maps_to']})")
         for note in plan["by_hand"]:
             print(f"by hand: {plan['file']} {note}")
     print(f"next: python3 {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")

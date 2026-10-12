@@ -137,6 +137,37 @@ def test_a_stock_create_next_app_stylesheet_ends_with_audit_exit_0(tmp_path):
     ok(skill_script(proj, app, "build-tokens.py", "--check"))
 
 
+SHADCN_NEXT = Path(__file__).resolve().parent / "fixtures/apps/next-tailwind-shadcn"
+
+
+def test_a_stock_shadcn_stylesheet_leaves_only_real_findings_after_one_ok(tmp_path):
+    """create on a Next.js + shadcn (new-york) app: 41 variables in its own @theme inline block, oklch values in :root
+    and .dark. After one --overrides --apply, nothing in globals.css is reported: what the audit still says (if
+    anything) is about the app's own code, the /plumb:audit fix flow."""
+    app = APPS["next-tailwind"]
+    proj = copy_app(app, tmp_path / "shadcn" / app.slug)
+    for path in sorted(SHADCN_NEXT.rglob("*")):
+        if path.is_file():
+            write(proj / path.relative_to(SHADCN_NEXT), read(path))
+    fix(proj, app)
+    scaffold(proj, app, detect(proj))
+    prototype(proj, app)
+    code, report = audit(proj, app)
+    assert code == 1
+    assert any(f["rule"] == "block-override" for f in errors(report))
+    data = json.loads(ok(skill_script(proj, app, "build-tokens.py", "--overrides")).stdout)
+    assert len(data["copies"][0]["overrides"]) == 38 and data["copies"][0]["by_hand"] == []
+    ok(skill_script(proj, app, "build-tokens.py", "--overrides", "--apply"))
+    ok(skill_script(proj, app, "build-tokens.py"))
+    code, report = audit(proj, app)
+    left = [f for f in report["findings"] if f["file"] == "app/globals.css" or f["rule"] in ("block-override", "raw-colour")]
+    assert left == [], left
+    assert code == 0, errors(report)  # this sample app has no findings of its own left
+    tokens = json.loads(read(proj / app.tokens))
+    assert tokens["radius"]["xl"] == {"$value": "14px"} and tokens["color"]["sidebar-accent"] == {"$value": "{color.sunk}"}
+    ok(skill_script(proj, app, "build-tokens.py", "--check"))
+
+
 def test_token_aware_fix_lines_name_the_token(tmp_path):
     proj = project(APPS["next-tailwind"], "built", tmp_path)
     _, report = audit(proj, APPS["next-tailwind"])

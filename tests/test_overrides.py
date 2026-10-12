@@ -128,7 +128,8 @@ SHADCN = '''@import "tailwindcss";
 
 @theme inline {
   --color-card: var(--card);
-  --color-sidebar-ring: var(--sidebar-ring);
+  --color-glow: var(--glow);
+  --radius-2xl: calc(var(--radius) * 1.5);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-lg: var(--radius);
 }
@@ -136,7 +137,7 @@ SHADCN = '''@import "tailwindcss";
 :root {
   --radius: 0.625rem;
   --card: oklch(1 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --glow: color-mix(in srgb, red 40%, transparent);
 }
 '''
 
@@ -146,14 +147,16 @@ def test_a_shadcn_stylesheet_moves_what_it_can_and_leaves_nothing_dangling(proje
     found = by_name(plan(project))
     assert found["@custom-variant dark"]["kind"] == "dark-variant"
     assert found["--color-card"]["token_change"] == {"add": "color.card", "$value": "{color.background}"}
-    assert found["--color-sidebar-ring"]["token_change"] is None  # no role, no colour Plumb can read: the user decides
+    assert found["--color-glow"]["token_change"] is None  # no role, no colour Plumb can read: the user decides
+    assert found["--radius-sm"]["token_change"] == {"add": "radius.sm", "$value": "6px"}
     assert found["--radius-lg"]["kind"] == "token"
     assert run(project, "build-tokens.py", "--overrides", "--apply").returncode == 0
     css = (project / "app/globals.css").read_text(encoding="utf-8")
     assert "@custom-variant" not in css and "--color-card" not in css and "--radius: 0.625rem" not in css
-    # --radius fed --radius-lg (moved); --radius-sm stays for the user, so its use points at the token too
-    assert "--radius-sm: calc(var(--radius-lg) - 4px);" in css and "var(--radius)" not in css
-    assert "--color-sidebar-ring: var(--sidebar-ring);" in css and "--sidebar-ring: oklch(0.708 0 0);" in css
+    assert "--radius-sm" not in css and "--radius:" not in css  # radius.sm = 6px; --radius fed radius.lg
+    # --radius-2xl (a multiple: Plumb cannot tell) stays for the user, and its use points at the token too
+    assert "--radius-2xl: calc(var(--radius-lg) * 1.5);" in css
+    assert "--color-glow: var(--glow);" in css and "--glow: color-mix(" in css
 
 
 def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
@@ -185,6 +188,84 @@ def test_an_override_directly_above_plumbs_block_never_touches_the_block(project
     after = css.read_text(encoding="utf-8")
     assert block in after and "--color-background: var(--bg)" not in after
     assert run(project, "build-tokens.py", "--check").returncode == 0
+
+
+SHADCN_STOCK = REPO / "tests/fixtures/apps/next-tailwind-shadcn/app/globals.css"
+ROLES = {"surface": "#fafafa", "sunk": "#f0f0f0", "outline": "#dddddd", "outline-input": "#888888",
+         "on-surface-muted": "#555555", "danger": "#c00000", "on-danger": "#ffffff"}
+
+
+def _scaffold_roles(p: Path) -> None:
+    doc = json.loads(tokens_file(p).read_text(encoding="utf-8"))
+    for name, value in ROLES.items():
+        doc["color"][name] = {"$value": value, "$extensions": {"plumb": {"dark": value}}}
+    doc["font"]["sans"]["$value"] = ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]
+    tokens_file(p).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def test_a_stock_shadcn_stylesheet_maps_every_variable_onto_a_token(project: Path) -> None:
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _scaffold_roles(project)
+    data = plan(project)
+    (copy,) = data["copies"]
+    assert copy["by_hand"] == []
+    found = by_name(data)
+    alias = {n: o["token_change"]["$value"] for n, o in found.items()
+             if o["token_change"] and isinstance(o["token_change"].get("$value"), str)
+             and o["token_change"]["$value"].startswith("{")}
+    assert alias == {
+        "--color-foreground": "{color.on-surface}",
+        "--color-sidebar-ring": "{color.primary}", "--color-sidebar-border": "{color.outline}",
+        "--color-sidebar-accent-foreground": "{color.on-surface}", "--color-sidebar-accent": "{color.sunk}",
+        "--color-sidebar-primary-foreground": "{color.on-primary}", "--color-sidebar-primary": "{color.primary}",
+        "--color-sidebar-foreground": "{color.on-surface}", "--color-sidebar": "{color.surface}",
+        "--color-ring": "{color.primary}", "--color-input": "{color.outline-input}", "--color-border": "{color.outline}",
+        "--color-destructive": "{color.danger}", "--color-accent-foreground": "{color.on-surface}",
+        "--color-accent": "{color.sunk}", "--color-muted-foreground": "{color.on-surface-muted}",
+        "--color-muted": "{color.sunk}", "--color-secondary-foreground": "{color.on-surface}",
+        "--color-secondary": "{color.sunk}", "--color-primary-foreground": "{color.on-primary}",
+        "--color-popover-foreground": "{color.on-surface}", "--color-popover": "{color.surface}",
+        "--color-card-foreground": "{color.on-surface}", "--color-card": "{color.surface}"}
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n@theme inline {\n  --color-destructive-foreground: var(--df);\n}\n', encoding="utf-8")
+    assert by_name(plan(project))["--color-destructive-foreground"]["token_change"]["$value"] == "{color.on-danger}"
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    # the chart colours are the app's own: moved as values (oklch read as sRGB), light and dark
+    chart = found["--color-chart-1"]["token_change"]
+    assert chart == {"add": "color.chart-1", "$value": "#f54900", "$extensions": {"plumb": {"dark": "#1447e6"}}}
+    # radius steps from calc(var(--radius) ± Npx) with --radius: 0.625rem (10px)
+    assert found["--radius-xl"]["token_change"] == {"add": "radius.xl", "$value": "14px"}
+    assert found["--radius-sm"]["token_change"] == {"add": "radius.sm", "$value": "6px"}
+    assert found["--radius-md"]["kind"] == found["--radius-lg"]["kind"] == "token"
+    # a system font stack in the tokens: the app's own font goes first
+    assert found["--font-sans"]["token_change"] == {"prepend": "font.sans", "family": "var(--font-geist-sans)"}
+    r = run(project, "build-tokens.py", "--overrides", "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert run(project, "build-tokens.py").returncode == 0
+    r = run(project, "audit.py", "--json", "app/globals.css")
+    assert [f for f in json.loads(r.stdout)["findings"] if f["file"] == "app/globals.css"] == []
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    assert doc["color"]["border"] == {"$value": "{color.outline}"}
+
+
+def test_a_translucent_value_keeps_its_alpha(project: Path) -> None:
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n\n@theme inline {\n  --color-glass: var(--glass);\n}\n\n:root {\n'
+        '  --glass: oklch(1 0 0 / 10%);\n}\n\n.dark {\n  --glass: #00000080;\n}\n', encoding="utf-8")
+    change = by_name(plan(project))["--color-glass"]["token_change"]
+    assert change == {"add": "color.glass", "$value": "#ffffff1a", "$extensions": {"plumb": {"dark": "#00000080"}}}
+
+
+def test_the_plan_lists_other_files_that_use_a_removed_variable(project: Path) -> None:
+    (project / "components").mkdir()
+    (project / "components/chart.tsx").write_text(
+        'export const C = () => <div style={{ width: 4 }} data-c="var(--background)" />;\n', encoding="utf-8")
+    (project / "app/extra.css").write_text(".x {\n  color: var(--foreground, red);\n}\n", encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    used = {v["name"]: v["used_in"] for v in copy["project_variables"]}
+    assert used == {"--background": ["components/chart.tsx:1"], "--foreground": ["app/extra.css:2"]}
+    out = run(project, "build-tokens.py", "--overrides", "--apply").stdout
+    assert "note: var(--background) is gone from app/globals.css but still read at components/chart.tsx:1" in out and "var(--color-background)" in out
 
 
 def test_nothing_to_move(project: Path) -> None:
