@@ -101,8 +101,9 @@ def test_skill_body_rules(path: Path) -> None:
     assert len(text.splitlines()) <= MAX_SKILL_LINES, "skills stay lean: move detail into reference/"
     assert "${CLAUDE_PLUGIN_ROOT}" in text and "/../.." in text, "ROOT resolution like Slate's skills"
     assert re.search(r"\]\(\.\./\.\./reference/[a-z0-9-]+\.md\)", text), "link at least one reference/ file"
-    assert "ask the user and wait" in text.lower(), "the never-install rule"
-    assert "install or download" in text.lower()
+    flat = " ".join(text.split()).lower()  # phrases may wrap across lines
+    assert "ask the user and wait" in flat, "the never-install rule"
+    assert "install or download" in flat
 
 
 @pytest.mark.parametrize("path", skill_files(), ids=lambda p: p.parent.name)
