@@ -70,7 +70,7 @@ plugins/plumb/                        the installed plugin (only this folder shi
   scripts/                            plugin-side helpers the skills run (not copied into projects)
     detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
     version.py  screenshot.py  kiro.py   in progress (Tasks 12b, 16)
-  hooks/                              hooks.json, run.sh / run.cmd, the hook scripts (in progress, Task 12)
+  hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
   templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet
   upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
   CHANGELOG.md  README.md
@@ -128,6 +128,11 @@ TEST.md                               hands-on test guide for any machine (Task 
 - **Scripts are the floor, not the ceiling.** `detect.py` is a first guess: the skill verifies it
   and the user confirms before anything is written. `audit.py` rules catch what can be
   expressed; an agent review pass covers the rest, and recurring findings become new rules.
+- **Hooks run only the plugin's own code.** They never import or run a project's copied
+  scripts (a cloned repo must not get code run by containing a `PLUMB.md`); the project is data
+  only. Every hook git call goes through the hardened helper (config overrides as environment
+  pairs, no lazy fetch, absolute git from PATH, shared 3 s budget, fail open). Keep
+  `SECURITY.md` "Trust boundary" exact when this changes.
 - **Exceptions by path, never by comment.** Audit allowances live on `PLUMB.md`'s allow list
   (e.g. `components/ui/**`); no `// plumb-ignore` style comments.
 - **Generated pages load nothing from the network:** no CDN, no hosted fonts; system font
