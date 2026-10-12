@@ -97,7 +97,8 @@ the audit's `block-override`), create and extract show each with the token it ma
 (`build-tokens.py --overrides`) and ask once, "move them into the tokens" recommended; only on yes
 does `--overrides --apply` add the tokens and remove the lines, so a fresh create on a stock app
 ends with the audit at 0. Two choices become tokens settings the generator honours: how the app switches themes
-(`$extensions.plumb.web.theme_switch`: `both`, `system` or `class`; answers key `theme_switch`)
+(`$extensions.plumb.web.theme_switch`: `both`, `system`, `class` or `data-theme`, the attribute
+next-themes sets by default; answers key `theme_switch`)
 and reduced motion (`$extensions.plumb.motion.reduced`: `keep-fades` or `none`; answers key
 `reduced_motion`); extract always asks both, recommending what the app already does. The same
 applies to extract (each token group, the screens to prototype, the files to write) and to init's

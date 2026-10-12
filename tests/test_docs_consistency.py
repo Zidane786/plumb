@@ -482,6 +482,15 @@ def test_create_and_extract_move_a_stylesheets_own_theme_variables_and_name_moti
         assert "--migrate" in _flat(path), path.name
 
 
+def test_the_data_theme_switch_is_documented_and_extract_reads_next_themes() -> None:
+    extract = _flat(SKILLS / "extract/SKILL.md")
+    for phrase in ("next-themes", 'attribute="class"', 'attribute="data-theme"', "→ `data-theme`", "ask anyway"):
+        assert phrase in extract, f"extract: {phrase!r}"
+    for path in (REFERENCE / "tokens-format.md", REFERENCE / "interview.md", REFERENCE / "scripts.md",
+                 SKILLS / "create/SKILL.md"):
+        assert "data-theme" in _flat(path), path.name
+
+
 def test_spec_states_the_new_rules() -> None:
     flat = _flat(SPEC).replace("*", "")
     for phrase in ("the project's design system outranks effective html", "craft only", "plumb:start",

@@ -71,8 +71,8 @@ register · density · accent · neutrals · semantic colours · label colours �
 elevation · motion and reduced motion · icons · dark mode · accessibility target (WCAG 2.2 AA by default) · vocabulary
 and voice · UX patterns (navigation, page anatomy, forms, feedback, empty/loading/error states, destructive actions,
 onboarding: one sub-question each). Show colours as hex with their dark value. C11 also asks how reduced motion
-behaves (keep fades, recommended, or none) and C13 how the app switches themes (system · class · both, recommended
-both); they become the tokens settings `$extensions.plumb.motion.reduced` and `$extensions.plumb.web.theme_switch`
+behaves (keep fades, recommended, or none) and C13 how the app switches themes (system · class · both · data-theme,
+recommended both; next-themes in the code → its `attribute`); they become the tokens settings `$extensions.plumb.motion.reduced` and `$extensions.plumb.web.theme_switch`
 (E3), which the generator honours. When the user picks keep fades and the styling is plain CSS, tell them in one line:
 add the class `motion-fade` to each element whose own transition is only a fade (Tailwind's `transition-opacity` /
 `transition-colors` need nothing). **OK?** Show every decision on one screen and ask to continue.
@@ -108,7 +108,7 @@ components, prototypes) the system wins.
 3. Add what the scaffold has no key for to the tokens file (warning, info, `label.*`, `md` values, sizes), exactly as
    approved in E1 (tokens-format.md). Check the two settings are there as answered, and add them when the scaffold
    did not write them: `$extensions.plumb.motion.reduced` (`"keep-fades"` | `"none"`) and
-   `$extensions.plumb.web.theme_switch` (`"both"` | `"system"` | `"class"`). Write
+   `$extensions.plumb.web.theme_switch` (`"both"` | `"system"` | `"class"` | `"data-theme"`). Write
    `design.md`, `references/ux.md`, `vocabulary.md`, `motion.md`, `accessibility.md` from the answers, replacing
    every "to fill" prompt.
 4. **OK? Existing files the build changes.** When a web copy (`$extensions.plumb.web.copies`) is a file that already

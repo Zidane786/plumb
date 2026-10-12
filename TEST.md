@@ -218,7 +218,7 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Choose **create**. The product questions come before any design question; every question has options with one
       marked (Recommended) and a reason; it asks before writing `docs/design/directions.html`; the directions page
       opens from disk and shows 2–3 distinct directions in light and dark.
-- [ ] Dark mode asks how the app switches themes (system · class · both, both recommended) and reduced motion asks keep
+- [ ] Dark mode asks how the app switches themes (system · class · both · data-theme, both recommended) and reduced motion asks keep
       fades or none; both land in the tokens file (`$extensions.plumb.web.theme_switch`,
       `$extensions.plumb.motion.reduced`).
 - [ ] It shows the full token set (light and dark) and the `scaffold.py --dry-run` file list, and writes only after you

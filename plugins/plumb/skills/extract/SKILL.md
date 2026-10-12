@@ -92,8 +92,10 @@ Ask only the interview questions the code does not answer: the product (A1–A6)
 (C13), the accessibility target (C14), vocabulary and voice (C15), and the UX patterns (C16) the screens do not make
 clear. Offer what the code shows as the recommendation ("the app uses a left sidebar: keep it?"). **Always ask these
 two**, one at a time, recommending what the app already does so extract keeps it:
-- **How the app switches themes** (`theme_switch`): code that toggles a `.dark` class (or `data-theme`) → `class`;
-  only `@media (prefers-color-scheme: dark)` → `system`; both → `both`; no dark mode yet → `both`.
+- **How the app switches themes** (`theme_switch`): next-themes' `<ThemeProvider attribute="class">` → `class`, its
+  `attribute="data-theme"` or no `attribute` (next-themes' default) → `data-theme`; other code that toggles a `.dark`
+  class → `class`, a `data-theme` attribute → `data-theme`; only `@media (prefers-color-scheme: dark)` → `system`; a
+  class and the media rule → `both`; no dark mode yet → `both`. Ask anyway, with that as the recommendation.
 - **Reduced motion** (`reduced_motion`): an existing `prefers-reduced-motion` rule that keeps opacity transitions →
   `keep-fades`; one that turns every animation off → `none`; none yet → `keep-fades`. On keep fades in a plain-CSS
   app, tell the user in one line to add the class `motion-fade` to each element whose own transition is only a fade.
