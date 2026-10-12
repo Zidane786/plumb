@@ -1611,6 +1611,9 @@ class _Lines:
     def __init__(self, text: str, code: str) -> None:
         self.text, self.code = text, code
         self.starts = [0] + [m.end() for m in re.finditer("\n", text)]
+        span = P.block_span(text)
+        # Plumb's own block (masked to spaces in `code`): never removed, never counted as a blank line
+        self.block = range(self.line(span[0]), self.line(span[1] - 1) + 1) if span else range(0)
 
     def line(self, pos: int) -> int:
         return bisect_right(self.starts, pos)
@@ -1630,8 +1633,14 @@ class _Lines:
         return list(range(self.line(start), self.line(max(start, end - 1)) + 1))
 
     def blank(self, line: int) -> bool:
+        """No code on the line (a comment-only line counts); never a line of Plumb's block."""
         a, b = self.span(line)
-        return not self.code[a:b].strip()
+        return line not in self.block and not self.code[a:b].strip()
+
+    def empty(self, line: int) -> bool:
+        """A really empty line of the file (whitespace only), outside Plumb's block."""
+        a, b = self.span(line)
+        return line not in self.block and not self.text[a:b].strip()
 
 
 def _enclosing(blocks: list, pos: int) -> List[tuple]:
@@ -1791,8 +1800,9 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         before = n - 1
         while before in remove:
             before -= 1
-        if (before < 1 or L.blank(before)) and L.blank(n + 1):
+        if (before < 1 or L.empty(before)) and L.empty(n + 1):
             remove.add(n + 1)
+    remove -= set(L.block)  # Plumb's block is never the plan's to change
     return {"file": shown, "overrides": overrides, "remove_lines": sorted(remove), "replace": replace,
             "project_variables": project_vars, "by_hand": by_hand}
 
@@ -1815,6 +1825,9 @@ def apply_override_plan(path: Path, plan: dict) -> Optional[str]:
         lines[r["line"] - 1] = lines[r["line"] - 1].replace(r["old"], r["new"], 1)
     drop = set(plan["remove_lines"])
     new = "\n".join(line for i, line in enumerate(lines, 1) if i not in drop)
+    if P.block_text(new) != P.block_text(text):
+        raise _err(f"{plan['file']}: the plan would change Plumb's block, so nothing was written",
+                   f"run python3 {SCRIPT_REL} --overrides again and move the listed lines by hand")
     return None if new == text else new
 
 
@@ -1855,13 +1868,13 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
     if not any(p["overrides"] for _path, p in plans):
         print("ok: nothing to move: no web copy sets the tokens' variables outside Plumb's block")
         return 0
+    news = [apply_override_plan(path, plan) for path, plan in plans]  # all checked before anything is written
     changes = apply_token_changes(doc, [p for _path, p in plans])
     if changes and not _write(tokens_file, json.dumps(doc, indent=2, ensure_ascii=False) + "\n", root):
         return 2
     for line in changes:
         print(line)
-    for path, plan in plans:
-        new = apply_override_plan(path, plan)
+    for (path, plan), new in zip(plans, news):
         if new is not None:
             with open(path, "w", encoding="utf-8", newline="") as fh:
                 fh.write(new)

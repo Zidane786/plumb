@@ -166,6 +166,27 @@ def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
     assert raw.startswith(b'@import "tailwindcss";\r\n\r\nbody {\r\n  background: var(--color-background);\r\n')
 
 
+def test_an_override_directly_above_plumbs_block_never_touches_the_block(project: Path) -> None:
+    css = project / "app/globals.css"
+    css.write_text('@import "tailwindcss";\n\n@theme inline {\n  --color-background: var(--bg);\n}\n',
+                   encoding="utf-8")
+    assert run(project, "build-tokens.py").returncode == 0
+    text = css.read_text(encoding="utf-8")
+    # move the project's lines above the block: the @theme block now sits directly over the start marker
+    start = text.index("/* plumb:start")
+    block = text[start:text.index("/* plumb:end */") + len("/* plumb:end */")]
+    css.write_text('@import "tailwindcss";\n\n@theme inline {\n  --color-background: var(--bg);\n}\n' + block + "\n",
+                   encoding="utf-8")
+    data = plan(project)
+    lines = css.read_text(encoding="utf-8").split("\n")
+    assert all(not lines[n - 1].startswith("/* plumb:") for n in data["copies"][0]["remove_lines"])
+    r = run(project, "build-tokens.py", "--overrides", "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    after = css.read_text(encoding="utf-8")
+    assert block in after and "--color-background: var(--bg)" not in after
+    assert run(project, "build-tokens.py", "--check").returncode == 0
+
+
 def test_nothing_to_move(project: Path) -> None:
     (project / "app/globals.css").write_text('@import "tailwindcss";\n\nbody {\n  margin: 0;\n}\n', encoding="utf-8")
     assert plan(project)["copies"][0]["overrides"] == []
