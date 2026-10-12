@@ -14,12 +14,8 @@ tokens file and regenerate. This README is plugin-owned and is refreshed by Plum
 
 ## Regenerate
 
-```
-make tokens          # write every output
-make tokens-check    # fail when an output is stale or missing
-```
-
-Without make, run the Python command in `PLUMB.md` (`build-tokens.py`, add `--check` to verify). The specimen page
+Run the tokens command in `PLUMB.md` → Commands (`scripts/build-tokens.py`) to write every output, and the check
+command (`--check`) to fail when an output is stale or missing. The specimen page
 (`docs/design/specimen.html` by default) and the contrast table in `references/dark-mode.md` are refreshed by the same command.
 
 ## Nothing is downloaded

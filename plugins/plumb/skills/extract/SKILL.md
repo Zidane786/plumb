@@ -27,7 +27,7 @@ recommendation first marked "(Recommended)" and why. Questions and recommendatio
 anything**; if something seems needed, say so, **ask the user and wait**. App code changes only with the user's OK;
 the audit in step 7 reports, it does not fix. Pre-approved commands (`allowed-tools`): Plumb's `detect.py`, `scaffold.py`,
 `build-tokens.py`, `audit.py`, `build-prototype.py`, and the read-only git calls; anything else asks first (Copilot
-CLI asks for every command: join a step's script calls with `&&` in one shell call). **Never run `--approve` (or
+CLI asks for every command: join a step's script calls with `&&` in one shell call; Windows PowerShell 5.1 has no `&&`: join with `;` there, or run the steps one by one). **Never run `--approve` (or
 record an approval) without the user's explicit yes to that screen** in this conversation: show it, ask, wait.
 `audit.py`: **exit 1 means errors found, not a crash** (your tool may show it as a failed command); read the findings.
 **End-of-turn check:** if it stops you after the user said not to fix now, report and stop.
@@ -75,12 +75,12 @@ proposed dark value.
 ## 4. Before/after page, then each group confirmed
 
 **OK?** "I'll write the proposal page to `<root>/docs/design/extract.html`" (a) Write it (Recommended) (b) Another
-path. Then write it (with Effective HTML's `design-artifact` when available, otherwise Plumb's built-in quality bar in
-[prototypes.md](../../reference/prototypes.md); **The project's design system outranks Effective HTML:** its tokens,
-`design.md` and references decide palette, type, spacing, radius and motion; Effective HTML guides craft only
-(content, states, interactions, accessibility, polish), and where they disagree the system wins. One self-contained
-page, light and
-dark, nothing from the network): per group, **before** (every value with swatch, count
+path. Then write it: one self-contained page, light and dark, nothing from the network, with Effective HTML's
+`design-artifact` when available, otherwise Plumb's built-in quality bar in
+[prototypes.md](../../reference/prototypes.md). **The project's design system outranks Effective HTML:** Effective
+HTML guides craft only (content, states, interactions, accessibility, polish); the look comes from the project, and
+where they disagree the system wins. Before the tokens exist, the current app's own values are that reference; from
+then on, the tokens, `design.md` and references. Per group, show **before** (every value with swatch, count
 and a few `file:line`) and **after** (the proposed token, its value in light and dark, what merges into it), and how
 many values become how many tokens. **OK? Each group, one at a time:** accept (Recommended) · rename · merge with
 another · split · leave out. After three groups, also offer "Accept all remaining groups as proposed" next to "Keep
@@ -90,8 +90,15 @@ going one by one". Never merge two values the user wants apart.
 
 Ask only the interview questions the code does not answer: the product (A1–A6), dark mode when the app has none
 (C13), the accessibility target (C14), vocabulary and voice (C15), and the UX patterns (C16) the screens do not make
-clear. Offer what the code shows as the recommendation ("the app uses a left sidebar: keep it?"). **OK?** Summarise
-in five lines: "Right?".
+clear. Offer what the code shows as the recommendation ("the app uses a left sidebar: keep it?"). **Always ask these
+two**, one at a time, recommending what the app already does so extract keeps it:
+- **How the app switches themes** (`theme_switch`): code that toggles a `.dark` class (or `data-theme`) → `class`;
+  only `@media (prefers-color-scheme: dark)` → `system`; both → `both`; no dark mode yet → `both`.
+- **Reduced motion** (`reduced_motion`): an existing `prefers-reduced-motion` rule that keeps opacity transitions →
+  `keep-fades`; one that turns every animation off → `none`; none yet → `keep-fades`.
+
+Both go in the answers JSON and become `$extensions.plumb.web.theme_switch` and `$extensions.plumb.motion.reduced`
+(create E2–E3). **OK?** Summarise in five lines: "Right?".
 
 ## Generate and record (create E and G)
 

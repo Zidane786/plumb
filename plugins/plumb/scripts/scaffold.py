@@ -28,7 +28,8 @@ Ownership (spec 5.1):
 
   scaffold.py --verify --project-root P
       Check that PLUMB.md's skill path exists, that the AGENTS.md / CLAUDE.md row and the Makefile point at it, that
-      every `make <target>` PLUMB.md names exists in the Makefile, and that the copy targets resolve. Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
+      every `make <target>` PLUMB.md names exists in the Makefile (a target missing from a Makefile that includes
+      other files is a note), and that the copy targets resolve (not in a `Role: linked` repo: the home owns them). Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
       suggested --relocate command. Exit 0 when there is no problem, 1 otherwise.
 
@@ -660,11 +661,11 @@ def relocate(root: Path, src_arg: str, dst_arg: str, dry_run: bool) -> int:
             new, n = edit_lines(read_keep(path), pattern, dst_rel, is_plumb_row)
             if n:
                 edits.append((path, new, f"{name} (the Plumb row)"))
-    makefile = root / "Makefile"
-    if makefile.is_file():
+    makefile = find_makefile(root)
+    if makefile is not None:
         new, n = edit_lines(read_keep(makefile), pattern, dst_rel)
         if n:
-            edits.append((makefile, new, f"Makefile ({n} line{'s' if n != 1 else ''})"))
+            edits.append((makefile, new, f"{makefile.name} ({n} line{'s' if n != 1 else ''})"))
     tokens = sorted((src / "assets/tokens").glob("*.tokens.json"))[0]
     try:
         copies = json.loads(tokens.read_text(encoding="utf-8")).get("$extensions", {}).get("plumb", {}).get("web", {}).get("copies", [])
@@ -735,33 +736,50 @@ def find_skills(root: Path) -> List[str]:
 
 MAKE_REF = re.compile(r"[(`]make ([A-Za-z0-9_.-]+)")
 MAKEFILES = ("Makefile", "makefile", "GNUmakefile")
-MAKE_RULE = re.compile(r"^([A-Za-z0-9_.-][A-Za-z0-9_. \t-]*?)[ \t]*::?(?!=)", re.M)
+# A rule line: targets, then `:` or `::`, never `:=` / `::=` (assignments); recipe lines start with a tab.
+MAKE_RULE = re.compile(r"^([A-Za-z0-9_.%/-][A-Za-z0-9_.%/ \t-]*?)[ \t]*::?(?!=)", re.M)
+MAKE_INCLUDE = re.compile(r"^-?(?:include|sinclude)[ \t]+(.+)$", re.M)
+ROLE_LINE = re.compile(r"^Role:\s*([a-z]+)", re.M)
 
 
-def makefile_targets(root: Path) -> "Optional[set]":
-    """The targets the project's Makefile defines, or None when there is no Makefile."""
+def find_makefile(root: Path) -> Optional[Path]:
+    """The project's Makefile (GNU make's names), or None."""
     for name in MAKEFILES:
         path = root / name
         if path.is_file():
-            return {t for m in MAKE_RULE.finditer(read_keep(path)) for t in m.group(1).split()}
+            return path
     return None
 
 
-def check_make_targets(text: str, root: Path) -> Optional[str]:
+def makefile_targets(root: Path) -> "Tuple[Optional[set], List[str]]":
+    """(the targets the project's Makefile defines, the files it includes); (None, []) when there is no Makefile."""
+    path = find_makefile(root)
+    if path is None:
+        return None, []
+    text = read_keep(path)
+    targets = {t for m in MAKE_RULE.finditer(text) for t in m.group(1).split() if not t.startswith(".")}
+    includes = [f for m in MAKE_INCLUDE.finditer(text) for f in m.group(1).split()]
+    return targets, includes
+
+
+def check_make_targets(text: str, root: Path) -> "Tuple[Optional[str], Optional[str], Optional[str]]":
     """PLUMB.md must not send anyone to a `make` target that does not exist (the user may have declined the Makefile).
-    Returns the problem text, or None (printing `ok:` when PLUMB.md names targets and they all exist)."""
+    Returns (ok, note, problem) texts for verify to print; at most one is set. Prints nothing."""
     named = list(dict.fromkeys(MAKE_REF.findall(text)))
     if not named:
-        return None
-    targets = makefile_targets(root)
+        return None, None, None
+    targets, includes = makefile_targets(root)
     if targets is None:
-        return f"PLUMB.md names {', '.join(f'`make {t}`' for t in named)} but there is no Makefile"
+        return None, None, f"PLUMB.md names {', '.join(f'`make {t}`' for t in named)} but there is no Makefile"
     missing = [t for t in named if t not in targets]
     if not missing:
-        print("ok: PLUMB.md's make targets exist in the Makefile")
-        return None
-    return (f"PLUMB.md names {', '.join(f'`make {t}`' for t in missing)} but the Makefile has no "
-            f"{', '.join(missing)} target{'s' if len(missing) != 1 else ''}")
+        return "PLUMB.md's make targets exist in the Makefile", None, None
+    listed = ", ".join(f"`make {t}`" for t in missing)
+    if includes:
+        return None, (f"PLUMB.md names {listed}; the Makefile does not define it but includes {', '.join(includes)} "
+                      "(check the target is there)"), None
+    return None, None, (f"PLUMB.md names {listed} but the Makefile has no {', '.join(missing)} "
+                        f"target{'s' if len(missing) != 1 else ''}")
 
 
 def verify(root: Path) -> int:
@@ -782,6 +800,8 @@ def verify(root: Path) -> int:
             print("fix: run /plumb:init, then /plumb:create or /plumb:extract")
         return 1
     plumb_text = read_keep(plumb_md)
+    role = ROLE_LINE.search(plumb_text)
+    linked = bool(role and role.group(1) == "linked")
     m = DESIGN_LINE.search(plumb_text)
     skill_rel = ""
     if not m or not m.group(1).strip():
@@ -818,21 +838,23 @@ def verify(root: Path) -> int:
                         print(f"fix: change the path in that row to {marker}SKILL.md")
         if not rows:
             print("note: no Plumb row in AGENTS.md or CLAUDE.md (/plumb:init step 4 asks the user whether to add it)")
-        makefile = root / "Makefile"
-        if makefile.is_file():
-            lines = [l for l in read_keep(makefile).splitlines() if "build-tokens.py" in l or "audit.py" in l]
-            if not lines:
-                print("note: the Makefile has no Plumb targets (optional; templates/Makefile.snippet)")
-            for line in lines:
-                if marker in line.replace("\\", "/"):
-                    print(f"ok: Makefile line points at {marker}")
-                else:
-                    problem(f"Makefile line {line.strip()!r} does not name {marker}")
-                    print(f"fix: change its path to {marker}scripts/...")
+        makefile = find_makefile(root)
+        lines = [l for l in read_keep(makefile).splitlines() if "build-tokens.py" in l or "audit.py" in l] if makefile else []
+        if not lines and not linked:  # a linked repo gets the row and the checks only, never Makefile targets
+            print("note: no Plumb targets in a Makefile (/plumb:init step 4 asks the user whether to add them)")
+        for line in lines:
+            if marker in line.replace("\\", "/"):
+                print(f"ok: {makefile.name} line points at {marker}")  # type: ignore[union-attr]
+            else:
+                problem(f"{makefile.name} line {line.strip()!r} does not name {marker}")  # type: ignore[union-attr]
+                print(f"fix: change its path to {marker}scripts/...")
         tokens = sorted((root / skill_rel / "assets/tokens").glob("*.tokens.json"))
         try:
             copies = json.loads(tokens[0].read_text(encoding="utf-8"))["$extensions"]["plumb"]["web"]["copies"]
         except (OSError, ValueError, KeyError, IndexError, TypeError):
+            copies = []
+        if linked and copies:
+            print("note: web copies belong to the home repo (Role: linked); check them there")
             copies = []
         for copy in copies if isinstance(copies, list) else []:
             rel = safe_rel(copy) if isinstance(copy, str) else None
@@ -846,7 +868,11 @@ def verify(root: Path) -> int:
                 print(f"note: web copy {rel} is not written yet (run the tokens build)")
             else:
                 print(f"ok: web copy {rel} resolves")
-    make_problem = check_make_targets(plumb_text, root)
+    make_ok, make_note, make_problem = check_make_targets(plumb_text, root)
+    if make_ok:
+        print(f"ok: {make_ok}")
+    if make_note:
+        print(f"note: {make_note}")
     if make_problem:
         problem(make_problem)
         print("fix: ask the user: add the Plumb targets (templates/Makefile.snippet) to the Makefile, or change "

@@ -1,6 +1,6 @@
 ---
 name: {{SKILL_NAME}}
-description: "{{NAME_YAML}}'s design system ({{PLATFORMS}}): one token source (W3C design tokens JSON) generating every platform's theme, plus component specs, UX rules and a design audit. Use for ANY {{NAME_YAML}} UI or design change or question, however small: screens, components, colours, type, spacing, radius, shadows, motion, light and dark mode, accessibility, icons, copy and empty states, `make tokens`, 'style this' or 'match the prototype'. Not for backend-only work or non-UI docs."
+description: "{{NAME_YAML}}'s design system ({{PLATFORMS}}): one token source (W3C design tokens JSON) generating every platform's theme, plus component specs, UX rules and a design audit. Use for ANY {{NAME_YAML}} UI or design change or question, however small: screens, components, colours, type, spacing, radius, shadows, motion, light and dark mode, accessibility, icons, copy and empty states, rebuilding the tokens, 'style this' or 'match the prototype'. Not for backend-only work or non-UI docs."
 metadata:
   design-system: {{SLUG}}
   plumb: "1.0.0"
@@ -22,7 +22,7 @@ Any time you create, change, review or ask about UI in this project. Read this f
 | File | Read or use when |
 |---|---|
 | [design.md](design.md) | Any doubt about the look: brand, colours, type, elevation, motion. It wins every disagreement. |
-| [assets/tokens/{{SLUG}}.tokens.json](assets/tokens/{{SLUG}}.tokens.json) | A value seems missing or wrong. Edit ONLY here, then `make tokens`. |
+| [assets/tokens/{{SLUG}}.tokens.json](assets/tokens/{{SLUG}}.tokens.json) | A value seems missing or wrong. Edit ONLY here, then run the tokens command (`PLUMB.md` → Commands). |
 | [assets/icons/icon-map.json](assets/icons/icon-map.json) | Picking an icon: add the concept here first. |
 | [references/components.md](references/components.md) | Building or changing a component: purpose, anatomy, sizes, states, tokens, a11y. |
 | [references/inventory.md](references/inventory.md) | Which component exists where, and what is still to build. |
@@ -34,8 +34,8 @@ Any time you create, change, review or ask about UI in this project. Read this f
 | [references/fidelity.md](references/fidelity.md) | "Is this what the original prototype or brand guide says?" |
 {{PLATFORM_FILE_ROWS}}
 | [assets/platforms/README.md](assets/platforms/README.md) | What is generated from the tokens and how to regenerate it. |
-| [scripts/build-tokens.py](scripts/build-tokens.py) | `make tokens` writes every theme; `make tokens-check` fails when one is stale. |
-| [scripts/audit.py](scripts/audit.py) | Before reporting UI work: `make design-audit` exits 0. |
+| [scripts/build-tokens.py](scripts/build-tokens.py) | The tokens command writes every theme; the check command fails when one is stale (`PLUMB.md` → Commands). |
+| [scripts/audit.py](scripts/audit.py) | Before reporting UI work: the audit command (`PLUMB.md` → Commands) exits 0. |
 
 The prototype lives in `{{DOCS_DIR}}/` (screens in `{{DOCS_DIR}}/prototype/screens/`), the decision log in `{{DOCS_DIR}}/decisions.md`.
 
@@ -48,24 +48,24 @@ The prototype lives in `{{DOCS_DIR}}/` (screens in `{{DOCS_DIR}}/prototype/scree
    with a named variant. Create only when nothing fits, and say why.
 3. **Spec first, platform second.** Read [references/components.md](references/components.md), then only the platform file
    for what differs: {{PLATFORM_SPEC_LINKS}}.
-4. **Name every visual decision with a token.** A missing value goes into the tokens file and `design.md`, then
-   `make tokens`, and is flagged in your report.
+4. **Name every visual decision with a token.** A missing value goes into the tokens file and `design.md`, then the
+   tokens command, and is flagged in your report.
 5. **Build every state** from the prototype and `ux.md`: loading, empty, error, success, disabled, focus, long text, zero,
    narrow screens, light and dark, reduced motion.
-6. **Check:** the accessibility checklist, `make tokens-check`, `make design-audit`.
+6. **Check:** the accessibility checklist, then the check and audit commands in `PLUMB.md` → Commands.
 7. **Report** what you reused, what you created and why, and any token or variant added (flag token and generated-theme
    changes for sign-off: they change every screen).
 
 ## Hard rules
 
-- **One token source.** Values live only in the tokens file. Generated files are never edited by hand; `make tokens-check`
-  fails when they drift.
+- **One token source.** Values live only in the tokens file. Generated files are never edited by hand; the check
+  command (`PLUMB.md` → Commands) fails when they drift.
 - **Closed scales, no arbitrary values:** no raw hex, no off-scale sizes, radii, shadows or durations in components.
 - **Never hand-roll an accessibility primitive** (dialog, sheet, menu, select, tooltip, tabs, checkbox, toast): use the
   platform's accessible one and style it with tokens.
 - **Never restyle a primitive from the outside.** Add a named variant inside it and list it.
 - **Light and dark:** components use tokens only, so they switch by themselves; never write per-component dark overrides.
-- **Motion is tokenised and gentle;** reduced motion makes everything instant ([references/motion.md](references/motion.md)).
+- **Motion is tokenised and gentle;** reduced motion follows the project's choice in [references/motion.md](references/motion.md).
 - **Status is a word plus an icon, never colour alone.** One icon set (the icon map). No emoji in the UI.
 - **No downloads.** Do not install or download anything (packages, fonts, icon sets, tools). If something is missing, ask the
   user and wait for their decision; never decide on their behalf.
@@ -75,7 +75,7 @@ The prototype lives in `{{DOCS_DIR}}/` (screens in `{{DOCS_DIR}}/prototype/scree
 
 - [ ] The user approved the prototype screen; the build matches it.
 - [ ] Spec followed; reused before creating; [inventory](references/inventory.md) updated if a component was added.
-- [ ] Only tokens; `make tokens-check` and `make design-audit` pass.
+- [ ] Only tokens; the check and audit commands in `PLUMB.md` → Commands pass.
 - [ ] Every state from the prototype and [ux.md](references/ux.md) exists, including error, empty, disabled and long text.
 - [ ] Words from [vocabulary.md](references/vocabulary.md); icons from the icon map; icon-only controls labelled.
 - [ ] Light and dark both checked; keyboard path works; reduced motion respected.

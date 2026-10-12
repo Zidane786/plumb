@@ -309,9 +309,9 @@ another repo (linked); new or existing; then each wire-in item: the `PLUMB.md` v
 
 **What it changes:** `PLUMB.md`, the design-system skill folder and `docs/design/` (through create or extract), one
 row in `AGENTS.md` or `CLAUDE.md`, three Makefile targets (`tokens`, `tokens-check`, `design-audit`), and optionally
-one line in `SLATE.md` and `.kiro/steering/plumb.md`. Nothing outside the agreed lines changes. Say no to the Makefile
-and `PLUMB.md` lists the direct commands instead of `make …` (`scaffold.py --verify` reports a `make` target that
-`PLUMB.md` names but the Makefile lacks).
+one line in `SLATE.md` and `.kiro/steering/plumb.md`. Nothing outside the agreed lines changes. `PLUMB.md` always
+names the direct commands; only when you say yes to the Makefile does it add the `(make tokens)` hints
+(`scaffold.py --verify` reports a `make` target that `PLUMB.md` names but the Makefile lacks).
 
 **Run again** in a set-up project: it shows status, resumes a half-finished setup from the first missing stage, offers
 `/plumb:upgrade` when the plugin is newer, and runs `scaffold.py --verify` to check the placement. It never overwrites a
@@ -850,7 +850,7 @@ Allowed raw values: components/ui/**
 
 ## Commands
 tokens `python3 .claude/skills/acme-design-system/scripts/build-tokens.py` (make tokens)
-check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
+check `python3 .claude/skills/acme-design-system/scripts/build-tokens.py --check` (make tokens-check) · audit `python3 .claude/skills/acme-design-system/scripts/audit.py` (make design-audit)
 
 ## Prototype
 Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
@@ -859,6 +859,9 @@ Prototype sync: on               (end-of-turn check stops once when a built scre
 ## Plumb updates
 - 2026-10-12 created with Plumb 1.0.0 (web; direction "Quiet service")
 ```
+
+The `(make …)` hints in `## Commands` appear only when you said yes to the Makefile targets; without them the lines
+are the direct commands.
 
 | Setting | What it does |
 |---|---|
@@ -1177,9 +1180,10 @@ Harmless. Typing the command already loaded the skill; the model then also tried
 skills an agent may start on its own (init, create, extract, update and upgrade run only when you type them). The flow
 goes on.
 
-**`problem: PLUMB.md names `make tokens`, … but there is no Makefile`** from `scaffold.py --verify`
-You said no to the Makefile (or it was never offered). Add the targets with `/plumb:init`, or change `PLUMB.md`'s
-`## Commands` lines to the direct commands (drop each `(make …)`).
+**`problem: PLUMB.md names … but there is no Makefile`** (or `… but the Makefile has no … target`) from `scaffold.py --verify`
+`PLUMB.md` sends people to a `make` target that doesn't exist (the Makefile was removed or edited). Add the targets
+again (`templates/Makefile.snippet`, or `/plumb:init`), or drop each `(make …)` hint from `PLUMB.md`'s `## Commands`
+lines: the direct commands there work without make.
 
 **Windows: nothing happens, or `python` is not found**
 Install Python 3.9+ (python.org or the Microsoft Store). The hooks try `py -3`, `python`, then `python3`, and never block

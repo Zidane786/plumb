@@ -136,7 +136,8 @@ Role: linked
 ```
 
 The other lines are filled from the home's tokens file (platforms) and this repo (UI packages, UI files, Python); the
-commands point at the home's scripts. Check the path holds `SKILL.md` and `assets/tokens/*.tokens.json` before writing;
+`## Commands` lines are the direct commands pointing at the home's scripts (never `make` hints: a linked repo gets no
+Makefile). Check the path holds `SKILL.md` and `assets/tokens/*.tokens.json` before writing;
 if not, say so and ask for the right path. Then add the AGENTS/CLAUDE row (from `<ROOT>/templates/agents-row.md`) with
 the home's path. Nothing else is copied into a linked repo.
 

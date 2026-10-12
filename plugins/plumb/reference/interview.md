@@ -90,8 +90,9 @@ why in one clause with every recommendation. Brand colours or fonts found in the
 
 After C, show a one-screen summary of every decision and ask "Generate directions from these?"
 
-**Two settings the generator honours.** C11 and C13 also set two values in the tokens file (written in step E3, with
-the rest; tokens-format.md): `$extensions.plumb.motion.reduced` — `"keep-fades"` (the generated
+**Two settings the generator honours.** C11 and C13 also set two values in the tokens file, passed as the answers
+keys `reduced_motion` and `theme_switch` (create E2; checked in E3; tokens-format.md). Extract always asks both,
+recommending what the app already does: `$extensions.plumb.motion.reduced` — `"keep-fades"` (the generated
 `prefers-reduced-motion` block stops movement but keeps opacity fades) or `"none"` (every animation and transition
 off) — and `$extensions.plumb.web.theme_switch` — `"both"`, `"system"` or `"class"` — which decides whether the
 generated web theme answers `prefers-color-scheme`, a `.dark` class, or both. Without them the generated CSS may not
@@ -126,7 +127,8 @@ show its full file list and paths, and run it for real only on the user's OK. Ke
 `colors` (`light`/`dark` for background, surface, sunk, on-surface, on-surface-muted, primary, on-primary, outline,
 outline-input, danger, on-danger, success, on-success, scrim), `fonts` (`sans`, `mono`), `type_scale`
 (`display h1 h2 h3 body-lg body sm xs` → `[size, line height]`), `spacing` (Tailwind steps), `radius` (`sm md lg`),
-`shadows` (`card`, `popover`, each `light`/`dark`), `motion` (`fast mid slow`), `icons`.
+`shadows` (`card`, `popover`, each `light`/`dark`), `motion` (`fast mid slow`), `icons`, `theme_switch` (`both`
+`system` `class`), `reduced_motion` (`keep-fades` `none`).
 
 Anything the scaffold has no key for (warning, info, `label.*`, `md` values, extra tokens) goes into the tokens file
 right after scaffolding, before the first build (see `tokens-format.md`).

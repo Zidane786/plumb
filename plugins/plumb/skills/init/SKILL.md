@@ -27,7 +27,7 @@ overwrite an existing design system. Announce each step in one line. Pre-approve
 `py -3`; init's list governs while it runs create or extract), `git rev-parse`,
 `git -C <root> status --short`, `git config user.name`; anything else asks first. Copilot CLI ignores `allowed-tools`
 and asks for each command: run each step's script calls in **one shell call** where this file shows them joined with
-`&&` ([reference/copilot.md](../../reference/copilot.md)).
+`&&` (Windows PowerShell 5.1 has no `&&`: join with `;` there, or run the steps one by one) ([reference/copilot.md](../../reference/copilot.md)).
 
 **Plugin root (`ROOT`):** `${CLAUDE_PLUGIN_ROOT}` (Claude Code and Copilot CLI fill this in for plugin skills).
 If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base directory (printed when the skill loads,
@@ -157,14 +157,14 @@ After create or extract, in the same session. **Ask every item even when the fil
    reviews changed screens before the agent hands back." (a) Both on (Recommended) (b) edit check only (c) end-of-turn
    only (d) both off → set `Edit check:` and `End-of-turn check:` in `PLUMB.md`.
 3. **The AGENTS.md / CLAUDE.md row** ([reference/wire-in.md](../../reference/wire-in.md)).
-4. **The Makefile targets.** On no, `PLUMB.md` must not name `make` targets: change its `## Commands` lines to the
-   direct commands (wire-in.md shows them; the user's no covers this edit, say so).
+4. **The Makefile targets.** `PLUMB.md` already names the direct commands. On yes, write the targets and add the
+   `(make …)` hints to its `## Commands` lines (wire-in.md); on no, change nothing.
 5. **The rest, each asked on its own** as wire-in.md says: the Slate review check (only when `<root>/kanban/board.py`
    exists), Kiro steering (when Kiro is used; Kiro's skills and hooks: [reference/kiro.md](../../reference/kiro.md)),
    and the monorepo package pointer (when opened inside a package).
 
 Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` and fix what it reports (asked). A
-`problem: PLUMB.md names make …` line means item 4 was skipped: ask it now.
+`problem: PLUMB.md names make …` line means a named target is missing: ask whether to add it or drop the hint.
 
 ## Step 5: show what you did
 

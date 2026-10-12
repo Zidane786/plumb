@@ -64,7 +64,7 @@ paths Plumb's generators own. `PLUMB.md`'s `UI files:` narrows a whole-project r
 
 | Rule | Severity | What it means | How to fix |
 |---|---|---|---|
-| `route-not-prototyped` | error (warn unless `Prototype sync: on`) | A route or page in the code that no screen in `screens.json` covers. | `/plumb:prototype <screen>`, the user approves, then `build-prototype.py --map <id> --route <route> --files <globs>`. |
+| `route-not-prototyped` | error (warn unless `Prototype sync: on`) | A route or page in the code that no screen in `screens.json` covers. | `/plumb:prototype <screen>`, the user approves, then `build-prototype.py --map <id> --route=<route> --files <globs>`. |
 | `no-prototype` | warn | `Prototype sync: on` but there are no screen files and no `screens.json`. | `/plumb:extract` (existing app) or `/plumb:prototype`. |
 | `screen-drift` | error (warn with no baseline) | A built screen's source files changed after its approval (or sync) while its screen file did not. | Update `screens/<id>.html` to show the change, ask the user, then `--approve <id>` (or `--synced <id>` for a small fix already built). |
 | `screen-unapproved` | error once built, warn while to-build | The screen file changed after its approval: don't build from it until it is approved again. Or the code of a never-approved screen changed. | Show the user the screen, then `build-prototype.py --approve <id>`. |

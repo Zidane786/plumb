@@ -19,7 +19,8 @@ ask the user and wait for their decision. Both themes, unless `PLUMB.md` says `T
 `--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation: show the
 screen, ask, wait; never chain it after another command. `audit.py`: **exit 1 means errors found, not a crash**
 (your tool may show it as a failed command). **End-of-turn check:** if it stops you after the user said not to fix
-now, report and stop. Copilot CLI asks for every command: join a step's script calls with `&&` in one shell call.
+now, report and stop. Copilot CLI asks for every command: join a step's script calls with `&&` in one shell call (Windows PowerShell 5.1 has no `&&`: join with `;` there, or
+run the steps one by one).
 
 ```
  brief ─▶ 2–3 variants (screen files ─▶ --proposal builds both views) ─▶ user picks ─▶ write to main + default tour

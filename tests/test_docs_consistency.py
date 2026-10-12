@@ -436,12 +436,44 @@ def test_temp_folder_is_named_where_it_is_used() -> None:
         assert ".plumb-tmp/" in path.read_text(encoding="utf-8"), path
 
 
-@pytest.mark.parametrize("path", skill_files() + [REFERENCE / "prototypes.md", REFERENCE / "copilot.md"],
-                         ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
+SPEC = REPO / "docs/specs/2026-10-11-plumb-design.md"
+ROUTE_DOCS = skill_files() + [p for p in sorted(REFERENCE.glob("*.md")) if p.name != "scripts.md"] + [
+    SPEC, USAGE, REPO / "TEST.md"]  # scripts.md belongs to the engine change and follows separately
+
+
+@pytest.mark.parametrize("path", ROUTE_DOCS, ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
 def test_routes_are_passed_as_one_argument(path: Path) -> None:
     # `--route /` made Copilot ask for path access to `/`.
     text = path.read_text(encoding="utf-8")
-    assert not re.search(r"--route [</]", text), f"{path.relative_to(REPO)}: write --route=<route>"
+    assert not re.search(r"--route [</A-Z]", text), f"{path.relative_to(REPO)}: write --route=<route>"
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if "`&&`" in p.read_text(encoding="utf-8")],
+                         ids=lambda p: p.parent.name)
+def test_batching_advice_names_the_powershell_caveat(path: Path) -> None:
+    assert "powershell 5.1" in _flat(path), f"{path.parent.name}: Windows PowerShell 5.1 has no `&&`"
+
+
+def test_extract_asks_theme_switch_and_reduced_motion() -> None:
+    flat = _flat(SKILLS / "extract/SKILL.md")
+    for phrase in ("theme_switch", "reduced_motion", "$extensions.plumb.web.theme_switch",
+                   "$extensions.plumb.motion.reduced", "always ask these two", "prefers-reduced-motion", ".dark"):
+        assert phrase in flat, f"extract: {phrase!r}"
+
+
+def test_create_shows_the_stylesheet_diff_and_passes_the_settings_as_answers() -> None:
+    flat = _flat(SKILLS / "create/SKILL.md")
+    assert "`build-tokens.py --check` prints the diff" in flat
+    assert "`theme_switch` / `reduced_motion`" in flat
+    assert "`theme_switch`" in _flat(REFERENCE / "interview.md") and "`reduced_motion`" in _flat(REFERENCE / "interview.md")
+
+
+def test_spec_states_the_new_rules() -> None:
+    flat = _flat(SPEC).replace("*", "")
+    for phrase in ("the project's design system outranks effective html", "craft only", "plumb:start",
+                   "theme_switch", "motion.reduced", "make target"):
+        assert phrase in flat, f"spec: {phrase!r}"
+    assert "effective html is the reference for every prototype" not in flat
 
 
 @pytest.mark.parametrize("name", sorted(USER_ONLY))

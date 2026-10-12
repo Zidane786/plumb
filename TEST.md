@@ -229,7 +229,8 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Every decision is in `docs/design/decisions.md` with `Decided by:` your git name.
 - [ ] Init's wire-in: each item is asked on its own (`PLUMB.md`, both checks, the `AGENTS.md` row, the Makefile),
       also in a project with no `AGENTS.md` and no `Makefile`. Say no to the Makefile → `PLUMB.md`'s `## Commands`
-      lines show the direct commands (no `make …`), and `scaffold.py --verify` ends `verify: ok`.
+      lines keep the direct commands (no `make …`), the generated skill names no `make` target, and
+      `scaffold.py --verify` ends `verify: ok`. Say yes → the targets are written and the `(make …)` hints added.
 - [ ] Start a **new** session. The first context line is
       `Plumb: <project>-design-system 1.0.0 · tokens up to date · N audit issues · read the skill before UI changes`
       (ask the agent "what did the Plumb session note say?").

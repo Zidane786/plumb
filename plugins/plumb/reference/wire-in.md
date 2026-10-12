@@ -26,16 +26,18 @@ command) and `{{SKILL_DIR}}` filled. Ask: add them to `<root>/Makefile` (Recomme
 `Makefile` with them (Recommended when it does not and `make` is on the machine) · no Makefile. When targets with
 those names already exist, show them and ask what to do.
 
-**No Makefile (declined, or no `make` on the machine): `PLUMB.md` must not name `make` targets.** The scaffold writes
-`(make tokens)` hints into its `## Commands` lines; replace those two lines with the direct commands (the user's no
-covers this edit; say so), `{{PYTHON}}` and `{{SKILL_DIR}}` filled:
+`PLUMB.md` names the direct commands by default (the scaffold writes them), so a project with no Makefile is always
+valid. **Only on yes**, after writing the targets, add the hints to its `## Commands` lines (the user's yes covers
+this edit; say so):
 
 ```
-tokens `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py`
-check `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py --check` · audit `{{PYTHON}} {{SKILL_DIR}}scripts/audit.py`
+tokens `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py` (make tokens)
+check `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py --check` (make tokens-check) · audit `{{PYTHON}} {{SKILL_DIR}}scripts/audit.py` (make design-audit)
 ```
 
-`scaffold.py --verify` reports `problem: PLUMB.md names make …` while a named target is missing.
+On no (or no `make` on the machine) change nothing: the direct commands stay. A linked repo never gets Makefile
+targets (row and checks only). `scaffold.py --verify` reports `problem: PLUMB.md names make …` when a named target is
+missing later (the Makefile was removed or edited).
 
 ## Slate review check
 

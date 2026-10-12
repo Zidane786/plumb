@@ -16,8 +16,8 @@ UI files: {{UI_FILES}}
 Allowed raw values: {{ALLOWED_RAW}}
 
 ## Commands
-tokens `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py` (make tokens)
-check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
+tokens `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py`
+check `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py --check` · audit `{{PYTHON}} {{SKILL_DIR}}scripts/audit.py`
 
 ## Prototype
 Main: {{PROTOTYPE_MAIN}} · screens: {{SCREENS_PAGE}} · map: {{SCREENS_MAP}}

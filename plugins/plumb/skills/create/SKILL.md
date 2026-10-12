@@ -26,7 +26,7 @@ following from what the user said. Every question and how to derive its recommen
 explicit, recorded decision. **Never install or download anything** (no packages, fonts, icon sets, images); if
 something seems needed, say so, **ask the user and wait**. Pre-approved commands (`allowed-tools`): Plumb's `detect.py`,
 `scaffold.py`, `build-tokens.py`, `audit.py`, and the read-only git calls; anything else asks first (Copilot CLI asks
-for every command: join a step's script calls with `&&` in one shell call, as shown below). **Never run
+for every command: join a step's script calls with `&&` in one shell call, as shown below; Windows PowerShell 5.1 has no `&&`: join with `;` there, or run the steps one by one). **Never run
 `--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation: show the
 screen, ask, wait. `audit.py`: **exit 1 means errors found, not a crash** (your tool may show it as a failed command);
 read the findings. **End-of-turn check:** if Plumb's end-of-turn check stops you after the user said not to fix now,
@@ -97,20 +97,23 @@ components, prototypes) the system wins.
    `directions.html` as the preview. Change what the user asks; continue only on their OK.
 2. **OK? The files.** Write the answers JSON (keys in interview.md, including the confirmed placement: `ui_packages`,
    `ui_files` as confirmed in init (detect's `proposal.ui_files`, else the platform default), `allowed_raw`,
-   `web_copies`, `python`, `role`) to `<root>/.plumb-tmp/answers.json` (its `.gitignore` first). Run
+   `web_copies`, `python`, `role`, and `theme_switch` / `reduced_motion` from C13 / C11) to
+   `<root>/.plumb-tmp/answers.json` (its `.gitignore` first). Run
    `python3 "<ROOT>/scripts/scaffold.py" --project-root "<root>" --name "<Name>" --skill-dir <skill dir>
    --platforms <list> --styling <mode> --answers "<root>/.plumb-tmp/answers.json" --docs-dir docs/design --dry-run`,
    show its **full** list of files and paths, and run it without `--dry-run` only on the user's OK; then delete
    `<root>/.plumb-tmp/`.
 3. Add what the scaffold has no key for to the tokens file (warning, info, `label.*`, `md` values, sizes), exactly as
-   approved in E1 (tokens-format.md), and the two settings from C11 and C13: `$extensions.plumb.motion.reduced`
-   (`"keep-fades"` | `"none"`) and `$extensions.plumb.web.theme_switch` (`"both"` | `"system"` | `"class"`). Write
+   approved in E1 (tokens-format.md). Check the two settings are there as answered, and add them when the scaffold
+   did not write them: `$extensions.plumb.motion.reduced` (`"keep-fades"` | `"none"`) and
+   `$extensions.plumb.web.theme_switch` (`"both"` | `"system"` | `"class"`). Write
    `design.md`, `references/ux.md`, `vocabulary.md`, `motion.md`, `accessibility.md` from the answers, replacing
    every "to fill" prompt.
 4. **OK? Existing files the build changes.** When a web copy (`$extensions.plumb.web.copies`) is a file that already
-   exists (e.g. `app/globals.css`), show before the first build: the file, what changes (Plumb adds a marked
-   `plumb:start … plumb:end` block with the generated theme and owns only that block; the rest stays the project's,
-   still edited by hand), and ask; build only on yes (no → another path for the copy, or none). Then
+   exists (e.g. `app/globals.css`), show the change before the first build: `build-tokens.py --check` prints the diff
+   for that file; show it and say what it means (Plumb adds a marked `plumb:start … plumb:end` block with the
+   generated theme and owns only that block; the rest stays the project's, still edited by hand). Ask; build only on
+   yes (no → another path for the copy, or none). Then
    `python3 "<root>/<skill dir>/scripts/build-tokens.py" && python3 "<root>/<skill dir>/scripts/audit.py" --json`
    in one shell call: the themes, the copies, the contrast block, `docs/design/specimen.html`, then the findings.
 5. **OK? Each contrast fix.** For each `contrast` error in that `--json` output show the failing pair, its ratio

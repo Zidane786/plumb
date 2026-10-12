@@ -161,9 +161,79 @@ def test_verify_without_plumb_md(tmp_path: Path) -> None:
     assert r.returncode == 1 and "problem: no PLUMB.md" in r.stdout and "fix: " in r.stdout
 
 
+
+MAKE_TARGET = re.compile(r"\bmake (tokens|tokens-check|design-audit)\b")
+COMMANDS = re.compile(r"^## Commands\n(.*?)(?=^## )", re.M | re.S)
+
+
+def add_make_hints(root: Path) -> None:
+    """What /plumb:init's wire-in does when the user says yes to the Makefile: name the targets in PLUMB.md."""
+    plumb = root / "PLUMB.md"
+    text = plumb.read_text(encoding="utf-8")
+    text = re.sub(r"(scripts/build-tokens\.py`)\n", r"\1 (make tokens)\n", text, count=1)
+    text = text.replace("--check` ·", "--check` (make tokens-check) ·", 1)
+    text = re.sub(r"(scripts/audit\.py`)\n", r"\1 (make design-audit)\n", text, count=1)
+    plumb.write_text(text, encoding="utf-8")
+
+
+def load_scaffold():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("plumb_scaffold", SCAFFOLD)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def test_a_fresh_scaffold_names_the_direct_commands_and_passes_verify(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    root.mkdir()
+    assert run(root).returncode == 0
+    commands = COMMANDS.search((root / "PLUMB.md").read_text(encoding="utf-8")).group(1)
+    assert f"python3 {SKILL_REL}/scripts/build-tokens.py`" in commands
+    assert f"python3 {SKILL_REL}/scripts/build-tokens.py --check`" in commands
+    assert f"python3 {SKILL_REL}/scripts/audit.py`" in commands
+    assert "make" not in commands
+    r = cli(root, "--verify")
+    assert r.returncode == 0, r.stdout
+    assert "note: no Plumb targets in a Makefile (/plumb:init step 4 asks the user whether to add them)" in r.stdout
+
+
+def test_generated_skill_files_name_no_make_targets(tmp_path: Path) -> None:
+    # A project that declined the Makefile must not be told to run `make tokens` by its own design-system skill.
+    root = tmp_path / "proj"
+    root.mkdir()
+    assert run(root, platforms="web,ios,android").returncode == 0
+    built = subprocess.run([sys.executable, str(root / SKILL_REL / "scripts/build-tokens.py")], capture_output=True,
+                           text=True, encoding="utf-8")
+    assert built.returncode == 0, built.stderr
+    hits = []
+    for path in sorted((root / SKILL_REL).rglob("*")) + [root / "PLUMB.md"]:
+        if path.is_file() and path.suffix in (".md", ".css", ".json", ".swift", ".kt", ".html", ".template"):
+            for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if MAKE_TARGET.search(line):
+                    hits.append(f"{path.relative_to(root)}:{n}: {line.strip()[:90]}")
+    assert not hits, "make targets named without a Makefile:\n" + "\n".join(hits)
+
+
+def test_verify_passes_in_a_linked_repo(tmp_path: Path) -> None:
+    home = project_with_everything(tmp_path)
+    api = tmp_path / "api"
+    api.mkdir()
+    linked = (PLUGIN / "templates/PLUMB.md").read_text(encoding="utf-8")
+    skill = f"../proj/{SKILL_REL}/"
+    for slot, value in {"SKILL_DIR": skill, "ROLE": "linked", "PYTHON": "python3", "PROJECT": "api"}.items():
+        linked = linked.replace("{{" + slot + "}}", value)
+    (api / "PLUMB.md").write_text(linked, encoding="utf-8")
+    r = cli(api, "--verify")
+    assert r.returncode == 0, r.stdout
+    assert f"ok: PLUMB.md names {skill.rstrip('/')}/ and it is a design-system skill" in r.stdout
+    assert "problem: web copy" not in r.stdout  # the home repo owns its copies
+    assert home.is_dir()
+
+
 def test_verify_reports_make_targets_that_do_not_exist(tmp_path: Path) -> None:
-    # PLUMB.md's Commands lines name `make tokens` etc.; a project whose user declined the Makefile must not keep them.
     root = project_with_everything(tmp_path)
+    add_make_hints(root)
     (root / "Makefile").unlink()
     r = cli(root, "--verify")
     assert r.returncode == 1, r.stdout
@@ -173,6 +243,7 @@ def test_verify_reports_make_targets_that_do_not_exist(tmp_path: Path) -> None:
 
 def test_verify_reports_a_make_target_missing_from_the_makefile(tmp_path: Path) -> None:
     root = project_with_everything(tmp_path)
+    add_make_hints(root)
     make = root / "Makefile"
     text = make.read_text(encoding="utf-8")
     make.write_text(text.split("# Check the UI code")[0].replace(" design-audit", ""), encoding="utf-8")
@@ -182,16 +253,41 @@ def test_verify_reports_a_make_target_missing_from_the_makefile(tmp_path: Path) 
     assert "ok: PLUMB.md's make targets" not in r.stdout
 
 
-def test_verify_accepts_direct_commands_without_a_makefile(tmp_path: Path) -> None:
+def test_verify_notes_a_target_that_may_come_from_an_included_makefile(tmp_path: Path) -> None:
     root = project_with_everything(tmp_path)
-    (root / "Makefile").unlink()
-    plumb = root / "PLUMB.md"
-    plumb.write_text(re.sub(r" ?\(make [a-z-]+\)", "", plumb.read_text(encoding="utf-8")), encoding="utf-8")
+    add_make_hints(root)
+    make = root / "Makefile"
+    text = make.read_text(encoding="utf-8")
+    make.write_text("include design.mk\n" + text.split("# Check the UI code")[0].replace(" design-audit", ""),
+                    encoding="utf-8")
     r = cli(root, "--verify")
     assert r.returncode == 0, r.stdout
-    assert "make" not in plumb.read_text(encoding="utf-8").split("## Commands")[1].split("##")[0]
+    assert "note: PLUMB.md names `make design-audit`; the Makefile does not define it but includes design.mk" in r.stdout
 
 
 def test_verify_accepts_make_targets_that_exist(tmp_path: Path) -> None:
-    r = cli(project_with_everything(tmp_path), "--verify")
+    root = project_with_everything(tmp_path)
+    add_make_hints(root)
+    r = cli(root, "--verify")
     assert r.returncode == 0 and "ok: PLUMB.md's make targets exist in the Makefile" in r.stdout
+
+
+def test_makefile_parsing(tmp_path: Path) -> None:
+    mod = load_scaffold()
+    (tmp_path / "Makefile").write_text(
+        ".PHONY: tokens design-audit\nVAR := x\nOTHER = y\nX ?= z\ntokens::\n\techo\n"
+        "design-audit tokens-check: deps\n\techo a:b\n-include local.mk\nsinclude more.mk\n", encoding="utf-8")
+    targets, includes = mod.makefile_targets(tmp_path)
+    assert {"tokens", "design-audit", "tokens-check"} <= targets
+    assert not {"VAR", "OTHER", "X", "echo", "a"} & targets
+    assert includes == ["local.mk", "more.mk"]
+    assert mod.makefile_targets(tmp_path / "missing") == (None, [])
+
+
+def test_check_make_targets_returns_its_lines_and_prints_nothing(tmp_path: Path, capsys) -> None:
+    mod = load_scaffold()
+    (tmp_path / "Makefile").write_text("tokens:\n\techo\n", encoding="utf-8")
+    ok, note, problem = mod.check_make_targets("tokens `x` (make tokens)", tmp_path)
+    assert ok == "PLUMB.md's make targets exist in the Makefile" and note is None and problem is None
+    assert mod.check_make_targets("no make hints here", tmp_path) == (None, None, None)
+    assert capsys.readouterr().out == ""
