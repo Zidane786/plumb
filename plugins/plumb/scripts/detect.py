@@ -37,20 +37,14 @@ FRAMEWORK_LABEL = {
     "next": "Next.js", "react": "React", "vue": "Vue", "svelte": "Svelte", "angular": "Angular",
     "html": "plain HTML", "swiftui": "SwiftUI", "uikit": "UIKit", "compose": "Jetpack Compose",
     "android-views": "Android Views",
+    "react-native": "React Native",
 }
-STYLING_LABEL = {"tailwind-v4": "Tailwind v4", "tailwind-v3": "Tailwind v3", "css": "CSS"}
+STYLING_LABEL = {"tailwind-v4": "Tailwind v4", "tailwind-v3": "Tailwind v3", "css": "CSS", "native": "native styles"}
 
 
-class PlumbError(Exception):
-    """Message is already 'error: ...' then 'fix: ...' lines."""
-
-
-def utf8_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-        except (AttributeError, ValueError):
-            pass
+# Shared helpers live in the skill template: plugins/plumb/assets/skill/scripts/_plumb.py
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "assets" / "skill" / "scripts"))
+from _plumb import PlumbError, read_plumb_md, utf8_stdio  # noqa: E402
 
 
 def normalize_cwd(value: str) -> str:
@@ -214,6 +208,11 @@ def analyze(root: Path, rel: str, names: List[str], scan: Scan, ancestor_ui: boo
             return {"ui": _ui(rel, "uikit", "css", False, ["ios"], scan)}
 
     framework = None
+    if "react-native" in deps or "expo" in deps or any(k.startswith("@react-native/") for k in deps):
+        item = _ui(rel, "react-native", "native", False, ["ios", "android"], scan)
+        item["supported"] = False
+        item["note"] = "React Native themes are a later release; Plumb does not generate a theme for it in 1.0.0"
+        return {"ui": item}
     if "next" in deps or any(n.startswith("next.config.") for n in names):
         framework = "next"
     elif "@angular/core" in deps:
@@ -227,11 +226,10 @@ def analyze(root: Path, rel: str, names: List[str], scan: Scan, ancestor_ui: boo
     tailwind_dep = any(k == "tailwindcss" or k.startswith("@tailwindcss/") for k in deps)
     if framework is None and tailwind_dep:
         framework = "html"
-    if framework is None and "index.html" in nameset and not ancestor_ui and "package.json" not in nameset:
-        if scan.css.get(rel):
+    if framework is None and "index.html" in nameset and not ancestor_ui:
+        inline = "<style" in read_small(base / "index.html", 65536).lower()
+        if scan.css.get(rel) or inline or "package.json" not in nameset:
             framework = "html"
-    if framework is None and "index.html" in nameset and "package.json" in nameset and scan.css.get(rel):
-        framework = "html"
 
     if framework is not None:
         existing_css = [c for c in GLOBAL_CSS_CANDIDATES if file_has(c)]
@@ -248,7 +246,8 @@ def analyze(root: Path, rel: str, names: List[str], scan: Scan, ancestor_ui: boo
             styling = "css"
         shadcn = "components.json" in nameset
         item = _ui(rel, framework, styling, shadcn, ["web"], scan)
-        item["global_css"] = global_css(framework, base, existing_css, others, deps, names, dir_has, file_has)
+        gpath = global_css(framework, base, existing_css, others, deps, names, dir_has, file_has)
+        item["global_css"] = {"path": gpath, "exists": file_has(gpath)}
         return {"ui": item}
 
     # Backend markers
@@ -273,7 +272,7 @@ def analyze(root: Path, rel: str, names: List[str], scan: Scan, ancestor_ui: boo
 def _ui(rel: str, framework: str, styling: str, shadcn: bool, platforms: List[str], scan: Scan) -> dict:
     return {
         "path": rel, "framework": framework, "styling": styling, "shadcn": shadcn,
-        "platforms": platforms, "files": scan.ui_files.get(rel, 0),
+        "platforms": platforms, "files": scan.ui_files.get(rel, 0), "supported": True, "global_css": None,
     }
 
 
@@ -307,7 +306,12 @@ def global_css(framework, base, existing, others, deps, names, dir_has, file_has
 # --- project name ----------------------------------------------------------------------------
 
 
+TRANSLIT = {"ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "đ": "d", "ł": "l", "þ": "th", "ð": "d", "ı": "i",
+            "Ø": "O", "Æ": "AE", "Œ": "OE", "Đ": "D", "Ł": "L", "Þ": "Th", "Ð": "D"}
+
+
 def kebab(text: str) -> str:
+    text = "".join(TRANSLIT.get(c, c) for c in text)
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
@@ -331,15 +335,11 @@ def read_existing(root: Path) -> dict:
     if not path.is_file():
         return out
     out["plumb_md"] = True
-    for line in read_small(path, 1 << 20).splitlines():
-        m = re.match(r"^([A-Za-z][A-Za-z ]*?):\s*(.*?)\s*$", line)
-        if not m:
-            continue
-        key, val = m.group(1).strip().lower(), m.group(2).strip()
-        if key == "design system" and val:
-            out["skill"] = val.strip("`").strip()
-        elif key == "role" and val:
-            out["role"] = val.split()[0].lower()
+    doc = {k.lower(): v for k, v in read_plumb_md(path).items()}
+    if doc.get("design system"):
+        out["skill"] = doc["design system"]
+    if doc.get("role"):
+        out["role"] = doc["role"].split()[0].lower()
     return out
 
 
@@ -379,6 +379,7 @@ def classify(root: Path, max_depth: int = MAX_DEPTH) -> Tuple[List[dict], List[d
 
 
 def list_children(cwd: Path) -> List[dict]:
+    """Immediate child folders that are repos or look like projects (cheap: markers only, no full scan)."""
     kids: List[dict] = []
     try:
         entries = sorted(os.scandir(str(cwd)), key=lambda e: e.name.lower())
@@ -394,13 +395,41 @@ def list_children(cwd: Path) -> List[dict]:
             continue
         child = Path(e.path)
         is_repo = (child / ".git").exists()
-        ui, no_ui = classify(child, 3)
-        looks_like_project = bool(ui or no_ui) or any(
-            (child / m).exists() for m in ("package.json", "pyproject.toml", "go.mod", "build.gradle", "build.gradle.kts")
-        ) or any(x.name.endswith(".xcodeproj") for x in _safe_iter(child))
+        names = [x.name for x in _safe_iter(child)]
+        looks_like_project = any(n in MARKER_FILES or n.endswith(".xcodeproj") for n in names if n != "index.html")
         if is_repo or looks_like_project:
-            kids.append({"name": e.name, "path": e.name, "is_repo": is_repo, "has_ui": bool(ui)})
+            kids.append({"name": e.name, "path": e.name, "is_repo": is_repo, "has_ui": _quick_ui(child, names)})
     return kids
+
+
+def _top_ui(folder: Path, ns: List[str]) -> bool:
+    if any(n.endswith(".xcodeproj") for n in ns) or "index.html" in ns:
+        return True
+    if "package.json" in ns:
+        deps = dep_map(load_package_json(folder / "package.json"))
+        ui = ("next", "react", "vue", "svelte", "@sveltejs/kit", "@angular/core", "nuxt", "tailwindcss",
+              "react-native", "expo")
+        return any(k in deps for k in ui)
+    for g in ("build.gradle", "build.gradle.kts"):
+        if g in ns and "compose" in read_small(folder / g).lower():
+            return True
+    return False
+
+
+def _quick_ui(child: Path, names: List[str]) -> bool:
+    """Cheap has-UI flag for the parent listing: the top level plus two levels of the usual UI folders."""
+    if _top_ui(child, names):
+        return True
+    for sub in ("frontend", "web", "client", "app", "apps"):
+        d = child / sub
+        if d.is_dir():
+            ns = [x.name for x in _safe_iter(d)]
+            if _top_ui(d, ns):
+                return True
+            for n in ns:
+                if n not in EXCLUDE and (d / n).is_dir() and _top_ui(d / n, [y.name for y in _safe_iter(d / n)]):
+                    return True
+    return False
 
 
 def _safe_iter(path: Path) -> List[Path]:
@@ -410,6 +439,28 @@ def _safe_iter(path: Path) -> List[Path]:
         return []
 
 
+def confidence(layout: str, marker: Optional[str], ui: List[dict], no_ui: List[dict]) -> Tuple[str, List[str]]:
+    low: List[str] = []
+    medium: List[str] = []
+    if not ui and not no_ui:
+        low.append("no project markers found (no package.json, pyproject, go.mod, Xcode project, ...)")
+    for u in ui:
+        g = u.get("global_css")
+        if g and not g["exists"]:
+            low.append(u["path"] + ": no global CSS found, copy path " + g["path"] + " is a guess")
+        if not u.get("supported", True):
+            medium.append(u["path"] + ": " + u["note"])
+    if len(ui) > 1 and not marker:
+        low.append("several UI packages without monorepo markers")
+    if layout == "mixed":
+        medium.append("backend and UI live in one repo without monorepo markers")
+    if low:
+        return "low", low + medium
+    if medium:
+        return "medium", medium
+    return "high", []
+
+
 def detect(cwd) -> dict:
     cwd = Path(cwd).resolve()
     root, git_ok = find_root(cwd)
@@ -417,8 +468,9 @@ def detect(cwd) -> dict:
     if root is None:
         return {
             "root": cwd.as_posix(), "opened": ".", "layout": "parent", "monorepo": None,
-            "ui_packages": [], "no_ui": [], "children": list_children(cwd), "git": git_ok,
-            "existing": existing, "proposal": None,
+            "ui_packages": [], "no_ui": [], "children": list_children(cwd), "git": False,
+            "git_available": git_ok, "existing": existing, "proposal": None,
+            "confidence": "low", "reasons": ["not inside a repo: the folder is a parent of projects"],
         }
     root = root.resolve()
     try:
@@ -429,6 +481,8 @@ def detect(cwd) -> dict:
     ui, no_ui = classify(root)
     if marker:
         layout = "monorepo"
+    elif ui and no_ui:
+        layout = "mixed"
     elif ui:
         layout = "frontend"
     elif no_ui:
@@ -436,24 +490,28 @@ def detect(cwd) -> dict:
     else:
         layout = "single"
     name = project_name(root)
-    copies = [join(u["path"], u["global_css"]) for u in ui if "global_css" in u]
+    copies: List[str] = []
     platforms: List[str] = []
     for u in ui:
+        if u.get("global_css"):
+            u["global_css"]["path"] = join(u["path"], u["global_css"]["path"])
+            if u["supported"]:
+                copies.append(u["global_css"]["path"])
         for p in u["platforms"]:
             if p not in platforms:
                 platforms.append(p)
-    for u in ui:
-        u.pop("global_css", None)
     skill = ".claude/skills/" + name + "-design-system"
+    conf, reasons = confidence(layout, marker, ui, no_ui)
     return {
         "root": root.as_posix(), "opened": opened, "layout": layout, "monorepo": marker,
-        "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok,
+        "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok, "git_available": git_ok,
         "existing": read_existing(root),
         "proposal": {
             "project": name, "skill_dir": skill, "plumb_md": "PLUMB.md", "copies": copies,
             "platforms": platforms,
             "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
         },
+        "confidence": conf, "reasons": reasons,
     }
 
 
@@ -499,6 +557,11 @@ def human(r: dict) -> str:
     lines.append("  " + p["plumb_md"] + "   at the repo root")
     for c in p["copies"]:
         lines.append("  generated copy → " + c)
+    for u in r["ui_packages"]:
+        if not u["supported"]:
+            lines.append("  not supported yet: " + u["path"] + " (" + u["note"] + ")")
+    if r["confidence"] != "high":
+        lines.append("confidence " + r["confidence"] + ": " + "; ".join(r["reasons"]) + " (explore and ask)")
     lines.append("OK, or change something?")
     return "\n".join(lines) + "\n"
 

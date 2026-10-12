@@ -386,3 +386,82 @@ def test_static_fixture_layouts(name: str, tmp_path: Path) -> None:
             assert {k: r[key][k] for k in val} == val, key
         else:
             assert r[key] == val, key
+
+
+def test_react_native_is_unsupported(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"expo": "51", "react": "18", "react-native": "0.74"})
+    r = run(tmp_path)
+    (ui,) = r["ui_packages"]
+    assert ui["framework"] == "react-native" and ui["platforms"] == ["ios", "android"]
+    assert ui["supported"] is False and "later release" in ui["note"] and ui["global_css"] is None
+    assert r["proposal"]["copies"] == []
+    assert r["confidence"] == "medium"
+
+
+def test_guessed_vs_detected_copy_path_and_confidence(tmp_path: Path) -> None:
+    a, b = tmp_path / "a", tmp_path / "b"
+    for d in (a, b):
+        repo(d)
+        pkg(d, "package.json", {"react": "18", "vite": "5"})
+    put(a, "src/index.css", "")
+    ra, rb = run(a), run(b)
+    assert ra["ui_packages"][0]["global_css"] == {"path": "src/index.css", "exists": True}
+    assert rb["ui_packages"][0]["global_css"] == {"path": "src/index.css", "exists": False}
+    assert ra["confidence"] == "high" and ra["reasons"] == []
+    assert rb["confidence"] == "low" and any("guess" in x for x in rb["reasons"])
+
+
+def test_confidence_low_without_markers(tmp_path: Path) -> None:
+    repo(tmp_path)
+    r = run(tmp_path)
+    assert r["confidence"] == "low" and r["reasons"]
+
+
+def test_slug_transliteration(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"react": "18"}, "@x/Ünï Cødé")
+    assert run(tmp_path)["proposal"]["skill_dir"] == ".claude/skills/uni-code-design-system"
+    assert detect.kebab("Straße Æon Łódź Þor Ðin Đa ı") == "strasse-aeon-lodz-thor-din-da-i"
+
+
+def test_backend_plus_ui_without_markers_is_mixed(tmp_path: Path) -> None:
+    repo(tmp_path)
+    put(tmp_path, "requirements.txt", "django\n")
+    pkg(tmp_path, "client/package.json", {"react": "18"})
+    put(tmp_path, "client/src/index.css", "")
+    r = run(tmp_path)
+    assert r["layout"] == "mixed" and r["confidence"] == "medium"
+    assert [u["path"] for u in r["ui_packages"]] == ["client"]
+    assert r["no_ui"][0]["stack"] == "django"
+
+
+def test_parent_git_flags(tmp_path: Path) -> None:
+    r = run(tmp_path)
+    assert r["layout"] == "parent" and r["git"] is False
+    assert r["git_available"] is (shutil.which("git") is not None)
+
+
+def test_parent_listing_does_not_deep_scan(tmp_path: Path) -> None:
+    for i in range(30):
+        pkg(tmp_path, f"p{i}/package.json", {"react": "18"})
+        for j in range(30):
+            put(tmp_path, f"p{i}/src/d{j}/f.tsx", "x")
+    t = time.perf_counter()
+    r = run(tmp_path)
+    assert time.perf_counter() - t < 1.0
+    assert len(r["children"]) == 30 and all(c["has_ui"] for c in r["children"])
+
+
+def test_plain_html_with_inline_style(tmp_path: Path) -> None:
+    repo(tmp_path)
+    put(tmp_path, "index.html", "<html><style>body{margin:0}</style></html>")
+    r = run(tmp_path)
+    assert r["ui_packages"][0]["framework"] == "html"
+    assert r["ui_packages"][0]["global_css"]["exists"] is False
+
+
+def test_existing_skill_uses_shared_reader(tmp_path: Path) -> None:
+    repo(tmp_path)
+    (tmp_path / "PLUMB.md").write_bytes(b"Design system: `.claude/skills/a-design-system/`   (home)\nRole: home\n")
+    assert run(tmp_path)["existing"]["skill"] == ".claude/skills/a-design-system/"
