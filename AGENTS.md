@@ -16,12 +16,12 @@ Copilot CLI and other agent tools all read the same text. Edit this file, never 
 |---|---|
 | What Plumb is, every decision | `docs/specs/2026-10-11-plumb-design.md` |
 | How a release is built: tasks, contracts, owner amendments | `docs/plans/*-build-plan.md` (newest last) |
-| The complete usage guide | `docs/USAGE.md` (being written in Task 17) |
-| What a project gets, as a page | `docs/what-you-get.html` (being written in Task 17) |
+| The complete usage guide | `docs/USAGE.md` |
+| What a project gets, as a page | `docs/what-you-get.html` (offline; check it headless in both themes when you change it) |
 | User-facing overview | `README.md`, `plugins/plumb/README.md` |
-| Every script command and flag, "use it when…", the shared rules | `plugins/plumb/reference/` (in progress: written with the skills, Tasks 15-16; `ls` it to see what exists) |
+| Every script command and flag, "use it when…", the shared rules | `plugins/plumb/reference/` |
 | What changed per version | `plugins/plumb/CHANGELOG.md` |
-| How to test on a machine by hand | `TEST.md` (being written in Task 17) |
+| How to test on a machine by hand | `TEST.md` (both CLIs, Kiro pending its live check) |
 | The exact output of `create` | `examples/caredesk/` (added after the owner validates it, Task 19) |
 | Reference implementations (**read only, never write there**) | below |
 
@@ -55,34 +55,34 @@ Marked *in progress* = planned in the build plan, not in the tree yet; remove th
 .claude/settings.json                 repo settings for agents (no AI attribution)
 plugins/plumb/                        the installed plugin (only this folder ships)
   .claude-plugin/plugin.json          name + VERSION (source of truth for the plugin version)
-  skills/<name>/SKILL.md              the 10 commands (in progress: none built yet): init create
-                                      extract prototype tour audit ux update upgrade status
-  reference/                          shared reference all skills link (in progress, with the skills)
+  skills/<name>/SKILL.md              the 10 commands: init create extract prototype tour audit ux
+                                      update upgrade status
+  reference/                          shared reference all skills link (scripts, rules, prototypes, tours, …)
   assets/skill/                       the design-system skill template copied into projects
     SKILL.md.tmpl  design.md.tmpl     filled from the interview answers
     references/                       reference templates (web/, mobile/ios, mobile/android)
     assets/                           icons, tokens, platforms/web (tokens.css templates)
     scripts/                          _plumb.py (shared core), build-tokens.py, audit.py,
                                       build-prototype.py: copied into projects, tested here
-    templates/                        specimen, audit report, prototype shell and screens page
-                                      templates, player.js / player.css (the walkthrough player),
-                                      directions.html (in progress)
+    templates/                        specimen, audit report, prototype shell, screens page and
+                                      proposal index templates, player.js / player.css (the walkthrough player)
   scripts/                            plugin-side helpers the skills run (not copied into projects)
     detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
-    version.py  screenshot.py  kiro.py   in progress (Tasks 12b, 16)
+    version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install
   hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
-  templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet
+  templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,
+                                      directions.html (the fallback directions page)
   upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
   CHANGELOG.md  README.md
 examples/caredesk/                    golden example of `create` (regression fixture; after validation, Task 19)
 tests/                                pytest suite; fixtures/ holds audit cases and sample projects;
                                       conftest.py enforces the skip rules
-docs/                                 specs/, plans/, USAGE.md and what-you-get.html (Task 17)
+docs/                                 specs/, plans/, USAGE.md (the complete guide), what-you-get.html
 scripts/                              repo tooling: release_notes.py, check_version_bump.py
 .github/                              workflows/test.yml (CI: Windows/macOS/Linux × Python 3.9/3.13),
                                       workflows/release.yml (publishes vX.Y.Z from the CHANGELOG on
                                       merge), dependabot.yml (keeps the Actions up to date)
-TEST.md                               hands-on test guide for any machine (Task 17)
+TEST.md                               hands-on test guide for any machine
 ```
 
 ## 3. Rules that must hold in every change
@@ -142,7 +142,6 @@ TEST.md                               hands-on test guide for any machine (Task 
   directions, variants, screens, light-only. The prototype shows it.
 - **Kiro is supported too** (skills via `scripts/kiro.py`, hooks through an adapter in
   `_hooklib.py`), built from Kiro's documented formats; the live check on a real Kiro is pending.
-  Not built yet.
 - **Lean skills.** `SKILL.md` files stay short; details go in `reference/` and are loaded only
   when needed.
 - **Product text never mentions internal projects.** Plumb is generic.
@@ -188,8 +187,14 @@ claude plugin validate --strict plugins/plumb
   `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`, e.g.
   `requires POSIX: FIFO`; `tests/test_skip_reasons.py` pins the list). A manual run always runs
   everything. Keep this list and the workflow's list in step.
-- `tests/test_docs_consistency.py` (being written in Task 17) will fail if a skill/doc mentions
-  a command that doesn't exist, or a skill doesn't link the reference — keep it green.
+- `tests/test_docs_consistency.py` fails if a skill, reference or user doc (README.md, the plugin README,
+  `docs/USAGE.md`, TEST.md, `docs/what-you-get.html`) mentions a command that doesn't exist, a skill doesn't link
+  the reference, a link points nowhere, `docs/USAGE.md` lacks a section for a command, a README doesn't link
+  `docs/USAGE.md` near the top, a message the docs quote is no longer printed by the code, the what-you-get page
+  loads anything from the network, TEST.md's expected output no longer matches the code that prints it, or an
+  internal project name appears under `plugins/` or in the user docs (extra names, uncommitted:
+  `PLUMB_INTERNAL_NAMES=a,b`) — keep it green.
+  `tests/test_portability.py` covers every `.py` in `plugins/`, `scripts/` and `tests/`.
 - **Parallel work, safely.** Each task runs in its own isolated git worktree, branched from
   `feat/1.0.0`, and is reviewed before it merges. Merge one at a time, with a merge commit. After
   every merge run the full suite, Playwright included, on Python 3.13 and 3.9 before pushing.

@@ -71,8 +71,10 @@ screen and ask to continue.
 **OK?** "I'll write the directions page to `<root>/docs/design/directions.html`" (a) Write it (Recommended)
 (b) Another path. Then write 2–3 **distinct, finished-looking** directions: palette, type, components and one real
 screen of a key task, each in light and dark. When the Effective HTML skills
-(`design-artifact`, `html`, `html-prototype`) are available in this session, follow them; otherwise start from
-`ROOT/templates/directions.html` and its rules. Nothing from the network. **OK?** pick one · combine (which parts) ·
+(`design-artifact`, `html`, `html-prototype`) are available in this session, follow them; otherwise use Plumb's
+built-in quality bar: start from `ROOT/templates/directions.html` and its rules, and
+[prototypes.md](../../reference/prototypes.md) "The quality bar". Effective HTML is
+optional; never install it. Nothing from the network. **OK?** pick one · combine (which parts) ·
 change something.
 
 ## E. Generate (each checkpoint waits for the user)

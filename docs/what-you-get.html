@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Plumb: What You Get</title>
+<meta name="description" content="What a project gets from Plumb 1.0.0: the design-system skill, the prototype, tours, the audit and the hooks.">
+<style>
+/* Layout: a hanging plumb line on the left is the page's spine and its navigation; sections
+   hang off it like courses of a wall. Prose stays narrow; trees, code and the live shell use the
+   wide track. Offline by design: system font stacks only, nothing loaded from the network. */
+:root{
+  --plaster:#f5f6f3;      /* ground: cool plaster, faintly green-grey */
+  --sheet:#ffffff;        /* raised panels */
+  --graphite:#1d2327;     /* ink */
+  --pencil:#58626a;       /* muted text */
+  --batten:#d6dad4;       /* rules and borders */
+  --chalk:#2b5cb5;        /* accent: carpenter's chalk-line blue */
+  --chalk-soft:#e4ebf8;
+  --brass:#a3732a;        /* the plumb bob; used once */
+  --ok:#2c7d52; --ok-bg:#e3f2e9;
+  --warn:#8a5d00; --warn-bg:#f8eed6;
+  --bad:#b23a30; --bad-bg:#f8e4e1;
+  --code-bg:#eef0ec;
+  --display:"Avenir Next Condensed","DIN Alternate","Bahnschrift","Roboto Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:Charter,"Bitstream Charter","Iowan Old Style","Sitka Text",Cambria,Georgia,serif;
+  --mono:ui-monospace,"SF Mono",Menlo,"Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:72px;
+  --r:3px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --plaster:#12161a;--sheet:#192026;--graphite:#e4e8e5;--pencil:#9ba5ac;--batten:#2c343b;
+  --chalk:#86a9ef;--chalk-soft:#1f2c44;--brass:#d4a75c;--ok:#6fcf9b;--ok-bg:#15301f;
+  --warn:#e8b75a;--warn-bg:#33270c;--bad:#f0948b;--bad-bg:#3a1916;--code-bg:#0f1316;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --plaster:#12161a;--sheet:#192026;--graphite:#e4e8e5;--pencil:#9ba5ac;--batten:#2c343b;
+  --chalk:#86a9ef;--chalk-soft:#1f2c44;--brass:#d4a75c;--ok:#6fcf9b;--ok-bg:#15301f;
+  --warn:#e8b75a;--warn-bg:#33270c;--bad:#f0948b;--bad-bg:#3a1916;--code-bg:#0f1316;color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--plaster);color:var(--graphite);font:17px/1.6 var(--body);padding-inline:16px;padding-block:0}
+a{color:var(--chalk)}
+:focus-visible{outline:2px solid var(--chalk);outline-offset:2px}
+code,pre,kbd{font-family:var(--mono);font-size:.84em}
+h1,h2,h3{font-family:var(--display);font-weight:600;letter-spacing:.01em;line-height:1.1;text-wrap:balance;margin:0}
+h1{font-size:clamp(2.6rem,6vw,4.2rem);font-weight:700}
+h2{font-size:2.1rem}
+h3{font-size:1.35rem}
+p{margin:0}
+.eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;color:var(--pencil)}
+.muted{color:var(--pencil)}
+.prose{max-width:65ch;display:grid;gap:var(--s3)}
+p.prose{display:block}  /* a single paragraph flows inline (its code and spans stay in the sentence) */
+
+.frame{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:200px minmax(0,1fr);gap:var(--s7)}
+/* the plumb line */
+.rail{position:sticky;top:env(safe-area-inset-top,0px);height:100vh;padding-block:var(--s7)}
+.rail .line{position:absolute;left:9px;top:var(--s6);bottom:var(--s6);width:1px;background:var(--batten)}
+.rail .bob{position:absolute;left:3px;width:13px;height:18px;top:var(--s7);transition:top .35s ease}
+.rail .bob svg{display:block}
+.rail nav{position:relative;display:grid;gap:2px;padding-left:28px}
+.rail a{font-family:var(--display);font-size:1.02rem;letter-spacing:.02em;color:var(--pencil);text-decoration:none;padding:3px 0}
+.rail a[aria-current="true"]{color:var(--graphite);font-weight:600}
+.rail a:hover{color:var(--chalk)}
+.rail .tools{position:relative;padding-left:28px;margin-top:var(--s5)}
+
+main{padding-block:var(--s7) var(--s8);display:grid;gap:var(--s8);min-width:0}
+section{display:grid;gap:var(--s5);min-width:0;scroll-margin-top:var(--s5)}
+section>*{min-width:0}
+.head{display:grid;gap:var(--s2)}
+
+button{font:inherit}
+.btn{font-family:var(--display);font-size:1rem;letter-spacing:.03em;border:1px solid var(--batten);background:var(--sheet);color:var(--graphite);padding:5px 12px;border-radius:var(--r);cursor:pointer}
+.btn:hover{border-color:var(--chalk)}
+.btn[aria-pressed="true"],.btn.on{background:var(--chalk);border-color:var(--chalk);color:var(--sheet)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:4px}
+
+/* hero: a refused edit */
+.hero{display:grid;gap:var(--s5)}
+.hero .lead{font-size:1.2rem;max-width:58ch}
+.edit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--s4)}
+.pane{background:var(--sheet);border:1px solid var(--batten);border-radius:var(--r);min-width:0}
+.pane header{display:flex;justify-content:space-between;gap:var(--s2);padding:var(--s2) var(--s3);border-bottom:1px solid var(--batten);font-family:var(--mono);font-size:.74rem;color:var(--pencil)}
+.pane pre{margin:0;padding:var(--s3);overflow-x:auto;line-height:1.55}
+.term{background:var(--code-bg)}
+.del{background:var(--bad-bg);color:var(--bad)}
+.add{background:var(--ok-bg);color:var(--ok)}
+.e{color:var(--bad)} .f{color:var(--ok)} .k{color:var(--chalk)}
+
+/* flow */
+.flow{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;overflow-x:auto;padding-bottom:var(--s2)}
+.step{position:relative;padding:var(--s3) var(--s3) var(--s3) 0;border-top:2px solid var(--graphite);display:grid;gap:4px;align-content:start;min-width:140px}
+.step::before{content:"";position:absolute;top:-6px;left:0;width:10px;height:10px;background:var(--plaster);border:2px solid var(--graphite);border-radius:50%}
+.step.gate{border-top-color:var(--brass)}
+.step.gate::before{border-color:var(--brass);background:var(--brass)}
+.step b{font-family:var(--display);font-size:1.15rem;font-weight:600}
+.step code{color:var(--chalk)}
+.step p{font-size:.92rem;color:var(--pencil)}
+.legend{display:flex;flex-wrap:wrap;gap:var(--s4);font-size:.88rem;color:var(--pencil)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+
+/* layouts */
+.layouts{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--s4)}
+.lay{border-left:2px solid var(--batten);padding-left:var(--s3);display:grid;gap:var(--s1)}
+.lay b{font-family:var(--display);font-size:1.1rem}
+.lay pre{margin:var(--s1) 0 0;font-size:.78rem;line-height:1.5;color:var(--pencil);overflow-x:auto}
+.lay pre .k{font-weight:500}
+
+/* interview */
+.stages{display:grid;gap:0;border-top:1px solid var(--batten)}
+.stage{display:grid;grid-template-columns:3rem minmax(0,1fr);gap:var(--s3);padding-block:var(--s3);border-bottom:1px solid var(--batten)}
+.stage .ltr{font-family:var(--display);font-size:1.8rem;font-weight:700;color:var(--chalk);line-height:1}
+.stage summary{cursor:pointer;font-family:var(--display);font-size:1.2rem;font-weight:600;list-style:none}
+.stage summary::-webkit-details-marker{display:none}
+.stage summary::after{content:" +";color:var(--pencil)}
+.stage details[open] summary::after{content:" \2212"}
+.stage .body{display:grid;gap:var(--s2);padding-top:var(--s2);font-size:.95rem}
+.q{background:var(--sheet);border:1px solid var(--batten);border-radius:var(--r);padding:var(--s3);display:grid;gap:6px;max-width:62ch}
+.q .opt{font-family:var(--mono);font-size:.8rem}
+.q .rec{color:var(--chalk)}
+
+/* tree */
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.own{font-family:var(--mono);font-size:.7rem;font-weight:500;padding:1px 6px;border-radius:2px;border:1px solid currentColor;white-space:nowrap}
+.own.P{color:var(--chalk)} .own.G{color:var(--brass)} .own.Y{color:var(--ok)} .own.A{color:var(--bad)}
+.tree{background:var(--sheet);border:1px solid var(--batten);border-radius:var(--r);overflow-x:auto}
+.tree ol{list-style:none;margin:0;padding:var(--s3) var(--s4);font-family:var(--mono);font-size:.82rem;line-height:1.75;min-width:720px}
+.tree li{display:grid;grid-template-columns:minmax(260px,auto) 3.2rem minmax(0,1fr);gap:var(--s3);align-items:baseline;transition:opacity .2s}
+.tree li .c{font-family:var(--body);font-size:.9rem;color:var(--pencil)}
+.tree li.dim{opacity:.25}
+.tree li.root{grid-template-columns:1fr}
+.tree li.root span{font-weight:500}
+.d1{padding-left:2ch}.d2{padding-left:4ch}.d3{padding-left:6ch}
+
+/* files */
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--batten)}
+.tab{font-family:var(--mono);font-size:.78rem;border:1px solid transparent;border-bottom:none;background:none;color:var(--pencil);padding:6px 10px;cursor:pointer;border-radius:var(--r) var(--r) 0 0}
+.tab[aria-selected="true"]{background:var(--sheet);border-color:var(--batten);color:var(--graphite);margin-bottom:-1px}
+.file{background:var(--sheet);border:1px solid var(--batten);border-top:none;border-radius:0 0 var(--r) var(--r)}
+.file .note{padding:var(--s3) var(--s4) 0;font-size:.92rem;color:var(--pencil)}
+.file pre{margin:0;padding:var(--s4);overflow-x:auto;font-size:.8rem;line-height:1.6}
+.ph{color:var(--brass)}
+
+/* the shell (schematic) */
+.shellwrap{display:grid;gap:var(--s3)}
+.bar{display:flex;flex-wrap:wrap;gap:var(--s3);align-items:center;justify-content:space-between}
+.illus{font-family:var(--mono);font-size:.72rem;color:var(--pencil);border:1px dashed var(--batten);padding:2px 8px;border-radius:2px}
+.shell{--u-bg:#fbfbfa;--u-fg:#2a2f33;--u-mute:#cfd3cf;--u-line:#e3e6e2;--u-acc:var(--chalk);
+  background:var(--u-bg);color:var(--u-fg);border:1px solid var(--batten);border-radius:var(--r);display:grid;grid-template-columns:150px minmax(0,1fr) 220px;min-height:400px;position:relative;overflow:hidden;transition:max-width .3s}
+.shell.dark{--u-bg:#1b2126;--u-fg:#dde2de;--u-mute:#3a434a;--u-line:#2c343a}
+.shell.phone{grid-template-columns:minmax(0,1fr);max-width:380px;margin-inline:auto}
+.shell.phone .snav,.shell.phone .side{display:none}
+.snav{border-right:1px solid var(--u-line);padding:var(--s3);display:grid;gap:6px;align-content:start}
+.snav button{all:unset;cursor:pointer;font-family:var(--display);font-size:1rem;padding:4px 8px;border-radius:2px}
+.snav button[aria-current="true"]{background:var(--u-line);font-weight:600}
+.snav button:focus-visible{outline:2px solid var(--u-acc)}
+.scr{padding:var(--s4);display:grid;gap:var(--s3);align-content:start;min-width:0}
+.scr h4{margin:0;font-family:var(--display);font-size:1.3rem}
+.blk{background:var(--u-mute);border-radius:2px;height:14px}
+.blk.w60{width:60%}.blk.w40{width:40%}.blk.w80{width:80%}
+.row{display:flex;gap:var(--s3);align-items:center;padding:var(--s2) 0;border-bottom:1px solid var(--u-line)}
+.row .dot{width:28px;height:28px;border-radius:50%;background:var(--u-mute);flex:none}
+.row .lines{flex:1;display:grid;gap:6px}
+.cta{justify-self:start;background:var(--u-acc);color:#fff;border:none;font-family:var(--display);font-size:1rem;padding:6px 14px;border-radius:2px;cursor:pointer}
+.skel .blk{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+.empty,.err{border:1px dashed var(--u-mute);padding:var(--s5);display:grid;gap:var(--s2);justify-items:start;border-radius:2px}
+.err{border-color:var(--bad)}
+.side{border-left:1px solid var(--u-line);padding:var(--s3);display:grid;gap:var(--s3);align-content:start;font-size:.86rem}
+.side h5{margin:0;font-family:var(--mono);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+.side .dec{border-left:2px solid var(--brass);padding-left:var(--s2);display:grid;gap:2px}
+.side .dec code{font-size:.72rem}
+.spot{outline:3px solid var(--brass);outline-offset:3px;border-radius:2px;transition:outline-color .2s}
+.coach{position:absolute;left:50%;bottom:var(--s3);transform:translateX(-50%);width:min(440px,calc(100% - 24px));background:var(--graphite);color:var(--plaster);border-radius:var(--r);padding:var(--s3);display:grid;gap:var(--s2);font-size:.92rem;box-shadow:0 6px 24px rgb(0 0 0 / .25)}
+.coach b{font-family:var(--display);font-size:1.1rem}
+.cursor{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:var(--brass);border:2px solid #fff;box-shadow:0 2px 8px rgb(0 0 0 / .35);pointer-events:none;z-index:3}
+.cursor.tap{animation:tap .35s ease-out}
+@keyframes tap{0%{box-shadow:0 0 0 0 rgb(163 115 42 / .6)}100%{box-shadow:0 0 0 18px rgb(163 115 42 / 0)}}
+.badge{position:absolute;top:8px;right:8px;z-index:3;font-family:var(--mono);font-size:.72rem;background:var(--graphite);color:var(--plaster);padding:3px 8px;border-radius:2px}
+.sub{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:3;max-width:calc(100% - 32px);background:rgb(0 0 0 / .78);color:#fff;font-size:1rem;padding:6px 12px;border-radius:2px;text-align:center}
+.btn:disabled{opacity:.45;cursor:default}
+.tlabel{position:absolute;z-index:3;font-family:var(--mono);font-size:.72rem;background:var(--brass);color:#fff;padding:2px 6px;border-radius:2px;pointer-events:none}
+.tcallout{position:absolute;z-index:3;font-family:var(--display);font-size:1rem;background:var(--graphite);color:var(--plaster);padding:4px 10px;border-radius:var(--r);pointer-events:none}
+.cmdt td:first-child{white-space:nowrap;border-left:none!important}
+.player{display:grid;gap:var(--s2);background:var(--sheet);border:1px solid var(--batten);border-radius:var(--r);padding:var(--s3)}
+.prog{position:relative;height:6px;background:var(--batten);border-radius:3px}
+.prog i{position:absolute;left:0;top:0;bottom:0;background:var(--chalk);border-radius:3px;width:0;transition:width .2s linear}
+.marks{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px}
+.marks button{all:unset;cursor:pointer;font-family:var(--mono);font-size:.7rem;color:var(--pencil);padding:2px 4px;border-radius:2px}
+.marks button.on{color:var(--chalk);font-weight:500}
+.marks button:focus-visible{outline:2px solid var(--chalk)}
+.ctl{display:flex;flex-wrap:wrap;gap:var(--s2);align-items:center;justify-content:space-between}
+.cap{font-size:.95rem;min-height:1.6em}
+
+/* catalogue */
+.cat{overflow-x:auto}
+.cat table{border-collapse:collapse;min-width:640px;width:100%}
+.cat th,.cat td{border:1px solid var(--batten);padding:var(--s2);vertical-align:top;text-align:left}
+.cat th{font-family:var(--display);font-weight:600;font-size:1rem;background:var(--sheet)}
+.mini{height:64px;background:var(--sheet);display:grid;gap:5px;align-content:start;padding:8px;border-radius:2px}
+.mini .blk{height:8px}
+.mini.ld .blk{opacity:.5}
+.mini.em{border:1px dashed var(--batten);place-content:center;font-family:var(--mono);font-size:.7rem;color:var(--pencil)}
+.mini.er{border:1px dashed var(--bad);place-content:center;font-family:var(--mono);font-size:.7rem;color:var(--bad)}
+
+/* audit */
+.sum{display:flex;flex-wrap:wrap;gap:var(--s5);align-items:baseline}
+.sum div{display:grid}
+.sum b{font-family:var(--display);font-size:2.4rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.sum .e b{color:var(--bad)} .sum .w b{color:var(--warn)}
+.issues{overflow-x:auto}
+.issues table{border-collapse:collapse;width:100%;min-width:760px;font-size:.88rem}
+.issues th{font-family:var(--mono);font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--pencil);text-align:left;padding:var(--s2);border-bottom:1px solid var(--graphite)}
+.issues td{padding:var(--s2);border-bottom:1px solid var(--batten);vertical-align:top}
+.issues td:first-child{border-left:4px solid var(--warn)}
+.issues tr.error td:first-child{border-left-color:var(--bad)}
+.sev{font-family:var(--mono);font-size:.72rem;text-transform:uppercase}
+.error .sev{color:var(--bad)} .warn .sev{color:var(--warn)}
+
+/* timeline */
+.tl{display:grid;gap:0;border-left:1px solid var(--graphite);margin-left:6px}
+.ev{position:relative;padding:0 0 var(--s4) var(--s5);display:grid;gap:6px}
+.ev::before{content:"";position:absolute;left:-6px;top:6px;width:11px;height:11px;border-radius:50%;background:var(--plaster);border:2px solid var(--graphite)}
+.ev.block::before{border-color:var(--bad);background:var(--bad)}
+.ev.pass::before{border-color:var(--ok);background:var(--ok)}
+.ev b{font-family:var(--display);font-size:1.1rem}
+.ev pre{margin:0;background:var(--code-bg);padding:var(--s2) var(--s3);border-radius:var(--r);overflow-x:auto;font-size:.78rem;max-width:100%}
+
+/* upgrade */
+.up{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--s3);counter-reset:u}
+.up div{border-top:2px solid var(--chalk);padding-top:var(--s2);display:grid;gap:4px;font-size:.92rem}
+.up div::before{counter-increment:u;content:counter(u);font-family:var(--display);font-weight:700;font-size:1.4rem;color:var(--chalk)}
+.up .ask{border-top-color:var(--brass)}
+.up .ask::before{color:var(--brass)}
+
+footer{border-top:1px solid var(--batten);padding-top:var(--s4);font-size:.9rem;color:var(--pencil);display:grid;gap:var(--s2)}
+
+@media (max-width:860px){
+  .frame{grid-template-columns:minmax(0,1fr);gap:0}
+  .rail{position:sticky;height:auto;padding-block:var(--s2);background:var(--plaster);z-index:5;border-bottom:1px solid var(--batten)}
+  .rail .line,.rail .bob{display:none}
+  .rail{display:flex;align-items:center;gap:var(--s2)}
+  .rail nav{display:flex;gap:var(--s3);overflow-x:auto;padding-left:0;white-space:nowrap;flex:1;min-width:0}
+  .rail .tools{margin-top:0;padding-left:0;flex:none}  /* the theme button stays reachable on phones */
+  .rail .tools .btn{padding:3px 8px;font-size:.9rem;white-space:nowrap}
+  .edit{grid-template-columns:minmax(0,1fr)}
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .shell .snav{grid-auto-flow:column;border-right:none;border-bottom:1px solid var(--u-line);overflow-x:auto}
+  .shell .side{border-left:none;border-top:1px solid var(--u-line)}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <aside class="rail" aria-label="Sections">
+    <span class="line" aria-hidden="true"></span>
+    <span class="bob" aria-hidden="true"><svg viewBox="0 0 13 18" width="13" height="18"><line x1="6.5" y1="0" x2="6.5" y2="5" stroke="var(--brass)" stroke-width="1"/><path d="M1 5 H12 L6.5 18 Z" fill="var(--brass)"/></svg></span>
+    <nav id="toc">
+      <a href="#edit">Held true</a>
+      <a href="#flow">The flow</a>
+      <a href="#commands">Commands</a>
+      <a href="#where">Where it lives</a>
+      <a href="#create">The interview</a>
+      <a href="#tree">The skill</a>
+      <a href="#files">Inside the files</a>
+      <a href="#prototype">The prototype</a>
+      <a href="#tours">Tours</a>
+      <a href="#screens">Every state</a>
+      <a href="#audit">The audit</a>
+      <a href="#build">While building</a>
+      <a href="#upgrade">Upgrades</a>
+      <a href="#needs">What it needs</a>
+    </nav>
+    <div class="tools"><button class="btn" id="themeBtn" type="button">Dark theme</button></div>
+  </aside>
+
+  <main>
+    <section class="hero" id="edit">
+      <div class="head">
+        <span class="eyebrow">Plumb 1.0.0 · Claude Code · GitHub Copilot CLI</span>
+        <h1>What a project gets from Plumb</h1>
+      </div>
+      <p class="lead">A plumb line keeps a wall true while it goes up. Plumb does that for a product's design: one design system the agent must build with, a prototype of every screen that you approve first, and checks that stop drift while Claude or Copilot builds. You stay in charge: one question at a time, nothing written without your OK, nothing installed or downloaded.</p>
+      <div class="edit">
+        <div class="pane">
+          <header><span>components/cards/summary-card.tsx</span><span>the edit the agent tried</span></header>
+<pre><code>  &lt;div className="<span class="del">bg-[#3b6fd4] text-[15px] rounded-[18px]</span> p-4 w-[320px]"&gt;</code></pre>
+        </div>
+        <div class="pane term">
+          <header><span>Plumb edit check</span><span>refused before it landed</span></header>
+<pre><code><span class="e">Plumb edit check: this edit adds 3 design-system errors</span>
+error: line 2: raw colour #3b6fd4
+<span class="f">fix: bg-primary (color.primary = #2b5cb5)</span>
+error: line 2: arbitrary design value text-[15px]
+<span class="f">fix: text-body (typography.body = 16px); if the design
+     needs 15px, add a token with /plumb:update</span>
+error: line 2: arbitrary design value rounded-[18px]
+<span class="f">fix: rounded-lg (radius.lg = 12px)</span></code></pre>
+        </div>
+        <div class="pane" style="grid-column:1/-1">
+          <header><span>components/cards/summary-card.tsx</span><span>the agent's second try: passes silently</span></header>
+<pre><code>  &lt;div className="<span class="add">bg-primary text-body rounded-lg</span> p-4 w-[320px]"&gt;    <span class="muted">// w-[320px] is layout geometry: allowed</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="flow">
+      <div class="head"><span class="eyebrow">The flow</span><h2>From an idea to a built screen</h2></div>
+      <p class="prose">Every step is a command you run, in Claude Code or Copilot CLI. The brass steps wait for you: nothing is built until you have picked and approved it. UI work is always prototype first: the screen is approved, then built to match.</p>
+      <div class="flow" role="list">
+        <div class="step" role="listitem"><b>Set up</b><code>/plumb:init</code><p>Finds the project, asks new or existing.</p></div>
+        <div class="step gate" role="listitem"><b>Design</b><code>create · extract</code><p>Interview, directions, the design system. You choose.</p></div>
+        <div class="step gate" role="listitem"><b>Prototype</b><code>/plumb:prototype</code><p>2–3 variants of a screen. You approve one.</p></div>
+        <div class="step" role="listitem"><b>Build</b><p>The agent builds to the approved screen. Hooks hold every edit true.</p></div>
+        <div class="step" role="listitem"><b>Check</b><code>audit · ux</code><p>Consistency, UX and prototype fidelity reports.</p></div>
+        <div class="step" role="listitem"><b>Keep true</b><code>update · upgrade</code><p>Change the design; take new Plumb versions.</p></div>
+      </div>
+      <div class="legend"><span><i style="background:var(--brass)"></i>waits for your choice</span><span><i style="border:2px solid var(--graphite)"></i>runs and reports</span></div>
+    </section>
+
+
+    <section id="commands">
+      <div class="head"><span class="eyebrow">Commands</span><h2>Ten commands, one job each</h2></div>
+      <p class="prose">The same commands work in Claude Code and GitHub Copilot CLI (in Kiro, a preview pending its live check, they are <code>/plumb-init</code>, <code>/plumb-create</code>, …). The complete guide, with an example session for each, is <code>docs/USAGE.md</code>.</p>
+      <div class="issues"><table class="cmdt">
+        <thead><tr><th>Command</th><th>Use it when</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>/plumb:init</code></td><td>First time in a project</td><td>Finds the right place (monorepo, separate frontend, parent folder, linked repos), shows what it found and waits for your OK, asks new or existing, and runs create or extract. Adds the rules to AGENTS.md / CLAUDE.md.</td></tr>
+          <tr><td><code>/plumb:create</code></td><td>A new project</td><td>Asks about the product, then each design decision. Shows 2–3 directions, writes the design system, then prototypes the key screens.</td></tr>
+          <tr><td><code>/plumb:extract</code></td><td>A project with UI already</td><td>Lists every colour, size and component in use, merges near-duplicates, builds the same design system and a prototype of every existing screen.</td></tr>
+          <tr><td><code>/plumb:prototype</code></td><td>A new screen, tab, flow or interaction</td><td>2–3 variants, each clickable and with every state. You approve one; it joins the main prototype with a default walkthrough. Building comes after.</td></tr>
+          <tr><td><code>/plumb:tour</code></td><td>A demo, a training, an onboarding</td><td>Writes a custom walkthrough: captions, callouts, labels, pointing styles, chapters, “your turn” steps. Also a standalone HTML file to share.</td></tr>
+          <tr><td><code>/plumb:audit</code></td><td>Any time</td><td>Checks consistency, contrast, drift and that the built UI matches its prototype, then an agent review. HTML report; offers Slate tickets. <code>fix</code> repairs with your OK; <code>improve</code> makes the screens and the system better.</td></tr>
+          <tr><td><code>/plumb:ux</code></td><td>After building a screen</td><td>Reviews the experience: states, forms, keyboard path, wording, visual polish, side by side with the prototype.</td></tr>
+          <tr><td><code>/plumb:update</code></td><td>The design changes</td><td>Changes tokens or components, adds a platform, regenerates everything, records the decision.</td></tr>
+          <tr><td><code>/plumb:upgrade</code></td><td>Plumb has a new version</td><td>Shows what's new, updates the copied scripts, migrates without deleting your values, asks before each step.</td></tr>
+          <tr><td><code>/plumb:status</code></td><td>You want a health check</td><td>Read-only: version, platforms, placement, stale files, audit counts, screens to build and to approve, checks on or off, the next step.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="where">
+      <div class="head"><span class="eyebrow">Init</span><h2>Where it lives</h2></div>
+      <p class="prose">Init never assumes the folder it was opened in is the project. It detects the layout, shows what it found and what it will create, and waits for your OK.</p>
+      <div class="layouts">
+        <div class="lay"><b>One repo with UI</b><span class="muted">Skill and PLUMB.md at the root.</span>
+<pre>repo/
+  <span class="k">PLUMB.md</span>
+  .claude/skills/<span class="k">&lt;project&gt;-design-system/</span></pre></div>
+        <div class="lay"><b>Monorepo</b><span class="muted">At the root; UI packages listed.</span>
+<pre>repo/
+  <span class="k">PLUMB.md</span>   UI: apps/web
+  .claude/skills/<span class="k">…-design-system/</span>
+  apps/web  apps/api</pre></div>
+        <div class="lay"><b>Separate frontend</b><span class="muted">In the frontend repo. The backend repo is asked about, never assumed.</span>
+<pre>web-repo/   <span class="k">PLUMB.md</span> + skill
+api-repo/   (nothing)</pre></div>
+        <div class="lay"><b>Several UI repos</b><span class="muted">One home owns the tokens; the others point to it.</span>
+<pre>web/      <span class="k">Role: home</span>
+mobile/   <span class="k">Role: linked</span>
+          Design system: ../web/…</pre></div>
+        <div class="lay"><b>Design only</b><span class="muted">No app yet, a backend repo or React Native: the whole system and an HTML prototype, nothing written into an app.</span>
+<pre>repo/
+  <span class="k">PLUMB.md</span>   UI: none yet
+  .claude/skills/<span class="k">…-design-system/</span></pre></div>
+      </div>
+      <p class="prose muted">Opened in a parent folder? Init lists the projects under it and writes nothing there. In a subfolder? It uses the repository root. Wrong place later? <code>scaffold.py --relocate</code> moves the skill and every reference in one step.</p>
+    </section>
+
+    <section id="create">
+      <div class="head"><span class="eyebrow">/plumb:create</span><h2>The interview</h2></div>
+      <p class="prose">One question at a time, each with options and a recommendation that follows from what you said about the product. Existing projects run <code>/plumb:extract</code> instead: the values come from the code, and the interview only asks what the code can't answer.</p>
+      <div class="stages">
+        <div class="stage"><span class="ltr">A</span><details open><summary>The product first</summary><div class="body">
+          <p>What you are building, who it's for, where and how often it's used, the key tasks, the feel you want, and any brand you already have.</p>
+          <div class="q"><span>Who will use this most?</span><span class="opt rec">● People who keep it open all day (Recommended from your brief)</span><span class="opt">○ Occasional visitors on their phones</span><span class="opt">○ Both, equally</span></div>
+        </div></details></div>
+        <div class="stage"><span class="ltr">B</span><details><summary>Platforms and stack</summary><div class="body"><p>Web, iOS, Android. The framework and styling (Tailwind v4, v3, plain CSS) are detected, then confirmed.</p></div></details></div>
+        <div class="stage"><span class="ltr">C</span><details><summary>Design decisions</summary><div class="body"><p>Personality, density, accent, neutrals, semantic colours, label colours, type, spacing, radius, elevation, motion, icons, dark mode, accessibility target, vocabulary and voice, and UX patterns: navigation, page anatomy, forms, states, feedback, onboarding.</p></div></details></div>
+        <div class="stage"><span class="ltr">D</span><details><summary>Directions</summary><div class="body"><p>Two or three distinct, finished-looking directions on one page, each with a real screen of your product in light and dark. You pick one or combine them.</p></div></details></div>
+        <div class="stage"><span class="ltr">E</span><details><summary>Generate</summary><div class="body"><p>Tokens, then every theme, then contrast computed and fixed with your OK, then the skill files, then components written in your framework, then the audit must pass, then the specimen page.</p></div></details></div>
+        <div class="stage"><span class="ltr">F</span><details><summary>Prototype the key screens</summary><div class="body"><p>The first main prototype, from the key tasks in A, with walkthroughs if you want them.</p></div></details></div>
+        <div class="stage"><span class="ltr">G</span><details><summary>Record every decision</summary><div class="body"><p>Each choice goes in <code>docs/design/decisions.md</code>: the options, the one chosen, why, and who decided.</p></div></details></div>
+      </div>
+    </section>
+
+    <section id="tree">
+      <div class="head"><span class="eyebrow">The generated skill</span><h2>What it writes, and who owns each file</h2></div>
+      <p class="prose">Ownership decides who may change a file and what an upgrade touches. Pick an owner to see its files.</p>
+      <div class="chips" role="group" aria-label="Show files owned by">
+        <button class="btn on" type="button" data-own="all" aria-pressed="true">All</button>
+        <button class="btn" type="button" data-own="Y" aria-pressed="false"><span class="own Y">Y</span> Yours</button>
+        <button class="btn" type="button" data-own="G" aria-pressed="false"><span class="own G">G</span> Generated</button>
+        <button class="btn" type="button" data-own="P" aria-pressed="false"><span class="own P">P</span> Plugin</button>
+        <button class="btn" type="button" data-own="A" aria-pressed="false"><span class="own A">A</span> Agent-written</button>
+      </div>
+      <div class="tree"><ol id="treeList">
+        <li class="root"><span>.claude/skills/&lt;project&gt;-design-system/</span></li>
+        <li data-o="Y" class="d1"><span>SKILL.md</span><span class="own Y">Y</span><span class="c">When to use it, the files, the workflow (prototype first), hard rules, done checklist.</span></li>
+        <li data-o="Y" class="d1"><span>design.md</span><span class="own Y">Y</span><span class="c">The look in words. Wins every disagreement. Revision notes.</span></li>
+        <li data-o="Y" class="d1"><span>assets/tokens/&lt;project&gt;.tokens.json</span><span class="own Y">Y</span><span class="c">The one source of every value (W3C design tokens), light and dark.</span></li>
+        <li data-o="Y" class="d1"><span>assets/icons/icon-map.json</span><span class="own Y">Y</span><span class="c">Concept to lucide, SF Symbol and Material Symbol.</span></li>
+        <li data-o="P" class="d1"><span>assets/platforms/README.md</span><span class="own P">P</span><span class="c">What is generated and how to regenerate it.</span></li>
+        <li data-o="Y" class="d2"><span>web/tokens.css.template</span><span class="own Y">Y</span><span class="c">CSS structure for your styling mode.</span></li>
+        <li data-o="G" class="d2"><span>web/tokens.css</span><span class="own G">G</span><span class="c">Tailwind v4 theme or plain CSS variables. An exact copy goes to your app's CSS path.</span></li>
+        <li data-o="G" class="d2"><span>web/tailwind.tokens.js</span><span class="own G">G</span><span class="c">Tailwind v3 only: the theme config next to the CSS variables.</span></li>
+        <li data-o="G" class="d2"><span>mobile/ios/&lt;Project&gt;Theme.swift</span><span class="own G">G</span><span class="c">SwiftUI colours, type, radii, spacing, motion. If iOS was chosen.</span></li>
+        <li data-o="G" class="d2"><span>mobile/android/&lt;Project&gt;Theme.kt</span><span class="own G">G</span><span class="c">Compose Material 3 theme. If Android was chosen.</span></li>
+        <li data-o="A" class="d2"><span>*/starter/</span><span class="own A">A</span><span class="c">Starter components in your framework, only while no app exists yet.</span></li>
+        <li data-o="Y" class="d1"><span>references/components.md</span><span class="own Y">Y</span><span class="c">Every component: anatomy, sizes, states, tokens, accessibility. Framework-neutral.</span></li>
+        <li data-o="Y" class="d1"><span>references/ux.md</span><span class="own Y">Y</span><span class="c">Users, key tasks, navigation, page anatomy, forms, every state, feedback, voice.</span></li>
+        <li data-o="Y" class="d1"><span>references/inventory.md</span><span class="own Y">Y</span><span class="c">Which component exists where, and what is still to build.</span></li>
+        <li data-o="Y" class="d1"><span>references/dark-mode.md</span><span class="own Y">Y</span><span class="c">The dark scheme, plus a generated table of computed contrast for every colour pair.</span></li>
+        <li data-o="Y" class="d1"><span>references/accessibility.md · motion.md · vocabulary.md</span><span class="own Y">Y</span><span class="c">WCAG 2.2 AA checklist, motion rules, the words.</span></li>
+        <li data-o="Y" class="d1"><span>references/fidelity.md</span><span class="own Y">Y</span><span class="c">Only when a prototype or brand guide existed before Plumb.</span></li>
+        <li data-o="Y" class="d1"><span>references/web/ · references/mobile/</span><span class="own Y">Y</span><span class="c">Only what differs per platform.</span></li>
+        <li data-o="P" class="d1"><span>scripts/build-tokens.py</span><span class="own P">P</span><span class="c">Writes every theme and the contrast evidence. --check fails when one is stale.</span></li>
+        <li data-o="P" class="d1"><span>scripts/audit.py</span><span class="own P">P</span><span class="c">Every rule. Run by make design-audit, CI and the skills. The hooks use the plugin's own copy, never this one.</span></li>
+        <li data-o="P" class="d1"><span>scripts/build-prototype.py</span><span class="own P">P</span><span class="c">Screen files to prototype.html and screens.html. The only writer of screens.json.</span></li>
+        <li data-o="P" class="d1"><span>scripts/_plumb.py · templates/</span><span class="own P">P</span><span class="c">Shared code; the specimen, report, prototype shell and walkthrough player templates.</span></li>
+        <li class="root"><span>docs/design/</span></li>
+        <li data-o="Y" class="d1"><span>decisions.md</span><span class="own Y">Y</span><span class="c">Every direction, variant and screen chosen, by whom, and why.</span></li>
+        <li data-o="G" class="d1"><span>prototype.html</span><span class="own G">G</span><span class="c">The whole product, clickable, with walkthroughs.</span></li>
+        <li data-o="G" class="d1"><span>screens.html</span><span class="own G">G</span><span class="c">Every screen in every state, light and dark side by side, and every control state.</span></li>
+        <li data-o="G" class="d1"><span>specimen.html</span><span class="own G">G</span><span class="c">Every token and component, light and dark.</span></li>
+        <li data-o="Y" class="d1"><span>prototype/screens/&lt;id&gt;.html</span><span class="own Y">Y</span><span class="c">One source file per screen: its states and interactions.</span></li>
+        <li data-o="Y" class="d1"><span>prototype/tours/&lt;id&gt;.json</span><span class="own Y">Y</span><span class="c">Walkthrough scripts: guide mode and play mode.</span></li>
+        <li data-o="G" class="d1"><span>tours/&lt;id&gt;.html</span><span class="own G">G</span><span class="c">One shareable page per tour: the whole prototype plus that tour, offline.</span></li>
+        <li data-o="G" class="d1"><span>prototype/screens.json</span><span class="own G">G</span><span class="c">Screen to route and source files, approvals, sync status.</span></li>
+        <li data-o="Y" class="d1"><span>prototype/proposals/&lt;name&gt;/</span><span class="own Y">Y</span><span class="c">The variants: their screen files are yours, their pages generated. Kept as the record.</span></li>
+        <li class="d1"><span>directions.html · extract.html · audit-*.html</span><span></span><span class="c">The create directions or extract before/after, and the reports.</span></li>
+        <li class="root"><span>PLUMB.md</span></li>
+      </ol></div>
+    </section>
+
+    <section id="files">
+      <div class="head"><span class="eyebrow">Templates</span><h2>Inside the files</h2></div>
+      <p class="prose">These are the templates Plumb fills in. <span class="ph">Brass</span> marks what comes from your answers.</p>
+      <div>
+        <div class="tabs" role="tablist" aria-label="Files">
+          <button class="tab" role="tab" aria-selected="true" aria-controls="f-skill" id="t-skill" type="button">SKILL.md</button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="f-tokens" id="t-tokens" type="button" tabindex="-1">tokens.json</button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="f-plumb" id="t-plumb" type="button" tabindex="-1">PLUMB.md</button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="f-dec" id="t-dec" type="button" tabindex="-1">decisions.md</button>
+          <button class="tab" role="tab" aria-selected="false" aria-controls="f-tour" id="t-tour" type="button" tabindex="-1">tours/&lt;flow&gt;.json</button>
+        </div>
+        <div class="file" role="tabpanel" id="f-skill" aria-labelledby="t-skill">
+          <p class="note">Kept short. Details live in references and are read only when needed.</p>
+<pre><code>---
+name: <span class="ph">&lt;project&gt;</span>-design-system
+description: "<span class="ph">&lt;Project&gt;</span>'s design system (<span class="ph">web, ios</span>): one token source generating
+  every platform's theme, plus component specs, UX rules and a design audit. Use for ANY
+  UI or design change or question, however small: screens, components, colours, type,
+  spacing, motion, light and dark mode, accessibility, icons, copy and empty states.
+  Not for backend-only work or non-UI docs."
+---
+# <span class="ph">&lt;Project&gt;</span> design system
+
+<span class="ph">&lt;one paragraph: what the product is, who uses it, the feel&gt;</span>
+
+## Workflow
+1. Prototype first. Update or create the screen with /plumb:prototype, show the
+   user, get their approval, then build it to match.
+2. Inventory before building (references/inventory.md). Reuse or add a named variant.
+3. Spec first (references/components.md), then only the platform file.
+4. Name every visual decision with a token. A missing value goes into the tokens file.
+5. Build every state from the prototype and references/ux.md, light and dark.
+6. Check: the accessibility checklist, make tokens-check, make design-audit.
+7. Report what you reused, what you created and why.
+
+## Hard rules
+- One token source. Generated files are never edited by hand.
+- Closed scales. No raw colours or arbitrary sizes; layout geometry is the exception.
+- <span class="ph">&lt;rules from your decisions: type scale, motion, focus, status words…&gt;</span></code></pre>
+        </div>
+        <div class="file" role="tabpanel" id="f-tokens" aria-labelledby="t-tokens" hidden>
+          <p class="note">W3C design tokens. Dark values sit next to light ones; Plumb's settings sit at the root.</p>
+<pre><code>{
+  "$extensions": { "plumb": {
+    "schema": 1,
+    "project": "<span class="ph">&lt;project&gt;</span>",
+    "platforms": [<span class="ph">"web", "ios"</span>],
+    "web": { "styling": "<span class="ph">tailwind-v4</span>", "copies": ["<span class="ph">app/globals.css</span>"] }
+  } },
+  "color": {
+    "$type": "color",
+    "primary": {
+      "$value": "<span class="ph">#……</span>", "$description": "Accent: focus ring, active, primary actions",
+      "$extensions": { "plumb": { "dark": "<span class="ph">#……</span>" } }
+    },
+    "on-surface": { "$value": "<span class="ph">#……</span>", "$description": "Ink",
+      "$extensions": { "plumb": { "dark": "<span class="ph">#……</span>" } } }
+  },
+  "typography": { "body-md": { "$type": "typography", "$value": { … } } },
+  "radius": { "md": { "$type": "dimension", "$value": "<span class="ph">6px</span>" } },
+  "motion": { "duration": { "fast": { "$type": "duration", "$value": "<span class="ph">150ms</span>" } } }
+}</code></pre>
+        </div>
+        <div class="file" role="tabpanel" id="f-plumb" aria-labelledby="t-plumb" hidden>
+          <p class="note">At the project root. The hooks read its <code>Key: value</code> lines; upgrade reads its first line.</p>
+<pre><code>&lt;!-- plumb v1.0.0 · written by /plumb:init, safe to edit values --&gt;
+# Plumb: the design system for <span class="ph">&lt;Project&gt;</span>
+
+Design system: `.claude/skills/<span class="ph">&lt;project&gt;</span>-design-system/`
+Role: home
+Platforms: <span class="ph">web</span>
+UI packages: <span class="ph">. (Next.js · Tailwind v4 · shadcn)</span>
+Python: `<span class="ph">python3</span>`
+No downloads: nothing is installed or downloaded; if something is missing,
+  ask the user and wait for their decision.
+
+## Checks
+Edit check: on
+End-of-turn check: on
+Themes: light-and-dark
+UI files: <span class="ph">app/**, components/** · *.tsx *.css</span>
+Allowed raw values: <span class="ph">components/ui/**</span>
+
+## Commands
+tokens `python3 …/scripts/build-tokens.py` (make tokens)
+check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
+
+## Prototype
+Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
+Prototype sync: on
+
+## Plumb updates
+- <span class="ph">&lt;date&gt;</span> created with Plumb 1.0.0 (<span class="ph">web</span>; direction "<span class="ph">&lt;name&gt;</span>")</code></pre>
+        </div>
+        <div class="file" role="tabpanel" id="f-dec" aria-labelledby="t-dec" hidden>
+          <p class="note">Append-only. The ids never collide, so several teams can add decisions on separate branches. The prototype shows each screen's decisions next to it.</p>
+<pre><code>## DS-<span class="ph">20261012</span>-<span class="ph">&lt;slug&gt;</span> · <span class="ph">&lt;what was decided&gt;</span>
+- Date: <span class="ph">&lt;date&gt;</span>
+- Decided by: <span class="ph">&lt;git user.name&gt;</span>
+- Options: <span class="ph">A …, B …, C …</span> ([variants](prototype/proposals/<span class="ph">&lt;name&gt;</span>/index.html))
+- Chosen: <span class="ph">B</span>
+- Why: <span class="ph">&lt;the reason, in the words used when choosing&gt;</span>
+- Screens: <span class="ph">&lt;ids, or "all"&gt;</span>
+- Ticket: <span class="ph">&lt;Slate ticket, if any&gt;</span></code></pre>
+        </div>
+        <div class="file" role="tabpanel" id="f-tour" aria-labelledby="t-tour" hidden>
+          <p class="note">One file drives both the guide mode and the play mode. <code>build-prototype.py --check</code> fails if a step points at something that no longer exists.</p>
+<pre><code>{
+  "title": "<span class="ph">&lt;flow name&gt;</span>",
+  "audience": "<span class="ph">client</span>",
+  "purpose": "<span class="ph">&lt;what the viewer should take away&gt;</span>",
+  "steps": [
+    { "screen": "<span class="ph">list</span>", "state": "ready", "target": "<span class="ph">[data-test=new]</span>",
+      "point": "spotlight", "title": "<span class="ph">Start here</span>",
+      "caption": "<span class="ph">&lt;what the viewer should notice&gt;</span>" },
+    { "screen": "<span class="ph">list</span>", "target": "<span class="ph">[data-test=new]</span>", "point": "cursor",
+      "title": "<span class="ph">Add an item</span>", "caption": "<span class="ph">&lt;what happens&gt;</span>",
+      "action": { "click": true }, "hold": 1200 }
+  ]
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="prototype">
+      <div class="head"><span class="eyebrow">docs/design/prototype.html</span><h2>One prototype of the whole product</h2></div>
+      <div class="prose">
+        <p>Every screen, clickable, working the way the real UI works. Each screen has its states, a phone and desktop view, light and dark, the decisions behind it, and a guide. It is built from one source file per screen, kept in step with your frontend, and checked by the audit.</p>
+        <p><code>/plumb:prototype</code> makes the screens. The walkthrough player is part of every prototype; <code>/plumb:tour</code> only writes the script it plays (which steps, which words), for a review or a client demo.</p>
+        <p>Below is a working schematic of the shell. Try the state switcher, then play the walkthrough and change its speed.</p>
+      </div>
+      <div class="shellwrap">
+        <div class="bar">
+          <div class="seg" role="group" aria-label="State">
+            <button class="btn on" type="button" data-state="ready" aria-pressed="true">Ready</button>
+            <button class="btn" type="button" data-state="loading" aria-pressed="false">Loading</button>
+            <button class="btn" type="button" data-state="empty" aria-pressed="false">Empty</button>
+            <button class="btn" type="button" data-state="error" aria-pressed="false">Error</button>
+          </div>
+          <div class="seg">
+            <button class="btn" type="button" id="vpBtn" aria-pressed="false">Phone</button>
+            <button class="btn" type="button" id="uiThemeBtn" aria-pressed="false">Dark</button>
+            <span class="illus">illustration</span>
+          </div>
+        </div>
+        <div class="shell" id="shell">
+          <nav class="snav" aria-label="Prototype screens">
+            <button type="button" data-scr="list" aria-current="true">List</button>
+            <button type="button" data-scr="detail" aria-current="false">Detail</button>
+            <button type="button" data-scr="form" aria-current="false">New item</button>
+          </nav>
+          <div class="scr" id="scr" aria-live="polite"></div>
+          <aside class="side" aria-label="About this screen">
+            <div><h5>This screen</h5><p id="sideWhat"></p></div>
+            <div><h5>Why it looks like this</h5><div class="dec"><code id="decId"></code><span id="decWhy"></span><span class="muted">Decided by &lt;name&gt; · options A, B, C</span></div></div>
+          </aside>
+        </div>
+        <div class="player" aria-label="Walkthrough player">
+          <div class="ctl">
+            <div class="seg" role="group" aria-label="Walkthrough mode">
+              <button class="btn" type="button" id="guideBtn">Guide me</button>
+              <button class="btn" type="button" id="playBtn">Play</button>
+            </div>
+            <div class="seg" role="group" aria-label="Speed">
+              <button class="btn" type="button" data-speed="0.5" aria-pressed="false">0.5×</button>
+              <button class="btn on" type="button" data-speed="1" aria-pressed="true">1×</button>
+              <button class="btn" type="button" data-speed="1.5" aria-pressed="false">1.5×</button>
+              <button class="btn" type="button" data-speed="2" aria-pressed="false">2×</button>
+            </div>
+          </div>
+          <p class="cap" id="cap" aria-live="polite">Guide me steps through the flow; Play runs it like a video. Space pauses.</p>
+          <div class="prog"><i id="progBar"></i></div>
+          <div class="marks" id="marks"></div>
+        </div>
+      </div>
+    </section>
+
+
+    <section id="tours">
+      <div class="head"><span class="eyebrow">Walkthroughs</span><h2>Tours: demos, training and onboarding</h2></div>
+      <div class="prose">
+        <p>Every prototype can play a walkthrough. <code>/plumb:prototype</code> writes a default one for each flow it builds; <code>/plumb:tour</code> writes custom ones for a client demo, a training session or a new teammate. Each tour is also its own HTML file in <code>docs/design/tours/</code>, so you can send it to someone and it opens straight into the tour, offline.</p>
+      </div>
+      <div class="layouts">
+        <div class="lay"><b>Adding text</b><span class="muted">Captions like subtitles, callouts on a chosen side, labels on several elements at once, notes anywhere, title cards between chapters, text typed into real fields.</span></div>
+        <div class="lay"><b>Pointing</b><span class="muted">Spotlight, ring, arrow with a label, beacon, zoom, and a cursor that clicks in play mode. Several targets in one step.</span></div>
+        <div class="lay"><b>Teaching</b><span class="muted">“Your turn” steps wait for the learner to click the real control; a wrong click gets a hint. In play mode the same step runs by itself.</span></div>
+        <div class="lay"><b>Pacing</b><span class="muted">Chapters, intro and closing cards, a default speed per tour, longer holds on important steps, links to any scene.</span></div>
+      </div>
+    </section>
+
+    <section id="screens">
+      <div class="head"><span class="eyebrow">docs/design/screens.html</span><h2>Every screen, in every state</h2></div>
+      <p class="prose">The catalogue: what loading, empty and error look like on every screen, and every control state. When you choose between prototype variants, each one comes with this view, so you compare the hard states, not only the happy path.</p>
+      <div class="cat"><table>
+        <thead><tr><th scope="col">Screen</th><th scope="col">Ready</th><th scope="col">Loading</th><th scope="col">Empty</th><th scope="col">Error</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">List</th><td><div class="mini"><span class="blk w80"></span><span class="blk w60"></span><span class="blk w80"></span></div></td><td><div class="mini ld"><span class="blk w60"></span><span class="blk w40"></span></div></td><td><div class="mini em">No items yet</div></td><td><div class="mini er">Couldn't load</div></td></tr>
+          <tr><th scope="row">Detail</th><td><div class="mini"><span class="blk w40"></span><span class="blk w80"></span><span class="blk w80"></span></div></td><td><div class="mini ld"><span class="blk w40"></span><span class="blk w60"></span></div></td><td><div class="mini em">Not found</div></td><td><div class="mini er">Couldn't load</div></td></tr>
+          <tr><th scope="row">New item</th><td><div class="mini"><span class="blk w60"></span><span class="blk w80"></span><span class="blk w40"></span></div></td><td><div class="mini ld"><span class="blk w60"></span></div></td><td><div class="mini em">n/a</div></td><td><div class="mini er">Fix 2 fields</div></td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="audit">
+      <div class="head"><span class="eyebrow">/plumb:audit</span><h2>An audit report</h2></div>
+      <p class="prose">An HTML report in <code>docs/design/</code>, a terminal summary and an exit code (0 means no errors). Every issue says where it is, what is wrong and the exact fix, naming the token to use. It also checks contrast in light and dark, generated files that drifted, and that the built UI still matches its prototype. After the rules, the agent reviews what no rule can express (marked <b>agent review</b>), and an <b>Improvements</b> section ranks suggestions that never fail the audit. With Slate set up, it offers to turn the fixes into tickets.</p>
+      <div class="sum"><div class="e"><b>3</b><span>errors</span></div><div class="w"><b>3</b><span>warnings</span></div><div><b>58</b><span>files checked</span></div><span class="illus">illustration</span></div>
+      <div class="issues"><table>
+        <thead><tr><th>Severity</th><th>Where</th><th>What's wrong</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr class="error"><td class="sev">error</td><td><code>components/cards/summary-card.tsx:14</code></td><td><code>raw-colour</code>: raw colour <code>#2b5cb5</code></td><td><code>bg-primary</code> (color.primary = #2b5cb5)</td></tr>
+          <tr class="error"><td class="sev">error</td><td><code>app/detail/page.tsx</code></td><td><code>screen-drift</code>: changed after its screen file was approved, while the screen file did not</td><td>Update <code>screens/detail.html</code>, then approve it</td></tr>
+          <tr class="error"><td class="sev">error</td><td><code>&lt;project&gt;.tokens.json</code></td><td><code>contrast</code>: <code>on-surface-muted</code> on <code>sunk</code> is 4.1:1 in dark, below 4.5:1</td><td><code>/plumb:update</code>: #9aa5ae passes (4.6:1)</td></tr>
+          <tr class="warn"><td class="sev">warn</td><td><code>app/list/page.tsx</code></td><td><code>state-missing-in-code</code>: the list's <b>empty</b> state is in the prototype but not in the code</td><td>Build the empty state from <code>screens/list.html</code></td></tr>
+          <tr class="warn"><td class="sev">warn</td><td>3 files</td><td><code>duplicate-component</code>: three button styles doing one job</td><td>Use <code>Button</code> variants; remove the copies</td></tr>
+          <tr class="warn"><td class="sev">warn</td><td><code>components/rows/row-actions.tsx:41</code></td><td><code>hover-only</code>: action shows on hover only</td><td>Also show on focus (<code>group-focus-within</code>)</td></tr>
+        </tbody>
+      </table></div>
+      <div class="layouts">
+        <div class="lay"><b><code>/plumb:audit</code></b><span class="muted">Reports only: errors, warnings, the agent review and the Improvements.</span></div>
+        <div class="lay"><b><code>/plumb:audit fix</code></b><span class="muted">Groups the issues (“12 raw colours → tokens”), shows a before → after, asks, applies, re-runs until clean. Visual changes go prototype first.</span></div>
+        <div class="lay"><b><code>/plumb:audit improve</code></b><span class="muted">A ranked plan for a passing project: screens and the system itself. You pick; screens go prototype first, system changes through <code>/plumb:update</code>.</span></div>
+      </div>
+    </section>
+
+    <section id="build">
+      <div class="head"><span class="eyebrow">Hooks, in Claude Code and Copilot CLI</span><h2>While an agent builds</h2></div>
+      <p class="prose">One session, start to finish. Init asks whether to turn the checks on (recommended), and each can be switched off in <code>PLUMB.md</code>. The hooks run only the plugin's own scripts, never the copies in your project, and never block your work when something is missing.</p>
+      <div class="tl">
+        <div class="ev"><b>Session starts</b>
+<pre>Plumb: &lt;project&gt;-design-system 1.0.0 · tokens up to date · 0 audit issues · read the skill before UI changes</pre></div>
+        <div class="ev block"><b>A new page with no approved prototype</b>
+<pre>error: app/reports/page.tsx is a new screen with no approved prototype
+fix: /plumb:prototype reports (design the screen, get the user's approval, then build it to match)</pre></div>
+        <div class="ev pass"><b>You approve a variant; it is written into the main prototype</b><p class="muted">The decision is recorded with who chose it and why. Now the page can be created.</p></div>
+        <div class="ev block"><b>An edit bypasses the tokens, or touches a generated file</b>
+<pre>error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build
+fix: change the tokens with /plumb:update, then rebuild: python3 …/scripts/build-tokens.py</pre><p class="muted">Refused before it lands, with the token or command to use. Only errors the edit adds count, so older code never blocks.</p></div>
+        <div class="ev block"><b>The agent finishes its turn</b>
+<pre>Plumb end-of-turn check: 1 new design-system error in the files changed this session.
+Fix them now, or tell the user why not (this check stops you once):
+error: app/reports/page.tsx line 12: raw colour #b42318
+fix: text-danger (color.danger = #b42318)</pre><p class="muted">The agent is stopped once, fixes it, and finishes. It cannot loop. A built screen that changed without its prototype stops it the same way.</p></div>
+        <div class="ev pass"><b>Clean</b>
+<pre>Plumb: 2 UI files checked, consistent</pre></div>
+      </div>
+    </section>
+
+    <section id="upgrade">
+      <div class="head"><span class="eyebrow">/plumb:upgrade</span><h2>When Plumb has a new version</h2></div>
+      <p class="prose">The session line tells you when the plugin is newer than the project. Upgrade never runs by itself, never deletes your values, and asks before every step that changes your files.</p>
+      <div class="up">
+        <div><b>Compare</b><span class="muted">PLUMB.md version against the plugin.</span></div>
+        <div><b>What's new</b><span class="muted">Every version in between.</span></div>
+        <div><b>Replace</b><span class="muted">Plugin-owned scripts; regenerate generated files.</span></div>
+        <div><b>Migrate</b><span class="muted">Tokens format, additive only.</span></div>
+        <div class="ask"><b>Steps</b><span class="muted">Each version's steps, asking before each.</span></div>
+        <div><b>Record</b><span class="muted">Version line and updates log in PLUMB.md.</span></div>
+        <div><b>Check</b><span class="muted">Status until healthy, then the diff.</span></div>
+      </div>
+    </section>
+
+
+    <section id="needs">
+      <div class="head"><span class="eyebrow">For enterprises</span><h2>What it needs, and what it never does</h2></div>
+      <div class="layouts">
+        <div class="lay"><b>Needs</b><span class="muted">Python 3.9 or newer with its standard library, and Claude Code or Copilot CLI (Kiro: a preview, live check pending). git is optional. macOS, Linux and Windows, over SSH and in tmux.</span></div>
+        <div class="lay"><b>Never</b><span class="muted">No npm, pip or other installs. Nothing downloaded while it runs. Every generated page opens offline: no CDN, no hosted fonts.</span></div>
+        <div class="lay"><b>Asks, then waits</b><span class="muted">The rule Plumb adds to AGENTS.md / CLAUDE.md: don't install or download anything; if something is missing, ask the user and wait for their decision.</span></div>
+        <div class="lay"><b>Optional extras</b><span class="muted">Effective HTML skills, a browser for screenshots, make, Slate. Each has a fallback, so none is required.</span></div>
+      </div>
+    </section>
+
+    <footer>
+      <p>The complete guide is <code>docs/USAGE.md</code>; the full design is <code>docs/specs/2026-10-11-plumb-design.md</code>. Plumb works in Claude Code and GitHub Copilot CLI, on macOS, Linux and Windows. This page loads nothing from the network.</p>
+      <p>Samples on this page are templates and schematics; the messages are the ones Plumb prints.</p>
+    </footer>
+  </main>
+</div>
+
+<script>
+(function(){
+  var $=function(s,r){return (r||document).querySelector(s)};
+  var $$=function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s))};
+  var reduced=window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* page theme */
+  var root=document.documentElement, themeBtn=$('#themeBtn');
+  function isDark(){var t=root.getAttribute('data-theme');if(t)return t==='dark';return matchMedia('(prefers-color-scheme: dark)').matches}
+  function syncTheme(){themeBtn.textContent=isDark()?'Light theme':'Dark theme'}
+  themeBtn.addEventListener('click',function(){root.setAttribute('data-theme',isDark()?'light':'dark');syncTheme()});
+  syncTheme();
+
+  /* the plumb line follows the reader */
+  var links=$$('#toc a'), bob=$('.rail .bob');
+  function setActive(id){links.forEach(function(a){var on=a.getAttribute('href')==='#'+id;a.setAttribute('aria-current',on?'true':'false');if(on&&bob){bob.style.top=(a.offsetTop+a.parentNode.offsetTop+4)+'px'}})}
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting)setActive(e.target.id)})},{rootMargin:'-20% 0px -70% 0px'});
+    $$('main section').forEach(function(s){io.observe(s)});
+  }
+  setActive('edit');
+
+  /* ownership filter */
+  $$('[data-own]').forEach(function(b){b.addEventListener('click',function(){
+    var o=b.getAttribute('data-own');
+    $$('[data-own]').forEach(function(x){var on=x===b;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false')});
+    $$('#treeList li[data-o]').forEach(function(li){li.classList.toggle('dim',o!=='all'&&li.getAttribute('data-o')!==o)});
+  })});
+
+  /* file tabs */
+  var tabs=$$('.tab');
+  function selectTab(t){tabs.forEach(function(x){var on=x===t;x.setAttribute('aria-selected',on?'true':'false');x.tabIndex=on?0:-1;$('#'+x.getAttribute('aria-controls')).hidden=!on});t.focus()}
+  tabs.forEach(function(t,i){t.addEventListener('click',function(){selectTab(t)});t.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'){e.preventDefault();selectTab(tabs[(i+1)%tabs.length])}
+    if(e.key==='ArrowLeft'){e.preventDefault();selectTab(tabs[(i-1+tabs.length)%tabs.length])}
+  })});
+
+  /* the schematic shell */
+  var S={scr:'list',state:'ready'};
+  var WHAT={list:'Find an item and open it. The main thing people come to do.',detail:'Everything about one item, and what you can do with it.',form:'Add an item. Errors appear in words under each field.'};
+  function rows(n){var h='';for(var i=0;i<n;i++)h+='<div class="row"><span class="dot"></span><span class="lines"><span class="blk w60"></span><span class="blk w40"></span></span></div>';return h}
+  function body(){
+    var s=S.state, scr=S.scr;
+    var title={list:'Items',detail:'Item',form:'New item'}[scr];
+    if(s==='loading')return '<h4>'+title+'</h4><div class="skel"><div class="blk w40"></div>'+rows(3)+'</div>';
+    if(s==='empty')return '<h4>'+title+'</h4><div class="empty"><b>'+(scr==='detail'?'This item was removed':'No items yet')+'</b><span>'+(scr==='detail'?'Go back to the list to pick another.':'Add the first one to get started.')+'</span><button class="cta" type="button" data-plumb="new">'+(scr==='detail'?'Back to items':'Add an item')+'</button></div>';
+    if(s==='error')return '<h4>'+title+'</h4><div class="err"><b>Couldn’t load '+title.toLowerCase()+'</b><span>Check your connection, then try again.</span><button class="cta" type="button">Try again</button></div>';
+    if(scr==='list')return '<h4>Items</h4><button class="cta" type="button" data-plumb="new">Add an item</button><div data-plumb="rows">'+rows(4)+'</div>';
+    if(scr==='detail')return '<h4>Item</h4><div class="blk w80" data-plumb="summary"></div><div class="blk w60"></div><div class="blk w80"></div><button class="cta" type="button" data-plumb="edit">Edit</button>';
+    return '<h4>New item</h4><div data-plumb="fields" style="display:grid;gap:10px"><div class="blk w60"></div><div class="blk w80"></div><div class="blk w40"></div></div><button class="cta" type="button" data-plumb="save">Save</button>';
+  }
+  var DEC={list:['DS-20261011-list-layout','Rows, not cards: people compare items quickly.'],detail:['DS-20261011-detail-actions','Actions sit under the summary, so the next step is where the eye lands.'],form:['DS-20261011-form-errors','Errors in words under each field, never colour alone.']};
+  function paint(){
+    $('#scr').innerHTML=body();
+    $('#sideWhat').textContent=WHAT[S.scr];
+    $('#decId').textContent=DEC[S.scr][0];$('#decWhy').textContent=DEC[S.scr][1];
+    $$('.snav button').forEach(function(b){b.setAttribute('aria-current',b.getAttribute('data-scr')===S.scr?'true':'false')});
+    $$('[data-state]').forEach(function(b){var on=b.getAttribute('data-state')===S.state;b.classList.toggle('on',on);b.setAttribute('aria-pressed',on?'true':'false')});
+  }
+  $$('.snav button').forEach(function(b){b.addEventListener('click',function(){S.scr=b.getAttribute('data-scr');paint()})});
+  $$('[data-state]').forEach(function(b){b.addEventListener('click',function(){S.state=b.getAttribute('data-state');paint()})});
+  $('#scr').addEventListener('click',function(e){var t=e.target.closest('[data-plumb]');if(!t||T.mode)return;var k=t.getAttribute('data-plumb');
+    if(k==='new'&&S.scr!=='detail'){S.scr='form';S.state='ready';paint()}else if(k==='new'){S.scr='list';S.state='ready';paint()}
+    if(k==='save'){S.scr='detail';paint()} if(k==='edit'){S.scr='form';paint()}});
+  var vp=$('#vpBtn');vp.addEventListener('click',function(){var on=$('#shell').classList.toggle('phone');vp.setAttribute('aria-pressed',on?'true':'false');vp.classList.toggle('on',on)});
+  var ut=$('#uiThemeBtn');ut.addEventListener('click',function(){var on=$('#shell').classList.toggle('dark');ut.setAttribute('aria-pressed',on?'true':'false');ut.classList.toggle('on',on)});
+  paint();
+
+  /* walkthrough: one script, two modes.
+     Guide: a step card that waits for Next/Back. Play: runs by itself like a video, with a cursor
+     that clicks, subtitles, a badge and a continuous progress bar. Reduced motion keeps Play
+     playing; it only drops the cursor glide and other animation. */
+  var TOUR=[
+    {scr:'list',state:'ready',target:'[data-plumb=rows]',title:'Start on the list',cap:'People land here and scan rows to find what they need.',labels:[['h4','1 Title'],['[data-plumb=new]','2 Main action'],['[data-plumb=rows]','3 Results']]},
+    {scr:'list',state:'ready',target:'[data-plumb=new]',title:'Add an item',cap:'The one primary action on this screen.',callout:'Start here',click:{scr:'form',state:'ready'}},
+    {scr:'form',state:'ready',target:'[data-plumb=save]',title:'Save too early',cap:'Saving with empty fields shows what went wrong.',click:{scr:'form',state:'error'}},
+    {scr:'form',state:'error',target:'.err',title:'Errors in words',cap:'The error says what happened and how to fix it.'},
+    {scr:'detail',state:'ready',target:'[data-plumb=summary]',title:'Saved',cap:'Fixed and saved: the new item opens, with what to do next.'}
+  ];
+  var T={mode:null,i:0,speed:1,paused:false,timer:null,run:0};
+  var shell=$('#shell'), marks=$('#marks'), bar=$('#progBar'), cap=$('#cap'), playBtn=$('#playBtn');
+  var IDLE='Guide me waits for you at each step. Play runs the flow by itself, like a video. Space pauses.';
+  TOUR.forEach(function(st,i){var b=document.createElement('button');b.type='button';b.textContent=(i+1)+'. '+st.title;b.setAttribute('aria-label','Jump to step '+(i+1)+': '+st.title);
+    b.addEventListener('click',function(){if(T.mode==='play'){T.run++;clearTimeout(T.timer);show(i);if(!T.paused)schedule()}else{T.mode='guide';show(i)}});marks.appendChild(b)});
+  var cursor=document.createElement('span');cursor.className='cursor';cursor.hidden=true;shell.appendChild(cursor);
+  var badge=document.createElement('span');badge.className='badge';badge.hidden=true;shell.appendChild(badge);
+  var sub=document.createElement('p');sub.className='sub';sub.hidden=true;sub.setAttribute('aria-live','polite');shell.appendChild(sub);
+  function clearUi(){$$('.spot').forEach(function(x){x.classList.remove('spot')});$$('.tlabel,.tcallout').forEach(function(x){x.remove()});var c=$('.coach');if(c)c.remove()}
+  function place(el,cls,text,dx,dy){var sr=shell.getBoundingClientRect(),r=el.getBoundingClientRect();var t=document.createElement('span');t.className=cls;t.textContent=text;t.style.left=(r.right-sr.left+dx)+'px';t.style.top=(r.top-sr.top+dy)+'px';shell.appendChild(t)}
+  function dwell(){return 2800/T.speed}
+  function setBar(i,anim){
+    var from=i/TOUR.length*100, to=(i+1)/TOUR.length*100;
+    bar.style.transition='none';bar.style.width=(T.mode==='play'?from:to)+'%';
+    if(T.mode==='play'&&anim){void bar.offsetWidth;bar.style.transition='width '+dwell()+'ms linear';bar.style.width=to+'%'}
+  }
+  function syncBadge(){badge.hidden=T.mode!=='play';badge.textContent=(T.paused?'❚❚ Paused':'▶ Playing')+' · '+T.speed+'×'}
+  function show(i){
+    T.i=i;var st=TOUR[i];S.scr=st.scr;S.state=st.state;paint();clearUi();
+    var el=$(st.target,$('#scr'));if(el)el.classList.add('spot');
+    (st.labels||[]).forEach(function(l){var e=$(l[0],$('#scr'));if(e)place(e,'tlabel',l[1],8,0)});
+    if(st.callout&&el)place(el,'tcallout','\u2190 '+st.callout,10,2);
+    $$('#marks button').forEach(function(b,j){b.classList.toggle('on',j===i)});
+    var line='Step '+(i+1)+' of '+TOUR.length+': '+st.title+'. '+st.cap;
+    cap.textContent=line;
+    if(T.mode==='play'){sub.hidden=false;sub.textContent=st.cap;setBar(i,!T.paused);syncBadge()}
+    else{sub.hidden=true;cursor.hidden=true;badge.hidden=true;setBar(i,false)}
+    if(T.mode==='guide'){
+      var c=document.createElement('div');c.className='coach';c.setAttribute('role','dialog');c.setAttribute('aria-label','Walkthrough step '+(i+1));
+      c.innerHTML='<span class="eyebrow" style="color:inherit;opacity:.7">Guide · step '+(i+1)+' of '+TOUR.length+'</span><b>'+st.title+'</b><span>'+st.cap+(st.click?' Click it yourself, or press Next.':'')+'</span><div class="seg"><button class="btn" type="button" data-t="back"'+(i===0?' disabled':'')+'>Back</button><button class="btn on" type="button" data-t="next">'+(i===TOUR.length-1?'Finish':'Next')+'</button><button class="btn" type="button" data-t="end">Leave</button></div>';
+      shell.appendChild(c);
+      c.addEventListener('click',function(e){var k=e.target.getAttribute('data-t');if(k==='next')step(1);if(k==='back')step(-1);if(k==='end')stop()});
+      var nb=c.querySelector('[data-t=next]');if(nb)nb.focus({preventScroll:true});
+    }
+  }
+  function step(d){var n=T.i+d;if(n<0)return;if(n>=TOUR.length){stop('Walkthrough finished.');return}show(n)}
+  function stop(msg){T.run++;clearTimeout(T.timer);T.mode=null;T.paused=false;clearUi();cursor.hidden=true;sub.hidden=true;badge.hidden=true;playBtn.textContent='Play';bar.style.transition='none';cap.textContent=msg||IDLE}
+  function clickTarget(st,run,done){
+    var el=$(st.target,$('#scr'));if(!el){done();return}
+    var sr=shell.getBoundingClientRect(), r=el.getBoundingClientRect();
+    cursor.hidden=false;cursor.classList.remove('tap');
+    var x=r.left-sr.left+Math.min(r.width/2,60), y=r.top-sr.top+r.height/2;
+    cursor.style.transition=reduced?'none':'left '+(600/T.speed)+'ms ease, top '+(600/T.speed)+'ms ease';
+    cursor.style.left=x+'px';cursor.style.top=y+'px';
+    T.timer=setTimeout(function(){if(run!==T.run)return;cursor.classList.add('tap');
+      T.timer=setTimeout(function(){if(run!==T.run)return;S.scr=st.click.scr;S.state=st.click.state;paint();done()},reduced?120:260/T.speed)},reduced?150:650/T.speed);
+  }
+  function schedule(){
+    var run=T.run, st=TOUR[T.i];
+    T.timer=setTimeout(function(){
+      if(run!==T.run||T.paused)return;
+      var next=function(){if(run!==T.run)return;if(T.i>=TOUR.length-1){stop('Played to the end. Press Play to watch again.');return}show(T.i+1);schedule()};
+      if(st.click)clickTarget(st,run,next);else next();
+    },dwell());
+  }
+  function pause(on){T.paused=on;playBtn.textContent=on?'Resume':'Pause';syncBadge();
+    if(on){T.run++;clearTimeout(T.timer);var w=getComputedStyle(bar).width;bar.style.transition='none';bar.style.width=w}
+    else{show(T.i);schedule()}}
+  $('#guideBtn').addEventListener('click',function(){stop();T.mode='guide';show(0)});
+  playBtn.addEventListener('click',function(){
+    if(T.mode==='play'){pause(!T.paused);return}
+    stop();T.mode='play';T.paused=false;playBtn.textContent='Pause';show(0);schedule();
+  });
+  $$('[data-speed]').forEach(function(b){b.addEventListener('click',function(){T.speed=parseFloat(b.getAttribute('data-speed'));$$('[data-speed]').forEach(function(x){var on=x===b;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false')});
+    if(T.mode==='play'){syncBadge();if(!T.paused){T.run++;clearTimeout(T.timer);show(T.i);schedule()}}})});
+  document.addEventListener('keydown',function(e){
+    if(!T.mode)return;var tag=(document.activeElement&&document.activeElement.tagName)||'';
+    if(e.key==='Escape'){stop();return}
+    if(T.mode==='guide'&&e.key==='ArrowRight'){e.preventDefault();step(1)}
+    if(T.mode==='guide'&&e.key==='ArrowLeft'){e.preventDefault();step(-1)}
+    if(T.mode==='play'&&e.key===' '&&tag!=='BUTTON'){e.preventDefault();pause(!T.paused)}
+  });
+})();
+</script>
+</body>
+</html>

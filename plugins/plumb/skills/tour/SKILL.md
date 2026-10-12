@@ -15,6 +15,11 @@ written without the user's OK:** say what you will write and where, and ask; wri
 Never install or download anything; ask the user and wait. Tours play in light and dark. Never edit `tours/*.html` or `prototype.html`:
 `build-prototype.py` writes them.
 
+**Pages.** Tour pages use Plumb's own walkthrough player (built by `build-prototype.py`). If you write any other HTML
+for a tour (a screen hook it needs, a standalone intro page the user asked for), follow Effective HTML's
+`design-artifact` when that skill is available in this session (optional; never install it), otherwise Plumb's built-in
+quality bar in [prototypes.md](../../reference/prototypes.md) "The quality bar".
+
 ```
  audience + purpose ─▶ screens, states, chapters ─▶ draft steps (table) ─▶ user OKs ─▶ write tours/<id>.json
    ─▶ build-prototype.py (targets checked) ─▶ show both links ─▶ changes? ─▶ STOP

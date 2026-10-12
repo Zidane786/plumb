@@ -3,8 +3,9 @@
 Skills link here instead of repeating the list. `<script> --help` is the final word on flags.
 
 **Who runs what.** The project's design-system skill holds its own copies of the engine
-(`<skill>/scripts/build-tokens.py`, `audit.py`, `build-prototype.py`, `_plumb.py`): those are what the hooks, `make`,
-CI and the skills run, so everyone applies the same rules. `<skill>` is the `Design system:` path in `PLUMB.md`. The
+(`<skill>/scripts/build-tokens.py`, `audit.py`, `build-prototype.py`, `_plumb.py`): those are what `make`, CI and the
+skills run, so everyone applies the same rules. The hooks never run them: they run the plugin's own installed copies
+on the project's files (the trust boundary in `SECURITY.md`). `<skill>` is the `Design system:` path in `PLUMB.md`. The
 plugin's helpers (`detect.py`, `scaffold.py`, `version.py`, `screenshot.py`) run from `<ROOT>/scripts/`, where `ROOT` is
 the plugin root (`${CLAUDE_PLUGIN_ROOT}`, or the skill's base directory + `/../..`).
 
