@@ -556,6 +556,33 @@ def test_missing_theme_switch_and_reduced_motion_get_a_note_and_the_defaults(pro
     assert 'motion.reduced is not set, so the default "none"' in r.stderr
     assert set(dark_rules(css_out(project).read_text(encoding="utf-8"))) == {"media", "class", "light"}
     assert "not set" not in run(project, "--check").stderr  # --check stays quiet about it
+    assert "build-tokens.py --migrate" in r.stderr  # the note names the one command that records the defaults
+
+
+def test_migrate_records_the_default_theme_switch_and_reduced_motion(project: Path) -> None:
+    def drop(d):
+        d["$extensions"]["plumb"]["web"].pop("theme_switch")
+        d["$extensions"]["plumb"].pop("motion")
+    edit_tokens(project, drop)
+    assert run(project).returncode == 0
+    css = css_out(project).read_text(encoding="utf-8")
+    r = run(project, "--migrate")
+    assert r.returncode == 0, r.stderr
+    assert 'added $extensions.plumb.web.theme_switch = "both"' in r.stdout
+    assert 'added $extensions.plumb.motion.reduced = "none"' in r.stdout
+    ext = json.loads(tokens_path(project).read_text(encoding="utf-8"))["$extensions"]["plumb"]
+    assert ext["web"]["theme_switch"] == "both" and ext["motion"] == {"reduced": "none"}
+    r = run(project)
+    assert r.returncode == 0 and "not set" not in r.stderr
+    assert css_out(project).read_text(encoding="utf-8") == css  # the defaults, now recorded: the same output
+
+
+def test_migrate_never_changes_a_recorded_motion_choice(project: Path) -> None:
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"].__setitem__("motion", {"reduced": "keep-fades"}))
+    r = run(project, "--migrate")
+    assert r.returncode == 0 and "motion.reduced" not in r.stdout and "theme_switch" not in r.stdout
+    assert json.loads(tokens_path(project).read_text(encoding="utf-8"))["$extensions"]["plumb"]["motion"] == {
+        "reduced": "keep-fades"}
 
 
 def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:

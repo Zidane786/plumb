@@ -1902,7 +1902,10 @@ def migrate(doc: dict, defaults_project: str = "") -> List[str]:
         if key not in plumb:
             plumb[key] = value
             added.append(f"$extensions.plumb.{key} = {json.dumps(value)}")
-    for key, subdefaults in (("web", {"styling": "css", "copies": []}), ("contrast", {"extra_pairs": []})):
+    # theme_switch and motion.reduced: the defaults the build applies when they are missing, now recorded, so the
+    # build's "not set" note ends with this one command (the output does not change)
+    for key, subdefaults in (("web", {"styling": "css", "copies": [], "theme_switch": "both"}),
+                             ("motion", {"reduced": "none"}), ("contrast", {"extra_pairs": []})):
         sub = plumb.get(key)
         if sub is None:
             sub = plumb[key] = {}
@@ -2471,15 +2474,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--contrast", action="store_true", help="rewrite the contrast block of references/dark-mode.md")
     parser.add_argument("--migrate", action="store_true", help="add the missing settings to the tokens JSON (additive)")
     parser.add_argument("--css-vars", action="store_true", help="print the tokens as plain CSS custom properties")
-    parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
-    parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
-    args = parser.parse_args(argv)
     parser.add_argument("--overrides", action="store_true",
                         help="print, as JSON, the variables a web copy sets in the tokens' namespaces outside Plumb's "
                              "block, each with the token it maps onto and the edits that move it there")
     parser.add_argument("--apply", action="store_true",
                         help="with --overrides: make those edits (the tokens file and the copies); only after the "
                              "user's OK")
+    parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
+    parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
+    args = parser.parse_args(argv)
     if sum(bool(x) for x in (args.check, args.contrast, args.migrate, args.css_vars, args.overrides)) > 1:
         parser.error("pass only one of --check, --contrast, --migrate, --css-vars, --overrides")
     if args.apply and not args.overrides:
@@ -2538,8 +2541,10 @@ def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str
                        f"assets/skill/assets/platforms/web/)")
         elif missing and has and not given:
             default, choices = MISSING_DEFAULTS[key]
-            out.append(f"note: $extensions.plumb.{key} is not set, so the default {default} applies; record the "
-                       f"choice ({choices}) in the tokens file with /plumb:update")
+            command = f"python3 {rel(skill_dir / SCRIPT_REL, find_project_root(skill_dir))} --migrate"
+            out.append(f"note: $extensions.plumb.{key} is not set, so the default {default} applies; keep it with "
+                       f"`{command}` (records the defaults, changes nothing else), or record another choice "
+                       f"({choices}) with /plumb:update")
     return out
 
 
@@ -2556,13 +2561,13 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if args.css_vars:
         sys.stdout.write(css_vars(doc))
         return 0
+    if args.overrides:
+        return run_overrides(args, doc, skill_dir, project, tokens_file, root)
     if args.migrate:
         added = migrate(doc, P.read_plumb_md(root / "PLUMB.md").get("Project", ""))
         if not added:
             print(f"ok: {rel(tokens_file, root)} is at schema {P.SCHEMA_VERSION}, nothing to add")
             return 0
-    if args.overrides:
-        return run_overrides(args, doc, skill_dir, project, tokens_file, root)
         text = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
         if not _write(tokens_file, text, root):
             return 2
