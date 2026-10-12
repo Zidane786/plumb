@@ -124,8 +124,10 @@ components, prototypes) the system wins.
    added, e.g. `color.foreground` = `{color.on-surface}`; a font the app loads goes first in its font token), the
    project's values, the lines that go and any `by_hand` item (ask about each). Ask once: move them into the tokens
    (Recommended: the app's utilities keep working and the audit can pass) · leave them for now (the audit fails until
-   then). Only on yes: `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`; point other
-   files' uses of the listed `project_variables` at the token's variable too, shown and asked first.
+   then). Only on yes: `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`; the other files
+   in each `project_variables` entry's `used_in` still read the removed variable: show them and, asked first, point
+   them at the token's variable. What the audit still reports after that is the app's own code (raw colours in its
+   keyframes, off-token durations…), not the overrides: say so and offer `/plumb:audit fix` for it.
 5. **OK? Each contrast fix.** For each `contrast` error in that `--json` output show the failing pair, its ratio
    (light or dark) and the proposed passing value; apply each only on the user's OK, rebuild, repeat until none is
    left.

@@ -474,7 +474,8 @@ def test_create_and_extract_move_a_stylesheets_own_theme_variables_and_name_moti
     for phrase in ("build-tokens.py --overrides", "motion-fade"):
         assert phrase in flat, f"{name}: {phrase!r}"
     create = _flat(SKILLS / "create/SKILL.md")
-    for phrase in ("block-override", "--overrides --apply", "move them into the tokens (recommended", "only on yes"):
+    for phrase in ("block-override", "--overrides --apply", "move them into the tokens (recommended", "only on yes",
+                   "`used_in`", "the app's own code", "/plumb:audit fix"):
         assert phrase in create, f"create: {phrase!r}"
     for path in (REFERENCE / "scripts.md", USAGE, REPO / "TEST.md"):
         assert "--overrides" in _flat(path), path.name

@@ -107,7 +107,8 @@ Follow `/plumb:create` steps **E** and **G** (read `ROOT/skills/create/SKILL.md`
 token set (E1), the scaffold's dry-run file list (E2), each contrast fix (E5), the component plan (E6). The confirmed
 groups are the answers; **no directions step** (the look already exists). Extract keeps what exists: E4's questions
 about an existing copy file (e.g. `app/globals.css`: Plumb owns only its marked block) and its own theme variables
-(`build-tokens.py --overrides`: the inventoried values are tokens now, so they move into them) are never skipped. In E6 the
+(`build-tokens.py --overrides`: the inventoried values are tokens now, so they move into them) are never skipped;
+errors left after `--apply` are the app's own findings, for step 7 and `/plumb:audit fix`. In E6 the
 components exist already: map
 them to `references/components.md` and `inventory.md`; propose only the missing starters, and change existing
 components only with the user's OK. **The design system must pass:** `python3 "<root>/<skill dir>/scripts/audit.py"
