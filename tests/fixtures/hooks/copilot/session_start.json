@@ -1,0 +1,7 @@
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "{{SESSION}}",
+  "timestamp": "2026-10-12T09:14:03.118Z",
+  "cwd": "{{CWD}}",
+  "source": "new"
+}

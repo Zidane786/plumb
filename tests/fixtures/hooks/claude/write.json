@@ -1,0 +1,13 @@
+{
+  "session_id": "{{SESSION}}",
+  "transcript_path": "/home/dev/.claude/projects/-work-demo/{{SESSION}}.jsonl",
+  "cwd": "{{CWD}}",
+  "permission_mode": "acceptEdits",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "{{FILE}}",
+    "content": "{{CONTENT}}"
+  },
+  "tool_use_id": "toolu_01BCDefGhIjKlMnOpQrStUvW"
+}

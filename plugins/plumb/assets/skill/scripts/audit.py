@@ -5,6 +5,8 @@ Usage:
   audit.py [PATHS...] [--json] [--no-tokens] [--root SKILL_DIR] [--project PATH]   full audit (default: the whole project)
   audit.py --quick FILE [--before -|PATH] [--root SKILL_DIR]                        one file, only what an edit adds (JSON)
   audit.py [PATHS...] --html [OUT.html]                                            also write the HTML report
+  audit.py --snapshot OUT.json [--root SKILL_DIR]                                   record the UI and screen files now
+  audit.py --changed SNAPSHOT [--json] [--root SKILL_DIR]                           only the files changed since then
 
 Full mode prints every finding as `file:line: <severity> <rule>: <message>` and `  fix: <fix>`, then a summary
 ("N errors, N warnings" and, on its own line, "N suggestions"). It runs the per-file rules and then the cross-file
@@ -127,6 +129,20 @@ tours/*.html, audit-*.html); anywhere else the header is just a comment and the 
 is walked: PLUMB.md `UI files:` narrows it, the design-system skill's own folder is left out except
 assets/platforms/*/starter/, and docs/design is left to the prototype checks. PATHS given are always checked.
 
+--snapshot and --changed are the end-of-turn check's audit (the Stop hook calls the same functions in-process:
+take_snapshot, changed_since, changed_findings). A snapshot records the tracked files: the UI files the full audit would
+walk plus the prototype screen files (<docs>/prototype/screens/*.html). In a git repository it holds HEAD and the hash
+(and, when small, the text) of every tracked file `git status` lists as changed or untracked; elsewhere the modification
+time and size of every tracked file (and the text of the small ones); plus each screen's status in screens.json.
+--changed compares the files now with it (git: also files committed since its HEAD, their old text from `git show`)
+and reports, for the changed files only: the per-file findings each file gained (quick() against its text at the
+snapshot; every finding when that text is unknown), route-not-prototyped for a route that is new in a changed file,
+and, with Prototype sync on, screen-drift for a screen that was built when the snapshot was taken whose source files
+changed while its screen file did not (and still differ from the recorded baseline: "update prototype screen booking:
+states ..."), and screen-unapproved for a built screen whose screen file or source changed and whose current prototype
+is not approved. No changed files: "no UI files changed since the snapshot", exit 0. A missing or broken snapshot
+exits 2.
+
 Hooks load this file by path (it is not in a package). Register the module in sys.modules before running it, or
 its dataclasses fail:
     spec = importlib.util.spec_from_file_location("plumb_audit", path)
@@ -146,12 +162,14 @@ from __future__ import annotations
 import argparse
 import bisect
 import datetime
+import hashlib
 import html
 import importlib.util
 import json
 import os
 import posixpath
 import re
+import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
@@ -166,7 +184,7 @@ from _plumb import PlumbError  # noqa: E402
 
 SCRIPT_REL = "scripts/audit.py"
 USAGE = (f"python3 {SCRIPT_REL} [PATHS...] [--json] [--html [OUT.html]] [--no-tokens] [--root SKILL_DIR] [--project PATH]"
-         " | --quick FILE --before -")
+         " | --quick FILE --before - | --snapshot OUT.json | --changed SNAPSHOT [--json]")
 WEB_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss"))
 PLATFORM_OF = {**{e: "web" for e in WEB_EXT}, ".swift": "ios", ".kt": "android"}
 SKIP_DIRS = P.SKIP_DIRS
@@ -3581,11 +3599,13 @@ def _ui_filter(settings: dict) -> Tuple[List[str], List[str]]:
     return dirs, names
 
 
-def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: dict, explicit: bool) -> List[Path]:
+def ui_matcher(root: Path, skill_dir: Path, settings: dict, explicit: bool = False) -> Callable[[Path], bool]:
+    """The test the full audit walks the project with, as a function of a path: a UI source file (.tsx ... .kt), not in
+    the design-system skill (except its assets/platforms/*/starter/), not in the docs folder, and (unless explicit) in
+    PLUMB.md's `UI files:` folders and names. The hooks use it to decide what the edit and end-of-turn checks cover."""
     skill_root = Path(skill_dir).resolve()
     dirs, names = _ui_filter(settings) if not explicit else ([], [])
     docs_dir = (root / str(settings.get("docs_dir") or "docs/design")).resolve()
-    out = set()
 
     def wanted(path: Path) -> bool:
         if file_ext(path.name) is None:
@@ -3611,6 +3631,12 @@ def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: di
             return False
         return True
 
+    return wanted
+
+
+def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: dict, explicit: bool) -> List[Path]:
+    wanted = ui_matcher(root, skill_dir, settings, explicit)
+    out = set()
     for target in targets:
         if target.is_file():
             if file_ext(target.name) is not None:
@@ -3627,6 +3653,336 @@ def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: di
 
 def read_source(path: Path) -> str:
     return path.read_bytes().decode("utf-8-sig", errors="replace")
+
+
+# ---------------------------------------------------------------- session snapshots (--snapshot, --changed; the hooks)
+
+
+SNAPSHOT_VERSION = 1
+SNAPSHOT_TEXT_MAX = 256 * 1024  # a changed file's text is kept in the snapshot up to this size ...
+SNAPSHOT_TEXT_TOTAL = 4 * 1024 * 1024  # ... and up to this much in all
+GIT_SHOW_MAX = 50  # at most this many `git show` calls to recover the text a file had at the snapshot
+
+
+class Change(NamedTuple):
+    """A tracked file (a UI file or a prototype screen file) that differs from the snapshot. before: its text at the
+    snapshot when known (None: it did not exist, or the snapshot cannot tell); existed / exists: at the snapshot / now."""
+
+    rel: str
+    before: Optional[str]
+    existed: bool
+    exists: bool
+    screen: bool
+
+
+def _docs_rel(settings: dict) -> str:
+    return str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip().strip("/") or "docs/design"
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(normalise_text(text).encode("utf-8")).hexdigest()
+
+
+def _git(root: Path, *args: str) -> Optional[str]:
+    try:
+        r = subprocess.run(["git", *args], cwd=str(root), capture_output=True, timeout=15, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
+
+
+class _GitState(NamedTuple):
+    top: Path
+    head: Optional[str]
+    dirty: List[str]  # project-relative paths git reports as modified, added, renamed or untracked
+
+
+def _git_state(root: Path) -> Optional[_GitState]:
+    """The repository around the project (None when it is not in one): its top folder, HEAD, and the files under the
+    project that `git status` lists (porcelain v2, paths relative to the repository top)."""
+    top_text = _git(root, "rev-parse", "--show-toplevel")
+    if not top_text or not top_text.strip():
+        return None
+    top = Path(os.path.realpath(top_text.strip()))
+    out = _git(root, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--", ".")
+    if out is None:
+        return None
+    real_root = Path(os.path.realpath(root))
+    head, dirty, entries, i = None, [], out.split("\0"), 0
+    while i < len(entries):
+        entry, i = entries[i], i + 1
+        if entry.startswith("# branch.oid "):
+            oid = entry[len("# branch.oid "):].strip()
+            head = oid if re.fullmatch(r"[0-9a-f]{40,64}", oid) else None
+            continue
+        kind = entry[:2]
+        if kind == "1 ":
+            parts = entry.split(" ", 8)
+        elif kind == "2 ":
+            parts, i = entry.split(" ", 9), i + 1  # the next entry is the path it was renamed from
+        elif kind == "u ":
+            parts = entry.split(" ", 10)
+        elif kind == "? ":
+            parts = [entry[2:]]
+        else:
+            continue
+        try:
+            dirty.append((top / parts[-1]).relative_to(real_root).as_posix())
+        except ValueError:
+            continue  # outside the project folder
+    return _GitState(top, head, dirty)
+
+
+def _tracked_matcher(root: Path, skill_dir: Path, settings: dict) -> Callable[[str], Optional[bool]]:
+    """rel -> True (a screen file), False (a UI file), None (not tracked by the snapshot)."""
+    wanted = ui_matcher(root, skill_dir, settings)
+    screens = f"{_docs_rel(settings)}/prototype/screens/"
+
+    def tracked(rel_path: str) -> Optional[bool]:
+        if rel_path.startswith(screens) and "/" not in rel_path[len(screens):] and rel_path.endswith(".html"):
+            return True
+        if file_ext(rel_path) is None or in_build_output(rel_path):
+            return None
+        return False if wanted(root / rel_path) else None
+
+    return tracked
+
+
+def _read_text(path: Path) -> Optional[str]:
+    try:
+        if path.stat().st_size > MAX_BYTES:
+            return None
+        return read_source(path)
+    except OSError:
+        return None
+
+
+def _screens_status(root: Path, settings: dict) -> Dict[str, str]:
+    """{screen id: status} from screens.json as it is now (the end-of-turn check only compares screens that were already
+    built when the session started). A missing or broken map gives {}."""
+    try:
+        data = json.loads((root / _docs_rel(settings) / "prototype" / "screens.json").read_text(encoding="utf-8-sig"))
+        return {s["id"]: str(s.get("status", "")) for s in data.get("screens", [])
+                if isinstance(s, dict) and isinstance(s.get("id"), str)}
+    except (OSError, ValueError, AttributeError, TypeError):
+        return {}
+
+
+def take_snapshot(root: Path, skill_dir: Path, settings: dict) -> dict:
+    """What the UI files and screen files look like now, to compare with at the end of a turn.
+
+    In a git repository: HEAD, and every tracked file git lists as changed or untracked, with its hash (and its text
+    when small). Elsewhere: the modification time and size of every tracked file (and the text of the small ones, up to
+    SNAPSHOT_TEXT_TOTAL in all). Plus each screen's status."""
+    root = Path(root).resolve()
+    tracked = _tracked_matcher(root, skill_dir, settings)
+    snap: dict = {"version": SNAPSHOT_VERSION, "plumb": P.PLUMB_VERSION, "root": str(root),
+                  "created": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat(),
+                  "screens": _screens_status(root, settings)}
+    state = _git_state(root)
+    if state is not None:
+        files, budget = {}, SNAPSHOT_TEXT_TOTAL
+        for name in sorted(set(state.dirty)):
+            if tracked(name) is None:
+                continue
+            text = _read_text(root / name)
+            item: dict = {"sha": _sha(text) if text is not None else None}
+            if text is not None and len(text) <= SNAPSHOT_TEXT_MAX and len(text) <= budget:
+                item["text"] = normalise_text(text)
+                budget -= len(text)
+            files[name] = item
+        snap.update({"mode": "git", "head": state.head, "files": files})
+        return snap
+    mtimes = _mtimes(root, tracked)
+    texts, budget = {}, SNAPSHOT_TEXT_TOTAL
+    for name, (_mtime, size) in sorted(mtimes.items()):
+        if size <= SNAPSHOT_TEXT_MAX and size <= budget:
+            text = _read_text(root / name)
+            if text is not None:
+                texts[name] = normalise_text(text)
+                budget -= size
+    snap.update({"mode": "mtime", "mtimes": mtimes, "texts": texts})
+    return snap
+
+
+def _mtimes(root: Path, tracked: Callable[[str], Optional[bool]]) -> Dict[str, List[int]]:
+    out: Dict[str, List[int]] = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".git"))
+        for name in filenames:
+            path = Path(dirpath) / name
+            r = rel(path, root)
+            if tracked(r) is None:
+                continue
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            out[r] = [st.st_mtime_ns, st.st_size]
+    return out
+
+
+def read_snapshot(path: Path) -> dict:
+    """A snapshot file written by take_snapshot (the hooks, or --snapshot); PlumbError when it is missing or broken."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PlumbError(f"error: cannot read the snapshot {path} ({exc})\n"
+                         f"fix: take one first: python3 {SCRIPT_REL} --snapshot {path}") from None
+    except ValueError as exc:
+        raise PlumbError(f"error: {path} is not a snapshot (not valid JSON: {exc})\n"
+                         f"fix: take a new one: python3 {SCRIPT_REL} --snapshot {path}") from None
+    if not isinstance(data, dict) or data.get("mode") not in ("git", "mtime"):
+        raise PlumbError(f"error: {path} is not a snapshot (no \"mode\" of git or mtime)\n"
+                         f"fix: take a new one: python3 {SCRIPT_REL} --snapshot {path}")
+    return data
+
+
+def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -> List[Change]:
+    """The tracked files that differ from the snapshot, with the text they had then when it is known."""
+    root = Path(root).resolve()
+    tracked = _tracked_matcher(root, skill_dir, settings)
+    out: List[Change] = []
+    if snapshot.get("mode") == "mtime":
+        before = {k: v for k, v in (snapshot.get("mtimes") or {}).items() if isinstance(k, str)}
+        texts = snapshot.get("texts") if isinstance(snapshot.get("texts"), dict) else {}
+        now = _mtimes(root, tracked)
+        for name in sorted(set(before) | set(now)):
+            kind = tracked(name)
+            if before.get(name) == now.get(name) or kind is None:
+                continue
+            then = texts.get(name) if isinstance(texts.get(name), str) else None
+            if then is not None and name in now:
+                text = _read_text(root / name)
+                if text is not None and normalise_text(text) == then:
+                    continue  # touched, not changed
+            out.append(Change(name, then, name in before, name in now, bool(kind)))
+        return out
+    state = _git_state(root)
+    if state is None:
+        return out
+    files = {k: v for k, v in (snapshot.get("files") or {}).items() if isinstance(k, str) and isinstance(v, dict)}
+    head = snapshot.get("head") if isinstance(snapshot.get("head"), str) else None
+    candidates = set(files) | set(state.dirty)
+    if head and state.head and head != state.head:  # committed during the session
+        diff = _git(root, "diff", "--name-only", "-z", head, state.head, "--", ".")
+        real_root = Path(os.path.realpath(root))
+        for name in (diff or "").split("\0"):
+            if name:
+                try:
+                    candidates.add((state.top / name).relative_to(real_root).as_posix())
+                except ValueError:
+                    pass
+    shows = 0
+    for name in sorted(candidates):
+        kind = tracked(name)
+        if kind is None:
+            continue
+        text = _read_text(root / name) if (root / name).is_file() else None
+        now_sha = _sha(text) if text is not None else None
+        if name in files:
+            then_sha = files[name].get("sha")
+            then = files[name].get("text") if isinstance(files[name].get("text"), str) else None
+            existed = then_sha is not None
+        else:  # unchanged at the snapshot: what HEAD had then
+            then = None
+            if head and shows < GIT_SHOW_MAX:
+                shows += 1
+                then = _git(root, "show", f"{head}:./{name}")  # ./ = relative to the project folder (git's cwd)
+            existed = then is not None
+            then_sha = _sha(then) if then is not None else None
+        if now_sha != then_sha:
+            out.append(Change(name, normalise_text(then) if then is not None else None, existed, text is not None,
+                              bool(kind)))
+    return out
+
+
+def _finding(rule_id: str, hit: XHit) -> Finding:
+    rule = _rules_by_id()[rule_id]
+    return Finding(rule_id, hit.severity or rule.severity, hit.file, hit.line,
+                   hit.message or rule.message.format(match=hit.match), hit.fix or rule.fix, match=hit.match)
+
+
+def changed_findings(snapshot: dict, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
+                     tokens_file: Optional[Path] = None,
+                     changes: Optional[List[Change]] = None) -> Tuple[List[Finding], int]:
+    """The findings of the files changed since the snapshot (--changed, the end-of-turn check), and how many UI files
+    were checked:
+
+    - per-file rules: only what the session added to each changed UI file (quick() against its text at the snapshot;
+      every finding when that text is unknown);
+    - route-not-prototyped: a route that is new in a changed file;
+    - prototype sync (Prototype sync: on): screen-drift for a screen that was built when the session started whose
+      source files changed this session while its screen file did not (and still differ from the approved baseline);
+      screen-unapproved for a built screen whose screen file or source changed this session and whose current
+      prototype is not approved.
+    """
+    root = Path(root).resolve()
+    if changes is None:
+        changes = changed_since(snapshot, root, skill_dir, settings)
+    findings: List[Finding] = []
+    ctxs: List[Ctx] = []
+    skip = RAW_VALUE_RULES if doc is None else frozenset()
+    befores: Dict[str, Change] = {}
+    for c in changes:
+        if c.screen or not c.exists:
+            continue
+        text = _read_text(root / c.rel)
+        if text is None or (is_generated(normalise_text(text[:1500])) and generator_owned(c.rel, settings)):
+            continue
+        ctx = make_ctx(c.rel, text, doc, settings)
+        if ctx is None:
+            continue
+        ctxs.append(ctx)
+        befores[c.rel] = c
+        if c.before is None and c.existed:  # the text at the snapshot is unknown: every finding counts
+            findings.extend(file_findings(ctx, skip))
+        else:
+            findings.extend(quick(c.rel, c.before, text, doc, settings))
+    proj = Project(root, skill_dir, doc, settings, ctxs, True, tokens_file)
+    for hit in check_route_not_prototyped(proj):
+        c = befores.get(hit.file)
+        if c is None or (c.existed and c.before is None):
+            continue  # the file was there before and its old routes are unknown: not new
+        old = {_route_key(r.route) for r in discover_routes(root, [(c.rel, c.before)])} if c.before is not None else set()
+        if _route_key(hit.match) not in old:
+            findings.append(_finding("route-not-prototyped", hit))
+    findings.extend(_session_sync(proj, snapshot, changes))
+    findings.sort(key=lambda f: (_SEVERITY_RANK[f.severity], f.file, f.line, _ORDER[f.rule]))
+    return findings, len(ctxs)
+
+
+def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Iterator[Finding]:
+    fid = _fid(proj)
+    if fid is None or not fid.sync_on:
+        return
+    changed = {c.rel for c in changes}
+    sources = [c.rel for c in changes if not c.screen]
+    built_then = snapshot.get("screens") if isinstance(snapshot.get("screens"), dict) else {}
+    try:
+        for s in _screens(fid):
+            e = s.entry
+            mine = [r for r in sources if any(P.glob_rx(g).match(r) for g in e["files"])]
+            screen_changed = s.file in changed
+            if (mine and not screen_changed and built_then.get(s.id) == "built" and e["status"] == "built"
+                    and fid.code_changed(s) is not False):
+                states = ", ".join(s.states) or "its states"
+                yield _finding("screen-drift", XHit(
+                    s.file, s.line, s.id,
+                    f"the source of screen {s.id} ({_list_names(mine)}) changed this session but {s.file} did not: "
+                    f"update prototype screen {s.id}: states {states}",
+                    f"update {s.file} to show what the code now does, rebuild with {fid.command}, then ask the user to "
+                    f"approve it: {fid.command} --approve {s.id} (if the change does not alter what the screen shows, "
+                    f"approving records the new baseline)"))
+            elif ((mine or screen_changed) and e["status"] == "built" and not e["synced_from_code"]
+                  and not fid.approved_now(s)):
+                yield _finding("screen-unapproved", XHit(
+                    s.file, s.line, s.id,
+                    f"screen {s.id} ({s.file}) changed this session and its current prototype is not approved: the code "
+                    f"must follow a screen the user approved",
+                    f"ask the user to review {fid.review(s)} and approve it: {fid.command} --approve {s.id}"))
+    except _UNEXPECTED as exc:
+        raise _fidelity_error(exc, fid.where) from None
 
 
 # ---------------------------------------------------------------- CLI
@@ -3911,7 +4267,7 @@ def run_quick(args: argparse.Namespace, root: Path, doc: Optional[dict], setting
     return _report(findings, checked, True)
 
 
-MODE_FULL, MODE_INCONSISTENCY = "full", "inconsistency-only"
+MODE_FULL, MODE_INCONSISTENCY, MODE_CHANGED = "full", "inconsistency-only", "changed"
 
 
 def _html_target(given: str, root: Path, skill_dir: Path, settings: dict) -> Tuple[Path, str]:
@@ -4004,6 +4360,36 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
     return code
 
 
+def run_snapshot(out: Path, root: Path, skill_dir: Path, settings: dict) -> int:
+    snap = take_snapshot(root, skill_dir, settings)
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(snap, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        print(f"error: cannot write the snapshot {out} ({exc.strerror or exc})\n"
+              f"fix: pass a path in a folder you can write to, e.g. --snapshot /tmp/plumb-snapshot.json", file=sys.stderr)
+        return 2
+    count = len(snap.get("files") or snap.get("mtimes") or {})
+    print(f"snapshot: {out} ({snap['mode']} mode, {_plural(count, 'file')} recorded)")
+    return 0
+
+
+def run_changed(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
+                tokens_file: Optional[Path]) -> int:
+    snap = read_snapshot(Path(args.changed))
+    changes = changed_since(snap, root, skill_dir, settings)
+    if not changes:
+        if args.json:
+            sys.stdout.write(json.dumps({"version": P.PLUMB_VERSION, "mode": MODE_CHANGED, "checked": 0, "errors": 0,
+                                         "warnings": 0, "suggestions": 0, "findings": []}, indent=2) + "\n")
+        else:
+            print("audit: no UI files changed since the snapshot")
+        return 0
+    findings, checked = changed_findings(snap, root, skill_dir, doc, settings, tokens_file, changes)
+    return _report(findings, checked, args.json, MODE_CHANGED)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     P.utf8_stdio()
     parser = _Parser(prog="audit.py", description="Check UI source against the design tokens.")
@@ -4017,7 +4403,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     parser.add_argument("--no-tokens", action="store_true",
                         help="inconsistency-only mode even when a tokens file exists (infer the scales from the code)")
+    parser.add_argument("--snapshot", metavar="OUT.json", help="write a snapshot of the UI and screen files (for --changed)")
+    parser.add_argument("--changed", metavar="SNAPSHOT", help="check only the files changed since a snapshot")
     args = parser.parse_args(argv)
+    session = [flag for flag, on in (("--snapshot", args.snapshot), ("--changed", args.changed)) if on]
+    if session and (args.quick or args.paths or args.html is not None or len(session) > 1):
+        parser.error(f"{session[0]} works alone (with --json, --root, --project): drop PATHS, --quick, --html"
+                     + (" and use one of --snapshot / --changed" if len(session) > 1 else ""))
     if args.before and not args.quick:
         parser.error("--before works only with --quick FILE")
     if args.quick and args.paths:
@@ -4038,6 +4430,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                   f"(only the checks that need no tokens ran)", file=sys.stderr)
         if args.quick:
             return run_quick(args, root, doc, settings)
+        if args.snapshot:
+            return run_snapshot(Path(args.snapshot), root, skill_dir, settings)
+        if args.changed:
+            return run_changed(args, root, skill_dir, doc, settings, tokens_file)
         args.html_out = None
         if args.html is not None:
             args.html_out = _html_target(args.html, root, skill_dir, settings)

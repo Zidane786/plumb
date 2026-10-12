@@ -1,0 +1,11 @@
+{
+  "sessionId": "{{SESSION}}",
+  "timestamp": 1760260590004,
+  "cwd": "{{CWD}}",
+  "toolName": "edit",
+  "toolArgs": {
+    "path": "{{FILE}}",
+    "old_str": "{{OLD}}",
+    "new_str": "{{NEW}}"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "sessionId": "{{SESSION}}",
+  "timestamp": 1760260541902,
+  "cwd": "{{CWD}}",
+  "toolName": "apply_patch",
+  "toolArgs": "{{PATCH}}"
+}

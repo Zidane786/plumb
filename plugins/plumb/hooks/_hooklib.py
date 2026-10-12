@@ -1,0 +1,768 @@
+"""Shared code for Plumb's hooks (session_start.py, pre_edit.py, stop_check.py). Not a hook itself.
+
+Claude Code and GitHub Copilot CLI run the same hooks.json and send Claude-style JSON on stdin, with these Copilot
+differences (pinned by tests/test_copilot.py):
+
+- its edit tool sends tool_input as apply_patch text ("*** Update File: <path>", "*** Add File:", "*** Delete File:",
+  "*** Move to:") instead of {file_path}; parse_patch() reads it and Change.after() applies the hunks to the current
+  file (when they do not apply, the edit check looks at the added lines only);
+- its own camelCase input (toolName / toolArgs; toolArgs a JSON string, an object or raw patch text) and
+  str_replace-style ({path, old_str, new_str}) or create-style ({path, file_text}) edit input;
+- it hides an exit-2 hook's stderr from the model, so under Copilot (COPILOT_CLI set, patch text or camelCase input) a
+  refusal is {"permissionDecision": "deny", ...} on stdout, flat and in hookSpecificOutput, with exit 0;
+- no permission_mode; session start context goes out as {"additionalContext": ...}.
+
+Every JSON a hook prints is ASCII (non-ASCII as \\u escapes), so it survives any console code page on the way (Copilot
+CLI on Windows runs the hooks through PowerShell and run.cmd).
+
+read_payload() turns either into one Payload: the event, the tool kind (TOOL_KINDS: edit, write, multiedit, patch,
+shell; a new tool's names are one more entry there), the file changes with a way to compute each file's text after the
+edit, the shell command, whether to answer in Copilot's dialect, the session id and cwd.
+
+The project is the nearest folder holding a PLUMB.md (not a template), searched from CLAUDE_PROJECT_DIR when the CLI
+sets it, else from the payload's cwd and the current directory. No PLUMB.md: every hook does nothing, so a repository
+without Plumb, and the Plumb repository itself, are never touched. PLUMB.md is read on every run (switches can change
+between two edits); its `Key: value` lines are parsed here with the same rules as _plumb.read_plumb_md, so the guards
+need no import of the project's scripts (a non-UI edit stays far under 150 ms). The checks load the project's own
+audit.py / build-prototype.py (the copies in the design-system skill, `Design system:` in PLUMB.md) with
+load_script(); when that fails they are skipped with one stderr line: hooks fail open.
+
+Python 3.9+, standard library only.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import os
+import re
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple
+
+HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+PLUMB_MD = "PLUMB.md"
+SNAPSHOT_DAYS = 7
+UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
+_CASELESS = sys.platform == "win32"
+
+# Tool names (lower case, without "_" and "-") -> what the tool does. Claude Code: Edit, Write, MultiEdit, Bash,
+# PowerShell; Copilot CLI: the same names for a plugin's hooks, or edit, create, str_replace, apply_patch, bash,
+# powershell in its own camelCase input.
+TOOL_KINDS = {
+    "edit": "edit", "strreplace": "edit", "strreplaceeditor": "edit", "write": "write", "create": "write",
+    "multiedit": "multiedit", "applypatch": "patch", "patch": "patch", "bash": "shell", "powershell": "shell",
+    "shell": "shell",
+}
+
+
+def utf8_stdio() -> None:
+    """Windows consoles and pipes default to cp1252; hooks speak UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - a stream that cannot be reconfigured is left as it is
+            pass
+
+
+def note(message: str) -> None:
+    """The one stderr line a hook prints when it skips something (it never fails the tool call)."""
+    print("plumb: " + " ".join(str(message).split()), file=sys.stderr)
+
+
+def normalise(text: str) -> str:
+    if text.startswith("﻿"):
+        text = text[1:]
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+# ---------------------------------------------------------------- edits and patches
+
+
+class Hunk:
+    def __init__(self, header: str) -> None:
+        self.header = header
+        self.lines: List[str] = []  # each starts with " ", "-" or "+"
+
+
+def _seek(lines: List[str], pattern: List[str], start: int) -> Optional[int]:
+    """Where pattern occurs in lines at or after start: exact, then ignoring trailing spaces, then ignoring spaces at
+    both ends (patches from models often lose trailing spaces)."""
+    if not pattern:
+        return None
+    for same in (lambda a, b: a == b, lambda a, b: a.rstrip() == b.rstrip(), lambda a, b: a.strip() == b.strip()):
+        for i in range(max(start, 0), len(lines) - len(pattern) + 1):
+            if all(same(lines[i + j], pattern[j]) for j in range(len(pattern))):
+                return i
+    return None
+
+
+def _apply_hunks(before: str, hunks: List[Hunk]) -> Optional[str]:
+    text = normalise(before)
+    trailing = text.endswith("\n")
+    lines = text.split("\n")
+    if trailing:
+        lines.pop()
+    cursor = 0
+    for h in hunks:
+        if h.header:
+            at = _seek(lines, [h.header], cursor)
+            if at is not None:
+                cursor = at + 1
+        old = [ln[1:] for ln in h.lines if ln[0] in " -"]
+        if not old:  # only added lines: they go at the end
+            lines.extend(ln[1:] for ln in h.lines if ln[0] == "+")
+            cursor = len(lines)
+            continue
+        at = _seek(lines, old, cursor)
+        if at is None:
+            at = _seek(lines, old, 0)
+        if at is None:
+            return None
+        j, out = at, []
+        for ln in h.lines:
+            if ln[0] == " ":
+                out.append(lines[j])  # the file's own context line (its spaces kept)
+                j += 1
+            elif ln[0] == "-":
+                j += 1
+            else:
+                out.append(ln[1:])
+        lines[at:j] = out
+        cursor = at + len(out)
+    return "\n".join(lines) + ("\n" if trailing or lines else "")
+
+
+class Change:
+    """One file an edit touches. kind: write (whole content), edit (old -> new), multiedit, insert (after a line), add /
+    update / delete / move (apply_patch sections), path (the tool names a file but its new text is unknown)."""
+
+    def __init__(self, path: str, kind: str, content: Optional[str] = None,
+                 edits: Optional[List[Tuple[str, str, bool]]] = None, line: int = 0) -> None:
+        self.path = path
+        self.kind = kind
+        self.content = content
+        self.edits = edits or []
+        self.line = line
+        self.hunks: List[Hunk] = []
+        self.add_lines: List[str] = []
+
+    def after(self, before: Optional[str]) -> Optional[str]:
+        """The file's text after the edit (LF line endings), or None when it cannot be known (an old string that is
+        not in the file, a patch that does not apply, a delete)."""
+        if self.kind in ("write",):
+            return normalise(self.content or "")
+        if self.kind == "add":
+            return "\n".join(self.add_lines) + ("\n" if self.add_lines else "")
+        if before is None:
+            return None
+        text = normalise(before)
+        if self.kind in ("edit", "multiedit"):
+            for old, new, every in self.edits:
+                old, new = normalise(old), normalise(new)
+                if not old or old not in text:
+                    return None
+                text = text.replace(old, new) if every else text.replace(old, new, 1)
+            return text
+        if self.kind == "insert":
+            lines = text.split("\n")
+            at = min(max(self.line, 0), len(lines))
+            return "\n".join(lines[:at] + normalise(self.content or "").split("\n") + lines[at:])
+        if self.kind == "update":
+            return _apply_hunks(text, self.hunks)
+        return None
+
+    def added(self) -> str:
+        return "\n".join(ln[1:] for h in self.hunks for ln in h.lines if ln[0] == "+")
+
+    def removed(self) -> str:
+        return "\n".join(ln[1:] for h in self.hunks for ln in h.lines if ln[0] == "-")
+
+
+PATCH_HEADER = re.compile(r"^\*\*\* (Update File|Add File|Delete File|Move to):[ \t]*(.+?)[ \t]*$")
+PATCH_RE = re.compile(r"^\*\*\* (?:Begin Patch|Update File:|Add File:|Delete File:)", re.MULTILINE)
+_PATCH_KIND = {"Update File": "update", "Add File": "add", "Delete File": "delete", "Move to": "move"}
+
+
+def parse_patch(text: str) -> List[Change]:
+    """Every file section of apply_patch text, in order. A "Move to" is its own change (the file it writes)."""
+    changes: List[Change] = []
+    cur: Optional[Change] = None
+    for line in normalise(text).split("\n"):
+        m = PATCH_HEADER.match(line)
+        if m:
+            kind = _PATCH_KIND[m.group(1)]
+            change = Change(m.group(2), kind)
+            changes.append(change)
+            if kind != "move":
+                cur = change
+            continue
+        if line.startswith("*** "):  # Begin Patch, End Patch, End of File
+            if line.startswith("*** End Patch"):
+                cur = None
+            continue
+        if cur is None:
+            continue
+        if cur.kind == "add":
+            if line.startswith("+"):
+                cur.add_lines.append(line[1:])
+        elif cur.kind == "update":
+            if line.startswith("@@"):
+                cur.hunks.append(Hunk(line[2:].strip().rstrip("@").strip()))
+                continue
+            if not cur.hunks:
+                cur.hunks.append(Hunk(""))
+            if line[:1] in (" ", "-", "+"):
+                cur.hunks[-1].lines.append(line)
+            elif line == "":
+                cur.hunks[-1].lines.append(" ")  # a blank context line that lost its space
+    for c in changes:
+        for h in c.hunks:
+            while h.lines and h.lines[-1] == " ":  # trailing blank context: usually the patch's own last newline
+                h.lines.pop()
+        c.hunks = [h for h in c.hunks if h.lines]
+    return changes
+
+
+# ---------------------------------------------------------------- the payload
+
+
+class Payload:
+    """What a hook was asked about, in either CLI's shape."""
+
+    def __init__(self, raw: dict) -> None:
+        self.raw = raw
+        self.event = str(raw.get("hook_event_name") or raw.get("hookEventName") or "")
+        camel = ("toolName" in raw or "toolArgs" in raw) and "tool_name" not in raw and "tool_input" not in raw
+        name = raw.get("toolName") if camel else raw.get("tool_name")
+        self.tool_name = name if isinstance(name, str) else ""
+        tool_input = raw.get("toolArgs") if camel else raw.get("tool_input")
+        if isinstance(tool_input, str) and camel:
+            try:
+                tool_input = json.loads(tool_input)
+            except ValueError:
+                pass  # raw patch text
+        self.tool = TOOL_KINDS.get(re.sub(r"[\s_-]", "", self.tool_name.lower()), "")
+        self.changes, self.command = _changes(self.tool, tool_input)
+        # Only Copilot CLI sends patch text or camelCase input, so those are answered in its dialect even without
+        # COPILOT_CLI.
+        self.copilot = camel or isinstance(tool_input, str) or bool(os.environ.get("COPILOT_CLI"))
+        sid = raw.get("session_id") or raw.get("sessionId") or ""
+        self.session_id = sid if isinstance(sid, str) else str(sid)
+        cwd = raw.get("cwd")
+        self.cwd = cwd if isinstance(cwd, str) and cwd else ""
+        self.stop_hook_active = raw.get("stop_hook_active") is True
+
+    @property
+    def file_path(self) -> Optional[str]:
+        return self.changes[0].path if self.changes else None
+
+
+def _first_str(d: dict, keys: Tuple[str, ...]) -> Optional[str]:
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def _changes(kind: str, tool_input: object) -> Tuple[List[Change], Optional[str]]:
+    if isinstance(tool_input, str):
+        if PATCH_RE.search(tool_input):
+            return parse_patch(tool_input), None
+        return [], (tool_input if kind == "shell" else None)
+    if not isinstance(tool_input, dict):
+        return [], None
+    path = _first_str(tool_input, ("file_path", "path", "notebook_path"))
+    command = tool_input.get("command")
+    if isinstance(command, str):
+        if kind == "shell" or (path is None and not any(k in tool_input for k in ("old_str", "new_str", "file_text"))):
+            return [], command
+        if command == "view":  # str_replace_editor's read
+            return [], None
+    if path is None:
+        for value in tool_input.values():
+            if isinstance(value, str) and PATCH_RE.search(value):
+                return parse_patch(value), None
+        return [], None
+    edits = tool_input.get("edits")
+    if isinstance(edits, list):
+        pairs = [(e.get("old_string") or e.get("old_str") or "", e.get("new_string") or e.get("new_str") or "",
+                  e.get("replace_all") is True) for e in edits if isinstance(e, dict)]
+        return [Change(path, "multiedit", edits=[(str(a), str(b), c) for a, b, c in pairs])], None
+    old = tool_input.get("old_string", tool_input.get("old_str"))
+    new = tool_input.get("new_string", tool_input.get("new_str"))
+    if isinstance(old, str):
+        return [Change(path, "edit", edits=[(old, new if isinstance(new, str) else "",
+                                             tool_input.get("replace_all") is True)])], None
+    content = tool_input.get("content", tool_input.get("file_text"))
+    if isinstance(content, str):
+        return [Change(path, "write", content=content)], None
+    line = tool_input.get("insert_line")
+    if isinstance(new, str) and isinstance(line, int) and not isinstance(line, bool):
+        return [Change(path, "insert", content=new, line=line)], None
+    return [Change(path, "path")], None
+
+
+def read_payload(text: Optional[str] = None) -> Optional[Payload]:
+    """The hook input from stdin (or text), or None when it is not a JSON object."""
+    if text is None:
+        try:
+            text = sys.stdin.buffer.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        raw = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return Payload(raw) if isinstance(raw, dict) else None
+
+
+def refuse(message: str, copilot: bool) -> int:
+    """Block the tool call with an actionable reason. Claude Code: exit 2, reason on stderr. Copilot CLI: exit 0 and a
+    JSON deny on stdout (it hides an exit-2 hook's stderr from the model)."""
+    if copilot:
+        print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": message,
+                          "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": message}}))
+        return 0
+    print(message, file=sys.stderr)
+    return 2
+
+
+# ---------------------------------------------------------------- paths
+
+
+def resolve(path: str, base: str) -> str:
+    """An absolute, normalised path (symlinks resolved) for a path from a payload or a command."""
+    if os.sep == "/":
+        path = path.replace("\\", "/")
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        path = os.path.join(base, path)
+    return os.path.realpath(os.path.normpath(path))
+
+
+def under(path: str, root: str) -> Optional[str]:
+    """path relative to root (posix), "" for root itself, None when it is outside."""
+    a, b = path.rstrip("/\\"), root.rstrip("/\\")
+    ca, cb = (os.path.normcase(a), os.path.normcase(b)) if _CASELESS else (a, b)
+    if len(ca) != len(a) or len(cb) != len(b):
+        ca, cb = a, b
+    if ca == cb:
+        return ""
+    for sep in {os.sep, "/"}:
+        if ca.startswith(cb + sep):
+            return a[len(b) + 1:].replace("\\", "/")
+    return None
+
+
+def plugin_root() -> str:
+    env = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    return os.path.realpath(env if env else os.path.dirname(HOOKS_DIR))
+
+
+def plugin_version() -> Optional[str]:
+    try:
+        with open(os.path.join(plugin_root(), ".claude-plugin", "plugin.json"), encoding="utf-8-sig") as fh:
+            v = json.load(fh).get("version")
+        return v if isinstance(v, str) else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def version_tuple(v: Optional[str]) -> Optional[Tuple[int, ...]]:
+    m = re.match(r"^\s*v?(\d+(?:\.\d+)*)", v or "")
+    return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+# ---------------------------------------------------------------- the project (PLUMB.md)
+
+
+_KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
+_NOTE = re.compile(r"\s{2,}\([^)]*\)\s*$")
+_VERSION = re.compile(r"<!--\s*plumb\s+v(\d+(?:\.\d+)*)", re.I)
+_PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
+_ON = re.compile(r"^\s*(?:on|yes|true)\b", re.I)
+
+
+def plumb_md_keys(text: str) -> Dict[str, str]:
+    """PLUMB.md's `Key: value` lines, by the rules of _plumb.read_plumb_md (comments, code fences, headings, bullets,
+    quotes and tables ignored; a trailing '   (note)' dropped; a value in backticks unwrapped)."""
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    out: Dict[str, str] = {}
+    fence = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("```") or s.startswith("~~~"):
+            fence = not fence
+            continue
+        if fence or not s or s[0] in "#-*>|":
+            continue
+        m = _KEY.match(s)
+        if not m:
+            continue
+        val = _NOTE.sub("", (m.group(2) or "").strip()).strip()
+        if len(val) >= 2 and val[0] == val[-1] == "`":
+            val = val[1:-1].strip()
+        out[m.group(1).strip()] = val
+    return out
+
+
+def _read(path: str) -> Optional[str]:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read().decode("utf-8-sig", "replace")
+    except OSError:
+        return None
+
+
+def find_project(start: str) -> Optional[Path]:
+    """The nearest folder at or above start holding a PLUMB.md that is a project's (not the template in Plumb's own
+    repository, which still has {{PLACEHOLDERS}})."""
+    folder = os.path.realpath(start)
+    while True:
+        candidate = os.path.join(folder, PLUMB_MD)
+        if os.path.isfile(candidate):
+            text = _read(candidate)
+            if text is not None and not _PLACEHOLDER.search(text):
+                return Path(folder)
+        parent = os.path.dirname(folder)
+        if parent == folder:
+            return None
+        folder = parent
+
+
+class Project:
+    """A project with Plumb: its root, PLUMB.md's switches and the design-system skill it names."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.root_s = str(root)
+        text = _read(os.path.join(self.root_s, PLUMB_MD)) or ""
+        first = text.lstrip("﻿").split("\n", 1)[0]
+        m = _VERSION.search(first)
+        self.version = m.group(1) if m else None
+        self.keys = plumb_md_keys(text)
+        self.skill_rel = self.keys.get("Design system", "").strip().replace("\\", "/").rstrip("/")
+        self.skill_dir: Optional[Path] = Path(resolve(self.skill_rel, self.root_s)) if self.skill_rel else None
+        self.linked = self.keys.get("Role", "").strip().lower().startswith("linked")
+        self.python = self.keys.get("Python", "").strip() or "python3"
+        self._doc: Optional[dict] = None
+        self._doc_read = False
+
+    def on(self, key: str) -> bool:
+        return _ON.match(self.keys.get(key, "") or "") is not None
+
+    @property
+    def skill_ok(self) -> bool:
+        return self.skill_dir is not None and self.skill_dir.is_dir()
+
+    @property
+    def name(self) -> str:
+        return self.skill_rel.rsplit("/", 1)[-1] if self.skill_rel else "design system"
+
+    def script(self, name: str) -> str:
+        """The command that runs one of the skill's scripts, for fix lines."""
+        return f"{self.python} {self.skill_rel}/scripts/{name}"
+
+    def tokens_doc(self) -> Optional[dict]:
+        """The tokens file (the one *.tokens.json in the skill's assets/tokens/), or None (missing, several, broken)."""
+        if not self._doc_read:
+            self._doc_read = True
+            folder = self.skill_dir / "assets" / "tokens" if self.skill_dir else None
+            found = sorted(folder.glob("*.tokens.json")) if folder is not None and folder.is_dir() else []
+            if len(found) == 1:
+                try:
+                    doc = json.loads(found[0].read_bytes().decode("utf-8-sig"))
+                    self._doc = doc if isinstance(doc, dict) else None
+                except (OSError, ValueError):
+                    self._doc = None
+        return self._doc
+
+    def _plumb_settings(self) -> dict:
+        doc = self.tokens_doc() or {}
+        ext = doc.get("$extensions") if isinstance(doc.get("$extensions"), dict) else {}
+        plumb = ext.get("plumb") if isinstance(ext.get("plumb"), dict) else {}
+        return plumb
+
+    @property
+    def docs_rel(self) -> str:
+        docs = self._plumb_settings().get("docs_dir") or "docs/design"
+        return str(docs).replace("\\", "/").strip().strip("/") or "docs/design"
+
+    @property
+    def copies(self) -> List[str]:
+        web = self._plumb_settings().get("web")
+        copies = web.get("copies") if isinstance(web, dict) else None
+        out = []
+        for c in copies or []:
+            if isinstance(c, str) and c.strip():
+                c = c.replace("\\", "/").strip()
+                while c.startswith("./"):
+                    c = c[2:]
+                out.append(c)
+        return out
+
+    def home_root(self) -> str:
+        """The project that owns the skill (a linked repo's skill lives in its home repo): the nearest folder above the
+        skill with a PLUMB.md, else this project."""
+        if self.skill_dir is not None:
+            found = find_project(str(self.skill_dir.parent))
+            if found is not None:
+                return str(found)
+        return self.root_s
+
+
+def load_project(payload: Optional[Payload]) -> Optional[Project]:
+    """The project the hook runs for: from CLAUDE_PROJECT_DIR when the CLI sets it (only there), else from the
+    payload's cwd, else from the current directory. None without a PLUMB.md."""
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    starts = [env] if env else [payload.cwd if payload else "", os.getcwd()]
+    for start in starts:
+        if start:
+            root = find_project(start)
+            if root is not None:
+                return Project(root)
+    return None
+
+
+def load_script(project: Project, file_name: str, module_name: str):
+    """One of the project's design-system scripts (audit.py, build-prototype.py) as a module, or None with one note.
+    The module is registered in sys.modules before it runs (its dataclasses need that); its folder goes on sys.path so
+    its own `import _plumb` finds the project's copy."""
+    if project.skill_dir is None:
+        return None
+    path = project.skill_dir / "scripts" / file_name
+    shown = f"{project.skill_rel}/scripts/{file_name}"
+    if not path.is_file():
+        note(f"{shown} is missing, so the design checks are skipped (the guards stay on); restore it with /plumb:upgrade")
+        return None
+    folder = str(path.parent)
+    if folder not in sys.path:
+        sys.path.insert(0, folder)
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, str(path))
+        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        sys.modules[module_name] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod
+    except BaseException as exc:  # noqa: BLE001 - a broken script must never break the tool call
+        sys.modules.pop(module_name, None)
+        if isinstance(exc, KeyboardInterrupt):
+            raise
+        note(f"cannot load {shown} ({type(exc).__name__}: {exc}), so the design checks are skipped (the guards stay "
+             f"on); restore it with /plumb:upgrade")
+        return None
+
+
+# ---------------------------------------------------------------- session snapshots
+
+
+def snapshot_dir() -> Path:
+    return Path(tempfile.gettempdir()) / "plumb"
+
+
+def snapshot_path(project: Path, session_id: str) -> Path:
+    """Where the session's snapshot lives: the OS temp folder, keyed by project and session, never in the repo."""
+    key = hashlib.sha256(os.path.realpath(str(project)).encode("utf-8")).hexdigest()[:12]
+    sid = re.sub(r"[^\w.-]", "_", session_id or "")[:80] or "session"
+    return snapshot_dir() / f"{key}-{sid}.json"
+
+
+def write_json(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(data, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+
+
+def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
+    folder = snapshot_dir()
+    cutoff = time.time() - days * 24 * 3600
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return
+    for p in entries:
+        try:
+            if p.suffix == ".json" and p.stat().st_mtime < cutoff:
+                p.unlink()
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------- shell commands
+
+
+# A cheap first look: a command with none of these cannot write a file.
+WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\brsync\b|\bln\b|\bdd\b|\btruncate\b|"
+                        r"write|\bopen\(|\.dump|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|::",
+                        re.I)
+_WORD = r"(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+)"
+_REDIR = re.compile(r"\d?>>?\|?\s*" + _WORD)
+_TEE = re.compile(r"\btee\b((?:\s+-{1,2}[\w-]+)*)((?:\s+" + _WORD + r")+)", re.I)
+_NO_WRITE = re.compile(r"\d?>&\d|\d?>>?\s*(?:/dev/null|\$null|nul)(?![\w./\\-])", re.I)
+_GENERIC = re.compile(r"write_text|write_bytes|\.write\(|json\.dump|shutil\.(?:copy\w*|move)|os\.(?:replace|rename)\(|"
+                      r"\bopen\([^)]*,\s*(?:mode\s*=\s*)?\\?['\"][rbt]*[wax+]|\btruncate\b|\bdd\b[^|;&]*\bof=|"
+                      r"::(?:write|append)all\w*\(", re.I)
+# Running Plumb's own builders is how generated files are meant to change.
+_RUNS_BUILDER = re.compile(r"^\s*(?:\S*[/\\])?(?:python[\d.]*(?:\.exe)?|py(?:\.exe)?|uv)\b.*\b(?:build-tokens|build-prototype)"
+                           r"\.py\b", re.I)
+_CD = re.compile(r"^\s*(?:cd|pushd|set-location|sl)\s+(?:/d\s+)?(\"[^\"]*\"|'[^']*'|\S+)\s*$", re.I)
+
+
+def _unquote(word: str) -> str:
+    return word[1:-1] if len(word) >= 2 and word[0] == word[-1] and word[0] in "\"'" else word
+
+
+def _split(command: str, seps: Tuple[str, ...]) -> List[str]:
+    """Split at top-level separators (not inside quotes)."""
+    parts: List[str] = []
+    cur: List[str] = []
+    quote = ""
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            cur.append(ch)
+            i += 1
+            continue
+        sep = next((s for s in seps if command.startswith(s, i)), None)
+        if sep is not None:
+            parts.append("".join(cur))
+            cur = []
+            i += len(sep)
+            continue
+        cur.append(ch)
+        i += 1
+    parts.append("".join(cur))
+    return [p for p in parts if p.strip()]
+
+
+_PS_PATH_FLAGS = ("-path", "-filepath", "-literalpath", "-pspath")
+_PS_VALUE_FLAGS = ("-value", "-encoding", "-filter", "-include", "-exclude", "-inputobject", "-width", "-stream",
+                   "-credential", "-delimiter")
+
+
+def _positional(words: List[str], value_flags: Tuple[str, ...]) -> List[str]:
+    out, skip = [], False
+    for w in words:
+        if skip:
+            skip = False
+            continue
+        if w.startswith("-") and len(w) > 1:
+            skip = w.lower() in value_flags
+            continue
+        out.append(w)
+    return out
+
+
+def _flag_value(words: List[str], flags: Tuple[str, ...]) -> Optional[str]:
+    for i, w in enumerate(words[:-1]):
+        if w.lower() in flags:
+            return words[i + 1]
+    for w in words:
+        k, eq, v = w.partition(":")
+        if eq and k.lower() in flags and v:
+            return v
+    return None
+
+
+def _sed_files(args: List[str], perl: bool = False) -> List[str]:
+    files, script_given, i = [], False, 0
+    pos: List[str] = []
+    while i < len(args):
+        a = args[i]
+        if a in ("-e", "-f", "--expression", "--file") or (perl and a in ("-e", "-E")):
+            script_given, i = True, i + 2
+            continue
+        if a.startswith(("--expression=", "--file=")):
+            script_given = True
+        elif a == "-i" and i + 1 < len(args) and args[i + 1] == "":  # BSD sed: -i '' (no backup suffix)
+            i += 2
+            continue
+        elif a.startswith("-") and len(a) > 1:
+            pass
+        else:
+            pos.append(a)
+        i += 1
+    files = pos if script_given else pos[1:]
+    return [f for f in files if f]
+
+
+def _stage_targets(stage: str, builder: bool = False) -> List[str]:
+    """The files one pipeline stage writes (best effort). builder: the stage runs a Plumb builder, whose own writes are
+    allowed; only its redirects and tee count."""
+    cleaned = _NO_WRITE.sub(" ", stage)
+    targets = [_unquote(m.group(1)) for m in _REDIR.finditer(cleaned)]
+    for m in _TEE.finditer(cleaned):
+        targets += [_unquote(w) for w in re.findall(_WORD, m.group(2))]
+    if builder:
+        return targets
+    rest = _TEE.sub(" ", _REDIR.sub(" ", cleaned))
+    words = [_unquote(w) for w in re.findall(_WORD, rest)]
+    while words and re.match(r"^[A-Za-z_]\w*=", words[0]):  # FOO=bar cmd
+        words.pop(0)
+    if words and words[0] in ("sudo", "command", "env", "nohup", "time"):
+        words.pop(0)
+    if not words:
+        return targets
+    name = re.split(r"[/\\]", words[0])[-1].lower()
+    args = words[1:]
+    if name in ("sed", "gsed") and any(re.match(r"^-[a-zA-Z]*i", a) or a.startswith("--in-place") for a in args):
+        targets += _sed_files(args)
+    elif name == "perl" and any(re.match(r"^-[a-zA-Z]*i", a) for a in args):
+        targets += _sed_files(args, perl=True)
+    elif name in ("cp", "mv", "install", "rsync", "ln", "copy", "move"):
+        pos = _positional(args, ("-t", "--target-directory", "-m", "--mode", "-o", "-g"))
+        if len(pos) >= 2:
+            targets.append(pos[-1])
+    elif name in ("set-content", "add-content", "out-file", "clear-content", "sc", "ac", "tee-object"):
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
+        targets += [value] if value else pos[:1]
+    elif name in ("copy-item", "move-item", "cpi", "mi"):
+        value = _flag_value(args, ("-destination",))
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))
+        targets += [value] if value else pos[1:2]
+    if _GENERIC.search(rest):  # a write that doesn't name its target in a way read here: every path it mentions
+        targets += re.findall(r"[^\s'\"`=(),;|&<>]+", rest)
+    return targets
+
+
+def shell_targets(command: str, cwd: str) -> List[str]:
+    """The files a shell command (Bash or PowerShell) looks like it writes, as absolute paths (best effort). What
+    build-tokens.py and build-prototype.py write themselves does not count (that is how generated files are meant to
+    change); only their redirects do.
+    `cd DIR` moves the base for the commands after it."""
+    out: List[str] = []
+    base = cwd
+    for part in _split(command, ("&&", "||", ";", "\n")):
+        m = _CD.match(part)
+        if m:
+            target = _unquote(m.group(1))
+            base = os.path.normpath(os.path.join(base, target.replace("\\", "/") if os.sep == "/" else target))
+            continue
+        builder = _RUNS_BUILDER.search(part) is not None
+        for stage in _split(part, ("|",)):
+            for t in _stage_targets(stage, builder):
+                if not t or t in ("-", "/dev/null"):
+                    continue
+                p = t.replace("\\", "/") if os.sep == "/" else t
+                p = os.path.expanduser(p)
+                full = os.path.normpath(p if os.path.isabs(p) else os.path.join(base, p))
+                if full not in out:
+                    out.append(full)
+    return out

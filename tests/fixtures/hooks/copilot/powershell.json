@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "{{SESSION}}",
+  "timestamp": "2026-10-12T09:17:40.090Z",
+  "cwd": "{{CWD}}",
+  "tool_name": "PowerShell",
+  "tool_input": {
+    "command": "{{COMMAND}}",
+    "description": "Run the command"
+  }
+}

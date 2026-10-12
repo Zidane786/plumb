@@ -1,0 +1,8 @@
+{
+  "session_id": "{{SESSION}}",
+  "transcript_path": "/home/dev/.claude/projects/-work-demo/{{SESSION}}.jsonl",
+  "cwd": "{{CWD}}",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": "{{ACTIVE}}"
+}
