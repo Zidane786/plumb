@@ -143,7 +143,9 @@ changed while its screen file did not (and still differ from the recorded baseli
 states ..."), and screen-unapproved for a built screen whose screen file or source changed and whose current prototype
 is not approved. No changed files: "no UI files changed since the snapshot", exit 0. A missing or broken snapshot
 exits 2. Git runs as an absolute path found on PATH (never in the project), read-only, with the commands a repository's
-config can name turned off (_GIT_OVERRIDES; SECURITY.md "Trust boundary").
+config can name turned off (_GIT_OVERRIDES; SECURITY.md "Trust boundary"), and all its calls in one run share a
+GIT_BUDGET of 3 seconds: past it git counts as failed (no git: a snapshot keeps modification times; a git snapshot
+then finds no changes).
 
 Hooks load this file by path (it is not in a package). Register the module in sys.modules before running it, or
 its dataclasses fail:
@@ -173,6 +175,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -3703,11 +3706,12 @@ _GIT_EXE: Dict[str, Optional[str]] = {}
 _GIT_VERSION: List[Optional[Tuple[int, ...]]] = []
 
 
-def find_executable(name: str, avoid: Optional[Path] = None) -> Optional[str]:
+def find_executable(name: str, avoid: Optional[Path] = None, windows: Optional[bool] = None) -> Optional[str]:
     """The absolute path of a program found on PATH, looked up here rather than by the OS: empty, `.` and relative PATH
     entries are skipped, and so is anything inside `avoid` (the project), so a program planted in a repository is
-    never run. On Windows .exe then .cmd. None when it is not found."""
-    exts = [".exe", ".cmd"] if os.name == "nt" else [""]
+    never run. On Windows only <name>.exe (a .cmd or .bat would run through cmd.exe, with the project's file names as
+    its arguments). None when it is not found."""
+    exts = [".exe"] if (os.name == "nt" if windows is None else windows) else [""]
     avoid_real = os.path.normcase(os.path.realpath(str(avoid))) if avoid is not None else None
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         entry = entry.strip().strip('"')
@@ -3740,18 +3744,28 @@ def _git_env(overrides: Tuple[Tuple[str, str], ...]) -> Dict[str, str]:
     return env
 
 
+GIT_BUDGET = 3.0  # seconds for all the git calls of one process; then git counts as failed (fail open)
+_GIT_DEADLINE: List[float] = []
+
+
 def _git_exec(root: Path, overrides: Tuple[Tuple[str, str], ...], args: Tuple[str, ...],
               stdin: Optional[bytes] = None) -> Optional[bytes]:
+    if not _GIT_DEADLINE:
+        _GIT_DEADLINE.append(time.monotonic() + GIT_BUDGET)
+    left = _GIT_DEADLINE[0] - time.monotonic()
     exe = _git_exe(root)
-    if exe is None:
+    if exe is None or left <= 0:
         return None
     dash_c: List[str] = []
     for key, value in overrides:
         if "=" not in key:
             dash_c += ["-c", f"{key}={value}"]
     try:
-        r = subprocess.run([exe, *dash_c, *_GIT_OPTIONS, *args], cwd=str(root), capture_output=True, timeout=15,
+        r = subprocess.run([exe, *dash_c, *_GIT_OPTIONS, *args], cwd=str(root), capture_output=True, timeout=left,
                            input=stdin if stdin is not None else b"", env=_git_env(overrides))
+    except subprocess.TimeoutExpired:
+        _GIT_DEADLINE[0] = 0.0  # git hangs here (a FIFO in an include.path, a slow mount): no more git this run
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     return r.stdout if r.returncode == 0 else None

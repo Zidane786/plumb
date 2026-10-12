@@ -19,8 +19,10 @@ and write files in the project.
 - **Git, with fixed overrides.** To see what changed in a session the hooks run git in the project: `rev-parse`,
   `status`, `diff --name-only`, `ls-tree`, `cat-file --batch` (the stored blob of a file's old text) and
   `config --get-regexp` (to list filter drivers). Git is found as an absolute path by walking `PATH` (empty, `.` and
-  relative entries and anything inside the project are skipped), never in the project; without it the checks stay
-  quiet. Every call passes these overrides, as `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` (and as
+  relative entries and anything inside the project are skipped; on Windows only `git.exe`), never in the project.
+  All the git calls of one hook run share a 3-second budget. Without git (not found, failing, or over the budget) the
+  snapshot falls back to modification times and the end-of-turn check still runs on them; a session whose snapshot
+  was taken with git finds no changes then, and stays quiet. Every call passes these overrides, as `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` (and as
   `-c` for older git): `core.fsmonitor=false`, `core.untrackedCache=false`, `core.hooksPath=<null device>`,
   `diff.external=` (empty), `core.pager=cat`, `protocol.allow=never`, and an empty `clean`, `smudge` and `process` for
   every `filter.<name>` the configuration lists (any name; on git older than 2.31 a name containing `=` cannot be

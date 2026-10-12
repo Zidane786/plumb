@@ -1092,3 +1092,65 @@ def test_generated_file_under_a_folder_with_a_space_is_refused(launcher, tmp_pat
     proj = make_project(tmp_path, "With Space")
     assert " is generated" in refused(bash(launcher, tmp_path, proj,
                                            f"python3 -c \"open('{proj}/app/globals.css', 'w').write('x')\""))
+
+
+# ---------------------------------------------------------------- review round 3: last minors
+
+
+def _audit_module():
+    spec = importlib.util.spec_from_file_location("plumb_audit", PLUGIN / "assets/skill/scripts/audit.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["plumb_audit"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_windows_git_lookup_takes_only_git_exe(tmp_path, monkeypatch):
+    A = _audit_module()
+    scripts_only = tmp_path / "scripts-only"
+    scripts_only.mkdir()
+    for name in ("git.cmd", "git.bat", "git"):
+        (scripts_only / name).write_text("x", encoding="utf-8")
+        os.chmod(str(scripts_only / name), 0o755)
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "git.exe").write_text("x", encoding="utf-8")
+    os.chmod(str(real / "git.exe"), 0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(scripts_only)]))
+    assert A.find_executable("git", windows=True) is None
+    monkeypatch.setenv("PATH", os.pathsep.join([str(scripts_only), str(real)]))
+    assert A.find_executable("git", windows=True) == os.path.realpath(str(real / "git.exe"))
+
+
+@pytest.mark.parametrize("command", [
+    "node -e \"require('fs').writeFileSync('app/globals.css', 'x')\"",
+    "node -e \"require('fs').appendFileSync('docs/design/prototype.html', 'x')\"",
+    "node -e \"fs.promises.writeFile('docs/design/screens.html', 'x')\"",
+    "node -e \"require('fs').createWriteStream('docs/design/specimen.html').end('x')\"",
+    "node -e \"require('fs').copyFileSync('/tmp/x.css', 'app/globals.css')\"",
+    "bun -e \"await Bun.write('app/globals.css', 'x')\"",
+    "deno eval \"Deno.writeTextFileSync('app/globals.css', 'x')\"",
+])
+def test_node_bun_and_deno_writes_are_refused(launcher, tmp_path, proj, command):
+    assert " is generated" in refused(bash(launcher, tmp_path, proj, command))
+
+
+def test_node_reads_are_allowed(launcher, tmp_path, proj):
+    allowed(bash(launcher, tmp_path, proj, "node -e \"console.log(require('fs').readFileSync('app/globals.css', 'utf8'))\""))
+
+
+@needs_git
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs a FIFO (POSIX)")
+def test_git_that_hangs_on_config_is_cut_short(launcher, tmp_path, proj):
+    git_init(proj)
+    fifo = tmp_path / "config-fifo"
+    os.mkfifo(str(fifo))
+    git(proj, "config", "include.path", str(fifo))
+    t = time.perf_counter()
+    r = session_start(launcher, tmp_path, proj)
+    assert context(r).startswith("Plumb: ")
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0
+    took = time.perf_counter() - t
+    assert took < 12, f"session start + stop took {took:.1f} s with a git that hangs"

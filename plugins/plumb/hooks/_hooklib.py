@@ -718,13 +718,16 @@ def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
 
 # A cheap first look: a command with none of these cannot write a file.
 WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\brsync\b|\bln\b|\bdd\b|\btruncate\b|"
-                        r"write|\bopen\(|\.dump|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|::",
+                        r"write|\bopen\(|\.dump|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|::|"
+                        r"append|copyfile|\bfs\.|rename",
                         re.I)
 _WORD = r"(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+)"
 _REDIR = re.compile(r"\d?>>?\|?\s*" + _WORD)
 _TEE = re.compile(r"\btee\b((?:\s+-{1,2}[\w-]+)*)((?:\s+" + _WORD + r")+)", re.I)
 _NO_WRITE = re.compile(r"\d?>&\d|\d?>>?\s*(?:/dev/null|\$null|nul)(?![\w./\\-])", re.I)
 _GENERIC = re.compile(r"write_text|write_bytes|\.write\(|json\.dump|shutil\.(?:copy\w*|move)|os\.(?:replace|rename)\(|"
+                      # Node, Bun, Deno (node -e, bun -e, deno eval): fs writes, copies and renames
+                      r"\b(?:writeFile|appendFile|copyFile|writeTextFile|createWriteStream|rename|cp)(?:Sync)?\(|"
                       r"\bopen\([^)]*,\s*(?:mode\s*=\s*)?\\?['\"][rbt]*[wax+]|\btruncate\b|\bdd\b[^|;&]*\bof=|"
                       r"::(?:write|append)all\w*\(", re.I)
 # Running Plumb's own builders is how generated files are meant to change: a pipeline stage whose interpreter's script
