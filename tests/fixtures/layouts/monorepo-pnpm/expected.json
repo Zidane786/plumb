@@ -1,0 +1,1 @@
+{"layout":"monorepo","monorepo":"pnpm-workspace.yaml","no_ui":[{"path":"apps/api","stack":"fastapi"}],"proposal":{"copies":["apps/web/app/globals.css"]}}
