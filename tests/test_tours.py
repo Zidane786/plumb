@@ -38,6 +38,7 @@ PAGES_REL = f"{DOCS}/tours"
 DEMO_SRC = FIXTURE / "tours/demo.json"
 DEMO_PAGE = f"{PAGES_REL}/demo.html"
 HOME_REL = f"{DOCS}/prototype/screens/home.html"
+REPO_TEMPLATES = Path(__file__).resolve().parents[1] / "plugins/plumb/assets/skill/templates"
 BOOKING_REL = f"{DOCS}/prototype/screens/booking.html"
 PURPOSE = "See tonight's bookings at a glance and start a new one."
 GUIDE_ITEM = "Start a new booking from the link at the top"
@@ -158,7 +159,7 @@ def test_tour_data_is_normalised_with_defaults(project: Path) -> None:
     assert len(steps) == 6
     assert steps[1]["state"] == "ready", "a step without a state uses the screen's first state"
     assert steps[1]["point"] == "arrow" and steps[1]["pointLabel"] == "Start here"
-    assert steps[0]["targets"] == [".tables"] and steps[5]["targets"] == [".tables li:first-child", "[data-test=new-booking]"]
+    assert steps[0]["targets"] == [".tables"] and steps[5]["targets"] == ["[data-test=new-booking]"]
     assert steps[2]["action"] == {"kind": "type", "target": "[data-test=guest]", "value": "Zoë Brontë", "ms": 0}
     assert steps[3]["action"]["kind"] == "click" and steps[3]["action"]["target"] == "[data-test=save]"
     assert steps[3]["yourTurn"] is True and steps[3]["hint"].startswith("Not that one")
@@ -525,7 +526,13 @@ def built(tmp_path_factory) -> Path:
     multi = training()
     multi["steps"].append({"screen": "home", "title": "Several rings", "caption": "Two things at once.",
                            "targets": ["h2", "[data-test=new-booking]"], "point": "ring"})
-    return make_tour_project(tmp_path_factory.mktemp("tours") / "Café Ünïcode", {"demo": demo(), "training": multi})
+    lesson = {"title": "Lesson: booking a table", "audience": "training", "steps": [
+        {"screen": "booking", "title": "Book", "caption": "Your turn: book the table.", "target": "[data-test=save]",
+         "point": "cursor", "action": {"click": True}, "your_turn": True},
+        {"screen": "home", "title": "All of tonight", "caption": "The whole list.", "target": ".tables", "point": "zoom"},
+    ]}
+    return make_tour_project(tmp_path_factory.mktemp("tours") / "Café Ünïcode",
+                             {"demo": demo(), "training": multi, "lesson": lesson})
 
 
 LOG = """
@@ -1063,3 +1070,191 @@ def test_guide_panel_shows_the_screen_what_to_do_try_it_and_a_feed(browser, buil
         assert errors == []
     finally:
         ctx.close()
+
+
+# ---------------------------------------------------------------- review round 1: navigating clicks, focus, polish
+
+
+OVERLAYS = """() => {
+  var s = document.getElementById('pp-stage').getBoundingClientRect();
+  return [...document.querySelectorAll('.pl-layer > [data-pl-step]')].map(function (n) {
+    var r = n.getBoundingClientRect();
+    return {cls: n.getAttribute('class'), left: r.left - s.left, top: r.top - s.top, right: r.right - s.left,
+            bottom: r.bottom - s.top, w: s.width, h: s.height};
+  });
+}"""
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_navigating_click_takes_the_steps_marks_with_it(browser, built, width: int) -> None:
+    """After step 2's played click opens New booking, nothing of step 2 (callout, arrow) is left at a stale or 0x0 spot
+    during the pause after the click."""
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=width)
+    try:
+        page.evaluate("""(js) => { window.__after = []; var get = eval(js);
+            setInterval(function () { var s = window.plumbPlayer.state();
+              if (s.pos === 3 && window.plumbPrototype.current().screen === 'booking') window.__after.push(get()); }, 20); }""",
+                      OVERLAYS)
+        _start(page, "demo", "play", step=2)
+        _wait_pos(page, 4)
+        after = page.evaluate("window.__after")
+        assert after, "the pause after the click was sampled"
+        for sample in after:
+            assert not [o for o in sample if "pl-callout" in o["cls"] or "pl-arrow" in o["cls"]], sample
+            for o in sample:
+                assert o["left"] >= -1 and o["top"] >= -1 and o["right"] <= o["w"] + 1 and o["bottom"] <= o["h"] + 1, o
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_overlays_stay_on_the_stage_and_off_hidden_elements(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=390)
+    try:
+        for step in range(1, 7):
+            _start(page, "demo", "guide", step=step)
+            page.wait_for_timeout(450 if step == 6 else 50)
+            for o in page.evaluate(OVERLAYS):
+                assert o["left"] >= -1 and o["right"] <= o["w"] + 1 and o["top"] >= -1 and o["bottom"] <= o["h"] + 1, (step, o)
+                if "pl-callout" in o["cls"] or "pl-arrow" in o["cls"]:
+                    assert o["left"] > 1 or o["top"] > 1, (step, o)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_enter_on_next_at_a_navigating_step_keeps_focus_in_the_dock(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "demo", "guide", step=2)
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "next"
+        page.keyboard.press("Enter")
+        assert _visible_screen(page) == "booking" and _state(page)["pos"] == 4
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "next"
+        page.keyboard.press("Enter")
+        assert _state(page)["pos"] == 5, "a second Enter still drives the tour"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_played_navigating_click_keeps_focus_on_pause(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "demo", "play", step=2)
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "play"
+        _wait_pos(page, 4)
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "play"
+        page.keyboard.press(" ")
+        assert _state(page)["paused"] is True
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_autostart_does_not_move_focus_and_the_skip_link_reaches_the_dock(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / DEMO_PAGE)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        assert page.evaluate("document.activeElement === document.body"), "no focus ring on load"
+        page.keyboard.press("Tab")
+        assert page.evaluate("document.activeElement.textContent") == "Skip to the walkthrough"
+        page.keyboard.press("Enter")
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "play"
+        assert page.evaluate("location.hash").startswith("#tour-demo")
+        page.keyboard.press("Escape")
+        assert _shown(page, ".pl-skip") == 0 and page.evaluate("document.querySelector('.pl-skip').hidden")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_zoom_never_crops_its_area(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "lesson", "guide", step=2)
+        page.wait_for_timeout(450)
+        assert page.evaluate("getComputedStyle(document.getElementById('pp-frame')).transform") in ("none", ""), \
+            "an area that already fills the screen is not zoomed"
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            _start(page, "demo", "guide", step=6)
+            page.wait_for_timeout(450)
+            assert page.evaluate("getComputedStyle(document.getElementById('pp-frame')).transform") not in ("none", "")
+            inside = page.evaluate("""() => { var s = document.getElementById('pp-stage').getBoundingClientRect();
+                var r = document.querySelector('#pp-frame [data-test=new-booking]').getBoundingClientRect();
+                return r.left >= s.left && r.right <= s.right && r.top >= s.top && r.bottom <= s.bottom; }""")
+            assert inside, f"the zoomed element stays whole on the stage at {width}px"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_default_hint_follows_the_pointing_style_and_blinks_the_target(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "lesson", "guide", step=1)
+        page.click('#pp-frame [data-screen="booking"] h2')
+        text = page.inner_text(".pl-hint")
+        assert "highlighted" not in text and "where the cursor points" in text and "Book the table" in text, text
+        assert page.evaluate("document.querySelector('#pp-frame [data-test=save]').classList.contains('pl-attn')")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_labels_keep_clear_of_the_badge(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=390)
+    try:
+        _start(page, "demo", "play", step=1)
+        page.evaluate("window.plumbPlayer.pause()")
+        boxes = page.evaluate("""() => { var b = document.querySelector('.pl-badge').getBoundingClientRect();
+            return [...document.querySelectorAll('.pl-label')].map(function (n) { var r = n.getBoundingClientRect();
+              return !(r.right <= b.left || r.left >= b.right || r.bottom <= b.top || r.top >= b.bottom); }); }""")
+        assert len(boxes) == 2 and not any(boxes), boxes
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_side_rail_ends_above_the_dock(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=1280)
+    try:
+        _start(page, "demo", "guide", step=1)
+        page.wait_for_timeout(100)
+        rail = page.evaluate("document.getElementById('pp-rail').getBoundingClientRect().bottom")
+        dock = page.evaluate("document.querySelector('.pl-dock').getBoundingClientRect().top")
+        assert rail <= dock + 1, (rail, dock)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_broken_tour_does_not_block_map_approve_or_synced(tmp_path: Path) -> None:
+    p = make_tour_project(tmp_path / "p")
+    page_before = (p / PROTO_REL).read_bytes()
+    doc = demo()
+    _step(doc).update(screen="bookings")
+    put_tour(p, "demo", doc)
+    r = run(p, "--approve", "home")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "approved home" in r.stdout
+    assert "warning: the pages were not rebuilt" in r.stderr and 'screen "bookings"' in r.stderr and "\nfix: " in r.stderr
+    entry = next(s for s in json.loads(read(p / f"{DOCS}/prototype/screens.json"))["screens"] if s["id"] == "home")
+    assert entry["approved"] is not None
+    assert (p / PROTO_REL).read_bytes() == page_before, "the pages wait for the tour to be fixed"
+    for args in (("--synced", "menu"), ("--map", "menu", "--route", "/menu", "--files", "app/menu/**")):
+        r = run(p, *args)
+        assert r.returncode == 0 and "warning: the pages were not rebuilt" in r.stderr, r.stdout + r.stderr
+    assert_refusal(run(p), 'screen "bookings"')
+    assert_refusal(run(p, "--check"), 'screen "bookings"')
+
+
+def test_player_colours_are_tokens_or_named_video_colours() -> None:
+    css = read(REPO_TEMPLATES / "player.css")
+    head, _sep, rest = css.partition("--pl-video-shadow-strong:")
+    assert _sep, "the video colours are defined once, by name"
+    body = rest.split("}", 1)[1]
+    raw = re.findall(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|(?<![\w-])(?:white|black)(?![\w-])", body)
+    assert raw == [], raw
+    assert "--pl-video-ink" in head and "--pl-video-scrim" in head and "--pl-video-dim" in head

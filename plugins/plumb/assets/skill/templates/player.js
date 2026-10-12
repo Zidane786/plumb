@@ -97,6 +97,11 @@
   [dockTop, dTitle, dCaption, hint, progress, controls].forEach(function (n) { dock.appendChild(n); });
   if (mount) { mount.appendChild(dock); mount.appendChild(live); }
   else { document.body.appendChild(dock); document.body.appendChild(live); }
+  /* While a tour runs, the first stop in the tab order jumps to its controls (the dock is last in the page). */
+  var skip = el("a", "pp-skip pp-ui pl-skip", "Skip to the walkthrough", { href: "#plumb-player" });
+  skip.hidden = true;
+  skip.addEventListener("click", function (e) { e.preventDefault(); if (T.tour) focusPrimary(); });
+  document.body.insertBefore(skip, document.body.firstChild);
 
   /* ------------------------------------------------------------ the player's state */
   var T = { tour: null, mode: null, seq: [], scenes: [], pos: 0, speed: 1, paused: false, ended: false, run: 0, timer: null,
@@ -174,8 +179,15 @@
     if (!section || !sel) return null;
     var list;
     try { list = section.querySelectorAll(sel); } catch (err) { return null; }
-    for (var i = 0; i < list.length; i++) if (list[i].getClientRects().length) return list[i];
-    return list[0] || null;
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i].getBoundingClientRect();
+      if (list[i].getClientRects().length && (r.width > 0 || r.height > 0)) return list[i];
+    }
+    return null;  /* nothing of it is on screen (another state, or the screen moved on): point at nothing */
+  }
+  function onStepScreen(step) {
+    var cur = api.current();
+    return cur.page === "screen" && cur.screen === step.screen;
   }
   function box(node) {
     var s = stage.getBoundingClientRect(), r = node.getBoundingClientRect();
@@ -220,16 +232,22 @@
       var r = n.getBoundingClientRect();
       x1 = Math.min(x1, r.left); y1 = Math.min(y1, r.top); x2 = Math.max(x2, r.right); y2 = Math.max(y2, r.bottom);
     });
-    var w = Math.max(1, x2 - x1), h = Math.max(1, y2 - y1);
-    var k = clamp(Math.min(f.width * 0.8 / w, f.height * 0.8 / h), 1.2, 1.8);
+    var w = Math.max(1, x2 - x1), h = Math.max(1, y2 - y1), s = stage.getBoundingClientRect();
+    var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, m = 8;
+    /* scaled about its own centre, the area must stay inside the frame's 80% and inside the stage on every side */
+    var k = Math.min(1.6, f.width * 0.8 / w, f.height * 0.8 / h, 2 * (cx - s.left - m) / w, 2 * (s.right - m - cx) / w,
+                     2 * (cy - s.top - m) / h, 2 * (s.bottom - m - cy) / h);
+    if (!(k >= 1.1)) return false;  /* the area already fills the view: zooming would only crop it */
     stage.classList.add("pl-zooming");
     frame.classList.add("pl-zoom-in");
     frame.style.transformOrigin = ((x1 + x2) / 2 - f.left) + "px " + ((y1 + y2) / 2 - f.top) + "px";
     frame.style.transform = "scale(" + k.toFixed(3) + ")";
+    return true;
   }
   /* Draws the step's pointing and text on the stage; called again on resize and after a zoom settles. */
   function draw(step) {
     clearOverlays();
+    if (!onStepScreen(step)) { unzoom(); return; }  /* a played or real click moved on: the step's marks go with it */
     var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
     var boxes = targets.map(box);
     var W = stage.clientWidth, H = stage.clientHeight;
@@ -251,6 +269,7 @@
       boxes.forEach(function (b) { ring("pl-edge", b); });
     }
     if (step.point === "ring") boxes.forEach(function (b) { ring("pl-ring", b); });
+    if (step.point === "zoom" && frame.style.transform) boxes.forEach(function (b) { ring("pl-edge", b); });
     if (step.point === "beacon") boxes.forEach(function (b) { put(addOverlay(el("span", "pl-beacon")), b.x + b.w - 2, b.y + 2); });
     var reserved = { top: 0, bottom: 0 };
     if (step.point === "arrow" && boxes.length) {
@@ -270,7 +289,7 @@
       var t = find(step, lab.target);
       if (!t) return;
       var b = box(t), tag = addOverlay(el("span", "pl-label", lab.text));
-      put(tag, clamp(b.x - 6, 4, Math.max(4, W - tag.offsetWidth - 4)), Math.max(4, b.y - 12));
+      placeClear(tag, clamp(b.x - 6, 4, Math.max(4, W - tag.offsetWidth - 4)), Math.max(4, b.y - 12), W, H);
     });
     if (step.callout && boxes.length) callout(step.callout, boxes[0], W, H, reserved);
     if (step.note) {
@@ -280,6 +299,25 @@
           clamp(f.y + f.h * step.note.y / 100 - nh / 2, 8, Math.max(8, H - nh - 8)));
     }
     if (step.point === "cursor" && targets.length) moveCursor(targets[0], T.mode === "play" && !calm());
+  }
+  /* Puts a tag at (x, y), or nudged left or down when it would sit under the play badge or the dock. */
+  function placeClear(tag, x, y, W, H) {
+    var tw = tag.offsetWidth, th = tag.offsetHeight, s = stage.getBoundingClientRect(), keep = [];
+    if (!badge.hidden) keep.push(box(badge));
+    if (!dock.hidden) {
+      var d = dock.getBoundingClientRect();
+      keep.push({ x: d.left - s.left, y: d.top - s.top, w: d.width, h: d.height });
+    }
+    function clear(px, py) {
+      return keep.every(function (k) { return px + tw <= k.x - 2 || px >= k.x + k.w + 2 || py + th <= k.y - 2 || py >= k.y + k.h + 2; });
+    }
+    var tries = [[x, y]];
+    keep.forEach(function (k) { tries.push([k.x - tw - 6, y], [x, k.y + k.h + 4], [x, k.y - th - 4]); });
+    for (var i = 0; i < tries.length; i++) {
+      var px = clamp(tries[i][0], 4, Math.max(4, W - tw - 4)), py = clamp(tries[i][1], 4, Math.max(4, H - th - 4));
+      if (clear(px, py)) { put(tag, px, py); return; }
+    }
+    put(tag, clamp(x, 4, Math.max(4, W - tw - 4)), clamp(y, 4, Math.max(4, H - th - 4)));
   }
   /* The subtitle sits at the bottom of the part of the stage you can see, above the dock. */
   function placeSubtitle() {
@@ -317,8 +355,7 @@
       if (r.top < 0 || r.bottom > bottom) targets[0].scrollIntoView({ block: "center" });
     }
     T.redraw = function () { draw(step); };
-    if (step.point === "zoom" && targets.length) {
-      zoom(targets);
+    if (step.point === "zoom" && targets.length && zoom(targets)) {
       T.zoomTimer = setTimeout(function () { if (T.redraw) T.redraw(); }, calm() ? 0 : 400);
     }
     draw(step);
@@ -381,7 +418,7 @@
     if (!a || a.kind === "wait") return;
     var node = find(step, a.target);
     if (!node) return;
-    if (a.kind === "click") node.click();
+    if (a.kind === "click") clickKeepingFocus(node);
     else if (a.kind === "type") { setValue(node, a.value); fire(node, "change"); }
     else choose(node, a.value);
   }
@@ -393,7 +430,7 @@
     wait(GLIDE, function () {
       if (a.kind === "click") {
         tap();
-        wait(TAP, function () { node.click(); done(); });
+        wait(TAP, function () { clickKeepingFocus(node); done(); });
       } else if (a.kind === "choose") {
         tap();
         wait(TAP, function () { choose(node, a.value); done(); });
@@ -411,6 +448,13 @@
       }
     });
   }
+  /* A click the player makes may navigate, and the shell then focuses the screen's title: when the viewer was working
+     the dock (Enter on Next, Space on Pause), focus goes back to the dock so the next key still drives the tour. */
+  function clickKeepingFocus(node) {
+    var had = dock.contains(document.activeElement);
+    node.click();
+    if (had && T.tour && !dock.contains(document.activeElement)) focusPrimary();
+  }
   function tap() {
     cursor.classList.remove("pl-tap");
     void cursor.offsetWidth;
@@ -420,15 +464,25 @@
 
   /* ------------------------------------------------------------ your turn (guide mode) */
   function showHint(step, node) {
-    var a = step.action;
-    var text = step.hint || ("Not that one. " + (a.kind === "click" ? "Click the highlighted " + describe(node)
-      : a.kind === "type" ? "Type “" + a.value + "” into the highlighted " + describe(node)
-      : "Choose “" + a.value + "” in the highlighted " + describe(node)) + ".");
+    var a = step.action, what = describe(node);
+    var where = step.point === "cursor" ? ", where the cursor points" : step.point === "none" ? ""
+      : ", highlighted on the screen";
+    var text = step.hint || ("Not that one. " + (a.kind === "click" ? "Click " + what
+      : a.kind === "type" ? "Type “" + a.value + "” into " + what
+      : "Choose “" + a.value + "” in " + what) + where + ".");
     hint.textContent = text;
     hint.hidden = false;
     layer.classList.remove("pl-flash");
     void layer.offsetWidth;
     layer.classList.add("pl-flash");
+    if (node) {
+      /* the real control blinks too, whatever the step points with */
+      node.classList.remove("pl-attn");
+      void node.offsetWidth;
+      node.classList.add("pl-attn");
+      setTimeout(function () { node.classList.remove("pl-attn"); }, 1200);
+    }
+    if (!cursor.hidden) tap();
   }
   function armTurn(step) {
     var a = step.action, run = T.run, done = false;
@@ -643,6 +697,7 @@
       return b;
     });
     dock.hidden = false;
+    skip.hidden = false;
     document.body.classList.add("pl-docked");
     sizeDock();
     if (!wasActive) note("Started the walkthrough “" + tour.title + "”");
@@ -657,11 +712,13 @@
     cursor.hidden = true;
     badge.hidden = true;
     dock.hidden = true;
+    skip.hidden = true;
     document.body.classList.remove("pl-docked");
     if (T.raf) cancelAnimationFrame(T.raf);
     T.raf = 0;
     var title = T.tour.title;
     T.tour = null; T.mode = null; T.seq = []; T.scenes = []; T.paused = false; T.ended = false;
+    fitRail();
     var cur = api.current();
     if (cur.page === "screen" && cur.screen) {
       var info = screenInfo(cur.screen);
@@ -719,6 +776,16 @@
   }
   function sizeDock() {
     document.body.style.setProperty("--pl-dock-h", dock.offsetHeight + "px");
+    fitRail();
+  }
+  /* While a tour runs, the sticky side rail (why + guide) ends above the dock, so its last items stay reachable by
+     scrolling the rail; on narrow layouts the rail is not sticky and the page's bottom padding does the job. */
+  function fitRail() {
+    var rail = $("pp-rail");
+    if (!rail) return;
+    if (!T.tour || getComputedStyle(rail).position !== "sticky") { rail.style.maxHeight = ""; return; }
+    var room = dock.getBoundingClientRect().top - 16 - rail.getBoundingClientRect().top;
+    rail.style.maxHeight = Math.max(160, Math.floor(room)) + "px";
   }
 
   leaveBtn.addEventListener("click", function () { leave(); });
@@ -751,7 +818,7 @@
     }
   });
   window.addEventListener("resize", function () { if (T.redraw) T.redraw(); if (T.tour) { sizeDock(); placeSubtitle(); } });
-  window.addEventListener("scroll", function () { if (T.tour) placeSubtitle(); }, { passive: true });
+  window.addEventListener("scroll", function () { if (T.tour) { placeSubtitle(); fitRail(); } }, { passive: true });
   if (window.ResizeObserver) {
     new ResizeObserver(function () { if (T.redraw) T.redraw(); }).observe(frame);
     new ResizeObserver(function () { if (T.tour) sizeDock(); }).observe(dock);
@@ -936,6 +1003,7 @@
     state: state
   };
   if (!fromHash(location.hash) && config.autostart && byId[config.autostart.tour]) {
-    start(config.autostart.tour, { mode: config.autostart.mode });
+    /* no focus move on load: nobody asked for it; the first Tab lands on "Skip to the walkthrough" */
+    start(config.autostart.tour, { mode: config.autostart.mode, focus: false });
   }
 })();

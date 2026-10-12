@@ -1,6 +1,20 @@
 /* Plumb walkthrough player and guide panel (inlined by build-prototype.py into prototype.html and every tour page).
    Colours come from the shell's --pl-* roles, which the token block maps to the project's tokens, so the player follows
    the project's palette in light and dark. Overlays sit on the stage and never take a click from the screen. */
+/* The "video" colours. Subtitles, the play badge, the cursor, the dimming of a spotlight and the shadows under floating
+   marks keep one fixed, high-contrast look in every project and both themes (like captions on a film), so they are not
+   project tokens. They are defined once, here, by name; every other colour in the player is a --pl-* role mapped to the
+   project's tokens. A prototype scan can exempt exactly these names (generator-owned). */
+:root {
+  --pl-video-ink: #ffffff;            /* subtitle text, cursor fill */
+  --pl-video-ink-soft: #f5f5f5;       /* badge text */
+  --pl-video-outline: #111111;        /* cursor outline */
+  --pl-video-scrim: rgb(12 13 15 / 0.84);   /* subtitle background */
+  --pl-video-badge: rgb(15 17 20 / 0.86);   /* play badge background */
+  --pl-video-dim: rgb(10 12 16 / 0.52);     /* spotlight: the rest of the screen */
+  --pl-video-shadow: rgb(0 0 0 / 0.3);      /* under labels, beacons and the cursor */
+  --pl-video-shadow-strong: rgb(0 0 0 / 0.35);  /* under the dock */
+}
 .pp-stage { position: relative; }
 .pp-stage.pl-zooming { overflow: hidden; }
 .pp-frame.pl-zoom-in { transition: transform 360ms var(--pl-ease); }
@@ -8,12 +22,12 @@
 .pl-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; border-radius: 12px; }
 .pl-layer > * { position: absolute; }
 .pl-dim { left: 0; top: 0; }
-.pl-dim path { fill: rgb(10 12 16 / 0.52); }
+.pl-dim path { fill: var(--pl-video-dim); }
 .pl-edge, .pl-ring {
   border-radius: 10px;
   box-shadow: 0 0 0 3px var(--pl-accent), 0 0 0 7px color-mix(in srgb, var(--pl-accent) 28%, transparent);
 }
-.pl-edge { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pl-accent) 85%, white); }
+.pl-edge { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pl-accent) 85%, var(--pl-video-ink)); }
 .pl-flash .pl-ring, .pl-flash .pl-edge { animation: pl-flash 0.5s ease-in-out 2; }
 @keyframes pl-flash { 50% { box-shadow: 0 0 0 5px var(--pl-warn), 0 0 0 10px color-mix(in srgb, var(--pl-warn) 30%, transparent); } }
 
@@ -23,12 +37,12 @@
 .pl-arrow-label, .pl-label {
   font: 600 12px/1.25 var(--pl-font); white-space: nowrap; max-width: 14rem; overflow: hidden; text-overflow: ellipsis;
   padding: 4px 9px; border-radius: 999px; color: var(--pl-on-accent); background: var(--pl-accent);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.25);
+  box-shadow: 0 2px 6px var(--pl-video-shadow);
 }
 .pl-label { padding: 3px 8px; }
 
 .pl-beacon { width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--pl-accent);
-  border: 2px solid var(--pl-surface); box-shadow: 0 1px 4px rgb(0 0 0 / 0.3); }
+  border: 2px solid var(--pl-surface); box-shadow: 0 1px 4px var(--pl-video-shadow); }
 .pl-beacon::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--pl-accent);
   animation: pl-pulse 1.6s ease-out infinite; }
 @keyframes pl-pulse { from { transform: scale(1); opacity: 0.9; } to { transform: scale(3); opacity: 0; } }
@@ -46,10 +60,10 @@
 .pl-side-left::before { right: -6px; top: calc(50% - 5px); transform: rotate(-135deg); }
 .pl-note { border-left: 4px solid var(--pl-accent); font-size: 13px; }
 
-.pl-cursor { width: 24px; height: 24px; margin: -3px 0 0 -5px; z-index: 3; color: #111;
-  transition: left 700ms var(--pl-ease), top 700ms var(--pl-ease); filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.35)); }
+.pl-cursor { width: 24px; height: 24px; margin: -3px 0 0 -5px; z-index: 3; color: var(--pl-video-outline);
+  transition: left 700ms var(--pl-ease), top 700ms var(--pl-ease); filter: drop-shadow(0 2px 3px var(--pl-video-shadow-strong)); }
 .pl-cursor svg { display: block; width: 24px; height: 24px; }
-.pl-cursor svg path { fill: #fff; stroke: #111; stroke-width: 1.5; stroke-linejoin: round; }
+.pl-cursor svg path { fill: var(--pl-video-ink); stroke: var(--pl-video-outline); stroke-width: 1.5; stroke-linejoin: round; }
 .pl-cursor.pl-still { transition: none; }
 .pl-cursor::after { content: ""; position: absolute; left: -6px; top: -6px; width: 20px; height: 20px; border-radius: 50%;
   background: var(--pl-accent); opacity: 0; }
@@ -57,10 +71,10 @@
 @keyframes pl-tap { from { transform: scale(0.4); opacity: 0.7; } to { transform: scale(1.8); opacity: 0; } }
 
 .pl-badge { top: 10px; right: 10px; z-index: 4; font: 600 12px/1 var(--pl-mono); padding: 6px 9px; border-radius: 6px;
-  color: #f5f5f5; background: rgb(15 17 20 / 0.86); }
+  color: var(--pl-video-ink-soft); background: var(--pl-video-badge); }
 .pl-subtitle { left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 4; width: max-content;
   max-width: calc(100% - 24px); margin: 0; padding: 8px 14px; border-radius: 8px; text-align: center; text-wrap: balance;
-  font: 500 16px/1.4 var(--pl-font); color: #fff; background: rgb(12 13 15 / 0.84); }
+  font: 500 16px/1.4 var(--pl-font); color: var(--pl-video-ink); background: var(--pl-video-scrim); }
 
 .pl-card { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; padding: 16px;
   border-radius: 12px; background: color-mix(in srgb, var(--pl-bg) 90%, transparent); }
@@ -77,9 +91,12 @@
   position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 40; margin: 0 auto; max-width: 46rem;
   max-height: 55vh; overflow: auto; display: grid; gap: 8px; padding: 12px 14px;
   color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong); border-radius: 14px;
-  box-shadow: 0 12px 32px -6px rgb(0 0 0 / 0.35);
+  box-shadow: 0 12px 32px -6px var(--pl-video-shadow-strong);
 }
 body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
+/* The real control a wrong click should have hit blinks (any pointing style, also none). */
+.pl-attn { outline: 3px solid var(--pl-warn) !important; outline-offset: 3px; animation: pl-attn 0.4s ease-in-out 3; }
+@keyframes pl-attn { 50% { outline-color: transparent; } }
 .pl-dock .pl-eyebrow { font-size: 12px; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; }
 .pl-dock-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pl-dock .pl-title { margin: 0; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
@@ -146,5 +163,5 @@ body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
   .pl-cursor, .pp-frame.pl-zoom-in { transition: none !important; }
   .pl-beacon::after { animation: none !important; transform: scale(1.8); opacity: 0.45; }
   .pl-cursor.pl-tap::after { animation: none !important; opacity: 0.5; transform: scale(1.4); }
-  .pl-flash .pl-ring, .pl-flash .pl-edge { animation: none !important; }
+  .pl-flash .pl-ring, .pl-flash .pl-edge, .pl-attn { animation: none !important; }
 }

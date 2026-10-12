@@ -78,8 +78,8 @@
           "screen": "home",
           "state": "ready",
           "title": "Back on the list",
-          "caption": "Tonight's list is where the host goes next.",
-          "targets": [".tables li:first-child", "[data-test=new-booking]"],
+          "caption": "Tonight's list is where the host goes next, with the next booking one tap away.",
+          "target": "[data-test=new-booking]",
           "point": "zoom",
           "hold": 600
         }
