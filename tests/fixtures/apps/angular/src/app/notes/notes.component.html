@@ -1,0 +1,10 @@
+<h1 class="title">Notes</h1>
+@if (notes().length === 0) {
+  <p>No notes yet</p>
+} @else {
+  <ul>
+    @for (note of notes(); track note) {
+      <li class="note">{{ note }}</li>
+    }
+  </ul>
+}
