@@ -625,6 +625,14 @@ approval (git `user.name`, date, hash of the screen file); `--synced <id>` marks
 from already-built code. `--check` exits 1 when either page or the token blocks are stale, or a
 walkthrough step names a screen, state or element that does not exist. Same exit-code and error conventions as §6.1.
 
+`--proposal <name>` builds `/plumb:prototype`'s variants instead of the main prototype: from each
+`docs/design/prototype/proposals/<name>/<variant>/screens/*.html` (and an optional `idea.md` with the variant's idea and
+trade-offs) it writes that variant's `prototype.html` and `screens.html` (both views, light and dark, the token block
+inlined) and `proposals/<name>/index.html` with the variants side by side. The pages are generated (never edited) and
+byte-stable; `--check --proposal <name>` exits 1 when one is stale; `screens.json` is not touched. A variant or
+proposal folder that leads outside the proposals folder is refused. When tokens change, the main build and
+`build-tokens.py` refresh the token block of every generated proposal page, so old variants keep rendering.
+
 ## 7. UX layer
 
 `references/ux.md` is written at create (from the product interview and the UX decisions) and at

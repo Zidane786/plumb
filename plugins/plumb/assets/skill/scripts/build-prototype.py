@@ -3,6 +3,7 @@
 
 Usage: build-prototype.py [--check] [--root SKILL_DIR] [--project PATH]
                           [--map ID --route ROUTE --files GLOB [GLOB ...]] [--approve ID] [--synced ID]
+       build-prototype.py --proposal NAME [--check] [--root SKILL_DIR] [--project PATH]
 
 Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, default docs/design), the decision log
 <docs>/decisions.md, the walkthroughs in <docs>/prototype/tours/ and the project's tokens, and writes these generated files:
@@ -73,6 +74,17 @@ Commands (every call rebuilds the three files, so the pages always show the curr
                                     tour does not block them: the map is written, the pages are left as they were, and
                                     a warning names the tour problem (the next build or --check exits 2 on it).
   --check                           write nothing; exit 1 naming each stale or missing file (and a stale token block).
+  --proposal NAME [--check]         build the variants of /plumb:prototype instead of the main prototype (below).
+
+Proposals (/plumb:prototype's variants): <docs>/prototype/proposals/<NAME>/<variant>/screens/*.html are the variant's screen
+files (the same contract) and <variant>/idea.md is optional (`# Title`, a paragraph with the idea, `- ` lines with the
+trade-offs). --proposal NAME writes, per variant, <variant>/prototype.html and <variant>/screens.html (both views, the
+same shell and catalogue as the main pages, light and dark, the token block inlined, no tours, no decisions) and
+<NAME>/index.html (the variants side by side with their idea, trade-offs and links to both views) from
+templates/proposal-index.html.tmpl. Variants are the folders of <NAME> (letters, digits, _ and -; a folder starting with
+. or _ is skipped), in name order. All generated, byte-stable and offline; --check --proposal NAME exits 1 when one is
+stale. The main build (and build-tokens.py) refreshes the token block of every generated proposal page, so old variants
+keep rendering; their screen files are never touched. screens.json is not read or written.
 
 Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...). An unreadable decisions.md is a warning:
 the build carries on with empty decision panels.
@@ -104,17 +116,18 @@ from _plumb import PlumbError  # noqa: E402
 SCRIPT_REL = "scripts/build-prototype.py"
 SHELL_TEMPLATE = "prototype-shell.html.tmpl"
 CATALOGUE_TEMPLATE = "screens.html.tmpl"
+INDEX_TEMPLATE = "proposal-index.html.tmpl"
 PLAYER_CSS = "player.css"
 PLAYER_JS = "player.js"
 SCHEMA = 1
-USAGE = ("[--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--root SKILL_DIR] "
+USAGE = ("[--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
          "[--project PATH]")
 _ID = re.compile(r"^\w[\w-]*\Z")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 _OUTSIDE_OK = frozenset(("html", "head", "body", "meta", "title"))
 APPROVAL_TEXT = {"approved": "Approved", "stale": "Changed since approval", "synced": "Synced from code",
                  "none": "Not approved"}
-STATUS_TEXT = {"built": "Built", "to-build": "To build"}
+STATUS_TEXT = {"built": "Built", "to-build": "To build", "proposal": "Variant"}
 
 
 def _err(what: str, fix: str) -> PlumbError:
@@ -1692,6 +1705,194 @@ def token_region(text: str, bt) -> Optional[str]:
     return text[start:end] if start != -1 and end != -1 else None
 
 
+# ---------------------------------------------------------------- proposals (--proposal NAME)
+
+
+def proposal_pages(docs: Path) -> List[Path]:
+    """Every generated page of every proposal: <docs>/prototype/proposals/*/index.html and */*/{prototype,screens}.html
+    written by this script (a hand-written page there is never touched)."""
+    base = docs / "prototype" / "proposals"
+    if not base.is_dir():
+        return []
+    found = sorted(p for pattern in P.PROPOSAL_PAGE_GLOBS for p in base.glob(pattern))
+    out = []
+    for path in found:
+        try:
+            head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        if path.is_file() and P.is_generated_proposal_page(head):
+            out.append(path)
+    return out
+
+
+def proposal_refresh(docs: Path, doc: dict, bt) -> Dict[Path, str]:
+    """The generated proposal pages with their token region rebuilt from the tokens (only the ones that changed)."""
+    out: Dict[Path, str] = {}
+    for path in proposal_pages(docs):
+        try:
+            current = P.normalise_text(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        refreshed = bt.refresh_prototype_theme(current, doc)
+        if refreshed is not None and refreshed != current:
+            out[path] = refreshed
+    return out
+
+
+def read_idea(path: Path) -> Tuple[Optional[str], List[str], List[str]]:
+    """idea.md: (title from `# Title`, the idea's paragraphs, the trade-offs from `- ` lines)."""
+    if not path.is_file():
+        return None, [], []
+    try:
+        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _err(f"{path}: cannot read the variant's idea ({exc})", "save idea.md as UTF-8 text") from None
+    title, paras, trade, cur = None, [], [], []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line.startswith("# ") and title is None:
+            title = line[2:].strip() or None
+        elif line.startswith(("- ", "* ")):
+            trade.append(line[2:].strip())
+        elif line:
+            cur.append(line)
+            continue
+        if cur:
+            paras.append(" ".join(cur))
+            cur = []
+    if cur:
+        paras.append(" ".join(cur))
+    return title, paras, trade
+
+
+def inside_or_refuse(path: Path, parent: Path, root: Path, rel) -> None:
+    """Refuse a proposal or variant folder that resolves outside where it sits (a symlink to somewhere else): pages are
+    written into it, so it must stay inside the proposals folder."""
+    try:
+        path.resolve().relative_to(parent)
+    except ValueError:
+        raise _err(f"{rel(path, root)} leads outside {rel(parent, root)} (a link to another folder), so nothing is "
+                   f"written there", f"replace the link with a real folder inside {rel(parent, root)}/ (copy the "
+                   f"variant's screen files into it), then run the command again") from None
+
+
+def proposal_entry(s: Screen) -> dict:
+    return {"id": s.id, "title": s.title, "states": list(s.states), "route": None, "files": [], "files_hash": None,
+            "approved": None, "synced_from_code": False, "status": "proposal"}
+
+
+def variant_card(name: str, title: str, paras: List[str], trade: List[str], screens: List[Screen]) -> str:
+    states = sum(len(s.states) for s in screens)
+    listed = ", ".join(s.title for s in screens)
+    idea = "".join(f'<p class="idea">{inline(p)}</p>' for p in paras)
+    tradeoffs = ('<ul class="tradeoffs">' + "".join(f"<li>{inline(x)}</li>" for x in trade) + "</ul>") if trade else ""
+    return (f'    <li class="variant" data-variant="{_e(name)}"><p class="letter">{_e(name)}</p><h2>{_e(title)}</h2>'
+            f'{idea}{tradeoffs}<p class="screens">{len(screens)} screen{"s" if len(screens) != 1 else ""}, {states} '
+            f'state{"s" if states != 1 else ""}: {_e(listed)}</p><p class="views">'
+            f'<a class="view primary" href="{_e(name)}/prototype.html">Clickable prototype</a>'
+            f'<a class="view" href="{_e(name)}/screens.html">Every state, light and dark</a></p></li>')
+
+
+def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dict, settings: dict, docs: Path,
+                 command: str, bt, tokens_file: Path) -> int:
+    rel = bt.rel
+    name = args.proposal
+    base = docs / "prototype" / "proposals" / name
+    again = f"{command} --proposal {name}"
+    if not base.is_dir():
+        raise _err(f"{rel(base, root)}/: no such proposal",
+                   f"write the variants first with /plumb:prototype <screen> (screen files in {rel(base, root)}/<variant>/screens/)")
+    proposals_root = (docs / "prototype" / "proposals").resolve()
+    inside_or_refuse(base, proposals_root, root, rel)
+    folders = sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
+    if not folders:
+        raise _err(f"{rel(base, root)}/ has no variant folders",
+                   f"write each variant's screen files in {rel(base, root)}/<variant>/screens/<id>.html, then run {again}")
+    project_name = str(settings.get("project") or "").strip() or "Product"
+    tokens_rel = rel(tokens_file, root)
+    script_rel = rel(skill_dir / SCRIPT_REL, root)
+    shell = read_template(skill_dir, SHELL_TEMPLATE)
+    catalogue_tpl = read_template(skill_dir, CATALOGUE_TEMPLATE)
+    player_css, player_js = read_template(skill_dir, PLAYER_CSS), read_template(skill_dir, PLAYER_JS)
+    files: Dict[Path, str] = {}
+    cards, summary = [], []
+    for folder in folders:
+        if not _ID.match(folder.name):
+            raise _err(f"{rel(folder, root)}: a variant folder name may hold only letters, digits, _ and -",
+                       "rename the folder, e.g. a-calm-list")
+        screens_dir = folder / "screens"
+        inside_or_refuse(folder, base.resolve(), root, rel)
+        inside_or_refuse(screens_dir, base.resolve(), root, rel)
+        if not screens_dir.is_dir() or not any(p.is_file() for p in screens_dir.glob("*.html")):
+            raise _err(f"{rel(folder, root)}: variant {folder.name} has no screen files in screens/",
+                       f"write its screens as {rel(screens_dir, root)}/<id>.html (or remove the folder), then run {again}")
+        screens = load_screens(screens_dir, root, rel)
+        title, paras, trade = read_idea(folder / "idea.md")
+        title = title or state_label(folder.name)
+        header = (f"GENERATED by {script_rel} --proposal {name} from {rel(screens_dir, root)}/*.html and {tokens_rel}. "
+                  f"Do not edit: edit the variant's screen files, then run build-prototype.py --proposal {name}.")
+        ctx = {
+            "screens": screens, "entries": {s.id: proposal_entry(s) for s in screens}, "decisions": [],
+            "header": header, "project": f"{project_name} · {title}", "screens_rel": rel(screens_dir, root) + "/",
+            "decisions_rel": rel(docs / "decisions.md", root), "styles": screen_styles(screens),
+            "scripts": screen_scripts(screens), "tours": [], "tours_rel": "", "tokens_rel": tokens_rel,
+            "script_rel": script_rel, "player_css": player_css, "player_js": player_js,
+        }
+        ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
+        files[folder / "prototype.html"] = build_prototype(ctx, shell)
+        ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=True)
+        files[folder / "screens.html"] = build_catalogue(ctx, catalogue_tpl, bt)
+        cards.append(variant_card(folder.name, title, paras, trade, screens))
+        summary.append(f"{folder.name}: {len(screens)} screen{'s' if len(screens) != 1 else ''}")
+    values = {
+        "header": f"<!-- {_e(f'GENERATED by {script_rel} --proposal {name} from {rel(base, root)}/*/screens/*.html, idea.md and {tokens_rel}. Do not edit: run build-prototype.py --proposal {name}.')} -->",
+        "title": _e(f"{project_name}: {name} proposal"),
+        "project": _e(project_name),
+        "name": _e(name),
+        "count": _e(f"{len(folders)} variant{'s' if len(folders) != 1 else ''} for {name}"),
+        "plumb_version": _e(P.PLUMB_VERSION),
+        "theme_css": bt.prototype_theme_css(doc, scoped=False),
+        "variants": "\n".join(cards),
+        "source": _e(rel(base, root) + "/"),
+        "rerun": _e(again),
+    }
+    index = P.fill_template(read_template(skill_dir, INDEX_TEMPLATE), values, INDEX_TEMPLATE)
+    files[base / "index.html"] = index if index.endswith("\n") else index + "\n"
+    line = f"proposal {name}: {len(folders)} variant{'s' if len(folders) != 1 else ''} ({', '.join(summary)})"
+
+    if args.check:
+        stale = []
+        for path, text in files.items():
+            try:
+                current = P.normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.exists() else None
+            except OSError:
+                current = None
+            if current != text:
+                stale.append(f"stale: {rel(path, root)}" + (" (missing)" if current is None else ""))
+        if stale:
+            print("\n".join(stale))
+            print(f"fix: {again}")
+            return 1
+        print(f"ok: {line}: up to date")
+        return 0
+    wrote = 0
+    for path, text in files.items():
+        try:
+            current = path.read_bytes() if path.exists() else None
+        except OSError:
+            current = None
+        if current == text.encode("utf-8"):
+            continue
+        if not bt._write(path, text, root):
+            return 2
+        wrote += 1
+        print(f"wrote {rel(path, root)}")
+    print(line if wrote else f"ok: {line}: up to date")
+    print(f"open {rel(base / 'index.html', root)} to compare them")
+    return 0
+
+
 # ---------------------------------------------------------------- cli
 
 
@@ -1719,6 +1920,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--files", metavar="GLOB", nargs="+", help="source files or globs, relative to the project root")
     parser.add_argument("--approve", metavar="ID", help="record your approval of a screen")
     parser.add_argument("--synced", metavar="ID", help="mark a screen as updated from already-built code")
+    parser.add_argument("--proposal", metavar="NAME",
+                        help="build the variants in <docs>/prototype/proposals/NAME/ (both views each + index.html)")
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     args = parser.parse_args(argv)
@@ -1729,6 +1932,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error(f"--map {args.map} needs {missing}")
     if args.check and (args.map or args.approve or args.synced):
         parser.error("--check writes nothing, so it does not combine with --map, --approve or --synced")
+    if args.proposal is not None:
+        if args.map or args.approve or args.synced:
+            parser.error("--proposal builds the variants only; run --map, --approve or --synced on their own")
+        if not _ID.match(args.proposal):
+            parser.error(f"--proposal takes the proposal's folder name (letters, digits, _ and -), got {args.proposal!r}")
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     project = Path(args.project) if args.project else None
     try:
@@ -1756,6 +1964,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     proto_path, cat_path, map_path = docs / "prototype.html", docs / "screens.html", docs / "prototype" / "screens.json"
     decisions_path = docs / "decisions.md"
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    if args.proposal is not None:
+        return run_proposal(args, skill_dir, root, doc, settings, docs, command, bt, tokens_file)
     has_screens = folder.is_dir() and any(p.is_file() for p in folder.glob("*.html"))
     if not has_screens:
         if args.check:
@@ -1853,6 +2063,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     files = {proto_path: proto, cat_path: catalogue,
              map_path: map_text([entries[s.id] for s in screens], header)}
     files.update(tour_pages)
+    files.update(proposal_refresh(docs, doc, bt))
     orphans = orphan_tour_pages(pages_folder, tour_pages)
     count = f"{len(screens)} screens, {len(tours)} tour{'s' if len(tours) != 1 else ''}"
 

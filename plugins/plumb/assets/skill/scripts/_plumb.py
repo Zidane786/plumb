@@ -524,6 +524,17 @@ def is_generated_text(text: str) -> bool:
     return "GENERATED" in head and re.search(r"do not edit", head, re.I) is not None
 
 
+PROPOSAL_PAGE_GLOBS = ("*/index.html", "*/*/prototype.html", "*/*/screens.html")
+
+
+def is_generated_proposal_page(text: str) -> bool:
+    """A proposal page (<docs>/prototype/proposals/...) written by `build-prototype.py --proposal`: a GENERATED header
+    that names that command. The one test build-prototype.py and build-tokens.py both use, so a page another tool
+    generated there (or a hand-written one) is never refreshed by either."""
+    head = "\n".join(text[:2000].splitlines()[:5])
+    return is_generated_text(head) and re.search(r"build-prototype\.py --proposal \S", head) is not None
+
+
 # ---------------------------------------------------------------- Tailwind defaults (the de-facto scale before tokens)
 
 TAILWIND_FAMILIES = ("slate gray zinc neutral stone red orange amber yellow lime green emerald teal cyan sky blue indigo "

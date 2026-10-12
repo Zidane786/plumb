@@ -14,7 +14,8 @@ radii, shadows in both themes, motion, the rest) and the basic controls in every
 project's own tokens, offline, no timestamps. --check covers it; with no template the build notes it and skips the page.
 It also refreshes the token-derived region (between /* plumb:theme */ and /* plumb:theme:end */: the --css-vars token
 block, the page roles, the frame breakpoint) inside <docs_dir>/prototype.html and screens.html when build-prototype.py
-has written them, so one tokens build keeps every page in step; --check names a stale one as a prototype token block.
+has written them (and in the proposal pages build-prototype.py --proposal wrote), so one tokens build keeps every page
+in step; --check names a stale one as a prototype token block.
 
   --check      write nothing; exit 1 naming every stale or missing file.
   --contrast   rewrite only the contrast block of references/dark-mode.md (exit 2 if the file or the markers are missing).
@@ -1575,6 +1576,12 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
     tours = safe_copy_path(root, f"{str(docs).rstrip('/')}/tours", "$extensions.plumb.docs_dir")
     if tours.is_dir():
         paths += sorted(p for p in tours.glob("*.html") if p.is_file())
+    proposals = safe_copy_path(root, f"{str(docs).rstrip('/')}/prototype/proposals", "$extensions.plumb.docs_dir")
+    generated_only = set()
+    if proposals.is_dir():  # /plumb:prototype's variants, built by build-prototype.py --proposal
+        found = sorted(p for pattern in P.PROPOSAL_PAGE_GLOBS for p in proposals.glob(pattern) if p.is_file())
+        paths += found
+        generated_only.update(found)
     for path in paths:
         try:
             text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
@@ -1582,6 +1589,8 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
             text = None  # build-prototype.py --check reports an unreadable page
         if text is not None and path.parent == tours and not P.is_generated_text(text):
             continue  # a hand-written page in tours/ is not Plumb's
+        if text is not None and path in generated_only and not P.is_generated_proposal_page(text):
+            continue  # nor is a page in proposals/ that build-prototype.py --proposal did not write
         refreshed = refresh_prototype_theme(text, doc) if text is not None else None
         if refreshed is not None:
             out[path] = refreshed
