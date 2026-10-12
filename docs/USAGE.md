@@ -1068,6 +1068,12 @@ variants and screen files, the extract before/after page and the UX review page.
 rules ("The quality bar" in [reference/prototypes.md](../plugins/plumb/reference/prototypes.md): real content, every
 state, working interactions, keyboard and focus, both themes, reduced motion, no generic look) and its directions
 template. The specimen, the audit report and the prototype shell are Plumb's own fixed templates either way.
+
+**Your design system outranks Effective HTML.** In a project, Effective HTML is followed for craft only (real content,
+states, interactions, accessibility, polish); the palette, type, spacing, radius and motion always come from your
+`<project>-design-system`, and where the two disagree, your system wins. The one exception is create's directions
+page, written before any system exists: each direction there is a candidate system.
+
 `/plumb:init` tells you once whether the skills are available, and `/plumb:status` reports it.
 
 Plumb never installs them. To add them, run these yourself in Claude Code (from Effective HTML's README):
