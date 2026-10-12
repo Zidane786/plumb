@@ -1,32 +1,42 @@
 #!/usr/bin/env python3
 """kiro.py: install Plumb's skills and hooks for Kiro (IDE and CLI v3), or remove them.
 
-    kiro.py install   [--home DIR] [--project DIR] [--yes]
-    kiro.py uninstall [--home DIR] [--project DIR] [--yes]
+    kiro.py install   [--home DIR | --project DIR] [--yes]
+    kiro.py uninstall [--home DIR | --project DIR] [--yes]
 
-Kiro has no plugin marketplace, so this copies what Claude Code and Copilot CLI load from the plugin:
+Kiro has no plugin marketplace, so this copies what Claude Code and Copilot CLI load from the plugin into one place:
+without --project the home folder (<home>/.kiro: global skills for the Kiro IDE, global hooks for Kiro CLI), with
+--project only that Kiro workspace (<project>/.kiro: skills and hooks for the IDE and the CLI). In each:
 
-- every skill to <home>/.kiro/skills/plumb-<name>/SKILL.md (global: Kiro IDE) and, with --project, to
-  <project>/.kiro/skills/plumb-<name>/SKILL.md (workspace: Kiro IDE and CLI). The copy is named plumb-<name> (the
-  command is /plumb-<name>), `${CLAUDE_PLUGIN_ROOT}` becomes this plugin's absolute path, /plumb:<x> becomes
-  /plumb-<x> and the links to reference/ point into the plugin;
-- the hooks: <home>/.kiro/hooks/plumb.json (Kiro CLI) and, with --project, <project>/.kiro/hooks/plumb.json (the IDE reads
-  workspace hooks), from kiro/plumb-hooks.json.tmpl: SessionStart -> session_start.py, PreToolUse (matchers write and
-  shell) -> pre_edit.py, Stop -> stop_check.py, each run through this plugin's hooks/run.sh (run.cmd on Windows) by
-  absolute path. A command whose launcher is gone (the plugin moved or was updated) exits 0, so it never blocks Kiro.
-  The home file's commands carry --kiro-global: those hooks stand down in a workspace that has its own Plumb hooks
-  file, so nothing runs twice (Kiro CLI runs global and workspace hooks side by side).
+- every skill as .kiro/skills/plumb-<name>/SKILL.md: named plumb-<name> (the command is /plumb-<name>), front matter
+  cut to Agent Skills' name + description (Claude's allowed-tools, argument-hint and disable-model-invocation dropped),
+  `${CLAUDE_PLUGIN_ROOT}` replaced by this plugin's absolute path, /plumb:<x> by /plumb-<x>, and the links to
+  reference/ pointing into the plugin. Marked copies of skills this plugin no longer has are removed;
+- the hooks as .kiro/hooks/plumb.json, from kiro/plumb-hooks.json.tmpl: SessionStart -> session_start.py, PreToolUse
+  (matchers write and shell) -> pre_edit.py, Stop -> stop_check.py. Each command runs this plugin's own launcher by
+  absolute path with --kiro (the hook then answers in Kiro's dialect) and, in the home file, --kiro-global (those hooks
+  stand down where the workspace's own Plumb hooks file runs the same plugin: Kiro CLI runs both side by side):
+    POSIX    [ -f '<plugin>/hooks/run.sh' ] && exec sh '<plugin>/hooks/run.sh' <script> --kiro ... || exit 0
+    Windows  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand <base64 UTF-16LE of
+             $s='<plugin>\\hooks\\run.cmd'; if (Test-Path -LiteralPath $s) { & $s <script> --kiro ...;
+             exit $LASTEXITCODE }; exit 0>
+  Every word of the Windows command is bare (no quotes, parentheses, %, & or $), so cmd.exe, Windows PowerShell 5.1,
+  pwsh 7 and Git Bash all run it the same way (verify live which one Kiro uses). A launcher that is gone (the plugin
+  moved or was updated) exits 0, so a hook never blocks Kiro (it blocks a PreToolUse on any non-zero exit); the
+  SessionStart command then prints one line saying the checks are off and to run kiro.py install again.
 
-Every file written carries "installed by Plumb's kiro.py" (the SKILL.md as a comment, the hooks in each description):
-install updates only such files and refuses to overwrite anything else; uninstall removes only such files (and a skill
-folder left empty), never the user's own skills or hooks.
+Every file written carries "installed by Plumb's kiro.py" (the SKILL.md as a comment, the hooks in each description,
+which also says what the hook runs): install updates only such files and refuses to overwrite anything else, or to
+write through a symlink below .kiro; uninstall removes only such files (and a skill folder left empty), never the
+user's own skills or hooks.
 
-It prints every path it will write or remove, then writes only after --yes or a "y" typed at the prompt; without a
-terminal and without --yes it writes nothing and says how to confirm. It never downloads, installs or runs anything.
-After updating the Plumb plugin, run install again (the copies point at this plugin folder).
+It prints every path it will write or remove, then writes only after --yes or a "y" typed at the prompt. Without a
+terminal and without --yes it writes nothing and says to ask the user (an agent never confirms for them). It never
+downloads, installs or runs anything. After updating the Plumb plugin, run install again (the copies point at this
+plugin folder; the Kiro session start says so when a newer Plumb sits next to it).
 
-Kiro's formats are taken from its docs (# verify live: the live Kiro run confirms the hooks file schema, the shell
-that runs a command on Windows, and whether the global skills folder is read by the CLI).
+Kiro's formats are taken from its docs (# verify live: the hooks file schema, the shell that runs a command on
+Windows, whether the Stop decision JSON makes Kiro continue, and which skills folder each Kiro reads).
 
 Exit codes: 0 done (or nothing to do), 1 the user said no, 2 refused (`error: ...` then `fix: ...` or `ask the user:
 ...`). Python 3.9+, standard library only.
@@ -35,20 +45,25 @@ Exit codes: 0 done (or nothing to do), 1 the user said no, 2 refused (`error: ..
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import List, Optional, Tuple
 
 PLUGIN = Path(__file__).resolve().parents[1]
 TEMPLATE = PLUGIN / "kiro" / "plumb-hooks.json.tmpl"
-# The same constants as hooks/_hooklib.py (KIRO_MARK, KIRO_GLOBAL_ARG); tests/test_kiro.py keeps them in step.
-KIRO_MARK = "installed by Plumb's kiro.py"
+# The same constants as hooks/_hooklib.py; tests/test_kiro.py keeps them in step.
+KIRO_ARG = "--kiro"
 KIRO_GLOBAL_ARG = "--kiro-global"
+KIRO_MARK = "installed by Plumb's kiro.py"
 WINDOWS = sys.platform == "win32"
 SKILL_PREFIX = "plumb-"
+# Agent Skills front matter keeps these; Claude Code's own keys (allowed-tools, argument-hint, disable-model-invocation)
+# are dropped from the Kiro copies.
+SKILL_KEYS = ("name", "description", "license", "compatibility", "metadata")
 # "(Claude Code and Copilot CLI fill this in ...). If it still reads literally ... + `/../..`, made absolute."
 ROOT_FALLBACK = re.compile(r"\((?:Claude Code and Copilot CLI fill this in|filled in by Claude Code or Copilot CLI)"
                            r"[^)]*\)\.\s*If it still reads literally.*?(?:resolved to an absolute path|made absolute)\.",
@@ -99,6 +114,18 @@ def _read(path: Path) -> Optional[str]:
         return None
 
 
+def _arg(text: str) -> str:
+    return text if re.fullmatch(r"[\w.@+/:\\-]+", text) else '"' + text + '"'
+
+
+def python_command() -> str:
+    return os.environ.get("PLUMB_PYTHON") or ("py -3" if WINDOWS else "python3")
+
+
+def this_script() -> str:
+    return _arg(str(PLUGIN / "scripts" / "kiro.py"))
+
+
 # ---------------------------------------------------------------- what gets written
 
 
@@ -108,6 +135,23 @@ def root_text() -> str:
     return PLUGIN.as_posix()
 
 
+def _front_matter(front: str, name: str) -> str:
+    """Agent Skills keys only (each with its indented continuation lines), the name made plumb-<name>."""
+    out: List[str] = []
+    keep = False
+    for line in front.splitlines():
+        m = re.match(r"^([A-Za-z][\w-]*)\s*:", line)
+        if m:
+            keep = m.group(1) in SKILL_KEYS
+            if m.group(1) == "name":
+                line = f"name: {SKILL_PREFIX}{name}"
+        if keep:
+            out.append(line)
+    if not any(line.startswith("name:") for line in out):
+        out.insert(0, f"name: {SKILL_PREFIX}{name}")
+    return "\n".join(out) + "\n"
+
+
 def kiro_skill(source: str, name: str, root: str, version: str) -> str:
     """A plugin skill's SKILL.md as Kiro's plumb-<name> skill."""
     text = source.replace("\r\n", "\n")
@@ -115,10 +159,7 @@ def kiro_skill(source: str, name: str, root: str, version: str) -> str:
     if not m:
         raise KiroError(f"skills/{name}/SKILL.md has no front matter, so it cannot be installed for Kiro",
                         "fix: reinstall the Plumb plugin, then run this command again")
-    front, body = m.group(1), text[m.end():]
-    front = re.sub(r"(?m)^name:.*$", f"name: {SKILL_PREFIX}{name}", front, count=1)
-    if not re.search(r"(?m)^name:", front):
-        front = f"name: {SKILL_PREFIX}{name}\n" + front
+    front, body = _front_matter(m.group(1), name), text[m.end():]
 
     def kiroise(part: str) -> str:
         # The fallback for an unfilled ${CLAUDE_PLUGIN_ROOT} (the skill's base directory + /../..) is wrong for a copy
@@ -137,65 +178,84 @@ def _sh_quote(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def hook_command(script: str, global_file: bool) -> str:
-    """The command a Kiro hook runs: this plugin's launcher by absolute path, exit 0 when it is missing."""
-    extra = f" {KIRO_GLOBAL_ARG}" if global_file else ""
-    hooks = PLUGIN / "hooks"
-    if WINDOWS:  # verify live: assumes Kiro runs a command through cmd.exe on Windows
-        run = str(hooks / "run.cmd")
-        if '"' in run or "%" in run:
-            raise KiroError(f"the plugin folder {PLUGIN} has a \" or % in its path, which a Kiro hook command cannot "
-                            "quote", "ask the user: move the Plumb plugin to a folder without \" or %, then run "
-                            "kiro.py install again")
-        return f'if exist "{run}" ("{run}" {script}{extra}) else (exit /b 0)'
-    run = _sh_quote(str(hooks / "run.sh"))
-    return f"[ -f {run} ] && exec sh {run} {script}{extra} || exit 0"
+def _ps_quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
 
 
-def _fill(node, values: dict, global_file: bool):
-    if isinstance(node, dict):
-        return {k: _fill(v, values, global_file) for k, v in node.items()}
-    if isinstance(node, list):
-        return [_fill(v, values, global_file) for v in node]
-    if isinstance(node, str):
-        m = re.fullmatch(r"\{\{RUN:([\w.-]+\.py)\}\}", node)
-        if m:
-            return hook_command(m.group(1), global_file)
-        for key, value in values.items():
-            node = node.replace("{{" + key + "}}", value)
-    return node
+def launcher(windows: bool = WINDOWS) -> str:
+    run = PLUGIN / "hooks" / ("run.cmd" if windows else "run.sh")
+    return str(PureWindowsPath(str(run))) if windows else str(run)  # from the text: 3.9 misreads a PosixPath
 
 
-def hooks_json(global_file: bool) -> str:
+def gone_note(project: Optional[Path]) -> str:
+    """What the SessionStart command prints when the plugin folder it points at is gone."""
+    scope = f" --project {_arg(str(project))}" if project is not None else ""
+    return (f"Plumb: the Kiro hooks point at a Plumb folder that is gone ({PLUGIN}), so Plumb's checks are off: ask the "
+            f"user to run {python_command()} <the updated Plumb plugin folder>/scripts/kiro.py install{scope} again")
+
+
+def hook_command(script: str, global_file: bool, windows: bool = WINDOWS, project: Optional[Path] = None) -> str:
+    """The command a Kiro hook runs: this plugin's launcher by absolute path with --kiro (and --kiro-global for the
+    home file); exit 0 when the launcher is missing, after one line at SessionStart."""
+    args = " ".join([script, KIRO_ARG] + ([KIRO_GLOBAL_ARG] if global_file else []))
+    note = gone_note(project) if script == "session_start.py" else None
+    run = launcher(windows)
+    if windows:
+        missing = f" else {{ Write-Output {_ps_quote(note)} }};" if note else ";"
+        body = (f"$s={_ps_quote(run)}; if (Test-Path -LiteralPath $s) {{ & $s {args}; exit $LASTEXITCODE }}"
+                f"{missing} exit 0")
+        encoded = base64.b64encode(body.encode("utf-16-le")).decode("ascii")
+        return f"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+    quoted = _sh_quote(run)
+    tail = f"{{ printf '%s\\n' {_sh_quote(note)}; exit 0; }}" if note else "exit 0"
+    return f"[ -f {quoted} ] && exec sh {quoted} {args} || {tail}"
+
+
+def windows_script(command: str) -> str:
+    """The PowerShell a Windows hook command runs (it is base64-encoded in the command)."""
+    return base64.b64decode(command.rsplit(" ", 1)[-1]).decode("utf-16-le")
+
+
+def hooks_json(global_file: bool, project: Optional[Path]) -> str:
     try:
         tmpl = json.loads(TEMPLATE.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise KiroError(f"cannot read the plugin's {TEMPLATE.relative_to(PLUGIN).as_posix()} ({exc})",
                         "fix: reinstall the Plumb plugin, then run this command again") from None
-    return json.dumps(_fill(tmpl, {"MARK": f"({KIRO_MARK}; kiro.py uninstall removes it)"}, global_file), indent=2, ensure_ascii=False) + "\n"
+    mark = f"({KIRO_MARK}; kiro.py uninstall removes it)"
+    for h in tmpl.get("hooks", []):
+        m = re.fullmatch(r"\{\{RUN:([\w.-]+\.py)\}\}", str(h.get("action", {}).get("command", "")))
+        if not m:
+            raise KiroError(f"the plugin's {TEMPLATE.name} has a hook without a {{{{RUN:<script>}}}} command",
+                            "fix: reinstall the Plumb plugin, then run this command again")
+        script = m.group(1)
+        flags = " ".join([KIRO_ARG] + ([KIRO_GLOBAL_ARG] if global_file else []))
+        h["action"]["command"] = hook_command(script, global_file, project=project)
+        h["description"] = (str(h.get("description", "")).replace("{{MARK}}", mark)
+                            + f" Runs {launcher()} {script} {flags}.")
+    return json.dumps(tmpl, indent=2, ensure_ascii=False) + "\n"
 
 
 def skill_names() -> List[str]:
     return sorted(p.parent.name for p in (PLUGIN / "skills").glob("*/SKILL.md"))
 
 
-def plan_install(home: Path, project: Optional[Path]) -> List[Tuple[Path, str]]:
+def plan_install(base: Path, global_file: bool) -> Tuple[List[Tuple[Path, str]], List[Path]]:
+    """(files to write, marked copies of skills the plugin no longer has, to remove)."""
     root, version = root_text(), plugin_version()
-    skills = []
-    for name in skill_names():
+    kiro = base / ".kiro"
+    names = skill_names()
+    writes: List[Tuple[Path, str]] = []
+    for name in names:
         source = (PLUGIN / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
-        skills.append((name, kiro_skill(source, name, root, version)))
-    out: List[Tuple[Path, str]] = []
-    for base, global_file in ((home, True), (project, False)):
-        if base is None:
-            continue
-        kiro = base / ".kiro"
-        out += [(kiro / "skills" / f"{SKILL_PREFIX}{name}" / "SKILL.md", text) for name, text in skills]
-        out.append((kiro / "hooks" / "plumb.json", hooks_json(global_file)))
-    return out
+        writes.append((kiro / "skills" / f"{SKILL_PREFIX}{name}" / "SKILL.md", kiro_skill(source, name, root, version)))
+    writes.append((kiro / "hooks" / "plumb.json", hooks_json(global_file, None if global_file else base)))
+    wanted = {f"{SKILL_PREFIX}{n}" for n in names}
+    retired = [p for p in plan_uninstall(base) if p.name == "SKILL.md" and p.parent.name not in wanted]
+    return writes, retired
 
 
-# ---------------------------------------------------------------- ownership
+# ---------------------------------------------------------------- ownership and safety
 
 
 def ours_skill(path: Path) -> bool:
@@ -218,37 +278,46 @@ def ours(path: Path) -> bool:
     return ours_hooks(path) if path.suffix == ".json" else ours_skill(path)
 
 
-def plan_uninstall(bases: List[Path]) -> List[Path]:
+def symlinks_below(base: Path, path: Path) -> List[Path]:
+    """path and its parents below <base>/.kiro that are symlinks (a dangling one included): writing there could land
+    anywhere the link points."""
+    kiro = base / ".kiro"
+    found = []
+    p = path
+    while p != kiro and kiro in p.parents:
+        if os.path.islink(str(p)):
+            found.append(p)
+        p = p.parent
+    return found
+
+
+def plan_uninstall(base: Path) -> List[Path]:
     out: List[Path] = []
-    for base in bases:
-        skills = base / ".kiro" / "skills"
-        if skills.is_dir():
-            out += [p for p in sorted(skills.glob(f"{SKILL_PREFIX}*/SKILL.md")) if p.is_file() and ours_skill(p)]
-        hooks = base / ".kiro" / "hooks" / "plumb.json"
-        if hooks.is_file() and ours_hooks(hooks):
-            out.append(hooks)
+    skills = base / ".kiro" / "skills"
+    if skills.is_dir() and not os.path.islink(str(skills)):
+        for p in sorted(skills.glob(f"{SKILL_PREFIX}*/SKILL.md")):
+            if p.is_file() and not symlinks_below(base, p) and ours_skill(p):
+                out.append(p)
+    hooks = base / ".kiro" / "hooks" / "plumb.json"
+    if hooks.is_file() and not symlinks_below(base, hooks) and ours_hooks(hooks):
+        out.append(hooks)
     return out
 
 
 # ---------------------------------------------------------------- the commands
 
 
-def _arg(text: str) -> str:
-    return text if re.fullmatch(r"[\w.@+/:\\-]+", text) else '"' + text + '"'
-
-
 def again(action: str, args: argparse.Namespace) -> str:
     """The exact command to run this again with --yes."""
-    python = os.environ.get("PLUMB_PYTHON") or ("py -3" if WINDOWS else "python3")
-    parts = [python, _arg(str(Path(__file__).resolve())), action]
-    if args.home:
-        parts += ["--home", _arg(str(args.home))]
+    parts = [python_command(), this_script(), action]
     if args.project:
         parts += ["--project", _arg(str(args.project))]
+    elif args.home:
+        parts += ["--home", _arg(str(args.home))]
     return " ".join(parts + ["--yes"])
 
 
-def confirmed(args: argparse.Namespace, action: str, question: str) -> Optional[bool]:
+def confirmed(args: argparse.Namespace, question: str) -> Optional[bool]:
     """True to go on, False when the user said no, None when there is no one to ask (no terminal, no --yes)."""
     if args.yes:
         return True
@@ -257,91 +326,112 @@ def confirmed(args: argparse.Namespace, action: str, question: str) -> Optional[
     return ask(f"{question} [y/N] ").strip().lower() in ("y", "yes")
 
 
-def install(args: argparse.Namespace, home: Path, project: Optional[Path]) -> int:
-    plan = plan_install(home, project)
-    foreign = [p for p, _ in plan if p.exists() and not (p.is_file() and ours(p))]
+def _remove(p: Path) -> None:
+    p.unlink()
+    if p.name == "SKILL.md":
+        try:
+            p.parent.rmdir()  # only when the folder is empty: the user's own files in it stay
+        except OSError:
+            print(f"  kept {p.parent} (it holds other files)")
+
+
+def install(args: argparse.Namespace, base: Path, global_file: bool) -> int:
+    writes, retired = plan_install(base, global_file)
+    linked = sorted({str(s) for p, _ in writes for s in symlinks_below(base, p)})
+    if linked:
+        raise KiroError(f"{', '.join(linked)} {'is a symlink' if len(linked) == 1 else 'are symlinks'} inside "
+                        f"{base / '.kiro'}, so writing there could land elsewhere; nothing was written",
+                        "ask the user: remove or replace the symlink (check where it points first), then run "
+                        f"{again('install', args)}")
+    foreign = [p for p, _ in writes if p.exists() and not (p.is_file() and ours(p))]
     if foreign:
         listed = ", ".join(str(p) for p in foreign)
         raise KiroError(f"{listed} already exist{'s' if len(foreign) == 1 else ''} and {'is' if len(foreign) == 1 else 'are'} "
                         f"not Plumb's (no \"{KIRO_MARK}\" mark), so nothing was written",
                         "ask the user: move or rename it (it is theirs; Plumb never overwrites it), then run "
                         f"{again('install', args)}")
-    print(f"Plumb {plugin_version()} for Kiro: install writes these {len(plan)} files:")
-    for p, _ in plan:
+    print(f"Plumb {plugin_version()} for Kiro: install writes these {len(writes)} files"
+          f"{f' and removes {len(retired)}' if retired else ''} in {base / '.kiro'}:")
+    for p, _ in writes:
         print(f"  {'update' if p.exists() else 'write'} {p}")
-    ok = confirmed(args, "install", "Write these files?")
+    for p in retired:
+        print(f"  remove {p} (no longer in this Plumb)")
+    if WINDOWS:
+        sample = hook_command("pre_edit.py", global_file, project=None if global_file else base)
+        print(f"  each hook runs, through PowerShell: {windows_script(sample)}")
+    ok = confirmed(args, "Write these files?")
     if ok is None:
-        raise KiroError(f"nothing was written: kiro.py writes into {home / '.kiro'}"
-                        f"{' and ' + str(project / '.kiro') if project else ''} only when you confirm",
-                        f"fix: {again('install', args)}")
+        raise KiroError(f"nothing was written: kiro.py writes into {base / '.kiro'} only when the user confirms",
+                        f"ask the user: run {again('install', args)} yourself (it writes the files listed above into "
+                        f"{base / '.kiro'}), or tell me to run it")
     if not ok:
         print("nothing was written")
         return 1
-    for p, text in plan:
+    for p, text in writes:
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
+    for p in retired:
+        _remove(p)
     names = ", ".join(f"/{SKILL_PREFIX}{n}" for n in skill_names())
-    print(f"Done: wrote {len(plan)} files. Restart Kiro (or start a new session) so it loads them.")
+    print(f"Done: wrote {len(writes)} files. Restart Kiro (or start a new session) so it loads them.")
     print(f"Commands in Kiro: {names}.")
     print("After updating the Plumb plugin, run this install again; kiro.py uninstall removes these files.")
     return 0
 
 
-def uninstall(args: argparse.Namespace, home: Path, project: Optional[Path]) -> int:
-    bases = [home] + ([project] if project else [])
-    plan = plan_uninstall(bases)
+def uninstall(args: argparse.Namespace, base: Path) -> int:
+    plan = plan_uninstall(base)
     if not plan:
-        print(f"Plumb for Kiro: nothing to remove in {', '.join(str(b / '.kiro') for b in bases)}")
+        print(f"Plumb for Kiro: nothing to remove in {base / '.kiro'}")
         return 0
     print(f"Plumb for Kiro: uninstall removes these {len(plan)} files (only the ones kiro.py installed):")
     for p in plan:
         print(f"  remove {p}")
-    ok = confirmed(args, "uninstall", "Remove these files?")
+    ok = confirmed(args, "Remove these files?")
     if ok is None:
-        raise KiroError("nothing was removed: kiro.py removes files only when you confirm",
-                        f"fix: {again('uninstall', args)}")
+        raise KiroError(f"nothing was removed: kiro.py removes files from {base / '.kiro'} only when the user confirms",
+                        f"ask the user: run {again('uninstall', args)} yourself (it removes the files listed above), or "
+                        f"tell me to run it")
     if not ok:
         print("nothing was removed")
         return 1
     for p in plan:
-        p.unlink()
-        if p.name == "SKILL.md":
-            try:
-                p.parent.rmdir()  # only when the folder is empty: the user's own files in it stay
-            except OSError:
-                print(f"  kept {p.parent} (it holds other files)")
+        _remove(p)
     print(f"Done: removed {len(plan)} files. Restart Kiro so it drops them.")
     return 0
 
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # shaped like every other refusal
-        self.exit(2, f"error: {message}\nfix: python3 kiro.py install [--home DIR] [--project DIR] [--yes]\n")
+        self.exit(2, f"error: {message}\nfix: {python_command()} {this_script()} --help\n")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     utf8_stdio()
     parser = _Parser(prog="kiro.py", description="Install Plumb's skills and hooks for Kiro, or remove them.")
     parser.add_argument("action", choices=("install", "uninstall"))
-    parser.add_argument("--home", type=Path, help="the home folder that holds .kiro (default: yours)")
-    parser.add_argument("--project", type=Path, help="also this project (Kiro workspace): its .kiro/skills and hooks")
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument("--home", type=Path, help="the home folder that holds .kiro (default: yours)")
+    where.add_argument("--project", type=Path, help="this Kiro workspace instead of the home folder")
     parser.add_argument("--yes", action="store_true", help="write or remove without asking")
     args = parser.parse_args(argv)
     try:
-        home = Path(os.path.abspath(str(args.home if args.home else Path.home())))
-        project = Path(os.path.abspath(str(args.project))) if args.project else None
-        if project is not None and not project.is_dir():
-            raise KiroError(f"the project folder {project} does not exist, so nothing was written",
-                            "ask the user: which folder is the Kiro workspace? Then run kiro.py "
-                            f"{args.action} --project <that folder>")
-        return install(args, home, project) if args.action == "install" else uninstall(args, home, project)
+        if args.project:
+            base, global_file = Path(os.path.abspath(str(args.project))), False
+            if not base.is_dir():
+                raise KiroError(f"the project folder {base} does not exist, so nothing was written",
+                                "ask the user: which folder is the Kiro workspace? Then run "
+                                f"{python_command()} {this_script()} {args.action} --project <that folder>")
+        else:
+            base, global_file = Path(os.path.abspath(str(args.home if args.home else Path.home()))), True
+        return install(args, base, global_file) if args.action == "install" else uninstall(args, base)
     except KiroError as exc:
         print(str(exc), file=sys.stderr)
         return 2
     except OSError as exc:
         print(f"error: {exc.strerror or exc}: {exc.filename or ''}\n"
-              f"ask the user: check that folder can be written, then run kiro.py {args.action} again", file=sys.stderr)
+              f"ask the user: check that folder can be written, then run {again(args.action, args)}", file=sys.stderr)
         return 2
 
 

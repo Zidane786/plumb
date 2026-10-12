@@ -154,7 +154,8 @@ other check. A `#fragment` that scrolls to an anchor can come out blank in headl
 
 ## kiro.py (plugin): Plumb's skills and hooks for Kiro
 
-`python3 "<ROOT>/scripts/kiro.py" install|uninstall [--home DIR] [--project DIR] [--yes]`: copies the skills to
-`.kiro/skills/plumb-<name>/` and writes `.kiro/hooks/plumb.json` in the home folder (and the project), or removes only
-what it installed. It lists every path and writes only after `--yes` or a typed `y`; the user runs it, never an agent.
+`python3 "<ROOT>/scripts/kiro.py" install|uninstall [--home DIR | --project DIR] [--yes]`: copies the skills to
+`.kiro/skills/plumb-<name>/` and writes `.kiro/hooks/plumb.json` in the home folder, or with `--project` in that
+workspace only; or removes only what it installed there. It lists every path and writes only after `--yes` or a typed
+`y`; the user runs it (an agent only when the user says so).
 Every flag and what differs in Kiro: [kiro.md](kiro.md). Exit codes: 0 · 1 the user said no · 2 refused.

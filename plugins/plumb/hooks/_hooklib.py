@@ -15,10 +15,12 @@ differences (pinned by tests/test_copilot.py):
 Kiro (IDE and CLI v3) runs the same scripts from the .kiro/hooks/plumb.json files scripts/kiro.py installs (pinned by
 tests/test_kiro.py; formats from Kiro's docs, verify live): snake_case input like Claude Code with its own tool names
 (fs_write, whose "command" is create / str_replace / insert / append, and execute_bash / execute_cmd) and, from 2.x,
-camelCase event names (agentSpawn, preToolUse, stop: read as SessionStart, PreToolUse, Stop). A Kiro payload is answered
-like Claude Code: a refusal is exit 2 with the reason on stderr (Kiro blocks a PreToolUse on any non-zero exit), session
-start is plain stdout, the Stop block is {"decision": "block", "reason": ...}. The home file's commands carry
---kiro-global; such a hook does nothing where the workspace has Plumb's own hooks file (deferred_to_workspace).
+camelCase event names (agentSpawn, preToolUse, stop: read as SessionStart, PreToolUse, Stop). Every installed command
+carries --kiro (kiro_run): the hook then answers like Claude Code: a refusal is exit 2 with the reason on stderr (Kiro
+blocks a PreToolUse on any non-zero exit), session start is plain stdout, the Stop block is
+{"decision": "block", "reason": ...}; and every command it prints is /plumb-<name> (tool_text). The home file's commands
+also carry --kiro-global; such a hook stands down only where the workspace's own Plumb hooks file runs the same plugin
+(deferred_to_workspace).
 
 Every JSON a hook prints is ASCII (non-ASCII as \\u escapes), so it survives any console code page on the way (Copilot
 CLI on Windows runs the hooks through PowerShell and run.cmd).
@@ -75,20 +77,37 @@ TOOL_KINDS = {
     "multiedit": "multiedit", "applypatch": "patch", "patch": "patch", "bash": "shell", "powershell": "shell",
     "shell": "shell",
     # Kiro: fs_write (its input's "command" says create / str_replace / insert / append), execute_bash, and
-    # execute_cmd (its Windows shell; verify live).
-    "fswrite": "write", "executebash": "shell", "executecmd": "shell",
+    # execute_cmd (its Windows shell); the IDE's fsWrite / fsAppend / executePwsh (verify live).
+    "fswrite": "write", "fsappend": "write", "executebash": "shell", "executecmd": "shell", "executepwsh": "shell",
 }
 
-# Kiro (IDE and CLI v3) sends Claude-style snake_case input; these tool names and event spellings tell it apart (the
-# 2.x camelCase events are still accepted by v3; verify live which spelling v3 sends). A Kiro payload is always answered
-# in Claude Code's dialect (exit 2 + stderr, plain session-start text, the Stop decision JSON), never Copilot's.
-KIRO_TOOLS = frozenset(("fs_write", "fs_read", "execute_bash", "execute_cmd", "use_aws", "use_subagent", "code"))
+# Kiro (IDE and CLI v3) sends Claude-style snake_case input. Its 2.x camelCase event names (still accepted by v3; verify
+# live which spelling v3 sends) are read as Claude's.
 KIRO_EVENTS = {"agentSpawn": "SessionStart", "preToolUse": "PreToolUse", "postToolUse": "PostToolUse", "stop": "Stop",
                "userPromptSubmit": "UserPromptSubmit"}
-# The line kiro.py puts in every file it installs (its ownership mark); kiro.py has the same constant.
-KIRO_MARK = "installed by Plumb's kiro.py"
-# The argument kiro.py adds to the commands of the home hooks file (~/.kiro/hooks/plumb.json).
+# The same constants as scripts/kiro.py. KIRO_ARG is on every command kiro.py installs: the hook then answers in Kiro's
+# dialect (exit 2 + stderr, plain session-start text, the Stop decision JSON, commands written /plumb-<name>), never by
+# guessing from the payload. KIRO_GLOBAL_ARG is on the home file's commands (~/.kiro/hooks/plumb.json). KIRO_MARK is in
+# every file kiro.py installs (its ownership mark).
+KIRO_ARG = "--kiro"
 KIRO_GLOBAL_ARG = "--kiro-global"
+KIRO_MARK = "installed by Plumb's kiro.py"
+SCRIPT_TRIGGERS = {"session_start.py": "SessionStart", "pre_edit.py": "PreToolUse", "stop_check.py": "Stop"}
+
+
+def kiro_run() -> bool:
+    """This hook was started from a Kiro hooks file (kiro.py puts KIRO_ARG on every command)."""
+    return KIRO_ARG in sys.argv[1:]
+
+
+def tool_text(text: str) -> str:
+    """text as the running tool names Plumb's commands: /plumb-<name> in Kiro (its skills are plumb-<name>)."""
+    return re.sub(r"/plumb:(?=[a-z])", "/plumb-", text) if kiro_run() else text
+
+
+def launcher_path() -> str:
+    """This plugin's hook launcher, as kiro.py names it in a hook's description ("Runs <launcher> <script> ...")."""
+    return os.path.realpath(os.path.join(HOOKS_DIR, "run.cmd" if sys.platform == "win32" else "run.sh"))
 
 
 def utf8_stdio() -> None:
@@ -102,7 +121,7 @@ def utf8_stdio() -> None:
 
 def note(message: str) -> None:
     """The one stderr line a hook prints when it skips something (it never fails the tool call)."""
-    print("plumb: " + " ".join(str(message).split()), file=sys.stderr)
+    print(tool_text("plumb: " + " ".join(str(message).split())), file=sys.stderr)
 
 
 def normalise(text: str) -> str:
@@ -275,7 +294,7 @@ class Payload:
         camel = ("toolName" in raw or "toolArgs" in raw) and "tool_name" not in raw and "tool_input" not in raw
         name = raw.get("toolName") if camel else raw.get("tool_name")
         self.tool_name = name if isinstance(name, str) else ""
-        self.kiro = not camel and (self.tool_name in KIRO_TOOLS or event in KIRO_EVENTS)
+        self.kiro = kiro_run()
         tool_input = raw.get("toolArgs") if camel else raw.get("tool_input")
         if isinstance(tool_input, str) and camel:
             try:
@@ -285,7 +304,7 @@ class Payload:
         self.tool = TOOL_KINDS.get(re.sub(r"[\s_-]", "", self.tool_name.lower()), "")
         self.changes, self.command = _changes(self.tool, tool_input)
         # Only Copilot CLI sends patch text or camelCase input, so those are answered in its dialect even without
-        # COPILOT_CLI. Kiro's input is answered in Claude Code's (its own) dialect whatever the environment says.
+        # COPILOT_CLI. A hook started from a Kiro hooks file answers in Kiro's dialect whatever the environment says.
         self.copilot = not self.kiro and (camel or isinstance(tool_input, str) or bool(os.environ.get("COPILOT_CLI")))
         sid = raw.get("session_id") or raw.get("sessionId") or ""
         self.session_id = sid if isinstance(sid, str) else str(sid)
@@ -336,11 +355,14 @@ def _changes(kind: str, tool_input: object) -> Tuple[List[Change], Optional[str]
         return [Change(path, "edit", edits=[(old, new if isinstance(new, str) else "",
                                              tool_input.get("replace_all") is True)])], None
     content = tool_input.get("content", tool_input.get("file_text"))
+    if command == "append":  # Kiro's fs_write append: new_str (or file_text / content; verify live) goes at the end
+        added = new if isinstance(new, str) else content
+        return [Change(path, "append", content=added) if isinstance(added, str) else Change(path, "path")], None
     if isinstance(content, str):
         return [Change(path, "write", content=content)], None
-    if command == "append" and isinstance(new, str):  # Kiro's fs_write append
-        return [Change(path, "append", content=new)], None
     line = tool_input.get("insert_line")
+    if isinstance(line, str) and line.strip().isdigit():  # Kiro may send the line number as text
+        line = int(line.strip())
     if isinstance(new, str) and isinstance(line, int) and not isinstance(line, bool):
         return [Change(path, "insert", content=new, line=line)], None
     return [Change(path, "path")], None
@@ -362,7 +384,9 @@ def read_payload(text: Optional[str] = None) -> Optional[Payload]:
 
 def refuse(message: str, copilot: bool) -> int:
     """Block the tool call with an actionable reason. Claude Code: exit 2, reason on stderr. Copilot CLI: exit 0 and a
-    JSON deny on stdout (it hides an exit-2 hook's stderr from the model)."""
+    JSON deny on stdout (it hides an exit-2 hook's stderr from the model). Kiro: as Claude Code, commands written
+    /plumb-<name>."""
+    message = tool_text(message)
     if copilot:
         print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": message,
                           "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
@@ -421,6 +445,52 @@ def plugin_version() -> Optional[str]:
 def version_tuple(v: Optional[str]) -> Optional[Tuple[int, ...]]:
     m = re.match(r"^\s*v?(\d+(?:\.\d+)*)", v or "")
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def newer_plugin() -> Optional[Tuple[str, str]]:
+    """(version, folder) of the newest Plumb next to this one (the plugin cache keeps one folder per version) when it
+    is newer than this plugin, else None. Kiro's copies point at one folder, so after a plugin update they run the old
+    one until kiro.py install runs again."""
+    root = plugin_root()
+    mine = version_tuple(plugin_version())
+    best: Optional[Tuple[Tuple[int, ...], str, str]] = None
+    try:
+        siblings = sorted(os.listdir(os.path.dirname(root)))
+    except OSError:
+        return None
+    for name in siblings:
+        folder = os.path.join(os.path.dirname(root), name)
+        if os.path.realpath(folder) == root:
+            continue
+        try:
+            with open(os.path.join(folder, ".claude-plugin", "plugin.json"), encoding="utf-8-sig") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict) or doc.get("name") != "plumb" or not isinstance(doc.get("version"), str):
+            continue
+        v = version_tuple(doc["version"])
+        if v is not None and mine is not None and v > mine and (best is None or v > best[0]):
+            best = (v, doc["version"], os.path.realpath(folder))
+    return (best[1], best[2]) if best else None
+
+
+KIRO_SKILL = re.compile(r"(?:^|/)\.kiro/skills/(plumb-[^/]+)/(.+)$", re.I if CASELESS else 0)
+KIRO_HOOKS = re.compile(r"(?:^|/)\.kiro/hooks/plumb\.json$", re.I if CASELESS else 0)
+
+
+def kiro_own_file(path: str) -> Optional[str]:
+    """The folder holding .kiro when path is one of the files kiro.py installed there (a marked
+    .kiro/hooks/plumb.json, or anything in a .kiro/skills/plumb-<name>/ folder whose SKILL.md is marked), else None."""
+    p = path.replace("\\", "/")  # an absolute path: the match starts at the "/" before .kiro
+    m = KIRO_SKILL.search(p)
+    if m:
+        marked = KIRO_MARK in (_read(os.path.join(p[:m.start(2)], "SKILL.md")) or "")
+        return (p[:m.start()] or "/") if marked else None
+    m = KIRO_HOOKS.search(p)
+    if m and kiro_hooks_doc(path) is not None:
+        return p[:m.start()] or "/"
+    return None
 
 
 # ---------------------------------------------------------------- the project (PLUMB.md)
@@ -570,30 +640,44 @@ class Project:
         return self.root_s
 
 
-def kiro_workspace_hooks(start: str) -> Optional[str]:
-    """The nearest .kiro/hooks/plumb.json at or above start that kiro.py installed for a project (it carries KIRO_MARK
-    and, unlike the home file, no KIRO_GLOBAL_ARG), or None."""
-    folder = os.path.realpath(start)
-    while True:
-        candidate = os.path.join(folder, ".kiro", "hooks", "plumb.json")
-        if os.path.isfile(candidate):
-            text = _read(candidate) or ""
-            if KIRO_MARK in text and KIRO_GLOBAL_ARG not in text:
-                return candidate
-        parent = os.path.dirname(folder)
-        if parent == folder:
-            return None
-        folder = parent
+def kiro_hooks_doc(path: str) -> Optional[list]:
+    """The hooks of a .kiro/hooks/plumb.json that kiro.py wrote (every hook carries KIRO_MARK), else None."""
+    try:
+        doc = json.loads(_read(path) or "")
+    except ValueError:
+        return None
+    hooks = doc.get("hooks") if isinstance(doc, dict) else None
+    if not isinstance(hooks, list) or not hooks or not all(
+            isinstance(h, dict) and KIRO_MARK in str(h.get("description") or "") for h in hooks):
+        return None
+    return hooks
 
 
 def deferred_to_workspace(payload: Optional[Payload]) -> bool:
-    """Kiro CLI runs the home hooks file and a workspace's side by side: a hook started from the home file
-    (KIRO_GLOBAL_ARG on its command line) stands down where the workspace has Plumb's own hooks file, so nothing runs
-    twice."""
+    """Kiro CLI runs the home hooks file and a workspace's side by side. A hook started from the home file
+    (KIRO_GLOBAL_ARG) stands down only where the workspace's own file (cwd/.kiro/hooks/plumb.json: Kiro runs hooks in
+    the workspace root; no walk up) will do the same job: Plumb's, written for the workspace (no KIRO_GLOBAL_ARG), its
+    hook for this trigger (and matcher) enabled and running this very plugin's launcher, which exists. Otherwise (a
+    workspace file from an old or removed plugin folder, a disabled hook, a foreign file) the home hook runs."""
     if KIRO_GLOBAL_ARG not in sys.argv[1:]:
         return False
     start = (payload.cwd if payload else "") or os.getcwd()
-    return kiro_workspace_hooks(start) is not None
+    hooks = kiro_hooks_doc(os.path.join(start, ".kiro", "hooks", "plumb.json"))
+    if hooks is None:
+        return False
+    script = os.path.basename(sys.argv[0])
+    trigger = SCRIPT_TRIGGERS.get(script)
+    launcher = launcher_path()
+    if trigger is None or not os.path.isfile(launcher):
+        return False
+    matcher = ("shell" if payload is not None and payload.tool == "shell" else "write") if trigger == "PreToolUse" else None
+    runs = f"Runs {launcher} {script} {KIRO_ARG}."
+    for h in hooks:
+        action = h.get("action") if isinstance(h.get("action"), dict) else {}
+        if (h.get("trigger") == trigger and h.get("matcher") == matcher and h.get("enabled", True) is not False
+                and runs in str(h.get("description") or "") and KIRO_GLOBAL_ARG not in str(action.get("command") or "")):
+            return True
+    return False
 
 
 def load_project(payload: Optional[Payload]) -> Optional[Project]:

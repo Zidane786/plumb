@@ -11,7 +11,9 @@ In such a project, in this order:
      <docs>/screens.html, <docs>/prototype/screens.json and <docs>/tours/*.html (a tour page that does not carry the
      GENERATED header is someone's own page and is left alone);
    - one of Plumb's own files: the design-system skill's [P] files (scripts/*.py, templates/*,
-     assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them.
+     assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
+     the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
+     marked, in the project or the home folder): editing them could switch the checks off.
    Shell commands are read for writes (>, >>, tee, sed -i, perl -i, cp / mv / install / rsync onto, Set-Content,
    Add-Content, Out-File, Copy-Item / Move-Item onto, Python writes); running build-tokens.py or build-prototype.py is
    allowed, as are reads, git and anything that writes elsewhere.
@@ -83,12 +85,25 @@ def _map_output(proj: H.Project, shown: str) -> str:
             f"fix: change it through {cmd} --map ID --route ROUTE --files GLOB, {cmd} --approve ID or {cmd} --synced ID")
 
 
+def _kiro_own(proj: H.Project, shown: str, base: str) -> str:
+    home = os.path.realpath(os.path.expanduser("~"))
+    scope = "" if os.path.realpath(base) == home else f" --project {H._safe_arg(base)}"
+    kiro = H._safe_arg(os.path.join(H.plugin_root(), "scripts", "kiro.py"))
+    return (f"error: {shown} is Plumb's Kiro file, written by kiro.py; a hand edit is lost on the next install and can "
+            f"switch Plumb's checks off\n"
+            f"ask the user: to refresh it, run {proj.python} {kiro} install{scope} yourself; to turn a check off, change "
+            f"Edit check: or End-of-turn check: in PLUMB.md (/plumb:update for design changes)")
+
+
 def guard(proj: H.Project, path: str) -> Optional[str]:
     """The refusal for writing this absolute path by hand, or None."""
     if H.under(path, H.plugin_root()) is not None:
         return _own(path)
     in_project = H.under(path, proj.root_s)
     shown = in_project if in_project else path
+    kiro_base = H.kiro_own_file(path)  # a marked .kiro/hooks/plumb.json or .kiro/skills/plumb-<name>/ (any .kiro)
+    if kiro_base is not None:
+        return _kiro_own(proj, shown, kiro_base)
     f = H.fold  # compare paths without case where the file system ignores it
     if proj.skill_dir is not None:
         in_skill = H.under(path, str(proj.skill_dir))
