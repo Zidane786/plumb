@@ -8,9 +8,9 @@ argument-hint: "[fix | improve] [paths]"
 
 **The script is the floor, not the ceiling.** `audit.py` checks everything that can be written as a rule, the same way
 every time (the hooks and CI rely on it). Then you review what no rule expresses. Rules and how to fix each:
-`<ROOT>/reference/rules.md`. Commands: `<ROOT>/reference/scripts.md`. Prototype rules: `<ROOT>/reference/prototypes.md`.
+[`rules.md`](../../reference/rules.md). Commands: [`scripts.md`](../../reference/scripts.md). Prototype rules: [`prototypes.md`](../../reference/prototypes.md). Copilot CLI differences: [`copilot.md`](../../reference/copilot.md).
 
-**Rules.** One question at a time through the question tool, options with the recommendation first. **Nothing is
+**Rules.** Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)". **Nothing is
 written without the user's OK:** the report, its review file and the screenshots are the output this command was asked
 for; any other write (a code fix, a screen file, a rule, a decision) is shown first (what and where) and made only on a
 yes. Never install or download anything; if something seems missing, ask the user and wait. Check both themes unless

@@ -7,13 +7,13 @@ argument-hint: "<screen | flow>"
 # /plumb:ux <screen | flow> — review one screen or flow as a user meets it
 
 `/plumb:audit` checks rules across the product; this is the deep look at one place. The method (what to gather, the
-heuristics, accessibility, the visual polish pass, findings, the report): `<ROOT>/reference/ux.md`. Commands:
-`<ROOT>/reference/scripts.md`.
+heuristics, accessibility, the visual polish pass, findings, the report): [`ux.md`](../../reference/ux.md). Commands:
+[`scripts.md`](../../reference/scripts.md). Copilot CLI without a browser tool: [`copilot.md`](../../reference/copilot.md).
 
-**Rules.** One question at a time through the question tool, options with the recommendation first. **Nothing is written
+**Rules.** Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)". **Nothing is written
 without the user's OK:** the review page and its screenshots are the output this command was asked for; any other write
-(a fix, a screen file, `vocabulary.md`) is shown first (what and where) and made only on a yes. Never install or
-download anything (no browser, no Playwright, no packages); if something is missing, ask the user and wait. Review in
+(a fix, a screen file, `vocabulary.md`) is shown first (what and where) and made only on a yes.
+Never install or download anything (no browser, no Playwright, no packages); if something is missing, ask the user and wait. Review in
 light and dark unless `Themes: light-only`. Anything that changes what a screen shows goes through the prototype first.
 
 ```

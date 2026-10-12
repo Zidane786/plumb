@@ -1,11 +1,11 @@
 """The plugin's skills and references agree with each other and with the spec.
 
-- every `/plumb:<x>` mentioned in a skill or reference is a 1.0.0 command, and (once built) a skill folder;
+- every `/plumb:<x>` mentioned in a skill or reference is a 1.0.0 command, and a skill folder;
 - every skill has the required frontmatter, resolves ROOT like Slate's skills, links reference/ and says
   "ask the user and wait" (Plumb never installs or downloads anything);
 - every relative markdown link, and every `ROOT/...` or `<ROOT>/...` path, in skills and references exists;
-- skills ask one question at a time with a "(Recommended)" option; init, create and extract say that nothing is
-  written without the user's OK;
+- skills ask one question at a time with a "(Recommended)" option; every skill that writes into a project says that
+  nothing is written without the user's OK (status is read-only);
 - no internal project names anywhere under plugins/ (Slate is the companion plugin and is allowed).
 """
 
@@ -26,14 +26,12 @@ REFERENCE = PLUGIN / "reference"
 COMMANDS = {"init", "create", "extract", "prototype", "tour", "audit", "ux", "update", "upgrade", "status"}
 # Heavy flows run only when the user typed them (spec section 3).
 USER_ONLY = {"init", "create", "extract", "update", "upgrade"}
-# Skills still being written in a parallel task of the 1.0.0 build; remove a name once its folder exists.
-PENDING = {"prototype", "tour", "audit", "ux", "update", "upgrade", "status"}
 INTERNAL_NAMES = re.compile(r"\b(keel|caredesk)\b", re.I)
 TEXT_SUFFIXES = {".md", ".py", ".json", ".html", ".css", ".js", ".tmpl", ".snippet", ".sh", ".cmd", ".txt", ".toml",
                  ".yml", ".yaml", ".swift", ".kt", ".tailwind-v3", ".tailwind-v4"}
 MAX_SKILL_LINES = 200
 # Skills that write into a project keep the user in the loop (owner requirement).
-CONFIRM_FIRST = {"init", "create", "extract"}
+CONFIRM_FIRST = COMMANDS - {"status"}
 # Read-only skills that ask nothing.
 NO_QUESTIONS = {"status"}
 ROOT_PATH = re.compile(r"<?ROOT>?/([A-Za-z0-9_./-]*)")
@@ -77,7 +75,7 @@ def test_every_reference_is_linked_from_a_skill() -> None:
 def test_every_skill_folder_is_a_command() -> None:
     folders = {p.name for p in SKILLS.iterdir() if p.is_dir()}
     assert folders <= COMMANDS, f"skill folders that are not 1.0.0 commands: {sorted(folders - COMMANDS)}"
-    assert not (folders & PENDING), f"built now, remove from PENDING: {sorted(folders & PENDING)}"
+    assert folders == COMMANDS, f"commands without a skill folder: {sorted(COMMANDS - folders)}"
 
 
 def test_every_command_mentioned_exists() -> None:
@@ -85,7 +83,7 @@ def test_every_command_mentioned_exists() -> None:
     for path in doc_files():
         for name in re.findall(r"/plumb:([a-z][a-z-]*)", path.read_text(encoding="utf-8")):
             assert name in COMMANDS, f"{path.relative_to(REPO)}: /plumb:{name} is not a Plumb command"
-            assert name in built | PENDING, f"{path.relative_to(REPO)}: /plumb:{name} has no skill folder"
+            assert name in built, f"{path.relative_to(REPO)}: /plumb:{name} has no skill folder"
 
 
 @pytest.mark.parametrize("path", skill_files(), ids=lambda p: p.parent.name)
@@ -127,9 +125,6 @@ def test_root_paths_exist(path: Path) -> None:
         if text[m.end():m.end() + 1] == "<":
             continue  # a placeholder segment such as ROOT/skills/<name>/SKILL.md
         rel = m.group(1).rstrip(".,")
-        parts = rel.split("/")
-        if parts[0] == "skills" and len(parts) > 1 and parts[1] in PENDING:
-            continue
         assert (PLUGIN / rel).exists(), f"{path.relative_to(REPO)}: {m.group(0)} does not exist in the plugin"
 
 

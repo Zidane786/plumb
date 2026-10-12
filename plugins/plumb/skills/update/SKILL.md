@@ -9,13 +9,13 @@ disable-model-invocation: true
 
 Only run when the user typed `/plumb:update` (other skills offer it, never run it). Values live only in the tokens file;
 every theme, copy, specimen, prototype and proposal token block is regenerated from it. Tokens format:
-`<ROOT>/reference/tokens-format.md`. Commands: `<ROOT>/reference/scripts.md`. Prototype rules:
-`<ROOT>/reference/prototypes.md`. Audit rules and the agent review: `<ROOT>/reference/rules.md`.
+[`tokens-format.md`](../../reference/tokens-format.md). Commands: [`scripts.md`](../../reference/scripts.md). Prototype rules:
+[`prototypes.md`](../../reference/prototypes.md). Audit rules and the agent review: [`rules.md`](../../reference/rules.md).
 
-**Rules.** One question at a time through the question tool, options with the recommendation first; every change is
+**Rules.** Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)"; every change is
 the user's choice. **Nothing is written without the user's OK:** before each edit, show exactly what changes and where,
-and ask. Never install or download anything (no font files, icon sets or packages); if something is missing, ask the
-user and wait. Every colour has a light and a dark value (unless `Themes: light-only`). Never hand-edit generated files
+and ask. Never install or download anything (no font files, icon sets or packages); if something is missing,
+ask the user and wait. Every colour has a light and a dark value (unless `Themes: light-only`). Never hand-edit generated files
 ([G]) or Plumb's own files ([P]); regenerate.
 
 ```

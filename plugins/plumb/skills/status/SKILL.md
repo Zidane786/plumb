@@ -7,8 +7,8 @@ description: Report the health of the project's design system, read-only - Plumb
 
 **Read-only.** Change nothing: no regeneration, no audit fixes, no approvals, no upgrade. The one exception: when the
 placement check offers a move and the user says yes, run that `--relocate` command. Never install or download anything;
-if something is missing (Python, git, the home repo of a linked system), report it and ask the user what to do.
-Commands: `<ROOT>/reference/scripts.md`.
+if something is missing (Python, git, the home repo of a linked system), report it, ask the user and wait.
+Commands: [`scripts.md`](../../reference/scripts.md).
 
 ## Step 0: context
 
@@ -48,7 +48,7 @@ git status --short                                   # skip it when the project 
 ## Report (under 200 words)
 
 1. **Version:** project <v> · plugin <v>; `older` → "run `/plumb:upgrade`"; `newer` → "update the plugin" (the commands
-   in `<ROOT>/reference/copilot.md`).
+   in [`copilot.md`](../../reference/copilot.md)).
 2. **System:** the skill path, home or linked, platforms, styling, themes (light and dark, or light-only by decision).
 3. **Placement:** `scaffold.py --verify` ok, or each `problem:` line; when it prints a suggested `--relocate` command,
    offer the move (one question: "Move the design system to <TO> and update every reference?"); run it only on yes.

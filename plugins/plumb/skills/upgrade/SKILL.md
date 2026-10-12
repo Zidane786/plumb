@@ -7,15 +7,15 @@ disable-model-invocation: true
 # /plumb:upgrade — bring the project's copied files up to the plugin's version
 
 Only run when the user typed `/plumb:upgrade` (other skills and the session-start check offer it, never run it).
-How the version files work: `<ROOT>/upgrades/README.md`. Commands: `<ROOT>/reference/scripts.md`.
+How the version files work: `<ROOT>/upgrades/README.md`. Commands: [`scripts.md`](../../reference/scripts.md). Copilot CLI (update commands, hooks): [`copilot.md`](../../reference/copilot.md).
 
 **Ownership** (what an upgrade may touch): `[P]` Plumb's files (`<skill>/scripts/*`, `<skill>/templates/*`,
 `assets/platforms/README.md`) are replaced; `[G]` generated files are regenerated; `[Y]` your files (tokens,
 `design.md`, references, screen files, tours, `PLUMB.md`, decisions) change only through a version step the user said
 yes to, and the tokens file only by additive migration (no value is ever deleted or changed); `[A]` agent-written
-components are never touched. **Nothing is written without the user's OK.** Never commit, push or delete data. Never
-install, update or download anything yourself, the plugin included: print the commands for the user to run and wait. One
-question at a time, options with the recommendation first; keep every value the project already set.
+components are never touched. **Nothing is written without the user's OK.** Never commit, push or delete data.
+Never install or download anything yourself (update the plugin included): print the commands for the user to run, then ask the user and wait.
+Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)"; keep every value the project already set.
 
 ```
  versions ─▶ What's new (every version in between) ─▶ ask ─▶ refresh [P] (scaffold.py) ─▶ --migrate ─▶ regenerate [G]

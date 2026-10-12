@@ -8,13 +8,13 @@ argument-hint: "<screen | flow | interaction>"
 
 The main prototype (`<docs>/prototype.html` + `screens.html`, built from one file per screen) is the reference every
 screen is built from. This skill adds or changes screens in it, with the user choosing and approving. Screen file
-contract, variants, approvals and the quality bar: `<ROOT>/reference/prototypes.md`. Tours: `<ROOT>/reference/tours.md`.
-Every command: `<ROOT>/reference/scripts.md`.
+contract, variants, approvals and the quality bar: [`prototypes.md`](../../reference/prototypes.md). Tours: [`tours.md`](../../reference/tours.md).
+Every command: [`scripts.md`](../../reference/scripts.md).
 
-**Rules.** Ask one question at a time through the question tool, with options and the recommendation first. **Nothing is
+**Rules.** Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)". **Nothing is
 written without the user's OK:** before writing, say what you will write and where, and ask; write only on a yes. Never
-install or download anything (no package, font, icon set, image or tool); if something seems missing, ask the user and
-wait for their decision. Both themes, unless `PLUMB.md` says `Themes: light-only`. Never edit `prototype.html`,
+install or download anything (no package, font, icon set, image or tool); if something seems missing,
+ask the user and wait for their decision. Both themes, unless `PLUMB.md` says `Themes: light-only`. Never edit `prototype.html`,
 `screens.html`, `screens.json`, `tours/*.html` or the proposal pages: `build-prototype.py` writes them. Never run
 `--approve` without the user's yes to that screen in this conversation.
 

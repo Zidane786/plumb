@@ -8,11 +8,11 @@ argument-hint: "[tour id or flow]"
 
 `/plumb:prototype` already writes a default walkthrough for every flow it builds. This skill writes the others: a
 different audience, a story across several flows, a hands-on lesson. The format, the two modes, pointing and text,
-`your_turn`, chapters and the rules for targets: `<ROOT>/reference/tours.md`. Commands: `<ROOT>/reference/scripts.md`.
+`your_turn`, chapters and the rules for targets: [`tours.md`](../../reference/tours.md). Commands: [`scripts.md`](../../reference/scripts.md).
 
-**Rules.** One question at a time through the question tool, options with the recommendation first. **Nothing is
-written without the user's OK:** say what you will write and where, and ask; write only on a yes. Never install or
-download anything; ask the user and wait. Tours play in light and dark. Never edit `tours/*.html` or `prototype.html`:
+**Rules.** Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)". **Nothing is
+written without the user's OK:** say what you will write and where, and ask; write only on a yes.
+Never install or download anything; ask the user and wait. Tours play in light and dark. Never edit `tours/*.html` or `prototype.html`:
 `build-prototype.py` writes them.
 
 ```
