@@ -102,11 +102,13 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
      PLUMB.md       in <root>
      docs/design/   in <root>   (directions or extract page, decision log, prototype, reports)
      generated copy → <global css path>
+     UI files   <proposal.ui_files, else the platform default>   (what the audit and the checks cover)
    OK, or change something?
    ```
 
    Options: OK (Recommended) · change where the skill goes (`.github/skills/…`, another name) · change the project
-   root · change the UI packages, the copy path or the docs folder · something else. Repeat until the user says OK.
+   root · change the UI packages, the copy path, the UI files or the docs folder · something else. Repeat until the
+   user says OK.
 8. Keep the confirmed **placement**: `<root>`, project name and id, skill dir, platforms, styling per package, UI
    packages (`PLUMB.md` `UI packages:`), copy paths, UI file globs, allowed raw paths (`components/ui/**` where
    primitives live), docs dir (`docs/design`), Python command, role, and whether it is **design only**. Create or

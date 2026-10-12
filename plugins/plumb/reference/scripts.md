@@ -92,7 +92,7 @@ Exit codes: 0 ok · 1 stale (`--check`) · 2 bad input (a screen file with no `d
 |---|---|
 | `--project-root P` | The project root (required in every mode). |
 | `--name`, `--skill-dir`, `--platforms`, `--styling` | Required to lay the skill: product name, skill folder relative to the root (`.claude/skills/<project>-design-system`), platforms, web styling. |
-| `--answers answers.json` | The interview answers (colours, type scale, spacing, radius, motion, icons, PLUMB.md values…); see the script's docstring. |
+| `--answers answers.json` | The interview answers (colours, type scale, spacing, radius, motion, icons, PLUMB.md values…); see the script's docstring. Without a `ui_files` answer, `PLUMB.md`'s `UI files:` comes from the project's stack (detect.py's scan: Angular gets its component files) or else the platform default ([placement.md](placement.md)). |
 | `--docs-dir` | Where the design pages live (default `docs/design`). |
 | `--dry-run` | Prints `would write:` / `skip:` and writes nothing. |
 | `--relocate FROM TO` | Moves the skill folder and updates every reference (PLUMB.md, the AGENTS.md/CLAUDE.md row, Makefile), then runs the moved `build-tokens.py --check` (regenerating once when only the header paths changed). |
@@ -106,8 +106,9 @@ problems) · 2 bad input.
 ## detect.py (plugin): repo layout and stack
 
 `python3 "<ROOT>/scripts/detect.py" --cwd PATH [--json]`: where the project and its UI live (git root, monorepo
-packages, frameworks, styling, UI file counts, an existing `PLUMB.md`). Read-only; a first guess that `/plumb:init`
-always shows the user to confirm.
+packages, frameworks, styling, UI file counts, the `UI files:` value the stack needs (`ui_files`: Angular's component
+files; `null` when the platform default fits), an existing `PLUMB.md`). Read-only; a first guess that `/plumb:init`
+always shows the user to confirm. Every field: [placement.md](placement.md).
 
 ## version.py (plugin): project vs plugin version
 

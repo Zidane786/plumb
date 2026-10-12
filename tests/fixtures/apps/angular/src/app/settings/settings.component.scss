@@ -1,0 +1,9 @@
+.save {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  transition: background-color 250ms ease-in-out;
+}
+
+.save:focus {
+  outline: none;
+}
