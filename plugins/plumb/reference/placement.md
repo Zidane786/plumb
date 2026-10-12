@@ -7,9 +7,9 @@ root, layout, framework, styling, platforms, copy paths) is a suggestion the use
 **The project root (`<root>`)** is the absolute `root` from detect.py, as the user confirmed or corrected it. From then
 on every path is relative to `<root>` and every command names it explicitly (`--project-root "<root>"`,
 `"<root>/<skill dir>/scripts/…"`); never write outside it, and never use `.` for it (the session may be open in a
-subfolder of the project, or in a parent folder of several). Two exceptions, each only as stated: the answers JSON for
-`scaffold.py` goes to the system temp folder and is deleted after the scaffold; and when the frontend lives in another
-repo, the backend repo's linked `PLUMB.md` is written only when the user says yes to that separate question.
+subfolder of the project, or in a parent folder of several). Temporary files stay inside `<root>` too
+([Temporary files](#temporary-files)). One exception: when the frontend lives in another repo, the backend repo's
+linked `PLUMB.md` is written only when the user says yes to that separate question.
 
 ## Detection is a first guess, never the decision
 
@@ -46,9 +46,18 @@ I'll create:
 OK, or change something?
 ```
 
-`detect.py` without `--json` prints this block; show it to the user verbatim (do not summarise it), correcting it with
-what you found. It always has the `UI files` line (the stack's value, else the platform default), and one line per web
-copy that already exists, saying Plumb adds only a marked block to it (or, when the block is there, updates only it).
+`detect.py` without `--json` prints this block. **Print it in the chat in full, verbatim** (a code block, every
+line), mark what you corrected `(corrected: <why>)`, then ask. It always has the `UI files` line (the stack's value, else the
+platform default) and one `exists:` line per web copy whose file is already there (Plumb adds and owns only a marked
+`plumb:start … plumb:end` block in it; the rest stays the project's). Never summarise it, and never ask about "the setup above" when it is not above.
+
+## Temporary files
+
+A file a script needs only for one step (the answers JSON for `scaffold.py`) goes in **`<root>/.plumb-tmp/`**: write
+`<root>/.plumb-tmp/.gitignore` containing `*` first (git ignores the folder; the project's own `.gitignore` is not
+touched), then `<root>/.plumb-tmp/answers.json`. Delete the whole `.plumb-tmp/` folder right after the step that used
+it (the real scaffold run). **Never** use `/tmp`, `%TEMP%` or another session's scratch folder: they sit
+outside the project, so Copilot CLI asks for path access to them, and nothing outside `<root>` is written.
 
 ## detect.py fields
 
@@ -129,7 +138,8 @@ Role: linked
 ```
 
 The other lines are filled from the home's tokens file (platforms) and this repo (UI packages, UI files, Python); the
-commands point at the home's scripts. Check the path holds `SKILL.md` and `assets/tokens/*.tokens.json` before writing;
+`## Commands` lines are the direct commands pointing at the home's scripts (never `make` hints: a linked repo gets no
+Makefile). Check the path holds `SKILL.md` and `assets/tokens/*.tokens.json` before writing;
 if not, say so and ask for the right path. Then add the AGENTS/CLAUDE row (from `<ROOT>/templates/agents-row.md`) with
 the home's path. Nothing else is copied into a linked repo.
 

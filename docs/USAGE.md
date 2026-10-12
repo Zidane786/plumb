@@ -127,9 +127,13 @@ I'll create:
   PLUMB.md                             in ~/Projects/acme
   docs/design/                         in ~/Projects/acme   (directions or extract page, decision log, prototype, reports)
   generated copy → apps/web/app/globals.css
+    apps/web/app/globals.css exists: Plumb adds and owns only a marked plumb:start … plumb:end block; the rest stays yours
   UI files   apps/web/app/**, apps/web/components/** · *.tsx *.jsx *.css   (what the audit and the checks cover)
 OK, or change something?
 ```
+
+The agent prints this whole block in the chat before it asks. If it ever asks "OK?" without the block above, ask it
+to show the block first.
 
 **Detection is a first guess. Plumb shows it, and you confirm.** Plumb's detection only looks for well-known marker
 files (package manifests, monorepo configs, stylesheets, Xcode and Gradle projects), and no script knows every layout.
@@ -144,7 +148,8 @@ written into `PLUMB.md`, so no later command guesses again.
 Then init asks whether the project is **new** (no UI yet, so `/plumb:create`) or **existing** (UI code already there,
 so `/plumb:extract`), with the one it detected marked "(Recommended)". It runs that flow, then wires Plumb in, asking
 about each item on its own: `PLUMB.md`, the row in `AGENTS.md`/`CLAUDE.md`, the Makefile targets, the two checks, the
-Slate review check (when Slate is set up) and Kiro steering (when you use Kiro).
+Slate review check (when Slate is set up) and Kiro steering (when you use Kiro). It asks about the row and the Makefile
+even when those files don't exist yet (then the question is whether to create them).
 
 When it finishes, **commit the files** and **start a new session** in the project folder so the hooks load.
 
@@ -304,7 +309,9 @@ another repo (linked); new or existing; then each wire-in item: the `PLUMB.md` v
 
 **What it changes:** `PLUMB.md`, the design-system skill folder and `docs/design/` (through create or extract), one
 row in `AGENTS.md` or `CLAUDE.md`, three Makefile targets (`tokens`, `tokens-check`, `design-audit`), and optionally
-one line in `SLATE.md` and `.kiro/steering/plumb.md`. Nothing outside the agreed lines changes.
+one line in `SLATE.md` and `.kiro/steering/plumb.md`. Nothing outside the agreed lines changes. `PLUMB.md` always
+names the direct commands; only when you say yes to the Makefile does it add the `(make tokens)` hints
+(`scaffold.py --verify` reports a `make` target that `PLUMB.md` names but the Makefile lacks).
 
 **Run again** in a set-up project: it shows status, resumes a half-finished setup from the first missing stage, offers
 `/plumb:upgrade` when the plugin is newer, and runs `scaffold.py --verify` to check the placement. It never overwrites a
@@ -338,13 +345,17 @@ plumb Done. Commit these files, start a new session here so the hooks load. UI w
 - **B. Platforms and stack:** web, iOS (SwiftUI), Android (Compose); the framework and styling it detected (Tailwind
   v4, Tailwind v3, plain CSS; shadcn when present), for you to confirm.
 - **C. Design decisions, one at a time**, each recommended from what you said: personality, density, accent, neutrals,
-  semantic colours, label colours, type, spacing, radius, elevation, motion and reduced motion, icons, dark mode,
+  semantic colours, label colours, type, spacing, radius, elevation, motion and reduced motion (keep fades, or no
+  animation at all), icons, dark mode (and how your app switches: the system setting, a `.dark` class, or both),
   accessibility target (WCAG 2.2 AA by default), vocabulary and voice, and the UX patterns (navigation, page anatomy,
-  forms, feedback, empty/loading/error states, destructive actions, onboarding).
+  forms, feedback, empty/loading/error states, destructive actions, onboarding). The reduced-motion and theme-switch
+  answers are recorded in the tokens file (`$extensions.plumb.motion.reduced`, `$extensions.plumb.web.theme_switch`)
+  and the generated CSS follows them.
 - **D. Directions:** 2–3 distinct, finished-looking directions on one page, each with a real screen of your product in
   light and dark. Pick one, combine parts, or change something.
-- **E. Generate**, with a checkpoint at each step: the full token set; the list of files; each contrast fix; which
-  starter components, in which framework, where.
+- **E. Generate**, with a checkpoint at each step: the full token set; the list of files; what changes in a
+  stylesheet you already have (e.g. `app/globals.css`: Plumb adds a marked `plumb:start … plumb:end` block and owns
+  only that; the rest stays yours); each contrast fix; which starter components, in which framework, where.
 - **F. Prototypes** of the key screens (or later, with `/plumb:prototype`).
 - **G. Record:** every decision goes in the decision log.
 
@@ -381,8 +392,9 @@ plumb Audit on components/ui: 0 errors. Specimen: docs/design/specimen.html. Pro
 
 **What it asks:** which folders hold the UI (and what to leave out); each token group from the before/after page
 (accept, rename, merge, split, leave out; after three groups you may accept the rest at once); the product and UX
-questions the code can't answer; then the same checkpoints as create (token set, files, contrast fixes, components);
-and which routes to prototype.
+questions the code can't answer; then the same checkpoints as create (token set, files, your existing stylesheet,
+contrast fixes, components); which routes to prototype; and, once you've looked, whether to approve each screen (a
+screen synced from code is never approved without your yes).
 
 **What it changes:** the same files as create, plus `docs/design/extract.html` (the before/after page) and one screen
 file per route in `docs/design/prototype/screens/`. Existing components are mapped into the specs; your app code
@@ -398,7 +410,7 @@ plumb Found 61 colours in 12 groups, 14 font sizes in 9 groups … I'll write do
 plumb Routes found: / → home, /bookings → bookings, /bookings/[id] → booking … Prototype all of them? (Recommended)
       …
 plumb Audit: 37 errors, 12 warnings in 88 files (report: docs/design/audit-2026-10-12.html).
-      Fix them now with /plumb:audit fix, or create Slate tickets by area?
+      Fix them now with /plumb:audit fix, or create Slate tickets by area? (Slate only when the project uses it)
 ```
 
 ### `/plumb:prototype`
@@ -476,11 +488,12 @@ finding the same kind of problem, it proposes it as a new rule.
 
 **Output:** `docs/design/audit-YYYY-MM-DD.html` (issues ranked by severity, each with `file:line`, what's wrong and the
 fix; then an **Improvements** section), a terminal summary, and an exit code: 0 no errors, 1 errors, 2 nothing checked
-or bad input. Severities: **error** fails the audit and the edit check refuses edits that add one; **warn** is reported;
+or bad input. Exit 1 is a result, not a crash, though your agent tool may show it as a failed command. Severities: **error** fails the audit and the edit check refuses edits that add one; **warn** is reported;
 **suggest** is an improvement that never fails anything.
 
-**What it asks:** after the summary, one question: `/plumb:audit fix`, `/plumb:audit improve`, Slate tickets, or
-nothing now.
+**What it asks:** your dev server's URL, when built screens need screenshots (it never probes `localhost` itself;
+"not running" skips them); after the summary, one question: `/plumb:audit fix`, `/plumb:audit improve`, Slate tickets
+(only when the project uses Slate), or nothing now.
 
 **Three modes:**
 
@@ -639,7 +652,7 @@ Every UI change that adds or changes a screen, tab, flow or interaction follows 
    - at the end of the turn, the files changed in this session are checked, including whether a built screen changed
      without its prototype.
 4. **Map it.** Once the route exists, the screen is linked to its route and source files
-   (`build-prototype.py --map billing --route /billing --files "app/billing/**"`), so the audit can compare them.
+   (`build-prototype.py --map billing --route=/billing --files "app/billing/**"`), so the audit can compare them.
 5. **Check and commit.** `/plumb:audit` (or `make design-audit`) exits 0; `/plumb:ux billing` for a deeper look.
 
 **Changing an existing screen** works the same way: the agent updates the screen file first, you approve it, then the
@@ -679,7 +692,7 @@ approval:
 
 | Command | What it records |
 |---|---|
-| `build-prototype.py --map billing --route /billing --files "app/billing/**"` | the route and source files, confirmed with you |
+| `build-prototype.py --map billing --route=/billing --files "app/billing/**"` | the route and source files, confirmed with you |
 | `build-prototype.py --approve billing` | your approval: who (git `user.name`, else `$USER` / `%USERNAME%`), when, and a hash of the screen file. Editing the screen file afterwards makes the approval stale |
 | `build-prototype.py --synced billing` | the screen file was updated to match code that was already built; listed for you to confirm, never blocking |
 | `build-prototype.py --check` | nothing written; exit 1 when a page or token block is stale, exit 2 when a walkthrough step points at something that no longer exists |
@@ -837,7 +850,7 @@ Allowed raw values: components/ui/**
 
 ## Commands
 tokens `python3 .claude/skills/acme-design-system/scripts/build-tokens.py` (make tokens)
-check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
+check `python3 .claude/skills/acme-design-system/scripts/build-tokens.py --check` (make tokens-check) · audit `python3 .claude/skills/acme-design-system/scripts/audit.py` (make design-audit)
 
 ## Prototype
 Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
@@ -846,6 +859,9 @@ Prototype sync: on               (end-of-turn check stops once when a built scre
 ## Plumb updates
 - 2026-10-12 created with Plumb 1.0.0 (web; direction "Quiet service")
 ```
+
+The `(make …)` hints in `## Commands` appear only when you said yes to the Makefile targets; without them the lines
+are the direct commands.
 
 | Setting | What it does |
 |---|---|
@@ -973,9 +989,14 @@ the plugin.
 
 - **Copilot CLI** hides a hook's error output, so refusals come back as a "deny" answer with the same `error:` and
   `fix:` text; the agent sees the reason. Session start uses Copilot's context field. Edits arrive as patch text and are
-  checked the same way. Whether the end-of-turn check can make Copilot keep working depends on Copilot's `agentStop`
-  support: where it can't, Copilot shows the end-of-turn summary only and the edit check remains the hard guard.
-  On Windows, Copilot runs each hook's PowerShell command (through `hooks/run.cmd`).
+  checked the same way. The end-of-turn check makes Copilot keep working: its answer arrives as a new prompt, so the
+  skills tell the agent to report and stop when you had said not to fix now. On Windows, Copilot runs each hook's
+  PowerShell command (through `hooks/run.cmd`).
+- **Copilot CLI asks before every script.** It ignores the skills' pre-approved commands (`allowed-tools`), so expect
+  a permission prompt per script run; the skills run each step's scripts in one shell call and keep temporary files
+  inside the project (`.plumb-tmp/`, ignored by version control, removed after). To cut the prompts, answer "remember
+  for this session", or start Copilot with `--allow-tool 'shell(python3)'` (every `python3` command, not only
+  Plumb's: your call). Details: `plugins/plumb/reference/copilot.md`.
 - **Kiro:** the same three scripts, each run with `--kiro` from `.kiro/hooks/plumb.json`: session start prints the
   status line; the edit check runs on Kiro's `write` and `shell` tools and refuses with exit 2 and the `error:` and
   `fix:` (or `ask the user:`) lines; the end-of-turn check answers `{"decision": "block", "reason": …}`. Kiro's docs
@@ -1050,6 +1071,12 @@ variants and screen files, the extract before/after page and the UX review page.
 rules ("The quality bar" in [reference/prototypes.md](../plugins/plumb/reference/prototypes.md): real content, every
 state, working interactions, keyboard and focus, both themes, reduced motion, no generic look) and its directions
 template. The specimen, the audit report and the prototype shell are Plumb's own fixed templates either way.
+
+**Your design system outranks Effective HTML.** In a project, Effective HTML is followed for craft only (real content,
+states, interactions, accessibility, polish); the palette, type, spacing, radius and motion always come from your
+`<project>-design-system`, and where the two disagree, your system wins. The one exception is create's directions
+page, written before any system exists: each direction there is a candidate system.
+
 `/plumb:init` tells you once whether the skills are available, and `/plumb:status` reports it.
 
 Plumb never installs them. To add them, run these yourself in Claude Code (from Effective HTML's README):
@@ -1147,6 +1174,16 @@ browser is installed somewhere unusual, pass its path with `--browser PATH`.
 **`error: … nothing was checked` (exit 2) from the audit**
 The paths you gave hold no UI files of the types Plumb reads (`.tsx .jsx .ts .js .vue .svelte .astro .html .css
 .scss .swift .kt`). Check the paths and `UI files:` in `PLUMB.md`.
+
+**Copilot CLI: `✗ skill(plumb:init) Skill not found: plumb:init` right after `/plumb:init`**
+Harmless. Typing the command already loaded the skill; the model then also tried Copilot's skill tool, which lists only
+skills an agent may start on its own (init, create, extract, update and upgrade run only when you type them). The flow
+goes on.
+
+**`problem: PLUMB.md names … but there is no Makefile`** (or `… but the Makefile has no … target`) from `scaffold.py --verify`
+`PLUMB.md` sends people to a `make` target that doesn't exist (the Makefile was removed or edited). Add the targets
+again (`templates/Makefile.snippet`, or `/plumb:init`), or drop each `(make …)` hint from `PLUMB.md`'s `## Commands`
+lines: the direct commands there work without make.
 
 **Windows: nothing happens, or `python` is not found**
 Install Python 3.9+ (python.org or the Microsoft Store). The hooks try `py -3`, `python`, then `python3`, and never block

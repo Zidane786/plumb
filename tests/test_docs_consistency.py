@@ -344,3 +344,172 @@ def test_what_you_get_opens_offline_in_both_themes() -> None:
     assert "prefers-color-scheme: dark" in text and '[data-theme="dark"]' in text
     for name in sorted(COMMANDS):
         assert f"/plumb:{name}" in text, f"what-you-get.html does not show /plumb:{name}"
+
+
+# ---------------------------------------------------------------- live-test rules (first live run, both CLIs)
+
+
+def _flat(path: Path) -> str:
+    return " ".join(path.read_text(encoding="utf-8").split()).lower()
+
+
+def _body(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    return text[text.find("\n---\n", 4) + 5:]
+
+
+APPROVE_RULE = "never run `--approve` (or record an approval) without the user's explicit yes to that screen"
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if "--approve" in p.read_text(encoding="utf-8")]
+                         + [REFERENCE / "prototypes.md"], ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
+def test_approve_needs_the_users_explicit_yes(path: Path) -> None:
+    # Copilot ran `--synced x && --approve x` unasked: every place that names --approve carries the hard rule.
+    assert APPROVE_RULE in _flat(path), f"{path.relative_to(REPO)}: say {APPROVE_RULE!r}"
+
+
+def test_extract_never_approves_synced_screens_itself() -> None:
+    flat = _flat(SKILLS / "extract/SKILL.md")
+    assert "never chain `--approve` after `--synced`" in flat
+
+
+def test_init_prints_the_placement_block_in_full() -> None:
+    # Claude asked "Plumb found the setup above. OK?" with no block above.
+    flat = _flat(SKILLS / "init/SKILL.md")
+    for phrase in ("print the block in the chat, in full", "verbatim", "never summarise it",
+                   "the setup above", "docs/design/ in <root>", "ui files"):
+        assert phrase in flat, f"init: {phrase!r}"
+    assert re.search(r"detect\.py\" --cwd \. --json && .*detect\.py\" --cwd \.`", flat), \
+        "init: one shell call gives the JSON and the text block"
+
+
+def test_wire_in_is_never_skipped() -> None:
+    # Copilot skipped the AGENTS.md row and the Makefile when neither file existed.
+    for path in (SKILLS / "init/SKILL.md", REFERENCE / "wire-in.md"):
+        flat = _flat(path)
+        assert "even when the file does not exist" in flat, path
+        assert "direct commands" in flat, f"{path}: a declined Makefile means PLUMB.md lists the direct commands"
+    for name in ("create", "extract"):
+        assert "never skip" in _flat(SKILLS / name / "SKILL.md"), f"{name}: finish with the wire-in, never skip it"
+
+
+def test_create_asks_before_changing_an_existing_stylesheet() -> None:
+    flat = _flat(SKILLS / "create/SKILL.md")
+    for phrase in ("plumb:start", "plumb:end", "the rest stays the project's", "theme_switch", "motion.reduced"):
+        assert phrase in flat, f"create: {phrase!r}"
+    interview = _flat(REFERENCE / "interview.md")
+    assert "$extensions.plumb.web.theme_switch" in interview and "$extensions.plumb.motion.reduced" in interview
+
+
+def test_audit_asks_for_the_dev_server_and_never_probes() -> None:
+    # Copilot ran curl against localhost:3000/3001/5173 instead of asking.
+    for path in (SKILLS / "audit/SKILL.md", SKILLS / "ux/SKILL.md", REFERENCE / "copilot.md"):
+        flat = _flat(path)
+        assert "never probe" in flat and "curl" in flat, path
+        assert "dev server" in flat, path
+
+
+@pytest.mark.parametrize("path", skill_files(), ids=lambda p: p.parent.name)
+def test_slate_is_offered_only_when_it_is_set_up(path: Path) -> None:
+    # Copilot offered "Create Slate tickets" in a repo without Slate.
+    flat = _flat(path)
+    if re.search(r"slate tickets?(?! if any)", flat):  # "the Slate ticket if any" in a decision entry is a record
+        assert "kanban/board.py" in flat and "never mention slate" in flat, \
+            f"{path.parent.name}: offer Slate tickets only when kanban/board.py exists; otherwise never mention Slate"
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if "scripts/audit.py" in _body(p)],
+                         ids=lambda p: p.parent.name)
+def test_audit_exit_1_is_not_a_crash(path: Path) -> None:
+    assert "exit 1 means errors found, not a crash" in _flat(path), path.parent.name
+
+
+@pytest.mark.parametrize("path", doc_files(), ids=lambda p: p.relative_to(PLUGIN).as_posix())
+def test_temp_files_stay_in_the_project(path: Path) -> None:
+    # Copilot asked for access to /tmp; the answers JSON lives in <root>/.plumb-tmp/ (git-ignored, removed after).
+    assert "system temp" not in _flat(path), f"{path.relative_to(REPO)}: temp files go in <root>/.plumb-tmp/"
+
+
+def test_temp_folder_is_named_where_it_is_used() -> None:
+    for path in (SKILLS / "init/SKILL.md", SKILLS / "create/SKILL.md", SKILLS / "extract/SKILL.md",
+                 REFERENCE / "placement.md", REFERENCE / "interview.md"):
+        assert ".plumb-tmp/" in path.read_text(encoding="utf-8"), path
+
+
+SPEC = REPO / "docs/specs/2026-10-11-plumb-design.md"
+ROUTE_DOCS = skill_files() + [p for p in sorted(REFERENCE.glob("*.md")) if p.name != "scripts.md"] + [
+    SPEC, USAGE, REPO / "TEST.md"]  # scripts.md belongs to the engine change and follows separately
+
+
+@pytest.mark.parametrize("path", ROUTE_DOCS, ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
+def test_routes_are_passed_as_one_argument(path: Path) -> None:
+    # `--route /` made Copilot ask for path access to `/`.
+    text = path.read_text(encoding="utf-8")
+    assert not re.search(r"--route [</A-Z]", text), f"{path.relative_to(REPO)}: write --route=<route>"
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if "`&&`" in p.read_text(encoding="utf-8")],
+                         ids=lambda p: p.parent.name)
+def test_batching_advice_names_the_powershell_caveat(path: Path) -> None:
+    assert "powershell 5.1" in _flat(path), f"{path.parent.name}: Windows PowerShell 5.1 has no `&&`"
+
+
+def test_extract_asks_theme_switch_and_reduced_motion() -> None:
+    flat = _flat(SKILLS / "extract/SKILL.md")
+    for phrase in ("theme_switch", "reduced_motion", "$extensions.plumb.web.theme_switch",
+                   "$extensions.plumb.motion.reduced", "always ask these two", "prefers-reduced-motion", ".dark"):
+        assert phrase in flat, f"extract: {phrase!r}"
+
+
+def test_create_shows_the_stylesheet_diff_and_passes_the_settings_as_answers() -> None:
+    flat = _flat(SKILLS / "create/SKILL.md")
+    assert "`build-tokens.py --check` prints the diff" in flat
+    assert "`theme_switch` / `reduced_motion`" in flat
+    assert "`theme_switch`" in _flat(REFERENCE / "interview.md") and "`reduced_motion`" in _flat(REFERENCE / "interview.md")
+
+
+def test_spec_states_the_new_rules() -> None:
+    flat = _flat(SPEC).replace("*", "")
+    for phrase in ("the project's design system outranks effective html", "craft only", "plumb:start",
+                   "theme_switch", "motion.reduced", "make target"):
+        assert phrase in flat, f"spec: {phrase!r}"
+    assert "effective html is the reference for every prototype" not in flat
+
+
+@pytest.mark.parametrize("name", sorted(USER_ONLY))
+def test_user_only_skills_say_they_are_already_loaded(name: str) -> None:
+    # Copilot hides disable-model-invocation skills from its skill tool, so the model's extra call fails noisily.
+    assert "already loaded" in _flat(SKILLS / name / "SKILL.md"), name
+
+
+@pytest.mark.parametrize("name", ("audit", "ux", "create", "extract", "prototype"))
+def test_end_of_turn_check_respects_dont_fix_now(name: str) -> None:
+    flat = _flat(SKILLS / name / "SKILL.md")
+    assert "end-of-turn check" in flat and "not to fix now" in flat and "report and stop" in flat, name
+
+
+def test_copilot_reference_covers_the_live_findings() -> None:
+    flat = _flat(REFERENCE / "copilot.md")
+    for phrase in ("allowed-tools", "--allow-tool", "skill not found", "--route=/", ".plumb-tmp/", "one shell call"):
+        assert phrase in flat, f"copilot.md: {phrase!r}"
+
+
+SYSTEM_WINS = "the project's design system outranks effective html"
+
+
+@pytest.mark.parametrize("name", HTML_WRITERS)
+def test_the_projects_design_system_outranks_effective_html(name: str) -> None:
+    # Owner requirement: Effective HTML is for craft only; palette, type, spacing, radius and motion come from the system.
+    flat = _flat(SKILLS / name / "SKILL.md").replace("*", "")
+    assert SYSTEM_WINS in flat and "craft only" in flat and "the system wins" in flat, name
+    if name == "create":
+        assert "directions page is the one exception" in flat
+
+
+def test_quality_bar_states_the_system_outranks_effective_html() -> None:
+    text = (REFERENCE / "prototypes.md").read_text(encoding="utf-8")
+    section = text.split("## The quality bar (Effective HTML)", 1)[1].split("\n## ", 1)[0]
+    flat = " ".join(section.split()).lower().replace("*", "")
+    for phrase in (SYSTEM_WINS, "craft only", "the system wins", "inlined token block", "audit exits 0",
+                   "directions page"):
+        assert phrase in flat, phrase

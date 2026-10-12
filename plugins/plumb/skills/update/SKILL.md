@@ -7,7 +7,8 @@ disable-model-invocation: true
 
 # /plumb:update [what] — change the design system, regenerate, record, audit
 
-Only run when the user typed `/plumb:update` (other skills offer it, never run it). Values live only in the tokens file;
+Only run when the user typed `/plumb:update` (other skills offer it, never run it); these instructions are already
+loaded, so don't load this skill again with a skill tool. Values live only in the tokens file;
 every theme, copy, specimen, prototype and proposal token block is regenerated from it. Tokens format:
 [`tokens-format.md`](../../reference/tokens-format.md). Commands: [`scripts.md`](../../reference/scripts.md). Prototype rules:
 [`prototypes.md`](../../reference/prototypes.md). Audit rules and the agent review: [`rules.md`](../../reference/rules.md).
@@ -16,7 +17,8 @@ every theme, copy, specimen, prototype and proposal token block is regenerated f
 the user's choice. **Nothing is written without the user's OK:** before each edit, show exactly what changes and where,
 and ask. Never install or download anything (no font files, icon sets or packages); if something is missing,
 ask the user and wait. Every colour has a light and a dark value (unless `Themes: light-only`). Never hand-edit generated files
-([G]) or Plumb's own files ([P]); regenerate.
+([G]) or Plumb's own files ([P]); regenerate. `audit.py`: **exit 1 means errors found, not a crash** (your tool may
+show it as a failed command); read the findings.
 
 ```
  what changes (or the audit's system suggestions, one at a time) ─▶ show before → after ─▶ ask ─▶ edit
@@ -101,6 +103,7 @@ recommendation. Apply what the user approves (step 2).
    with generated ones (the screen files stay); run it only on a yes.
 4. A spec or rule change that changes what screens show → propose the screen-file edits, ask, edit, rebuild, show the
    user and ask for approval again (`--approve <id>`); built screens then follow in code.
+   **Never run `--approve` (or record an approval) without the user's explicit yes to that screen.**
 
 ## Step 4: record (show, ask, then write)
 

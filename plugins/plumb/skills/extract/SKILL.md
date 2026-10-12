@@ -9,11 +9,12 @@ allowed-tools: Bash(python3 *scripts/detect.py*), Bash(python *scripts/detect.py
 # /plumb:extract — the system you already ship, cleaned up
 
 Only run when the user typed `/plumb:extract` (or `/plumb:init` routed here). Other skills offer it, never run it.
+These instructions are already loaded: don't load this skill again with a skill tool.
 
 ```
 placement ─▶ 1–2 inventory (audit.py --inventory) ─▶ 3 clusters ─▶ 4 before/after page ─▶ each group OK?
    ─▶ 5 remaining product + UX questions ─▶ create E (token set OK? files OK? contrast OK? components OK?) + G
-   ─▶ 6 screens to prototype OK? ─▶ screen files ─▶ 7 audit what does not match yet ─▶ Slate tickets on offer ─▶ wire in
+   ─▶ 6 screens to prototype OK? ─▶ screen files ─▶ each screen approved? ─▶ 7 audit what does not match ─▶ wire in
 ```
 
 **Rules.** **Nothing is written without the user's OK.** Each checkpoint (marked **OK?**) is a question-tool step
@@ -25,15 +26,20 @@ recommendation first marked "(Recommended)" and why. Questions and recommendatio
 [reference/placement.md](../../reference/placement.md). Light **and** dark by default. **Never install or download
 anything**; if something seems needed, say so, **ask the user and wait**. App code changes only with the user's OK;
 the audit in step 7 reports, it does not fix. Pre-approved commands (`allowed-tools`): Plumb's `detect.py`, `scaffold.py`,
-`build-tokens.py`, `audit.py`, `build-prototype.py`, and the read-only git calls; anything else asks first.
+`build-tokens.py`, `audit.py`, `build-prototype.py`, and the read-only git calls; anything else asks first (Copilot
+CLI asks for every command: join a step's script calls with `&&` in one shell call; Windows PowerShell 5.1 has no `&&`: join with `;` there, or run the steps one by one). **Never run `--approve` (or
+record an approval) without the user's explicit yes to that screen** in this conversation: show it, ask, wait.
+`audit.py`: **exit 1 means errors found, not a crash** (your tool may show it as a failed command); read the findings.
+**End-of-turn check:** if it stops you after the user said not to fix now, report and stop.
 
 **Plugin root (`ROOT`):** `${CLAUDE_PLUGIN_ROOT}` (Claude Code and Copilot CLI fill this in for plugin skills).
 If it still reads literally as `${CLAUDE_PLUGIN_ROOT}`, use this skill's base directory (printed when the skill loads,
 `<plugin>/skills/extract`) + `/../..`, resolved to an absolute path.
 
 **Project root (`<root>`):** the absolute root the user confirmed in `/plumb:init`. Every path below is relative to
-`<root>` and every command names it explicitly; never write outside it, never use `.` for it. The one exception: the
-answers JSON for `scaffold.py` goes to the system temp folder and is deleted right after the scaffold.
+`<root>` and every command names it explicitly; never write outside it, never use `.` for it. The answers JSON for
+`scaffold.py` goes in `<root>/.plumb-tmp/` (git-ignored, deleted right after the scaffold; "Temporary files" in
+placement.md), never `/tmp`.
 
 ## Step 0: placement and Python
 
@@ -69,9 +75,12 @@ proposed dark value.
 ## 4. Before/after page, then each group confirmed
 
 **OK?** "I'll write the proposal page to `<root>/docs/design/extract.html`" (a) Write it (Recommended) (b) Another
-path. Then write it (with Effective HTML's `design-artifact` when available, otherwise Plumb's built-in quality bar in
-[prototypes.md](../../reference/prototypes.md); one self-contained page, light and
-dark, nothing from the network): per group, **before** (every value with swatch, count
+path. Then write it: one self-contained page, light and dark, nothing from the network, with Effective HTML's
+`design-artifact` when available, otherwise Plumb's built-in quality bar in
+[prototypes.md](../../reference/prototypes.md). **The project's design system outranks Effective HTML:** Effective
+HTML guides craft only (content, states, interactions, accessibility, polish); the look comes from the project, and
+where they disagree the system wins. Before the tokens exist, the current app's own values are that reference; from
+then on, the tokens, `design.md` and references. Per group, show **before** (every value with swatch, count
 and a few `file:line`) and **after** (the proposed token, its value in light and dark, what merges into it), and how
 many values become how many tokens. **OK? Each group, one at a time:** accept (Recommended) · rename · merge with
 another · split · leave out. After three groups, also offer "Accept all remaining groups as proposed" next to "Keep
@@ -81,14 +90,23 @@ going one by one". Never merge two values the user wants apart.
 
 Ask only the interview questions the code does not answer: the product (A1–A6), dark mode when the app has none
 (C13), the accessibility target (C14), vocabulary and voice (C15), and the UX patterns (C16) the screens do not make
-clear. Offer what the code shows as the recommendation ("the app uses a left sidebar: keep it?"). **OK?** Summarise
-in five lines: "Right?".
+clear. Offer what the code shows as the recommendation ("the app uses a left sidebar: keep it?"). **Always ask these
+two**, one at a time, recommending what the app already does so extract keeps it:
+- **How the app switches themes** (`theme_switch`): code that toggles a `.dark` class (or `data-theme`) → `class`;
+  only `@media (prefers-color-scheme: dark)` → `system`; both → `both`; no dark mode yet → `both`.
+- **Reduced motion** (`reduced_motion`): an existing `prefers-reduced-motion` rule that keeps opacity transitions →
+  `keep-fades`; one that turns every animation off → `none`; none yet → `keep-fades`.
+
+Both go in the answers JSON and become `$extensions.plumb.web.theme_switch` and `$extensions.plumb.motion.reduced`
+(create E2–E3). **OK?** Summarise in five lines: "Right?".
 
 ## Generate and record (create E and G)
 
 Follow `/plumb:create` steps **E** and **G** (read `ROOT/skills/create/SKILL.md`), with every checkpoint: the full
 token set (E1), the scaffold's dry-run file list (E2), each contrast fix (E5), the component plan (E6). The confirmed
-groups are the answers; **no directions step** (the look already exists). In E6 the components exist already: map
+groups are the answers; **no directions step** (the look already exists). Extract keeps what exists: E4's question
+about an existing copy file (e.g. `app/globals.css`: Plumb owns only its marked block) is never skipped. In E6 the
+components exist already: map
 them to `references/components.md` and `inventory.md`; propose only the missing starters, and change existing
 components only with the user's OK. **The design system must pass:** `python3 "<root>/<skill dir>/scripts/audit.py"
 "<root>/<folder of each component you wrote>"` exits 0 (contrast, missing dark values and generated-file drift run
@@ -106,21 +124,27 @@ with PATHS too); the rest of the app is step 7. In G, link each entry to `extrac
    following the screen-file contract at the top of `<skill dir>/scripts/build-prototype.py`: real copy, the states
    the code handles (loading, empty, error, success, long text, …) as `data-state` blocks, the interactions inline
    (links, tabs, dialogs, menus, validation, toasts), tokens only (CSS variables), light and dark.
-4. Map and mark each: `python3 "<root>/<skill dir>/scripts/build-prototype.py" --map <id> --route <route> --files
-   <globs>`, then `--synced <id>` (synced from code: the user confirms later with `--approve`, without blocking).
-5. Once the first screen exists, `python3 "<root>/<skill dir>/scripts/audit.py" --json` reports any route still
-   without a screen as `route-not-prototyped`: add the ones you missed (asked). `build-prototype.py --check` exits 0.
-   Give the paths of `docs/design/prototype.html` and `screens.html` and ask the user to look.
+4. Map and mark every screen in one shell call, the route as one argument (`--route=/`, so Copilot doesn't read `/`
+   as a path): `python3 "<root>/<skill dir>/scripts/build-prototype.py" --map <id> --route=<route> --files <globs>
+   && … --synced <id>` for each. Synced from code means waiting for the user; **never chain `--approve` after
+   `--synced`**.
+5. `python3 "<root>/<skill dir>/scripts/audit.py" --json` reports any route still without a screen as
+   `route-not-prototyped`: add the ones you missed (asked). `build-prototype.py --check` exits 0.
+6. Give the paths of `docs/design/prototype.html` and `screens.html`, ask the user to look, then per screen: "Approve
+   <screen> as the reference to build?" Approve (Recommended when it matches the app) · leave it synced for later ·
+   change something. Only on an explicit approve: `build-prototype.py --approve <id>`.
 
 ## 7. Audit what does not match yet
 
-`python3 "<root>/<skill dir>/scripts/audit.py" --html` writes `docs/design/audit-YYYY-MM-DD.html`. Summarise errors
-and warnings by area. When `<root>/kanban/board.py` exists, offer Slate tickets for the fixes, grouped by area,
-created only through Slate's `board.py` (never edit `kanban/`). Otherwise offer `/plumb:audit fix`.
+`python3 "<root>/<skill dir>/scripts/audit.py" --html` writes `docs/design/audit-YYYY-MM-DD.html` (exit 1 = errors
+found). Summarise errors and warnings by area and offer `/plumb:audit fix`. Only when `<root>/kanban/board.py` exists,
+also offer Slate tickets for the fixes, grouped by area, created only through Slate's `board.py` (never edit
+`kanban/`); otherwise never mention Slate.
 
 ## Finish
 
-Routed from init: return to `/plumb:init` step 4. Run directly: do init's step 4 now (each item asked). Show the
+Routed from init: return to `/plumb:init` step 4 now. Run directly: do init's step 4 now. Never skip it: every
+wire-in item is asked, also when `AGENTS.md` or the `Makefile` does not exist yet. Show the
 summary (values found → tokens, the files written, the prototype, the audit counts) and `git -C "<root>" status --short`.
 
 ## Checklist
@@ -128,5 +152,6 @@ summary (values found → tokens, the files written, the prototype, the audit co
 - [ ] The inventory came from `audit.py --inventory`; every token group was confirmed by the user
 - [ ] The user approved the token set, the file list, each contrast fix, the components and the screens to prototype
 - [ ] Every colour token has a dark value (or a recorded light-only decision); `build-tokens.py --check` exits 0
-- [ ] Every confirmed route has a screen file, mapped and marked synced from code; `build-prototype.py --check` exits 0
+- [ ] Every confirmed route has a screen file, mapped and marked synced from code; a screen is approved only on the
+      user's explicit yes; `build-prototype.py --check` exits 0; init step 4 was asked
 - [ ] Nothing written outside `<root>`; app code changed only with the user's OK; nothing installed or downloaded

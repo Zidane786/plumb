@@ -32,6 +32,10 @@ PY SKILL/scripts/build-prototype.py --check        # only when <docs>/prototype/
 git status --short                                   # skip it when the project is not a git repo
 ```
 
+Run them in one shell call (`;` between them, so each still runs: Copilot CLI asks for every command). `audit.py`:
+**exit 1 means errors found, not a crash** (Claude Code shows "Error: Exit code 1", Copilot CLI "✗ Shell"); report
+the counts, never as a failure of status.
+
 - `Role: linked` → check that the `Design system:` path exists (a missing path is the first thing to report, with
   "the home repo is not where PLUMB.md says: clone it there or correct the path"); the audit and generator commands are
   the home skill's.
@@ -52,7 +56,7 @@ git status --short                                   # skip it when the project 
 2. **System:** the skill path, home or linked, platforms, styling, themes (light and dark, or light-only by decision).
 3. **Placement:** `scaffold.py --verify` ok, or each `problem:` line; when it prints a suggested `--relocate` command,
    offer the move (one question: "Move the design system to <TO> and update every reference?"); run it only on yes.
-4. **Generated files:** up to date, or the stale ones and "run `PY SKILL/scripts/build-tokens.py`" (`make tokens`).
+4. **Generated files:** up to date, or the stale ones and the tokens command from `PLUMB.md` → Commands.
 5. **Audit:** N errors · N warnings · N suggestions, the top rules, the last report's date; errors → `/plumb:audit fix`;
    clean → `/plumb:audit improve`.
 6. **Prototype:** N screens (N built, N to build, with routes), approvals pending, synced from code to confirm, drift

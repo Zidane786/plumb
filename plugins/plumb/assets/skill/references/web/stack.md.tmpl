@@ -24,8 +24,9 @@ stack when `/plumb:init` or `/plumb:extract` has detected it.
   ask the user and wait for their decision.
 - Fonts come from the project's own files or the system stack; nothing is loaded from the network.
 - A dev-only design page (for example `/dev/design`) may show the components; it is written in the project's framework and
-  must pass `make design-audit` like any other page.
+  must pass the audit like any other page.
 
 ## Commands
 
-`make tokens` regenerates the CSS and copies; `make tokens-check` fails when they drift; `make design-audit` runs the audit.
+The tokens, check and audit commands are in `PLUMB.md` → Commands: tokens regenerates the CSS and copies; check fails
+when they drift; audit runs the design audit.

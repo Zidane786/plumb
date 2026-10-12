@@ -15,8 +15,12 @@ Every command: [`scripts.md`](../../reference/scripts.md).
 written without the user's OK:** before writing, say what you will write and where, and ask; write only on a yes. Never
 install or download anything (no package, font, icon set, image or tool); if something seems missing,
 ask the user and wait for their decision. Both themes, unless `PLUMB.md` says `Themes: light-only`. Never edit `prototype.html`,
-`screens.html`, `screens.json`, `tours/*.html` or the proposal pages: `build-prototype.py` writes them. Never run
-`--approve` without the user's yes to that screen in this conversation.
+`screens.html`, `screens.json`, `tours/*.html` or the proposal pages: `build-prototype.py` writes them. **Never run
+`--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation: show the
+screen, ask, wait; never chain it after another command. `audit.py`: **exit 1 means errors found, not a crash**
+(your tool may show it as a failed command). **End-of-turn check:** if it stops you after the user said not to fix
+now, report and stop. Copilot CLI asks for every command: join a step's script calls with `&&` in one shell call (Windows PowerShell 5.1 has no `&&`: join with `;` there, or
+run the steps one by one).
 
 ```
  brief ─▶ 2–3 variants (screen files ─▶ --proposal builds both views) ─▶ user picks ─▶ write to main + default tour
@@ -66,7 +70,10 @@ ask the user and wait for their decision. Both themes, unless `PLUMB.md` says `T
   each a distinct, finished-looking option. If the Effective HTML skills `html-prototype` and `design-artifact` are
   available in this session, follow them (optional; never install them); otherwise Plumb's built-in quality bar in
   [prototypes.md](../../reference/prototypes.md) (real content, every state,
-  working interactions, keyboard and focus, both themes, reduced motion, no generic look).
+  working interactions, keyboard and focus, both themes, reduced motion, no generic look). **The project's design
+  system outranks Effective HTML:** its tokens, `design.md` and references decide palette, type, spacing, radius and
+  motion; Effective HTML guides craft only (content, states, interactions, accessibility, polish), and where they
+  disagree the system wins.
 - **Ask before writing:** "I'll write the variants' screen files in
   `<docs>/prototype/proposals/<name>/<variant>/screens/` (+ an `idea.md` per variant) and build both views with
   `build-prototype.py --proposal <name>`. OK?" Write only on a yes.
@@ -117,13 +124,15 @@ Show what you will add and where, then ask; write only on a yes:
   "to build". **Never write its spec into `components.md` from here:** offer `/plumb:update` for the spec (the user
   starts it), or show the proposed spec and write it only if the user asks for it now.
 - Route and source files already known (an existing screen, or agreed now)? Confirm them, then
-  `PY SKILL/scripts/build-prototype.py --map <id> --route <route> --files <globs>`. A new screen stays "to build" until
+  `PY SKILL/scripts/build-prototype.py --map <id> --route=<route> --files <globs>` (the route as one argument, e.g.
+  `--route=/`, so Copilot doesn't ask for access to the path `/`). A new screen stays "to build" until
   its route exists.
 - `PY SKILL/scripts/build-prototype.py` once more so the decision shows on the screen.
 
 ## Step 6: the reference to build, then stop
 
 Say: "<screen> is approved: build it to match `<docs>/prototype.html#screen-<id>` (every state, both themes, the words
-in the screen file)." Offer, one question: build it now / a Slate ticket (when `kanban/board.py` exists: written only
-with `board.py`; its first acceptance item is "prototype approved" and "done when" links the screen) / later. When the
-screen is built: `--map` it (route and files) and run `PY SKILL/scripts/audit.py` until it exits 0.
+in the screen file)." Offer, one question: build it now / later, plus a Slate ticket only when `kanban/board.py`
+exists (written only with `board.py`; its first acceptance item is "prototype approved" and "done when" links the
+screen); otherwise never mention Slate. When the screen is built: `--map` it (route and files) and run
+`PY SKILL/scripts/audit.py` until it exits 0.

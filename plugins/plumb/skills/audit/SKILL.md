@@ -15,7 +15,10 @@ written without the user's OK:** the report, its review file and the screenshots
 for; any other write (a code fix, a screen file, a rule, a decision) is shown first (what and where) and made only on a
 yes. Never install or download anything; if something seems missing, ask the user and wait. Check both themes unless
 `Themes: light-only`. Never edit generated files or Plumb's own scripts and templates (regenerate; propose
-rule changes upstream). Anything that changes how a screen looks goes through the prototype first.
+rule changes upstream). Anything that changes how a screen looks goes through the prototype first. **Never run
+`--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation.
+**End-of-turn check:** if Plumb's end-of-turn check stops you after the user said not to fix now (or chose report
+only), don't fix: report and stop.
 
 ```
  audit.py --html ─▶ visual fidelity (browser?) ─▶ agent review ─▶ --add-review ─▶ summary + offers ─▶ STOP
@@ -42,8 +45,10 @@ rule changes upstream). Anything that changes how a screen looks goes through th
 ## Step 1: run the script
 
 `PY SKILL/scripts/audit.py [paths] --html`. It prints every finding (`file:line: severity rule: message` + `fix:`), a
-summary, and writes `<docs>/audit-YYYY-MM-DD.html`. Exit 0 = no errors, 1 = errors, 2 = bad input or nothing checked:
-show the `error:` and do what its `fix:` says (or ask). No tokens yet → it runs in inconsistency-only mode by itself.
+summary, and writes `<docs>/audit-YYYY-MM-DD.html`. Exit 0 = no errors; **exit 1 means errors found, not a crash**
+(Claude Code shows "Error: Exit code 1", Copilot CLI "✗ Shell": read the findings, don't retry or debug the script);
+2 = bad input or nothing checked: show the `error:` and do what its `fix:` says (or ask). No tokens yet → it runs in
+inconsistency-only mode by itself.
 
 ## Step 2: visual fidelity (when a browser is available)
 
@@ -56,7 +61,8 @@ different size or spacing; anti-aliasing, font hinting and sub-pixel shifts are 
 - Browser, first available: the agent's own browser tool → `PY "<ROOT>/scripts/screenshot.py" <url-or-file> --out <png>
   --width <w> --theme <light|dark>` (a Chrome, Edge or Chromium already installed) → none: `screenshot.py` exits 3 with
   `note: visual comparison skipped: no browser found` and a `fix:` line; put both in the summary and go on.
-- The built route needs the app running: ask once for the dev server's URL; not running → skip the built side.
+- The built route needs the app running: ask the user once for the dev server's URL; not running → skip the built
+  side. **Never probe for a server yourself** (no `curl`, `wget`, port scans or guessed `localhost` URLs).
 - Prototype screens: `<docs>/prototype.html#screen-<id>/<state>`. Shots go in `<docs>/audit-YYYY-MM-DD/`.
 
 ## Step 3: agent review
@@ -82,14 +88,14 @@ into `design.md` or `ux.md`, and offer to propose it to Plumb as an audit rule.
 Under 200 words: the verdict (pass / errors), counts (errors, warnings, suggestions, agent review), the top issues
 grouped by rule with how many, the three highest-impact improvements, the visual note if it was skipped, and the report
 path. Then offer, one question: `/plumb:audit fix` (when there are errors or warnings) · `/plumb:audit improve` (when it
-passes) · Slate tickets · nothing now.
+passes) · Slate tickets (only when `<root>/kanban/board.py` exists; otherwise never mention Slate) · nothing now.
 
 **Slate tickets** (only when `kanban/board.py` exists and the user says yes): group findings by area (one ticket per
 area or rule group, not per line), show the list, ask, then write them only with Slate's `board.py`
 (`python3 kanban/board.py new --help` for the flags; `add --dry-run --file <batch>` for several, then `add`), with the
-Python command from `SLATE.md`. Each ticket: what to fix, the files, the fix, "`make design-audit` exits 0" in
-done-when; a ticket that changes a screen starts with "prototype approved" and links
-`<docs>/prototype.html#screen-<id>`. Never edit `kanban/` yourself.
+Python command from `SLATE.md`. Each ticket: what to fix, the files, the fix, "the audit exits 0" in done-when
+(`make design-audit` when the Makefile has it, else the audit command from `PLUMB.md`); a ticket that changes a
+screen starts with "prototype approved" and links `<docs>/prototype.html#screen-<id>`. Never edit `kanban/` yourself.
 
 ## Mode `fix`: repair errors and warnings, with the user's OK
 
@@ -131,6 +137,6 @@ done-when; a ticket that changes a screen starts with "prototype approved" and l
    - a system change (tokens, component specs, `ux.md`/`design.md` rules): it is already a system proposal in the review
      file (step 3); ask the user to run `/plumb:update`, which applies the audit's system suggestions one at a time,
      regenerates, refreshes the prototypes, records the decision and re-runs the audit;
-   - or a Slate ticket instead.
+   - or a Slate ticket instead (only when `kanban/board.py` exists).
 5. Every change made is recorded in `<docs>/decisions.md` (`<ROOT>/templates/decision-entry.md`). End with the audit
    run again, `git diff --stat` and a summary. The user commits.

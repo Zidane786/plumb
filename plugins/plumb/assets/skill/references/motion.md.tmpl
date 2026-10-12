@@ -19,7 +19,8 @@ Only these durations and this easing exist; the audit flags any other.
 - Entrances use `easing.out`; exits are as fast or faster than entrances.
 - Hover lift (web) or the pressed state (mobile) only on interactive items.
 - Continuous animation is allowed only for skeletons and the in-button spinner.
-- **Reduced motion:** when the user asks for less motion, durations become 0 and nothing slides or scales. The generated CSS
+- **Reduced motion:** when the user asks for less motion, nothing slides or scales; fades stay only when the tokens file's
+  `$extensions.plumb.motion.reduced` is `"keep-fades"`, otherwise durations become 0. The generated CSS
   already contains this block; never override it. On iOS and Android read the system setting and swap movement for a fade or nothing.
 - Never use motion as the only signal; pair it with a word, icon or state change.
 

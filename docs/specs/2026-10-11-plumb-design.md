@@ -88,8 +88,17 @@ newer. It never overwrites an existing design system.
 styling, platforms, brand colours and fonts found in the code) is a suggestion the user confirms or
 corrects. Before generating, the user approves the full token set (light and dark); before writing,
 the dry-run list of every file and path; each contrast fix; and which components are written, in
-which framework and where. The same applies to extract (each token group, the screens to prototype,
-the files to write) and to init's wire-in steps.
+which framework and where. When a web copy is a stylesheet the project already has (e.g.
+`app/globals.css`), the build's change is shown first (`build-tokens.py --check` prints the diff)
+and asked: Plumb adds and owns only a marked `plumb:start … plumb:end` block; the rest stays the
+project's. Two choices become tokens settings the generator honours: how the app switches themes
+(`$extensions.plumb.web.theme_switch`: `both`, `system` or `class`; answers key `theme_switch`)
+and reduced motion (`$extensions.plumb.motion.reduced`: `keep-fades` or `none`; answers key
+`reduced_motion`); extract always asks both, recommending what the app already does. The same
+applies to extract (each token group, the screens to prototype, the files to write) and to init's
+wire-in steps. `PLUMB.md` names the direct commands; the `(make …)` hints are added only when the
+user says yes to the Makefile targets, and `scaffold.py --verify` reports a make target `PLUMB.md`
+names that the Makefile lacks.
 
 **A. The product first** (questions grouped up to four at a time, each with suggestions drawn from
 the brief, README, `AGENTS.md`/`CLAUDE.md`, `SLATE.md` and any prototype or brand files found):
@@ -232,10 +241,15 @@ you to confirm, without blocking.
 from the existing app (every route, at the same level of interaction). When tokens change,
 `/plumb:update` rebuilds the token blocks and the drift check covers them.
 
-**Effective HTML is the reference for every prototype.** Variants, screen files and the shell
-follow the `html-prototype` and `design-artifact` skills when installed; when they are not,
-`reference/prototypes.md` carries the rules Plumb needs from them (real content, every state,
-working interactions, keyboard and focus, both themes, reduced motion, no generic look).
+**The project's design system outranks Effective HTML.** In a project, its
+`<project>-design-system` (tokens, `design.md`, references) is the authority for every page and
+screen Plumb produces. Variants, screen files and pages follow the `html-prototype` and
+`design-artifact` skills when installed, for craft only (real content, every state, working
+interactions, keyboard and focus, accessibility, polish); the palette, typography, spacing, radius
+and motion always come from the system, and where the two disagree the system wins. When the skills
+are not installed, `reference/prototypes.md` carries the same craft rules. Prototypes use only the
+inlined token block and the audit exits 0 on them. The one exception is create's directions page,
+written before any system exists: each direction is a candidate system.
 
 ### 3.4.1 Walkthroughs and `/plumb:tour`
 
@@ -619,7 +633,7 @@ in `tours/`) and `screens.html` (sidebar navigation, every screen × every
 pages are single files that open from disk.
 
 It is the **only writer of `screens.json`** (as Slate's `board.py` is of `tickets.json`): skills
-change it through commands, never by editing it. `--map <id> --route <route> --files <globs>`
+change it through commands, never by editing it. `--map <id> --route=<route> --files <globs>`
 sets a screen's route and source files (confirmed with you); `--approve <id>` records your
 approval (git `user.name`, date, hash of the screen file); `--synced <id>` marks a screen updated
 from already-built code. `--check` exits 1 when either page or the token blocks are stale, or a
@@ -693,10 +707,15 @@ Copilot hooks), which adds about 0.3 s per hook.
 fails, only added lines are checked); camelCase `toolName`/`toolArgs` input; no
 `permission_mode`; `tool_result` instead of `tool_response`; exit-2 stderr is hidden, so with
 `COPILOT_CLI` set a refusal is `{"permissionDecision": "deny", …}` on stdout (flat and in
-`hookSpecificOutput`) with exit 0; session start returns `{"additionalContext": …}`. Whether a
-plugin's `Stop` hook reaches Copilot's `agentStop` and can make it continue is verified first in
-the build; if not, Copilot shows the end-of-turn summary only and the edit check remains the hard
-guard there, and the README says so.
+`hookSpecificOutput`) with exit 0; session start returns `{"additionalContext": …}`. A plugin's
+`Stop` hook reaches Copilot's `agentStop` and makes it continue (live run, 2026-10-12): the block
+arrives as a new prompt, so it can override an earlier "don't fix now"; the skills say to report
+and stop then. Copilot ignores a skill's `allowed-tools`, so every script run asks: the skills run
+a step's scripts in one shell call, keep temporary files in `<root>/.plumb-tmp/` (ignored through
+its own `.gitignore`, removed after the step) instead of the OS temp folder, and pass routes as
+`--route=<route>` (a bare `/` reads as a path). Copilot's skill tool lists only skills the model
+may start, so the user-only skills say they are already loaded (else Copilot prints a harmless
+`Skill not found`).
 
 **Safety:** hooks fail open (no Python, no `PLUMB.md`, a missing or broken `audit.py`, unreadable
 input → exit 0 with at most one stderr line); non-UI edits exit in about 50 ms and UI edits stay
@@ -933,7 +952,8 @@ framework (components are agent-written from specs); a hosted or shared prototyp
 ## 17. Verified during the build (not assumed)
 
 1. A plugin `Stop` hook in Copilot CLI: does it map to `agentStop`, and can it make the agent
-   continue? Decides the Copilot end-of-turn behaviour in §8.
+   continue? Decides the Copilot end-of-turn behaviour in §8. (Live run 2026-10-12: yes, it
+   continues.)
 2. Do both tools load root `.claude/skills/` when a session opens inside a monorepo package?
    Decides the pointer row in §4.
 3. Copilot's edit tool names for the PreToolUse matcher (Slate's matcher is the starting point).

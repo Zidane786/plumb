@@ -69,7 +69,15 @@ form.addEventListener("submit", function (event) {
 ## The quality bar (Effective HTML)
 
 When the Effective HTML skills are installed, variants, screen files and directions follow `html-prototype` and
-`design-artifact`. When they are not, these rules are the bar:
+`design-artifact`. When they are not, these rules are the bar.
+
+**The project's design system outranks Effective HTML.** In a project, the `<project>-design-system` skill (its
+tokens file, `design.md` and `references/`) is the authority for every page and screen Plumb produces. Effective HTML
+(`html`, `html-prototype`, `design-artifact`) is followed for **craft only**: real content, states, interactions,
+accessibility and polish. It never chooses the palette, typography, spacing, radius or motion; where its guidance
+conflicts with the project's system, the system wins. Prototypes and screen files use only the inlined token block
+(CSS variables), and the audit exits 0 on them. The one exception is `/plumb:create`'s directions page, written before
+any system exists: each direction is a candidate system, so there Effective HTML may shape the look too.
 
 - **Real content:** the product's real words, names, numbers and lengths (a long name, a zero, a big number), never
   lorem ipsum or "Item 1".
@@ -79,7 +87,8 @@ When the Effective HTML skills are installed, variants, screen files and directi
 - **Keyboard and focus:** every control reachable by Tab in a sensible order, a visible focus ring (the focus token),
   Esc closes what opened, labels on every field and icon-only button.
 - **Both themes:** check light and dark; nothing disappears or loses contrast in dark.
-- **Reduced motion:** with `prefers-reduced-motion`, nothing slides or fades; state changes are instant.
+- **Reduced motion:** with `prefers-reduced-motion`, nothing slides; fades stay only when the tokens file's
+  `$extensions.plumb.motion.reduced` is `"keep-fades"`, otherwise state changes are instant.
 - **No generic look:** a deliberate hierarchy (one primary action per view), the system's type pairing and spacing
   rhythm, real density for the audience; nothing that looks machine-made or like three recolours of one layout.
 - **Mobile platforms** sit in a phone frame with that platform's conventions (iOS navigation bar and tab bar, Android
@@ -115,13 +124,17 @@ system. Each variant comes as **both views**, so states are compared, not only t
 
 ## Approvals and the map
 
-- `build-prototype.py --approve <id>` records the user's yes to a screen (who, when, a hash of the screen file). Run it
-  only after the user approved **that** screen in this conversation. Editing the screen file afterwards makes the
-  approval stale (`screen-unapproved`): show the change and approve again.
-- `--map <id> --route <route> --files <globs>` links a screen to its route and source files once they exist (or are
-  agreed); the screen is `to-build` until every glob matches, then `built`.
+- `build-prototype.py --approve <id>` records the user's yes to a screen (who, when, a hash of the screen file).
+  **Never run `--approve` (or record an approval) without the user's explicit yes to that screen** in this
+  conversation: show the screen (its `prototype.html#screen-<id>` link), ask "Approve <screen> as the reference to
+  build?", wait for the answer. Never chain it after another command (`--synced x && --approve x`), never approve on
+  the user's behalf because a flow "usually" ends approved. Editing the screen file afterwards makes the approval
+  stale (`screen-unapproved`): show the change and ask again.
+- `--map <id> --route=<route> --files <globs>` links a screen to its route and source files once they exist (or are
+  agreed); the screen is `to-build` until every glob matches, then `built`. Pass the route as one argument
+  (`--route=/`, `--route=/billing`): Copilot CLI reads a bare `/` as a path and asks for access to it.
 - `--synced <id>`: the screen file was updated to match code that was already built (a small fix, code written before
-  Plumb). Listed for the user to confirm with `--approve`; it never blocks.
+  Plumb). Listed for the user to confirm later with `--approve` (their yes, asked); it never blocks.
 - **Prototype first.** A new screen or route is created in the prototype, approved, then built; the edit check refuses a
   new page file with no approved screen (`fix: /plumb:prototype <name>`). Changing what an existing screen shows or how
   it behaves starts with its screen file and the user's approval. Small fixes that change neither (logic bugs, typos,
