@@ -139,7 +139,8 @@ it with the confirmed placement and `<root>` (it skips its own placement step). 
    only (d) both off → set `Edit check:` and `End-of-turn check:` in `PLUMB.md`.
 3. **The rest, each asked on its own** as [reference/wire-in.md](../../reference/wire-in.md) says: the AGENTS.md /
    CLAUDE.md row, the Makefile targets, the Slate review check (when `kanban/board.py` exists), Kiro steering (when
-   Kiro is used), and the monorepo package pointer (when opened inside a package).
+   Kiro is used; Kiro's skills and hooks: [reference/kiro.md](../../reference/kiro.md)), and the monorepo package
+   pointer (when opened inside a package).
 
 Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` and fix what it reports (asked).
 

@@ -12,6 +12,16 @@ differences (pinned by tests/test_copilot.py):
   refusal is {"permissionDecision": "deny", ...} on stdout, flat and in hookSpecificOutput, with exit 0;
 - no permission_mode; session start context goes out as {"additionalContext": ...}.
 
+Kiro (IDE and CLI v3) runs the same scripts from the .kiro/hooks/plumb.json files scripts/kiro.py installs (pinned by
+tests/test_kiro.py; formats from Kiro's docs, verify live): snake_case input like Claude Code with its own tool names
+(fs_write, whose "command" is create / str_replace / insert / append, and execute_bash / execute_cmd) and, from 2.x,
+camelCase event names (agentSpawn, preToolUse, stop: read as SessionStart, PreToolUse, Stop). Every installed command
+carries --kiro (kiro_run): the hook then answers like Claude Code: a refusal is exit 2 with the reason on stderr (Kiro
+blocks a PreToolUse on any non-zero exit), session start is plain stdout, the Stop block is
+{"decision": "block", "reason": ...}; and every command it prints is /plumb-<name> (tool_text). The home file's commands
+also carry --kiro-global; such a hook stands down only where the workspace's own Plumb hooks file runs the same plugin
+(deferred_to_workspace).
+
 Every JSON a hook prints is ASCII (non-ASCII as \\u escapes), so it survives any console code page on the way (Copilot
 CLI on Windows runs the hooks through PowerShell and run.cmd).
 
@@ -66,7 +76,38 @@ TOOL_KINDS = {
     "edit": "edit", "strreplace": "edit", "strreplaceeditor": "edit", "write": "write", "create": "write",
     "multiedit": "multiedit", "applypatch": "patch", "patch": "patch", "bash": "shell", "powershell": "shell",
     "shell": "shell",
+    # Kiro: fs_write (its input's "command" says create / str_replace / insert / append), execute_bash, and
+    # execute_cmd (its Windows shell); the IDE's fsWrite / fsAppend / executePwsh (verify live).
+    "fswrite": "write", "fsappend": "write", "executebash": "shell", "executecmd": "shell", "executepwsh": "shell",
 }
+
+# Kiro (IDE and CLI v3) sends Claude-style snake_case input. Its 2.x camelCase event names (still accepted by v3; verify
+# live which spelling v3 sends) are read as Claude's.
+KIRO_EVENTS = {"agentSpawn": "SessionStart", "preToolUse": "PreToolUse", "postToolUse": "PostToolUse", "stop": "Stop",
+               "userPromptSubmit": "UserPromptSubmit"}
+# The same constants as scripts/kiro.py. KIRO_ARG is on every command kiro.py installs: the hook then answers in Kiro's
+# dialect (exit 2 + stderr, plain session-start text, the Stop decision JSON, commands written /plumb-<name>), never by
+# guessing from the payload. KIRO_GLOBAL_ARG is on the home file's commands (~/.kiro/hooks/plumb.json). KIRO_MARK is in
+# every file kiro.py installs (its ownership mark).
+KIRO_ARG = "--kiro"
+KIRO_GLOBAL_ARG = "--kiro-global"
+KIRO_MARK = "installed by Plumb's kiro.py"
+SCRIPT_TRIGGERS = {"session_start.py": "SessionStart", "pre_edit.py": "PreToolUse", "stop_check.py": "Stop"}
+
+
+def kiro_run() -> bool:
+    """This hook was started from a Kiro hooks file (kiro.py puts KIRO_ARG on every command)."""
+    return KIRO_ARG in sys.argv[1:]
+
+
+def tool_text(text: str) -> str:
+    """text as the running tool names Plumb's commands: /plumb-<name> in Kiro (its skills are plumb-<name>)."""
+    return re.sub(r"/plumb:(?=[a-z])", "/plumb-", text) if kiro_run() else text
+
+
+def launcher_path() -> str:
+    """This plugin's hook launcher, as kiro.py names it in a hook's description ("Runs <launcher> <script> ...")."""
+    return os.path.realpath(os.path.join(HOOKS_DIR, "run.cmd" if sys.platform == "win32" else "run.sh"))
 
 
 def utf8_stdio() -> None:
@@ -80,7 +121,7 @@ def utf8_stdio() -> None:
 
 def note(message: str) -> None:
     """The one stderr line a hook prints when it skips something (it never fails the tool call)."""
-    print("plumb: " + " ".join(str(message).split()), file=sys.stderr)
+    print(tool_text("plumb: " + " ".join(str(message).split())), file=sys.stderr)
 
 
 def normalise(text: str) -> str:
@@ -147,8 +188,9 @@ def _apply_hunks(before: str, hunks: List[Hunk]) -> Optional[str]:
 
 
 class Change:
-    """One file an edit touches. kind: write (whole content), edit (old -> new), multiedit, insert (after a line), add /
-    update / delete / move (apply_patch sections), path (the tool names a file but its new text is unknown)."""
+    """One file an edit touches. kind: write (whole content), edit (old -> new), multiedit, insert (after a line),
+    append (Kiro: at the end), add / update / delete / move (apply_patch sections), path (the tool names a file but its
+    new text is unknown)."""
 
     def __init__(self, path: str, kind: str, content: Optional[str] = None,
                  edits: Optional[List[Tuple[str, str, bool]]] = None, line: int = 0) -> None:
@@ -177,6 +219,8 @@ class Change:
                     return None
                 text = text.replace(old, new) if every else text.replace(old, new, 1)
             return text
+        if self.kind == "append":  # Kiro's fs_write append: a newline first when the file does not end with one
+            return text + ("\n" if text and not text.endswith("\n") else "") + normalise(self.content or "")
         if self.kind == "insert":
             lines = text.split("\n")
             at = min(max(self.line, 0), len(lines))
@@ -245,10 +289,12 @@ class Payload:
 
     def __init__(self, raw: dict) -> None:
         self.raw = raw
-        self.event = str(raw.get("hook_event_name") or raw.get("hookEventName") or "")
+        event = str(raw.get("hook_event_name") or raw.get("hookEventName") or "")
+        self.event = KIRO_EVENTS.get(event, event)
         camel = ("toolName" in raw or "toolArgs" in raw) and "tool_name" not in raw and "tool_input" not in raw
         name = raw.get("toolName") if camel else raw.get("tool_name")
         self.tool_name = name if isinstance(name, str) else ""
+        self.kiro = kiro_run()
         tool_input = raw.get("toolArgs") if camel else raw.get("tool_input")
         if isinstance(tool_input, str) and camel:
             try:
@@ -258,8 +304,8 @@ class Payload:
         self.tool = TOOL_KINDS.get(re.sub(r"[\s_-]", "", self.tool_name.lower()), "")
         self.changes, self.command = _changes(self.tool, tool_input)
         # Only Copilot CLI sends patch text or camelCase input, so those are answered in its dialect even without
-        # COPILOT_CLI.
-        self.copilot = camel or isinstance(tool_input, str) or bool(os.environ.get("COPILOT_CLI"))
+        # COPILOT_CLI. A hook started from a Kiro hooks file answers in Kiro's dialect whatever the environment says.
+        self.copilot = not self.kiro and (camel or isinstance(tool_input, str) or bool(os.environ.get("COPILOT_CLI")))
         sid = raw.get("session_id") or raw.get("sessionId") or ""
         self.session_id = sid if isinstance(sid, str) else str(sid)
         cwd = raw.get("cwd")
@@ -309,9 +355,14 @@ def _changes(kind: str, tool_input: object) -> Tuple[List[Change], Optional[str]
         return [Change(path, "edit", edits=[(old, new if isinstance(new, str) else "",
                                              tool_input.get("replace_all") is True)])], None
     content = tool_input.get("content", tool_input.get("file_text"))
+    if command == "append":  # Kiro's fs_write append: new_str (or file_text / content; verify live) goes at the end
+        added = new if isinstance(new, str) else content
+        return [Change(path, "append", content=added) if isinstance(added, str) else Change(path, "path")], None
     if isinstance(content, str):
         return [Change(path, "write", content=content)], None
     line = tool_input.get("insert_line")
+    if isinstance(line, str) and line.strip().isdigit():  # Kiro may send the line number as text
+        line = int(line.strip())
     if isinstance(new, str) and isinstance(line, int) and not isinstance(line, bool):
         return [Change(path, "insert", content=new, line=line)], None
     return [Change(path, "path")], None
@@ -333,7 +384,9 @@ def read_payload(text: Optional[str] = None) -> Optional[Payload]:
 
 def refuse(message: str, copilot: bool) -> int:
     """Block the tool call with an actionable reason. Claude Code: exit 2, reason on stderr. Copilot CLI: exit 0 and a
-    JSON deny on stdout (it hides an exit-2 hook's stderr from the model)."""
+    JSON deny on stdout (it hides an exit-2 hook's stderr from the model). Kiro: as Claude Code, commands written
+    /plumb-<name>."""
+    message = tool_text(message)
     if copilot:
         print(json.dumps({"permissionDecision": "deny", "permissionDecisionReason": message,
                           "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
@@ -392,6 +445,52 @@ def plugin_version() -> Optional[str]:
 def version_tuple(v: Optional[str]) -> Optional[Tuple[int, ...]]:
     m = re.match(r"^\s*v?(\d+(?:\.\d+)*)", v or "")
     return tuple(int(x) for x in m.group(1).split(".")) if m else None
+
+
+def newer_plugin() -> Optional[Tuple[str, str]]:
+    """(version, folder) of the newest Plumb next to this one (the plugin cache keeps one folder per version) when it
+    is newer than this plugin, else None. Kiro's copies point at one folder, so after a plugin update they run the old
+    one until kiro.py install runs again."""
+    root = plugin_root()
+    mine = version_tuple(plugin_version())
+    best: Optional[Tuple[Tuple[int, ...], str, str]] = None
+    try:
+        siblings = sorted(os.listdir(os.path.dirname(root)))
+    except OSError:
+        return None
+    for name in siblings:
+        folder = os.path.join(os.path.dirname(root), name)
+        if os.path.realpath(folder) == root:
+            continue
+        try:
+            with open(os.path.join(folder, ".claude-plugin", "plugin.json"), encoding="utf-8-sig") as fh:
+                doc = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict) or doc.get("name") != "plumb" or not isinstance(doc.get("version"), str):
+            continue
+        v = version_tuple(doc["version"])
+        if v is not None and mine is not None and v > mine and (best is None or v > best[0]):
+            best = (v, doc["version"], os.path.realpath(folder))
+    return (best[1], best[2]) if best else None
+
+
+KIRO_SKILL = re.compile(r"(?:^|/)\.kiro/skills/(plumb-[^/]+)/(.+)$", re.I if CASELESS else 0)
+KIRO_HOOKS = re.compile(r"(?:^|/)\.kiro/hooks/plumb\.json$", re.I if CASELESS else 0)
+
+
+def kiro_own_file(path: str) -> Optional[str]:
+    """The folder holding .kiro when path is one of the files kiro.py installed there (a marked
+    .kiro/hooks/plumb.json, or anything in a .kiro/skills/plumb-<name>/ folder whose SKILL.md is marked), else None."""
+    p = path.replace("\\", "/")  # an absolute path: the match starts at the "/" before .kiro
+    m = KIRO_SKILL.search(p)
+    if m:
+        marked = KIRO_MARK in (_read(os.path.join(p[:m.start(2)], "SKILL.md")) or "")
+        return (p[:m.start()] or "/") if marked else None
+    m = KIRO_HOOKS.search(p)
+    if m and kiro_hooks_doc(path) is not None:
+        return p[:m.start()] or "/"
+    return None
 
 
 # ---------------------------------------------------------------- the project (PLUMB.md)
@@ -541,9 +640,52 @@ class Project:
         return self.root_s
 
 
+def kiro_hooks_doc(path: str) -> Optional[list]:
+    """The hooks of a .kiro/hooks/plumb.json that kiro.py wrote (every hook carries KIRO_MARK), else None."""
+    try:
+        doc = json.loads(_read(path) or "")
+    except ValueError:
+        return None
+    hooks = doc.get("hooks") if isinstance(doc, dict) else None
+    if not isinstance(hooks, list) or not hooks or not all(
+            isinstance(h, dict) and KIRO_MARK in str(h.get("description") or "") for h in hooks):
+        return None
+    return hooks
+
+
+def deferred_to_workspace(payload: Optional[Payload]) -> bool:
+    """Kiro CLI runs the home hooks file and a workspace's side by side. A hook started from the home file
+    (KIRO_GLOBAL_ARG) stands down only where the workspace's own file (cwd/.kiro/hooks/plumb.json: Kiro runs hooks in
+    the workspace root; no walk up) will do the same job: Plumb's, written for the workspace (no KIRO_GLOBAL_ARG), its
+    hook for this trigger (and matcher) enabled and running this very plugin's launcher, which exists. Otherwise (a
+    workspace file from an old or removed plugin folder, a disabled hook, a foreign file) the home hook runs."""
+    if KIRO_GLOBAL_ARG not in sys.argv[1:]:
+        return False
+    start = (payload.cwd if payload else "") or os.getcwd()
+    hooks = kiro_hooks_doc(os.path.join(start, ".kiro", "hooks", "plumb.json"))
+    if hooks is None:
+        return False
+    script = os.path.basename(sys.argv[0])
+    trigger = SCRIPT_TRIGGERS.get(script)
+    launcher = launcher_path()
+    if trigger is None or not os.path.isfile(launcher):
+        return False
+    matcher = ("shell" if payload is not None and payload.tool == "shell" else "write") if trigger == "PreToolUse" else None
+    runs = f"Runs {launcher} {script} {KIRO_ARG}."
+    for h in hooks:
+        action = h.get("action") if isinstance(h.get("action"), dict) else {}
+        if (h.get("trigger") == trigger and h.get("matcher") == matcher and h.get("enabled", True) is not False
+                and runs in str(h.get("description") or "") and KIRO_GLOBAL_ARG not in str(action.get("command") or "")):
+            return True
+    return False
+
+
 def load_project(payload: Optional[Payload]) -> Optional[Project]:
     """The project the hook runs for: from CLAUDE_PROJECT_DIR when the CLI sets it (only there), else from the
-    payload's cwd, else from the current directory. None without a PLUMB.md."""
+    payload's cwd, else from the current directory. None without a PLUMB.md, and None for a hook from Kiro's home hooks
+    file where the workspace has its own (deferred_to_workspace)."""
+    if deferred_to_workspace(payload):
+        return None
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     starts = [env] if env else [payload.cwd if payload else "", os.getcwd()]
     for start in starts:
@@ -722,7 +864,9 @@ def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
 # A cheap first look: a command with none of these cannot write a file.
 WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\brsync\b|\bln\b|\bdd\b|\btruncate\b|"
                         r"write|\bopen\(|\.dump|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|::|"
-                        r"append|copyfile|\bfs\.|rename",
+                        r"append|copyfile|\bfs\.|rename|"
+                        # removals and moves: rm, rmdir, unlink, del, erase, rd, Remove-Item, ri, move, mi
+                        r"\brm\b|\brmdir\b|\bunlink\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b",
                         re.I)
 _WORD = r"(\"[^\"]*\"|'[^']*'|[^\s;&|<>]+)"
 _REDIR = re.compile(r"\d?>>?\|?\s*" + _WORD)
@@ -782,12 +926,15 @@ _PS_VALUE_FLAGS = ("-value", "-encoding", "-filter", "-include", "-exclude", "-i
 
 
 def _positional(words: List[str], value_flags: Tuple[str, ...]) -> List[str]:
-    out, skip = [], False
+    out, skip, ended = [], False, False
     for w in words:
         if skip:
             skip = False
             continue
-        if w.startswith("-") and len(w) > 1:
+        if w == "--" and not ended:  # end of options: what follows is positional
+            ended = True
+            continue
+        if w.startswith("-") and len(w) > 1 and not ended:
             skip = w.lower() in value_flags
             continue
         out.append(w)
@@ -904,11 +1051,53 @@ def _stage_targets(stage: str) -> List[str]:
     return targets
 
 
-def shell_targets(command: str, cwd: str) -> List[str]:
-    """The files a shell command (Bash or PowerShell) looks like it writes, as absolute paths (best effort). What
-    build-tokens.py and build-prototype.py write themselves does not count (that is how generated files are meant to
-    change), only the redirects of the pipeline stage that runs them; every other stage is read as usual.
-    `cd DIR` moves the base for the commands after it."""
+_REMOVERS = ("rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri")
+_PS_REMOVERS = ("remove-item", "ri", "del", "erase", "rd")
+_MOVERS = ("mv", "move", "move-item", "mi")
+
+
+def _stage_removals(stage: str) -> List[str]:
+    """The files or folders one pipeline stage removes or moves away (best effort): rm, rmdir, unlink, del / erase /
+    rd (cmd), Remove-Item (ri, del), git rm, and the sources of mv / move, Move-Item (mi) and git mv."""
+    rest = _TEE.sub(" ", _REDIR.sub(" ", _NO_WRITE.sub(" ", stage)))
+    words = [_unquote(w) for w in re.findall(_WORD, rest)]
+    while words and re.match(r"^[A-Za-z_]\w*=", words[0]):  # FOO=bar cmd
+        words.pop(0)
+    if words and words[0] in ("sudo", "command", "env", "nohup", "time"):
+        words.pop(0)
+    if not words:
+        return []
+    name, args = _command_name(words[0]), words[1:]
+    if name == "git" and args and args[0] in ("rm", "mv"):
+        name, args = args[0], args[1:]
+    if name in ("del", "erase", "rd"):  # cmd's /q /s /f switches
+        args = [a for a in args if not re.fullmatch(r"/[A-Za-z](?::\S*)?", a)]
+    if name in _PS_REMOVERS:
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
+        items = ([value] if value else []) + pos
+    elif name in _REMOVERS:
+        items = _positional(args, ())
+    elif name in ("move-item", "mi"):
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))
+        items = [value] if value else pos[:1]
+    elif name in _MOVERS:
+        pos = _positional(args, ("-t", "--target-directory", "-S", "--suffix"))
+        into = any(a in ("-t", "--target-directory") or a.startswith("--target-directory=") for a in args)
+        items = pos if into else pos[:-1]
+    else:
+        return []
+    if name in _PS_REMOVERS + ("move-item", "mi"):  # PowerShell lists: a.css, b.css
+        items = [x.strip() for item in items for x in item.split(",")]
+    return [i for i in items if i]
+
+
+# $HOME, ${HOME} (sh), %USERPROFILE% (cmd), $env:USERPROFILE / $env:HOME (PowerShell) at the start of a path: read as ~.
+_HOME_VAR = re.compile(r"^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|\$env:HOME)(?=[/\\]|$)", re.I)
+
+
+def _shell_paths(command: str, cwd: str, stage_paths: Callable[[str], List[str]]) -> List[str]:
     out: List[str] = []
     base = cwd
     for part in _split(command, ("&&", "||", ";", "\n")):
@@ -918,12 +1107,28 @@ def shell_targets(command: str, cwd: str) -> List[str]:
             base = os.path.normpath(os.path.join(base, target.replace("\\", "/") if os.sep == "/" else target))
             continue
         for stage in _split(part, ("|",)):
-            for t in _stage_targets(stage):
+            for t in stage_paths(stage):
                 if not t or t in ("-", "/dev/null"):
                     continue
                 p = t.replace("\\", "/") if os.sep == "/" else t
+                p = _HOME_VAR.sub(lambda _m: "~", p)
                 p = os.path.expanduser(p)
                 full = os.path.normpath(p if os.path.isabs(p) else os.path.join(base, p))
                 if full not in out:
                     out.append(full)
     return out
+
+
+def shell_targets(command: str, cwd: str) -> List[str]:
+    """The files a shell command (Bash or PowerShell) looks like it writes, as absolute paths (best effort). What
+    build-tokens.py and build-prototype.py write themselves does not count (that is how generated files are meant to
+    change), only the redirects of the pipeline stage that runs them; every other stage is read as usual.
+    `cd DIR` moves the base for the commands after it; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE are the
+    home folder."""
+    return _shell_paths(command, cwd, _stage_targets)
+
+
+def shell_removals(command: str, cwd: str) -> List[str]:
+    """The files or folders a shell command looks like it removes or moves away (rm, del, Remove-Item, git rm, the
+    sources of mv / Move-Item / git mv), as absolute paths (best effort), read like shell_targets."""
+    return _shell_paths(command, cwd, _stage_removals)

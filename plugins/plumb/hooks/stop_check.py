@@ -101,10 +101,10 @@ def main() -> int:
             pass  # without the record the next turn may block again: still never a loop (stop_hook_active)
         head = (f"Plumb end-of-turn check: {n} new design-system error{'' if n == 1 else 's'} in the files changed this "
                 f"session. Fix them now, or tell the user why not (this check stops you once):")
-        print(json.dumps({"decision": "block", "reason": "\n".join([head] + _listing(proj, errors))}))
+        print(json.dumps({"decision": "block", "reason": H.tool_text("\n".join([head] + _listing(proj, errors)))}))
         return 0
     head = f"Plumb end-of-turn check: {n} design-system error{'' if n == 1 else 's'} remain in the files changed this session:"
-    print(json.dumps({"systemMessage": "\n".join([head] + _listing(proj, errors))}))
+    print(json.dumps({"systemMessage": H.tool_text("\n".join([head] + _listing(proj, errors)))}))
     return 0
 
 
