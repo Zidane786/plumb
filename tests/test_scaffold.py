@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -463,3 +465,95 @@ def test_an_existing_tokens_file_under_another_name_is_kept_and_not_duplicated(t
     assert r.returncode == 0, r.stderr
     assert sorted(p.name for p in tokens.iterdir()) == ["other.tokens.json"]
     assert f"skip: {SKILL_REL}/assets/tokens/other.tokens.json (yours, kept)" in r.stdout
+
+
+# ---------------------------------------------------------------- UI files: stack-aware default
+
+WEB_DEFAULT = "app/**, src/**, components/** · *.tsx *.jsx *.vue *.svelte *.css"
+ANGULAR = ("src/** · *.component.ts *.component.html *.component.scss *.component.css *.routes.ts *routing.module.ts "
+           "styles.scss styles.css")
+
+
+def ui_files_line(root: Path) -> str:
+    m = re.search(r"^UI files: (.*)$", (root / "PLUMB.md").read_text(encoding="utf-8"), re.M)
+    assert m
+    return m.group(1).strip()
+
+
+def angular_app(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "package.json").write_text(json.dumps({"name": "notes", "dependencies": {"@angular/core": "18"}}),
+                                       encoding="utf-8")
+    comp = root / "src/app/notes"
+    comp.mkdir(parents=True)
+    for name in ("notes.component.ts", "notes.component.html", "notes.component.scss"):
+        (comp / name).write_text("x\n", encoding="utf-8")
+
+
+def test_angular_project_gets_component_ui_files_by_default(tmp_path: Path) -> None:
+    angular_app(tmp_path)
+    r = run(tmp_path, styling="css")
+    assert r.returncode == 0, r.stderr
+    assert ui_files_line(tmp_path) == ANGULAR
+    assert f"note: UI files from the detected stack: {ANGULAR}" in r.stderr
+    assert "ui_files" in r.stderr  # how to change it
+
+
+def test_angular_with_ios_chosen_but_no_ios_folder_keeps_swift(tmp_path: Path) -> None:
+    angular_app(tmp_path)
+    assert run(tmp_path, platforms="web,ios", styling="css").returncode == 0
+    assert ui_files_line(tmp_path) == ANGULAR + " *.swift"
+
+
+def test_web_and_ios_side_by_side_get_the_ios_folder(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"next": "15", "react": "19"}}),
+                                           encoding="utf-8")
+    (tmp_path / "ios/App.xcodeproj").mkdir(parents=True)
+    (tmp_path / "ios/App.xcodeproj/project.pbxproj").write_text("", encoding="utf-8")
+    (tmp_path / "ios/App").mkdir()
+    (tmp_path / "ios/App/ContentView.swift").write_text("import SwiftUI\n", encoding="utf-8")
+    assert run(tmp_path, platforms="web,ios").returncode == 0
+    assert ui_files_line(tmp_path) == "app/**, src/**, components/**, ios/** · *.tsx *.jsx *.vue *.svelte *.css *.swift"
+    # web chosen alone: the iOS package is left out, so the platform default fits again
+    other = tmp_path / "web-only"
+    shutil.copytree(str(tmp_path / "ios"), str(other / "ios"))
+    shutil.copy(str(tmp_path / "package.json"), str(other / "package.json"))
+    assert run(other).returncode == 0
+    assert ui_files_line(other) == WEB_DEFAULT
+
+
+def test_failed_detection_falls_back_with_a_note(tmp_path: Path, monkeypatch, capsys) -> None:
+    spec = importlib.util.spec_from_file_location("plumb_scaffold_for_test", SCAFFOLD)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    broken = tmp_path / "detect.py"
+    broken.write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+    monkeypatch.setattr(mod, "DETECT", broken)
+    assert mod.detected_ui_files(tmp_path, ["web"]) is None
+    err = capsys.readouterr().err
+    assert "note: UI files: the platform default (detecting the stack failed: " in err and "boom" in err
+
+
+def test_ui_files_answer_wins_over_the_detected_stack(tmp_path: Path) -> None:
+    angular_app(tmp_path / "p")
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"ui_files": "src/** · *.ts *.html *.scss"}), encoding="utf-8")
+    assert run(tmp_path / "p", "--answers", str(path), styling="css").returncode == 0
+    assert ui_files_line(tmp_path / "p") == "src/** · *.ts *.html *.scss"
+
+
+@pytest.mark.parametrize("deps", [{"next": "15", "react": "19"}, {"react": "18"}, {"vue": "3"}, {"svelte": "5"}, None])
+def test_other_stacks_keep_the_platform_default(tmp_path: Path, deps: Optional[dict]) -> None:
+    if deps is not None:
+        (tmp_path / "package.json").write_text(json.dumps({"dependencies": deps}), encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert ui_files_line(tmp_path) == WEB_DEFAULT
+
+
+def test_mobile_defaults_are_unchanged(tmp_path: Path) -> None:
+    assert run(tmp_path, platforms="ios").returncode == 0
+    assert ui_files_line(tmp_path) == "*.swift"
+    other = tmp_path / "droid"
+    other.mkdir()
+    assert run(other, platforms="web,android").returncode == 0
+    assert ui_files_line(other) == WEB_DEFAULT + " · *.kt"

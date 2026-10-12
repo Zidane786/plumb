@@ -19,6 +19,9 @@ Every script it runs is the plugin's own copy (`--root <the project's skill>`), 
   warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill).
 
 Claude Code adds plain stdout to the session; GitHub Copilot CLI (COPILOT_CLI set) reads {"additionalContext": ...}.
+Kiro (--kiro on the command) reads plain stdout too, with commands written /plumb-<name>, plus a line when a newer Plumb
+sits next to the plugin folder Kiro's copies point at ("Plumb X is installed but Kiro still uses Y: ask the user to run
+... kiro.py install").
 
 Then it writes the session snapshot (audit.take_snapshot: in git, the hash and text of each UI or screen file that is
 changed or untracked now, plus HEAD; elsewhere every UI and screen file's modification time) to
@@ -159,9 +162,26 @@ def main() -> int:
         if scripts:
             lines.append(scripts)
         snapshot(proj, p.session_id)
-    text = "\n".join(lines)
+    if H.kiro_run():
+        stale = kiro_stale_note(proj, p)
+        if stale:
+            lines.append(stale)
+    text = H.tool_text("\n".join(lines))
     print(json.dumps({"additionalContext": text}) if p.copilot else text)
     return 0
+
+
+def kiro_stale_note(proj: H.Project, p: H.Payload) -> Optional[str]:
+    """Kiro's copies (skills, hooks) point at one plugin folder: when a newer Plumb sits next to it, say how to move
+    them over (the user runs kiro.py; never the agent)."""
+    newer = H.newer_plugin()
+    if newer is None:
+        return None
+    version, folder = newer
+    kiro = H._safe_arg(os.path.join(folder, "scripts", "kiro.py"))
+    scope = "" if H.KIRO_GLOBAL_ARG in sys.argv[1:] else f" --project {H._safe_arg(p.cwd or os.getcwd())}"
+    return (f"Plumb {version} is installed but Kiro still uses {H.plugin_version() or '(unknown)'}: ask the user to run "
+            f"{proj.python} {kiro} install{scope} (Kiro's Plumb skills and hooks point at the old folder)")
 
 
 if __name__ == "__main__":

@@ -83,7 +83,8 @@ change something.
    right after the build, in E5), type family and scale, spacing, radius, shadows, motion, labels; point at the chosen direction in
    `directions.html` as the preview. Change what the user asks; continue only on their OK.
 2. **OK? The files.** Write the answers JSON (keys in interview.md, including the confirmed placement: `ui_packages`,
-   `ui_files`, `allowed_raw`, `web_copies`, `python`, `role`) to a file in the system temp folder (deleted after the scaffold). Run
+   `ui_files` as confirmed in init (detect's `proposal.ui_files`, else the platform default), `allowed_raw`,
+   `web_copies`, `python`, `role`) to a file in the system temp folder (deleted after the scaffold). Run
    `python3 "<ROOT>/scripts/scaffold.py" --project-root "<root>" --name "<Name>" --skill-dir <skill dir>
    --platforms <list> --styling <mode> --answers <file> --docs-dir docs/design --dry-run`, show its **full** list of
    files and paths, and run it without `--dry-run` only on the user's OK.

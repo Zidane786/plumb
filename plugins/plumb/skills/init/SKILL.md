@@ -102,11 +102,13 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
      PLUMB.md       in <root>
      docs/design/   in <root>   (directions or extract page, decision log, prototype, reports)
      generated copy → <global css path>
+     UI files   <proposal.ui_files, else the platform default>   (what the audit and the checks cover)
    OK, or change something?
    ```
 
    Options: OK (Recommended) · change where the skill goes (`.github/skills/…`, another name) · change the project
-   root · change the UI packages, the copy path or the docs folder · something else. Repeat until the user says OK.
+   root · change the UI packages, the copy path, the UI files or the docs folder · something else. Repeat until the
+   user says OK.
 8. Keep the confirmed **placement**: `<root>`, project name and id, skill dir, platforms, styling per package, UI
    packages (`PLUMB.md` `UI packages:`), copy paths, UI file globs, allowed raw paths (`components/ui/**` where
    primitives live), docs dir (`docs/design`), Python command, role, and whether it is **design only**. Create or
@@ -140,7 +142,8 @@ it with the confirmed placement and `<root>` (it skips its own placement step). 
    only (d) both off → set `Edit check:` and `End-of-turn check:` in `PLUMB.md`.
 3. **The rest, each asked on its own** as [reference/wire-in.md](../../reference/wire-in.md) says: the AGENTS.md /
    CLAUDE.md row, the Makefile targets, the Slate review check (when `kanban/board.py` exists), Kiro steering (when
-   Kiro is used), and the monorepo package pointer (when opened inside a package).
+   Kiro is used; Kiro's skills and hooks: [reference/kiro.md](../../reference/kiro.md)), and the monorepo package
+   pointer (when opened inside a package).
 
 Then run `python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` and fix what it reports (asked).
 

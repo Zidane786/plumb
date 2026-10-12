@@ -1,0 +1,39 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Plumb session start",
+      "description": "One status line for the project's design system, and the snapshot the end-of-turn check compares with. {{MARK}}",
+      "trigger": "SessionStart",
+      "action": {"type": "command", "command": "{{RUN:session_start.py}}"},
+      "timeout": 15,
+      "enabled": true
+    },
+    {
+      "name": "Plumb edit check (write)",
+      "description": "Refuses hand edits to generated files and Plumb's own files, a new screen with no approved prototype, and an edit that adds design-system errors. {{MARK}}",
+      "trigger": "PreToolUse",
+      "matcher": "write",
+      "action": {"type": "command", "command": "{{RUN:pre_edit.py}}"},
+      "timeout": 10,
+      "enabled": true
+    },
+    {
+      "name": "Plumb edit check (shell)",
+      "description": "Refuses shell commands that write generated files or Plumb's own files. {{MARK}}",
+      "trigger": "PreToolUse",
+      "matcher": "shell",
+      "action": {"type": "command", "command": "{{RUN:pre_edit.py}}"},
+      "timeout": 10,
+      "enabled": true
+    },
+    {
+      "name": "Plumb end-of-turn check",
+      "description": "Checks the UI files changed this session; new design-system errors keep the agent going once to fix them. {{MARK}}",
+      "trigger": "Stop",
+      "action": {"type": "command", "command": "{{RUN:stop_check.py}}"},
+      "timeout": 30,
+      "enabled": true
+    }
+  ]
+}

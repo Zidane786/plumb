@@ -93,7 +93,7 @@ Exit codes: 0 ok · 1 stale (`--check`) · 2 bad input (a screen file with no `d
 |---|---|
 | `--project-root P` | The project root (required in every mode). |
 | `--name`, `--skill-dir`, `--platforms`, `--styling` | Required to lay the skill: product name, skill folder relative to the root (`.claude/skills/<project>-design-system`), platforms, web styling. |
-| `--answers answers.json` | The interview answers (colours, type scale, spacing, radius, motion, icons, PLUMB.md values…); see the script's docstring. |
+| `--answers answers.json` | The interview answers (colours, type scale, spacing, radius, motion, icons, PLUMB.md values…); see the script's docstring. Without a `ui_files` answer, `PLUMB.md`'s `UI files:` comes from the project's stack (detect.py's scan: Angular gets its component files) or else the platform default ([placement.md](placement.md)). |
 | `--docs-dir` | Where the design pages live (default `docs/design`). |
 | `--dry-run` | Prints `would write:` / `skip:` and writes nothing. |
 | `--relocate FROM TO` | Moves the skill folder and updates every reference (PLUMB.md, the AGENTS.md/CLAUDE.md row, Makefile), then runs the moved `build-tokens.py --check` (regenerating once when only the header paths changed). |
@@ -107,8 +107,9 @@ problems) · 2 bad input.
 ## detect.py (plugin): repo layout and stack
 
 `python3 "<ROOT>/scripts/detect.py" --cwd PATH [--json]`: where the project and its UI live (git root, monorepo
-packages, frameworks, styling, UI file counts, an existing `PLUMB.md`). Read-only; a first guess that `/plumb:init`
-always shows the user to confirm.
+packages, frameworks, styling, UI file counts, the `UI files:` value the stack needs (`ui_files`: Angular's component
+files; `null` when the platform default fits), an existing `PLUMB.md`). Read-only; a first guess that `/plumb:init`
+always shows the user to confirm. Every field: [placement.md](placement.md).
 
 ## version.py (plugin): project vs plugin version
 
@@ -152,3 +153,11 @@ other check. A `#fragment` that scrolls to an anchor can come out blank in headl
 **Which browser, in order:** (1) the agent's own browser tool, if it has one and the organisation allows it; (2)
 `screenshot.py` (a Chrome, Edge or Chromium already installed); (3) none: skip the visual part with the `note:` and its
 `fix:` line in the report. Playwright is never installed for a project; it is used only in Plumb's own CI.
+
+## kiro.py (plugin): Plumb's skills and hooks for Kiro
+
+`python3 "<ROOT>/scripts/kiro.py" install|uninstall [--home DIR | --project DIR] [--yes]`: copies the skills to
+`.kiro/skills/plumb-<name>/` and writes `.kiro/hooks/plumb.json` in the home folder, or with `--project` in that
+workspace only; or removes only what it installed there. It lists every path and writes only after `--yes` or a typed
+`y`; the user runs it (an agent only when the user says so).
+Every flag and what differs in Kiro: [kiro.md](kiro.md). Exit codes: 0 · 1 the user said no · 2 refused.

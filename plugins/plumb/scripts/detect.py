@@ -14,6 +14,19 @@ parent, and "children" lists the project folders found under it (git repos and f
 the scan depth). Outside git, "enclosing" names the nearest folder above with monorepo markers or a PLUMB.md (then
 confidence is low: the project may be that folder). Detection is a first guess; the init skill confirms it.
 
+UI files: each UI package has "files" (a count) and "ui_files" (the PLUMB.md `UI files:` value its stack needs, or
+null when scaffold.py's platform default fits). Angular needs its own: the component templates, classes and styles in
+its source folders (angular.json projects.*.sourceRoot, else src/: *.component.ts/.html/.scss/.css), the route configs
+and the global stylesheet, never every .ts; when any component is named without the .component suffix (Angular 20,
+alone or mixed, or an unpaired @Component class) every .ts/.html/.scss/.css there (a medium-confidence reason says so).
+"proposal.ui_files" joins the packages' values, and is also set when web packages sit next to iOS or Android ones
+(the web folders plus the mobile packages' folders, since the audit needs a file in a listed folder AND with a listed
+name); null otherwise. An Angular package counts its templates plus the .ts/.scss/.css files that carry the
+.component suffix or pair by name with a template or style, and unpaired @Component classes. A marker folder nested in
+a package (src/index.html) counts for the nearest package, never for a UI package above a backend one.
+SwiftUI sources (import SwiftUI) with no Package.swift or Xcode project are a UI package at the folder they share,
+with low confidence.
+
 Standard library only, Python 3.9+.
 """
 
@@ -39,6 +52,19 @@ NOT_PROJECTS = EXCLUDE | {"vendor", "vendors", "third_party", "third-party", "ex
 MAX_DEPTH = 5
 MAX_ENTRIES = 60000
 UI_EXTS = {".tsx", ".jsx", ".vue", ".svelte", ".html", ".swift", ".kt"}
+# Angular component files beyond the templates: classes and styles. A .ts/.scss/.css counts when its name carries the
+# .component suffix or it pairs by name with a template or style in the same folder (Angular 20 names: app.ts +
+# app.html), so services, main.ts, routes and specs are not counted.
+ANGULAR_EXTS = (".ts", ".html", ".scss", ".css")
+# PLUMB.md `UI files:` for an Angular package (its src/ folder): component templates, classes and styles, the route
+# configs (the audit's route discovery) and the global stylesheet; never every .ts (services, guards, models).
+ANGULAR_UI_NAMES = ("*.component.ts", "*.component.html", "*.component.scss", "*.component.css", "*.routes.ts",
+                    "*routing.module.ts", "styles.scss", "styles.css")
+# Angular 20 drops the .component suffix: no glob tells a component class from a service, so every source file counts.
+ANGULAR_UI_NAMES_UNSUFFIXED = ("*.ts", "*.html", "*.scss", "*.css")
+LONELY_TS_MAX = 400  # unpaired .ts files read for @Component( per package (Angular 20 inline-template components)
+SWIFTUI_GUESS_REASON = ("SwiftUI sources (import SwiftUI) without Package.swift or an Xcode project: {path} is a guess "
+                        "for the app folder")
 MARKER_FILES = {
     "package.json", "pyproject.toml", "requirements.txt", "go.mod", "pom.xml", "build.gradle",
     "build.gradle.kts", "Cargo.toml", "Gemfile", "Package.swift", "index.html",
@@ -105,6 +131,34 @@ class Scan:
         self.ui_files: Dict[str, int] = {}
         self.css: Dict[str, List[str]] = {}
         self.swift: Dict[str, List[str]] = {}
+        self.angular_extra: Dict[str, int] = {}     # owner -> Angular component classes and styles (see ANGULAR_EXTS)
+        self.component_suffix: Dict[str, int] = {}  # owner -> *.component.ts files (the pre-Angular-20 naming)
+        self.loose_swift: List[str] = []            # .swift files outside every marker folder
+        self.unsuffixed_paired: Dict[str, int] = {}  # owner -> unsuffixed .ts paired with a template or style
+        self.lonely_ts: Dict[str, List[str]] = {}    # owner -> other unsuffixed .ts (up to LONELY_TS_MAX)
+
+
+def _angular_extra(names: List[str]) -> Tuple[int, int, int, List[str]]:
+    """Among one folder's file names (see ANGULAR_EXTS): (component classes and styles, *.component.ts files,
+    unsuffixed .ts files paired with a template or style (Angular 20 names), the other unsuffixed .ts files: read later
+    for @Component( when the package is Angular)."""
+    stems: Dict[str, int] = {}
+    files = []  # (name, ext, stem), lower-case ext and stem
+    for n in names:
+        low = n.lower()
+        ext = os.path.splitext(low)[1]
+        if low.endswith(".spec.ts") or ext not in ANGULAR_EXTS:
+            continue
+        stem = low[: -len(ext)]
+        stems[stem] = stems.get(stem, 0) + 1
+        files.append((n, ext, stem))
+    extra = sum(1 for _, ext, stem in files
+                if ext != ".html" and (stem.endswith(".component") or stems[stem] >= 2))
+    suffixed = sum(1 for _, ext, stem in files if ext == ".ts" and stem.endswith(".component"))
+    plain = [(n, stem) for n, ext, stem in files if ext == ".ts" and not stem.endswith(".component")]
+    paired = sum(1 for _, stem in plain if stems[stem] >= 2)
+    lonely = [n for n, stem in plain if stems[stem] < 2]
+    return extra, suffixed, paired, lonely
 
 
 def walk(root: Path, max_depth: int = MAX_DEPTH) -> Scan:
@@ -119,6 +173,22 @@ def walk(root: Path, max_depth: int = MAX_DEPTH) -> Scan:
         budget[0] -= len(entries)
         names = [e.name for e in entries]
         is_marker = any(n in MARKER_FILES or n.endswith(".xcodeproj") for n in names)
+        own = rel if is_marker else owner
+        if own is not None:
+            files = []
+            for e in entries:
+                try:
+                    if e.is_file(follow_symlinks=False):
+                        files.append(e.name)
+                except OSError:
+                    continue
+            extra, suffixed, paired, lonely = _angular_extra(files)
+            scan.angular_extra[own] = scan.angular_extra.get(own, 0) + extra
+            scan.component_suffix[own] = scan.component_suffix.get(own, 0) + suffixed
+            scan.unsuffixed_paired[own] = scan.unsuffixed_paired.get(own, 0) + paired
+            if lonely:
+                lst = scan.lonely_ts.setdefault(own, [])
+                lst.extend(n if rel == "." else rel + "/" + n for n in lonely if len(lst) < LONELY_TS_MAX)
         if is_marker:
             scan.dirs[rel] = names
             owner = rel
@@ -134,10 +204,12 @@ def walk(root: Path, max_depth: int = MAX_DEPTH) -> Scan:
                 child_rel = e.name if rel == "." else rel + "/" + e.name
                 visit(Path(e.path), child_rel, depth + 1, owner)
                 continue
-            if owner is None:
-                continue
             ext = os.path.splitext(e.name)[1].lower()
             file_rel = e.name if rel == "." else rel + "/" + e.name
+            if owner is None:
+                if ext == ".swift":
+                    scan.loose_swift.append(file_rel)
+                continue
             if ext in UI_EXTS:
                 scan.ui_files[owner] += 1
             if ext in (".css", ".scss") and len(scan.css.setdefault(owner, [])) < 40:
@@ -257,6 +329,8 @@ def analyze(root: Path, rel: str, names: List[str], scan: Scan, ancestor_ui: boo
             styling = "css"
         shadcn = "components.json" in nameset
         item = _ui(rel, framework, styling, shadcn, ["web"], scan)
+        if framework == "angular":
+            item["ui_files"] = angular_ui_files(rel)  # finished in classify(), once the nested folders are known
         gpath = global_css(framework, base, existing_css, others, deps, names, dir_has, file_has)
         item["global_css"] = {"path": gpath, "exists": file_has(gpath)}
         return {"ui": item}
@@ -284,7 +358,47 @@ def _ui(rel: str, framework: str, styling: str, shadcn: bool, platforms: List[st
     return {
         "path": rel, "framework": framework, "styling": styling, "shadcn": shadcn,
         "platforms": platforms, "files": scan.ui_files.get(rel, 0), "supported": True, "global_css": None,
+        "ui_files": None,
     }
+
+
+def angular_ui_files(rel: str, suffixed: bool = True, roots: Optional[List[str]] = None) -> str:
+    """PLUMB.md `UI files:` for an Angular package at rel: its source folders (angular.json sourceRoot, default src/),
+    component files only (see ANGULAR_UI_NAMES); every source file when any component is named without the .component
+    suffix (Angular 20 names, alone or mixed with the older ones, or an inline-template class)."""
+    names = ANGULAR_UI_NAMES if suffixed else ANGULAR_UI_NAMES_UNSUFFIXED
+    return ", ".join(join(rel, r + "/**") for r in (roots or ["src"])) + " · " + " ".join(names)
+
+
+def ui_files_for(ui: List[dict]) -> Optional[str]:
+    """The PLUMB.md `UI files:` value these UI packages need, or None when scaffold.py's platform default fits: only web
+    packages other than Angular, or only mobile ones. Angular needs its own; web next to iOS or Android needs the
+    mobile folders too (the audit takes a file only when it is in a listed folder AND has a listed name)."""
+    ui = [u for u in ui if u.get("supported", True)]  # React Native: no theme in 1.0.0, so no UI files of its own
+    web = any("web" in u["platforms"] for u in ui)
+    mobile = any("web" not in u["platforms"] for u in ui)
+    if not any(u.get("ui_files") for u in ui) and not (web and mobile):
+        return None
+    dirs: List[str] = []
+    names: List[str] = []
+
+    def add(items: List[str], values) -> None:
+        for v in values:
+            if v not in items:
+                items.append(v)
+
+    for u in ui:
+        if u.get("ui_files"):
+            left, _, right = u["ui_files"].partition(" · ")
+            add(dirs, [d.strip() for d in left.split(",") if d.strip()])
+            add(names, right.split())
+        elif "web" in u["platforms"]:
+            add(dirs, ["app/**", "src/**", "components/**"] if u["path"] == "." else [join(u["path"], "**")])
+            add(names, ["*.tsx", "*.jsx", "*.vue", "*.svelte", "*.css"])
+        else:
+            add(dirs, [join(u["path"], "**")] if u["path"] != "." else ["**"])
+            add(names, ["*.swift"] if "ios" in u["platforms"] else ["*.kt"])
+    return ", ".join(dirs) + " · " + " ".join(names)
 
 
 def global_css(framework, base, existing, others, deps, names, dir_has, file_has) -> str:
@@ -386,7 +500,98 @@ def classify(root: Path, max_depth: int = MAX_DEPTH) -> Tuple[List[dict], List[d
             ui_dirs.append(rel)
         else:
             no_ui.append(res["no_ui"])
+    _absorb(root, scan, ui, no_ui)
+    loose = loose_swiftui(root, scan)
+    if loose:
+        ui.append(loose)
     return ui, no_ui
+
+
+def _absorb(root: Path, scan: Scan, ui: List[dict], no_ui: List[dict]) -> None:
+    """Count each UI package's files with those of the marker folders nested in it that are not packages of their own
+    (src/index.html makes src/ a marker folder; a folder inside a backend package counts for nobody), and finish an
+    Angular package's UI files from its source roots and component naming."""
+    packages = [(u["path"], u) for u in ui] + [(n["path"], None) for n in no_ui]
+    paths = {p for p, _ in packages}
+
+    def owner(rel: str) -> Optional[dict]:
+        best: Optional[Tuple[str, Optional[dict]]] = None
+        for p, u in packages:
+            if (p == "." or rel.startswith(p + "/")) and (best is None or len(p) > len(best[0])):
+                best = (p, u)
+        return best[1] if best else None  # None also when the nearest package is a backend
+
+    members: Dict[str, List[str]] = {u["path"]: [u["path"]] for u in ui}
+    for rel in scan.dirs:
+        if rel in paths:
+            continue
+        u = owner(rel)
+        if u is not None:
+            u["files"] += scan.ui_files.get(rel, 0)
+            members[u["path"]].append(rel)
+    for u in ui:
+        if u["framework"] != "angular":
+            continue
+        mine = members[u["path"]]
+        base = root if u["path"] == "." else root / u["path"]
+        extra = sum(scan.angular_extra.get(r, 0) for r in mine)
+        suffixed = sum(scan.component_suffix.get(r, 0) for r in mine)
+        paired = sum(scan.unsuffixed_paired.get(r, 0) for r in mine)
+        lonely = [f for r in mine for f in scan.lonely_ts.get(r, [])][:LONELY_TS_MAX]
+        inline = [f for f in lonely if "@Component(" in read_small(root / f, 16384)]
+        u["files"] += extra + len(inline)
+        unsuffixed = paired + len(inline) > 0
+        u["ui_files"] = angular_ui_files(u["path"], not unsuffixed, angular_source_roots(base))
+        if unsuffixed:
+            u["naming"] = "mixed" if suffixed else "unsuffixed"
+
+
+def angular_source_roots(base: Path) -> List[str]:
+    """The source folders of an Angular workspace (angular.json projects.*.sourceRoot, relative to the workspace),
+    in file order; ["src"] when angular.json is missing, unreadable (JSON with comments), or names none inside it."""
+    try:
+        doc = json.loads(read_small(base / "angular.json", 1 << 20))
+    except ValueError:
+        return ["src"]
+    projects = doc.get("projects") if isinstance(doc, dict) else None
+    roots: List[str] = []
+    if isinstance(projects, dict):
+        for proj in projects.values():
+            sr = proj.get("sourceRoot") if isinstance(proj, dict) else None
+            if not isinstance(sr, str):
+                continue
+            sr = sr.replace("\\", "/").strip()
+            if sr.startswith("/"):  # absolute: outside the workspace
+                continue
+            sr = sr.strip("/")
+            if sr.startswith("./"):
+                sr = sr[2:]
+            parts = sr.split("/")
+            if not sr or ".." in parts or ":" in parts[0]:
+                continue
+            if sr not in roots:
+                roots.append(sr)
+    return roots or ["src"]
+
+
+def loose_swiftui(root: Path, scan: Scan) -> Optional[dict]:
+    """SwiftUI sources outside every marker folder (no Package.swift, no Xcode project): a UI package at the folder
+    the SwiftUI files share, flagged as a guess (it lowers the confidence)."""
+    swiftui = [f for f in scan.loose_swift[:200] if "import SwiftUI" in read_small(root / f, 8192)]
+    if not swiftui:
+        return None
+    parts = [f.split("/")[:-1] for f in swiftui]
+    common: List[str] = []
+    for segs in zip(*parts):
+        if any(s != segs[0] for s in segs):
+            break
+        common.append(segs[0])
+    rel = "/".join(common) or "."
+    files = sum(1 for f in scan.loose_swift if rel == "." or f.startswith(rel + "/"))
+    item = _ui(rel, "swiftui", "css", False, ["ios"], scan)
+    item["files"] = files
+    item["guess"] = SWIFTUI_GUESS_REASON.format(path=rel)
+    return item
 
 
 def list_children(cwd: Path, max_depth: int = MAX_DEPTH) -> List[dict]:
@@ -491,6 +696,12 @@ def confidence(layout: str, marker: Optional[str], ui: List[dict], no_ui: List[d
             low.append(u["path"] + ": no global CSS found, copy path " + g["path"] + " is a guess")
         if not u.get("supported", True):
             medium.append(u["path"] + ": " + u["note"])
+        if u.get("guess"):
+            low.append(u["guess"])
+        if u.get("naming") in ("unsuffixed", "mixed"):
+            medium.append(u["path"] + ": Angular files without the .component suffix (Angular 20 names"
+                          + (", next to suffixed ones" if u["naming"] == "mixed" else "")
+                          + "): UI files cover every .ts, .html, .scss and .css in the source folders")
     if len(ui) > 1 and not marker:
         low.append("several UI packages without monorepo markers")
     if layout == "mixed":
@@ -564,7 +775,8 @@ def detect(cwd) -> dict:
     return {
         "root": root.as_posix(), "opened": opened, "layout": layout, "monorepo": marker,
         "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok and in_repo, "in_repo": in_repo,
-        "git_available": git_ok, "existing": read_existing(root), "proposal": _proposal(name, copies, platforms),
+        "git_available": git_ok, "existing": read_existing(root),
+        "proposal": _proposal(name, copies, platforms, ui_files_for(ui)),
         "enclosing": enclosing, "confidence": conf, "reasons": reasons,
     }
 
@@ -577,10 +789,10 @@ def _enclosing_reason(enc: dict) -> str:
 NO_GIT_REASON = "not a git repo: the folder you opened is taken as the project root (git is optional)"
 
 
-def _proposal(name: str, copies: List[str], platforms: List[str]) -> dict:
+def _proposal(name: str, copies: List[str], platforms: List[str], ui_files: Optional[str] = None) -> dict:
     return {
         "project": name, "skill_dir": ".claude/skills/" + name + "-design-system", "plumb_md": "PLUMB.md",
-        "docs_dir": "docs/design", "copies": copies, "platforms": platforms,
+        "docs_dir": "docs/design", "copies": copies, "platforms": platforms, "ui_files": ui_files,
         "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
     }
 
@@ -659,6 +871,8 @@ def human(r: dict) -> str:
                  + "   (directions or extract page, decision log, prototype, reports)")
     for c in p["copies"]:
         lines.append("  generated copy → " + c)
+    if p.get("ui_files"):
+        lines.append("  UI files   " + p["ui_files"] + "   (PLUMB.md: what the audit and the checks cover)")
     for u in r["ui_packages"]:
         if not u["supported"]:
             lines.append("  not supported yet: " + u["path"] + " (" + u["note"] + ")")
