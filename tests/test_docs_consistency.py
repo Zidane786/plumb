@@ -468,6 +468,19 @@ def test_create_shows_the_stylesheet_diff_and_passes_the_settings_as_answers() -
     assert "`theme_switch`" in _flat(REFERENCE / "interview.md") and "`reduced_motion`" in _flat(REFERENCE / "interview.md")
 
 
+@pytest.mark.parametrize("name", ["create", "extract"])
+def test_create_and_extract_move_a_stylesheets_own_theme_variables_and_name_motion_fade(name: str) -> None:
+    flat = _flat(SKILLS / f"{name}/SKILL.md")
+    for phrase in ("build-tokens.py --overrides", "motion-fade"):
+        assert phrase in flat, f"{name}: {phrase!r}"
+    create = _flat(SKILLS / "create/SKILL.md")
+    for phrase in ("block-override", "--overrides --apply", "move them into the tokens (recommended", "only on yes"):
+        assert phrase in create, f"create: {phrase!r}"
+    for path in (REFERENCE / "scripts.md", USAGE, REPO / "TEST.md"):
+        assert "--overrides" in _flat(path), path.name
+        assert "--migrate" in _flat(path), path.name
+
+
 def test_spec_states_the_new_rules() -> None:
     flat = _flat(SPEC).replace("*", "")
     for phrase in ("the project's design system outranks effective html", "craft only", "plumb:start",

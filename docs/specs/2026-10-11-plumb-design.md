@@ -91,7 +91,12 @@ the dry-run list of every file and path; each contrast fix; and which components
 which framework and where. When a web copy is a stylesheet the project already has (e.g.
 `app/globals.css`), the build's change is shown first (`build-tokens.py --check` prints the diff)
 and asked: Plumb adds and owns only a marked `plumb:start … plumb:end` block; the rest stays the
-project's. Two choices become tokens settings the generator honours: how the app switches themes
+project's. When that stylesheet sets its own variables in the tokens' namespaces (a stock
+create-next-app `@theme inline { --color-background; --color-foreground; --font-sans; --font-mono }`,
+the audit's `block-override`), create and extract show each with the token it maps onto
+(`build-tokens.py --overrides`) and ask once, "move them into the tokens" recommended; only on yes
+does `--overrides --apply` add the tokens and remove the lines, so a fresh create on a stock app
+ends with the audit at 0. Two choices become tokens settings the generator honours: how the app switches themes
 (`$extensions.plumb.web.theme_switch`: `both`, `system` or `class`; answers key `theme_switch`)
 and reduced motion (`$extensions.plumb.motion.reduced`: `keep-fades` or `none`; answers key
 `reduced_motion`); extract always asks both, recommending what the app already does. The same
@@ -493,7 +498,7 @@ guard hook blocks it) · `[Y]` yours (written at create from your answers; chang
 │   ├── web/  stack.md · components.md · ux-guidelines.md · dark-mode.md     [Y] per chosen platform
 │   └── mobile/  README.md · components.md · ios/ · android/                  [Y]
 └── scripts/
-    ├── build-tokens.py                 [P] write every theme · --check · --migrate · --contrast · --css-vars
+    ├── build-tokens.py                 [P] write every theme · --check · --migrate · --contrast · --css-vars · --overrides
     ├── audit.py                        [P] full audit · --quick · --changed · --json · --html
     ├── build-prototype.py              [P] screens/*.html → prototype.html + screens.html + screens.json · --check
     └── _plumb.py                       [P] shared: token loading, colour maths, contrast, the inventory scanner
@@ -579,8 +584,11 @@ masters in `plugins/plumb/assets/skill/scripts/`.
   (light/dark), type, radii, spacing, motion, icons. Android: Compose Material 3 colour schemes,
   type, shapes, motion.
 - `--check` exits 1 when any output, copy or prototype token block is stale. `--migrate` upgrades
-  the tokens schema additively. `--contrast` rewrites only the contrast block. `--css-vars` prints
-  the plain-CSS export used by prototypes and the specimen.
+  the tokens schema additively (and records the `theme_switch` / `motion.reduced` defaults the build
+  applies when they are missing). `--contrast` rewrites only the contrast block. `--css-vars` prints
+  the plain-CSS export used by prototypes and the specimen. `--overrides` prints, as JSON, a web
+  copy's own variables in the tokens' namespaces with the token each maps onto and the exact edits;
+  `--overrides --apply` makes them, only after the user's OK.
 - **Contrast** is computed with WCAG 2.2 relative luminance, in light and dark: every `on-X` over
   `X`, every text token over every surface, plus `extra_pairs`. Thresholds: 4.5:1 text, 3:1 large
   text and UI boundaries. Failures are listed with the nearest passing value.

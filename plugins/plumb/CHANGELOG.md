@@ -31,6 +31,10 @@
 - **One token file** (W3C design tokens, light and dark) generates the web theme (Tailwind v4, Tailwind v3 or plain
   CSS, plus an exact copy at your app's path), a SwiftUI theme and a Compose Material 3 theme. Contrast is computed in
   light and dark and written as evidence in the skill's `dark-mode.md`.
+- **Your stylesheet stays yours**: in a stylesheet you already have (e.g. `app/globals.css`), Plumb adds and owns only
+  a marked block, shown as a diff and asked first. When the file sets its own theme variables (a stock
+  create-next-app or shadcn `globals.css`), create and extract show the token each maps onto and, on your OK, move
+  them into the tokens (`build-tokens.py --overrides`), so the audit passes on a fresh app.
 - **The design-system skill** each project gets: `SKILL.md`, `design.md`, component specs, inventory, UX rules,
   accessibility, motion, vocabulary and dark-mode references, and the scripts (`build-tokens.py`, `audit.py`,
   `build-prototype.py`), Python standard library only.

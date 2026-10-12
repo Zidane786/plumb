@@ -355,7 +355,12 @@ plumb Done. Commit these files, start a new session here so the hooks load. UI w
   light and dark. Pick one, combine parts, or change something.
 - **E. Generate**, with a checkpoint at each step: the full token set; the list of files; what changes in a
   stylesheet you already have (e.g. `app/globals.css`: Plumb adds a marked `plumb:start … plumb:end` block and owns
-  only that; the rest stays yours); each contrast fix; which starter components, in which framework, where.
+  only that; the rest stays yours); when that stylesheet sets its own theme variables (a stock create-next-app sets
+  `--color-background`, `--color-foreground`, `--font-sans` and `--font-mono` in an `@theme inline` block, which would
+  override the tokens), the token each maps onto and the lines that go, asked once with "move them into the tokens"
+  recommended (`build-tokens.py --overrides`, then `--overrides --apply` on your yes); each contrast fix; which
+  starter components, in which framework, where. If you choose keep fades for reduced motion in a plain-CSS app, add
+  the class `motion-fade` to elements whose transition is only a fade.
 - **F. Prototypes** of the key screens (or later, with `/plumb:prototype`).
 - **G. Record:** every decision goes in the decision log.
 
@@ -584,7 +589,9 @@ plumb build-tokens.py wrote assets/platforms/mobile/ios/AcmeTheme.swift … Cont
 
 **What it does, in order:** compares `PLUMB.md`'s version with the plugin's; shows **What's new** for every version in
 between and asks before changing anything; replaces Plumb's own files in the project (the scripts and templates; it
-shows the list first); migrates the tokens file by **adding** new settings only (it never deletes or changes a value);
+shows the list first); migrates the tokens file by **adding** new settings only (it never deletes or changes a value;
+a tokens file without the theme-switch and reduced-motion settings gets the defaults the build already used, `both`
+and `none`, so the build's "not set" note stops; `build-tokens.py --migrate` does the same on its own);
 regenerates every generated file; runs each version's upgrade steps in order, asking before each ("Keep as is" is the
 default); updates `PLUMB.md` (version line, any new setting, a dated line under "Plumb updates"); runs the checks until
 healthy; shows the diff. You commit.

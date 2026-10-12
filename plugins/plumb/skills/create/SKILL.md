@@ -73,7 +73,9 @@ and voice · UX patterns (navigation, page anatomy, forms, feedback, empty/loadi
 onboarding: one sub-question each). Show colours as hex with their dark value. C11 also asks how reduced motion
 behaves (keep fades, recommended, or none) and C13 how the app switches themes (system · class · both, recommended
 both); they become the tokens settings `$extensions.plumb.motion.reduced` and `$extensions.plumb.web.theme_switch`
-(E3), which the generator honours. **OK?** Show every decision on one screen and ask to continue.
+(E3), which the generator honours. When the user picks keep fades and the styling is plain CSS, tell them in one line:
+add the class `motion-fade` to each element whose own transition is only a fade (Tailwind's `transition-opacity` /
+`transition-colors` need nothing). **OK?** Show every decision on one screen and ask to continue.
 
 ## D. Directions
 
@@ -116,6 +118,14 @@ components, prototypes) the system wins.
    yes (no → another path for the copy, or none). Then
    `python3 "<root>/<skill dir>/scripts/build-tokens.py" && python3 "<root>/<skill dir>/scripts/audit.py" --json`
    in one shell call: the themes, the copies, the contrast block, `docs/design/specimen.html`, then the findings.
+   **OK? The project's own theme variables.** When the findings include `block-override` (a stock create-next-app or
+   shadcn `globals.css` sets `--color-background`, `--font-sans` … in its own `@theme`), run `build-tokens.py
+   --overrides` and show each variable, the token it maps onto (`kind` token: the token wins; new-name: a token is
+   added, e.g. `color.foreground` = `{color.on-surface}`; a font the app loads goes first in its font token), the
+   project's values, the lines that go and any `by_hand` item (ask about each). Ask once: move them into the tokens
+   (Recommended: the app's utilities keep working and the audit can pass) · leave them for now (the audit fails until
+   then). Only on yes: `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`; point other
+   files' uses of the listed `project_variables` at the token's variable too, shown and asked first.
 5. **OK? Each contrast fix.** For each `contrast` error in that `--json` output show the failing pair, its ratio
    (light or dark) and the proposed passing value; apply each only on the user's OK, rebuild, repeat until none is
    left.
@@ -157,8 +167,9 @@ at a time; it records its own decisions and approves a screen only on the user's
 ## Checklist
 
 - [ ] Product questions came before design questions; every question offered a recommendation and why
-- [ ] The user approved the token set, the scaffold's file list, the change to an existing copy file, each contrast
-      fix, the component plan and each screen (`--approve` only on their yes)
+- [ ] The user approved the token set, the scaffold's file list, the change to an existing copy file (and moving its
+      own theme variables into the tokens), each contrast fix, the component plan and each screen (`--approve` only
+      on their yes)
 - [ ] `motion.reduced` and `web.theme_switch` are in the tokens file; `.plumb-tmp/` is gone; init step 4 was asked
 - [ ] Tokens have a dark value for every colour (or a recorded light-only decision)
 - [ ] Components written by you from `components.md`; the audit on them exits 0; `build-tokens.py --check` exits 0

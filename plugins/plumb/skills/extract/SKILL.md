@@ -95,7 +95,8 @@ two**, one at a time, recommending what the app already does so extract keeps it
 - **How the app switches themes** (`theme_switch`): code that toggles a `.dark` class (or `data-theme`) → `class`;
   only `@media (prefers-color-scheme: dark)` → `system`; both → `both`; no dark mode yet → `both`.
 - **Reduced motion** (`reduced_motion`): an existing `prefers-reduced-motion` rule that keeps opacity transitions →
-  `keep-fades`; one that turns every animation off → `none`; none yet → `keep-fades`.
+  `keep-fades`; one that turns every animation off → `none`; none yet → `keep-fades`. On keep fades in a plain-CSS
+  app, tell the user in one line to add the class `motion-fade` to each element whose own transition is only a fade.
 
 Both go in the answers JSON and become `$extensions.plumb.web.theme_switch` and `$extensions.plumb.motion.reduced`
 (create E2–E3). **OK?** Summarise in five lines: "Right?".
@@ -104,8 +105,9 @@ Both go in the answers JSON and become `$extensions.plumb.web.theme_switch` and 
 
 Follow `/plumb:create` steps **E** and **G** (read `ROOT/skills/create/SKILL.md`), with every checkpoint: the full
 token set (E1), the scaffold's dry-run file list (E2), each contrast fix (E5), the component plan (E6). The confirmed
-groups are the answers; **no directions step** (the look already exists). Extract keeps what exists: E4's question
-about an existing copy file (e.g. `app/globals.css`: Plumb owns only its marked block) is never skipped. In E6 the
+groups are the answers; **no directions step** (the look already exists). Extract keeps what exists: E4's questions
+about an existing copy file (e.g. `app/globals.css`: Plumb owns only its marked block) and its own theme variables
+(`build-tokens.py --overrides`: the inventoried values are tokens now, so they move into them) are never skipped. In E6 the
 components exist already: map
 them to `references/components.md` and `inventory.md`; propose only the missing starters, and change existing
 components only with the user's OK. **The design system must pass:** `python3 "<root>/<skill dir>/scripts/audit.py"
