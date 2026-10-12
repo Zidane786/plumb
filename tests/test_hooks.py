@@ -949,7 +949,8 @@ def _git_cfg(proj: Path, text: str) -> None:
 def test_filter_named_with_an_equals_sign_never_runs(launcher, tmp_path, proj):
     git_init(proj)
     mark = tmp_path / "EQ-RAN"
-    _git_cfg(proj, f'[filter "x=y"]\n\tclean = "touch \'{mark}\'; cat"\n\tprocess = "touch \'{mark}\'"\n')
+    m = mark.as_posix()  # forward slashes: a backslash is an escape in a git config value
+    _git_cfg(proj, f'[filter "x=y"]\n\tclean = "touch \'{m}\'; cat"\n\tprocess = "touch \'{m}\'"\n')
     write(proj / ".gitattributes", "*.tsx filter=x=y\n")
     safe = ("-c", "core.fsmonitor=false")  # the filter is emptied through env (a -c key cannot hold "=" on every git)
     env = {"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "filter.x=y.clean", "GIT_CONFIG_VALUE_0": "cat",
