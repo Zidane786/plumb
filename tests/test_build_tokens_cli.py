@@ -186,6 +186,31 @@ def test_dark_failure_lightens(tmp_path: Path) -> None:
     assert int(m.group(1)[:2], 16) > 0x2a  # lightened
 
 
+def _bt():
+    import importlib.util
+    sys.path.insert(0, str(SCRIPTS))
+    spec = importlib.util.spec_from_file_location("bt_headroom_test", SCRIPTS / "build-tokens.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_proposed_value_clears_the_audits_headroom_rule(tmp_path: Path) -> None:
+    """A value Plumb proposes for a failing pair passes with 0.5 to spare, so the same audit's contrast-headroom
+    suggestion (a pair under 0.3 above the minimum) never flags it once applied."""
+    bt = _bt()
+    p = make_project(tmp_path, fail_mutation)
+    doc = json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+    pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+    value, ratio = pair.fix["light"]
+    assert ratio >= pair.need + bt.FIX_SPARE and bt.FIX_SPARE >= bt.HEADROOM
+    doc["color"]["on-primary"]["$value"] = value
+    again = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+    assert again.light >= again.need + bt.HEADROOM  # out of contrast-headroom's range (need <= ratio < need + 0.3)
+    audit = (SCRIPTS / "audit.py").read_text(encoding="utf-8")
+    assert 'getattr(bt, "HEADROOM", 0.3)' in audit  # the audit reads the same threshold
+
+
 def test_ui_boundary_uses_three_to_one(tmp_path: Path) -> None:
     def mut(doc: dict) -> None:
         doc["color"]["outline-input"] = {"$value": "#838b98", "$extensions": {"plumb": {"dark": "#6e7785"}}}

@@ -1,5 +1,6 @@
 /* {{@header}} */
-/* Tailwind v3: tailwind.tokens.js (next to this file) maps these variables into theme.extend. */
+/* Tailwind v3: tailwind.tokens.js (next to this file) maps these variables into theme.extend and says which
+   darkMode setting matches the dark scheme below. */
 :root {
   {{@vars}}
 }
@@ -13,19 +14,6 @@
 }
 {{@end}}
 
-/* Dark scheme: only the tokens that have a dark value. */
-.dark {
-  {{@vars-dark}}
-  color-scheme: dark;
-}
+{{@dark}}
 
-/* Motion is an enhancement. If the user asked for less, give them none. Never override this block. */
-@media (prefers-reduced-motion: reduce) {
-  *, ::before, ::after {
-    animation-duration: 0s !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0s !important;
-    transition-delay: 0s !important;
-    scroll-behavior: auto !important;
-  }
-}
+{{@reduced-motion}}
