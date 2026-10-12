@@ -137,10 +137,12 @@ claude plugin validate --strict plugins/plumb
   label-sm, sm, xs`); run `audit` on that copy and on the two prototypes and look at the HTML
   reports.
 - **CI (`.github/workflows/test.yml`)** runs on every PR and push to `main`, but the full suite
-  runs only when one of these changed: `plugins/**`, `tests/**`, `scripts/**`,
-  `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes (README,
-  TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code changed".
-  A manual run always runs everything. Keep this list and the workflow's list in step.
+  runs only when one of these changed: `plugins/**`, `tests/**`, `examples/**`,
+  `scripts/**`, `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes
+  (README, TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code
+  changed". CI installs Playwright + Chromium and runs the browser tests on every OS; unexpected
+  skips fail the run (`PLUMB_STRICT_SKIPS=1`, `tests/conftest.py`). A manual run always runs
+  everything. Keep this list and the workflow's list in step.
 - `tests/test_docs_consistency.py` fails if a skill/doc mentions a command that doesn't exist,
   or a skill doesn't link the reference — keep it green.
 
