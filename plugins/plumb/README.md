@@ -28,8 +28,9 @@ project:
 **GitHub Copilot CLI:** `copilot plugin marketplace add Zidane786/plumb`, then `copilot plugin install plumb@plumb`,
 then `/restart`. The commands are the same.
 
-**Kiro (preview, live check pending):** `python3 <clone>/plugins/plumb/scripts/kiro.py install [--project <path>]`
-copies the skills (`/plumb-init`, …) and the hook files.
+**Kiro (preview, live check pending):** `python3 <plumb>/scripts/kiro.py install` (your home folder) or
+`… install --project <folder>` (that workspace only) copies the skills (`/plumb-init`, …) and the hook files, asking
+first (`--yes` skips the question); run it again after updating Plumb. Details: `reference/kiro.md`.
 
 Needs Python 3.9+ (standard library only; `py -3`, `python` or `python3` on Windows). git is optional.
 

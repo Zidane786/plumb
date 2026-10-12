@@ -64,11 +64,15 @@
 - **Three hooks**, in Claude Code and Copilot CLI: a status line at session start (with an upgrade nudge), a check
   before each edit and shell write (refuses hand edits to generated files and Plumb's own files, a new page with no
   approved prototype, and an edit that adds design-system errors), and an end-of-turn check of the files changed in
-  the session that stops the agent once when there are new errors. Each is switched in `PLUMB.md`.
+  the session that stops the agent once when there are new errors. The edit, prototype-first and end-of-turn checks
+  are switched in `PLUMB.md` (`Edit check`, `Prototype sync`, `End-of-turn check`); the session-start line and the
+  guard on generated and Plumb's own files are always on in a project with a `PLUMB.md`.
 - **Screenshots without installing anything**: `screenshot.py` uses a Chrome, Edge or Chromium already on the machine,
   headless; with none, the visual part is skipped with a note and every other check still runs.
-- **Kiro (preview)**: `scripts/kiro.py install` copies the skills (`/plumb-init`, …) and the hook files into Kiro.
-  Built from Kiro's documented formats; the live check on a real Kiro is pending.
+- **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
+  only) copies the skills (`/plumb-init`, …) and the hook files into Kiro after you confirm (`--yes` skips the
+  question); `uninstall` removes only what it wrote. Built from Kiro's documented formats; the live check on a real
+  Kiro is pending.
 - **Slate and Effective HTML**: audit and UX findings can become Slate tickets (through Slate's `board.py`), and
   `make design-audit` can join Slate's review checks; the Effective HTML skills are used for directions and variants
   when installed.

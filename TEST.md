@@ -49,9 +49,10 @@ uv run --with pytest pytest -q -rs                      # or: PY -m pip install 
 uv run --python 3.9 --with pytest pytest -q -rs         # the oldest supported Python, if available
 ```
 
-**Expected:** every test passes. Skips are listed with their reason (`-rs`): `requires macOS` (the `swiftc`
-type-check), `requires Windows` (the `run.cmd` and PowerShell hook tests), `requires POSIX shell`, `requires xcrun`, and
-`requires Playwright` when Playwright isn't installed. Report the last line (`N passed, M skipped …`).
+**Expected:** every test passes. Skips are listed with their reason (`-rs`). Every platform or tool skip reason starts
+with one of `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun` (for example the Windows-only
+`run.cmd` and PowerShell hook tests, and, on macOS with xcrun, the Swift type-check of the generated theme); browser
+tests skip with `requires Playwright` when Playwright isn't installed. Report the last line (`N passed, M skipped …`).
 
 To run the browser tests too (they render every generated page in light and dark, headless):
 
@@ -61,8 +62,9 @@ uv run --with pytest --with playwright pytest -q -rs
 ```
 
 **CI** (`.github/workflows/test.yml`) runs the whole suite on Ubuntu, macOS and Windows × Python 3.9 and 3.13, installs
-Playwright and Chromium on every runner, and sets `PLUMB_STRICT_SKIPS=1`: any skip whose reason is not a platform skip
-(`requires macOS`, `requires Windows`, `requires POSIX shell`, `requires xcrun`) fails the run (`tests/conftest.py`).
+Playwright and Chromium on every runner, and sets `PLUMB_STRICT_SKIPS=1`: `tests/conftest.py` allows only skips whose
+reason starts with `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`; any other skip (such as
+`requires Playwright`) fails the run.
 To reproduce that locally: `PLUMB_STRICT_SKIPS=1 uv run --with pytest --with playwright pytest -q -rs`.
 
 **Windows notes:** run from Git Bash or PowerShell. If many JSON or golden-file tests fail, check
@@ -159,7 +161,7 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    prototype" and "Every state, light and dark" links that open that variant's pages; the theme toggle switches light
    and dark; nothing is loaded from the network.
 4. Run step 2 again. **Expect:** `ok: proposal demo: 2 variants (…): up to date` and no file changed.
-5. Edit `b-dense/screens/home.html`, then `PY SKILL/scripts/build-prototype.py --check --proposal demo`.
+5. In `b-dense/screens/home.html`, change its heading text again (a comment alone doesn't change the pages), then `PY SKILL/scripts/build-prototype.py --check --proposal demo`.
    **Expect:** exit 1 listing `stale: …/b-dense/prototype.html` and `…/b-dense/screens.html` and a `fix:` line with
    `--proposal demo`.
 6. Change a colour in the tokens file and run `PY SKILL/scripts/build-tokens.py`.
@@ -286,12 +288,28 @@ first run on a real Kiro. Record everything, including what differs.
 PY <repo>/plugins/plumb/scripts/kiro.py install --project <scratch project>
 ```
 
-- [ ] `<scratch>/.kiro/skills/plumb-<name>/SKILL.md` exists for every command, and `.kiro/hooks/plumb.json` is written.
+- [ ] It lists every path it will write and asks `[y/N]`; answer `y`. (Run from a non-terminal without `--yes`, it
+      writes nothing and prints `ask the user: run … --yes yourself, or tell me to run it`.)
+- [ ] `<scratch>/.kiro/skills/plumb-<name>/SKILL.md` exists for every command, and `<scratch>/.kiro/hooks/plumb.json`
+      is written; nothing was written in your home `~/.kiro` (`--project` is that workspace only). Every hook command
+      in the file runs the plugin's launcher with `--kiro`.
 - [ ] In Kiro, `/plumb-init` runs the init flow (questions one at a time).
-- [ ] Session start shows the `Plumb: …` line; a raw-colour edit is refused with Plumb's reason; the end-of-turn check
-      stops the agent once.
-- [ ] Record which exit code blocks and the exact hook input fields Kiro sends (the spec waits on this).
-- [ ] `PY <repo>/plugins/plumb/scripts/kiro.py uninstall --project <scratch project>` removes only Plumb's files.
+- [ ] Session start shows the `Plumb: …` line, with commands written `/plumb-…`.
+- [ ] A raw-colour edit with Kiro's write tool, and a shell write to a generated file, are refused with Plumb's
+      `error:` / `fix:` text. Record which exit code blocks and the exact hook input fields Kiro sends (the spec waits on
+      this).
+- [ ] **The Stop decision:** let a change with a new error reach the end of the turn (set `Edit check: off` in
+      `PLUMB.md` first). The hook answers `{"decision": "block", "reason": …}` on stdout, exit 0. Record whether Kiro
+      makes the agent continue and fix it, or only adds the text to its context; and whether the report-only follow-up
+      (`{"systemMessage": …}`) shows as raw JSON. Either is acceptable for now; record which, in the IDE and the CLI.
+- [ ] Ask the agent to edit `.kiro/hooks/plumb.json` by hand → refused (change the checks in `PLUMB.md`, refresh with
+      `kiro.py install`).
+- [ ] **Windows:** run the same install from cmd.exe, PowerShell and Git Bash; each hook command is a
+      `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand …` line. Check the refusals and the
+      session line work, note the extra start-up time (about 0.3 s per hook is expected), and check that a machine
+      without Python never blocks a tool call.
+- [ ] `PY <repo>/plugins/plumb/scripts/kiro.py uninstall --project <scratch project>` removes only Plumb's files (your
+      own skills and hooks stay).
 
 ---
 
@@ -347,7 +365,8 @@ Problems: <exact command + output for every failure>
 
 ## Cleanup
 
-Delete the scratch folders. For Kiro: `kiro.py uninstall` (and `--project <path>` for each project you installed into).
+Delete the scratch folders. For Kiro: `kiro.py uninstall --project <path>` for each project you installed into, and
+`kiro.py uninstall` if you also installed into your home folder.
 
 ---
 

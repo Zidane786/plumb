@@ -29,7 +29,19 @@ REFERENCE = PLUGIN / "reference"
 COMMANDS = {"init", "create", "extract", "prototype", "tour", "audit", "ux", "update", "upgrade", "status"}
 # Heavy flows run only when the user typed them (spec section 3).
 USER_ONLY = {"init", "create", "extract", "update", "upgrade"}
-INTERNAL_NAMES = re.compile(r"\b(keel|caredesk)\b", re.I)
+# Internal project names that must never appear in product text. Add more without committing them: set
+# PLUMB_INTERNAL_NAMES to a comma-separated list (e.g. in a private CI secret or your shell).
+INTERNAL_NAME_LIST = ["keel", "caredesk"]
+
+
+def _internal_names() -> "re.Pattern[str]":
+    import os
+    extra = [n.strip() for n in os.environ.get("PLUMB_INTERNAL_NAMES", "").split(",") if n.strip()]
+    names = sorted({n.lower() for n in INTERNAL_NAME_LIST + extra})
+    return re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b", re.I)
+
+
+INTERNAL_NAMES = _internal_names()
 TEXT_SUFFIXES = {".md", ".py", ".json", ".html", ".css", ".js", ".tmpl", ".snippet", ".sh", ".cmd", ".txt", ".toml",
                  ".yml", ".yaml", ".swift", ".kt", ".tailwind-v3", ".tailwind-v4"}
 MAX_SKILL_LINES = 200
@@ -240,6 +252,54 @@ def test_quoted_messages_are_real() -> None:
     for phrase, source in QUOTED.items():
         assert phrase in (PLUGIN / source).read_text(encoding="utf-8"), f"{source} no longer prints {phrase!r}"
         assert phrase in usage, f"docs/USAGE.md does not quote {phrase!r} (troubleshooting / hooks)"
+
+
+# TEST.md's expected output (level 3) next to the code that prints it: (what TEST.md says, the script, the code text).
+TEST_EXPECTS = [
+    ("done: 38 written, 0 kept", "scripts/scaffold.py", 'f"done: {wrote} written, {kept} kept"'),
+    ("ok: 5 generated files are up to date", "assets/skill/scripts/build-tokens.py",
+     'f"ok: {len(files)} generated files are up to date"'),
+    ("`stale: …`", "assets/skill/scripts/build-tokens.py", 'f"stale: {rel(path, root)}{note}"'),
+    ("ui/card.css:1: error raw-colour: raw colour #ff0000", "assets/skill/scripts/audit.py",
+     'f"{f.file}:{f.line}: {f.severity} {f.rule}: {f.message}"'),
+    ("raw-colour: raw colour", "assets/skill/scripts/audit.py", '"raw-colour", "error", WEB, "file", check_raw_colour, '
+                                                              '"raw colour {match}"'),
+    ("proposal demo: 2 variants (a-calm: 1 screen, b-dense: 1 screen)", "assets/skill/scripts/build-prototype.py",
+     "f\"proposal {name}: {len(folders)} variant{'s' if len(folders) != 1 else ''} ({', '.join(summary)})\""),
+    ("approved home (", "assets/skill/scripts/build-prototype.py",
+     "f\"approved {args.approve} ({e['approved']['by']}, {e['approved']['at']})\""),
+    ("1 tour: first-look (3 steps, play mode)", "assets/skill/scripts/build-prototype.py",
+     "f\"{t['id']} ({len(t['steps'])} steps, {t['mode']} mode)\""),
+    ('steps[1].target "[data-test=new]"\n   matches nothing', "assets/skill/scripts/build-prototype.py",
+     'matches nothing in {screen.rel} (state {state})'),
+    ("wrote: shot.png (<browser>, 390x900, dark)", "scripts/screenshot.py",
+     'f"wrote: {args.out} ({browser.name}, {args.width}x{args.height}, {args.theme})"'),
+    ("note: visual comparison skipped: no browser found", "scripts/screenshot.py",
+     "note: visual comparison skipped: no browser found"),
+]
+
+
+@pytest.mark.parametrize("expected,source,code", TEST_EXPECTS, ids=[t[0][:40] for t in TEST_EXPECTS])
+def test_test_md_expectations_match_the_code(expected: str, source: str, code: str) -> None:
+    flat = " ".join((REPO / "TEST.md").read_text(encoding="utf-8").split())
+    assert " ".join(expected.split()) in flat, f"TEST.md no longer expects {expected!r}: update TEST_EXPECTS too"
+    assert code in (PLUGIN / source).read_text(encoding="utf-8"), \
+        f"{source} no longer prints {code!r}: TEST.md expects {expected!r}; fix TEST.md and this entry"
+
+
+@pytest.mark.parametrize("path", [REPO / "README.md", USAGE, REPO / "TEST.md", WHAT_YOU_GET],
+                         ids=lambda p: str(p.relative_to(REPO)))
+def test_no_internal_project_names_in_the_user_docs(path: Path) -> None:
+    hits = [f"{n}: {line.strip()[:80]}" for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+            if INTERNAL_NAMES.search(line)]
+    assert not hits, f"internal project names in {path.relative_to(REPO)}:\n" + "\n".join(hits)
+
+
+def test_internal_names_list_can_be_extended(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLUMB_INTERNAL_NAMES", "Acme-Secret, other")
+    rx = _internal_names()
+    assert rx.search("built for acme-secret") and rx.search("Other") and rx.search("caredesk")
+    assert not rx.search("acme") and not rx.search("others")
 
 
 def test_what_you_get_opens_offline_in_both_themes() -> None:

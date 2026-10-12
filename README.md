@@ -60,9 +60,11 @@ hooks run through PowerShell. VS Code's Copilot Chat isn't supported.
 
 ### Kiro (preview)
 
-Kiro has no plugin marketplace, so a script copies Plumb's skills and hook files in:
-`python3 <clone>/plugins/plumb/scripts/kiro.py install [--project <path>]`; the commands are `/plumb-init`,
-`/plumb-create`, …. This was built from Kiro's documented formats; **the live check on a real Kiro is pending**. See
+Kiro has no plugin marketplace, so a script copies Plumb's skills and hook files in, one scope per run:
+`python3 <plumb>/plugins/plumb/scripts/kiro.py install` (your home folder) or `… install --project <folder>` (that
+workspace only). It lists every path and asks first (`--yes` skips the question); run it again after updating Plumb.
+The commands are `/plumb-init`, `/plumb-create`, …. This was built from Kiro's documented formats; **the live check on
+a real Kiro is pending**. See
 [docs/USAGE.md](docs/USAGE.md#kiro-built-from-kiros-docs-live-check-pending).
 
 ## Update to a new version
@@ -235,7 +237,8 @@ claude --plugin-dir plugins/plumb                 # try it in a scratch project
 ```
 
 CI runs the suite on Ubuntu, macOS and Windows × Python 3.9 and 3.13, with Playwright and Chromium installed on every
-runner so the browser tests run everywhere; an unexpected skip fails the run. The hands-on guide for any machine, both
+runner so the browser tests run everywhere. Only platform and tool skips are allowed: their reasons start with
+`requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`; any other skip fails the run. The hands-on guide for any machine, both
 CLIs and Kiro is [TEST.md](TEST.md). How to work on this repo: [AGENTS.md](AGENTS.md).
 
 ## License

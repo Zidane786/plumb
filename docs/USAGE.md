@@ -78,17 +78,27 @@ Then restart Copilot CLI (`/restart`, or quit and start it again). The commands 
 ### Kiro (built from Kiro's docs; live check pending)
 
 Plumb's skills follow the Agent Skills standard, so Kiro (IDE and CLI v3+) can run them. Kiro has no plugin
-marketplace, so a script copies them in. Clone the Plumb repository, then:
+marketplace, so a script copies them in. With Plumb installed in Claude Code or Copilot CLI (or a clone of the Plumb
+repository), run it yourself, one scope at a time:
 
 ```
-python3 /path/to/plumb/plugins/plumb/scripts/kiro.py install                 # global: ~/.kiro/skills/plumb-<name>/
-python3 /path/to/plumb/plugins/plumb/scripts/kiro.py install --project .     # this project: .kiro/skills/plumb-<name>/
+python3 <plumb>/plugins/plumb/scripts/kiro.py install                       # your home folder only (~/.kiro)
+python3 <plumb>/plugins/plumb/scripts/kiro.py install --project <folder>    # that workspace only (<folder>/.kiro)
+python3 <plumb>/plugins/plumb/scripts/kiro.py uninstall [--project <folder>]
 ```
 
-In Kiro the commands are `/plumb-init`, `/plumb-create`, `/plumb-prototype`, and so on. The install also writes Kiro
-hook files (`~/.kiro/hooks/plumb.json`, and `.kiro/hooks/plumb.json` per project) for the same three checks. Kiro
-reads `AGENTS.md` as steering, so Plumb's "read before you work" row applies there too, and `/plumb-init` can add
-`.kiro/steering/plumb.md`. `kiro.py uninstall` removes only Plumb's files.
+Each run writes `.kiro/skills/plumb-<name>/SKILL.md` for every command and `.kiro/hooks/plumb.json` in that one scope
+(`--project` is that workspace only; it never also writes your home folder). It lists every path first and asks
+`[y/N]`; `--yes` skips the question. Run without a terminal (by an agent) and without `--yes`, it writes nothing and
+says `ask the user: run … --yes yourself, or tell me to run it`: an agent never confirms for you. It never overwrites
+a file it didn't write. `uninstall` removes only the files `kiro.py` installed in that scope.
+
+In Kiro the commands are `/plumb-init`, `/plumb-create`, `/plumb-prototype`, and so on (Kiro skill names can't hold
+`:`), and every hook message names them that way. Kiro reads `AGENTS.md` as steering, so Plumb's "read before you
+work" row applies there too, and `/plumb-init` can add `.kiro/steering/plumb.md`. **After updating the Plumb plugin,
+run `install` again**: the copies point at one plugin folder, and Kiro's session line says when a newer Plumb sits next
+to it. If that folder is gone, every hook allows everything and the session line says the checks are off until you
+run `kiro.py install` again.
 
 This support was built from Kiro's documented formats and is tested in CI with Kiro-shaped input. **The live check on
 a real Kiro install is still pending**: treat it as a preview until a release note says it was verified.
@@ -117,6 +127,12 @@ I'll create:
   generated copy → apps/web/app/globals.css
 OK, or change something?
 ```
+
+**Detection is a first guess. Plumb shows it, and you confirm.** Plumb's detection only looks for well-known marker
+files (package manifests, monorepo configs, stylesheets, Xcode and Gradle projects), and no script knows every layout.
+When the result is uncertain, empty or odd, the agent also looks through the folders itself (manifests, global
+stylesheets, routes, screens) and corrects the picture. Either way it always shows you the block above, even when it
+is sure, and nothing it found is used until you confirm it.
 
 Say OK, or correct anything: the folder, the skill's name or place, the UI packages, the copy path. What you confirm is
 written into `PLUMB.md`, so no later command guesses again.
@@ -657,7 +673,7 @@ approval:
 | Command | What it records |
 |---|---|
 | `build-prototype.py --map billing --route /billing --files "app/billing/**"` | the route and source files, confirmed with you |
-| `build-prototype.py --approve billing` | your approval: who (git `user.name`), when, and a hash of the screen file. Editing the screen file afterwards makes the approval stale |
+| `build-prototype.py --approve billing` | your approval: who (git `user.name`, else `$USER` / `%USERNAME%`), when, and a hash of the screen file. Editing the screen file afterwards makes the approval stale |
 | `build-prototype.py --synced billing` | the screen file was updated to match code that was already built; listed for you to confirm, never blocking |
 | `build-prototype.py --check` | nothing written; exit 1 when a page or token block is stale, exit 2 when a walkthrough step points at something that no longer exists |
 
@@ -709,8 +725,8 @@ team tours in guide mode. The other mode is one click away.
 labels on several elements at once, a note placed anywhere, title cards (intro, chapter, closing), and text typed into a
 real field letter by letter in play mode.
 
-**Pointing:** spotlight (dims the rest), ring (outline, rest visible), arrow with a short label, beacon (a pulsing dot,
-still with reduced motion), zoom, and a cursor that moves and clicks in play mode. One step can point at several
+**Pointing:** spotlight (dims the rest), ring (outline, rest visible), arrow with a short label, beacon (a pulsing dot;
+static with reduced motion), zoom, and a cursor that moves and clicks in play mode. One step can point at several
 elements.
 
 **"Your turn" steps** teach: in guide mode the tour waits until the learner does the action on the real control (a wrong
@@ -951,7 +967,12 @@ the plugin.
   checked the same way. Whether the end-of-turn check can make Copilot keep working depends on Copilot's `agentStop`
   support: where it can't, Copilot shows the end-of-turn summary only and the edit check remains the hard guard.
   On Windows, Copilot runs each hook's PowerShell command (through `hooks/run.cmd`).
-- **Kiro:** the same three hooks through Kiro's hook files; refusals exit with the reason. Pending the live check.
+- **Kiro:** the same three scripts, each run with `--kiro` from `.kiro/hooks/plumb.json`: session start prints the
+  status line; the edit check runs on Kiro's `write` and `shell` tools and refuses with exit 2 and the `error:` and
+  `fix:` (or `ask the user:`) lines; the end-of-turn check answers `{"decision": "block", "reason": …}`. Kiro's docs
+  show that JSON for CLI v3; whether it makes the agent continue is part of the pending live check. On Windows each
+  hook starts through PowerShell, which adds about 0.3 s per hook. Hand edits to Plumb's own `.kiro/hooks/plumb.json`
+  and `.kiro/skills/plumb-*/` are refused too: change the checks in `PLUMB.md` and refresh with `kiro.py install`.
 
 ---
 
@@ -1137,8 +1158,9 @@ a comment, so they're visible and reviewed.
 **Can I turn the checks off?** Yes, in `PLUMB.md` (`Edit check`, `End-of-turn check`, `Prototype sync`). The audit
 still reports everything when you run it.
 
-**Does it work without git?** Yes, with fewer details: no "decided by" from git (you're asked for your name), and the
-session snapshot uses file modification times.
+**Does it work without git?** Yes, with fewer details. Decision entries written by `/plumb:create` ask for your name
+instead of reading git's `user.name`; screen approvals (`build-prototype.py --approve`) record your login name instead
+(`$USER`, or `%USERNAME%` on Windows), without asking; and the session snapshot uses file modification times.
 
 **Does it change my app without asking?** No. Every write is shown and asked first; the audit reports and `fix` applies
 only the groups you say yes to.

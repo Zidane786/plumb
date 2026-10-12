@@ -190,7 +190,9 @@ claude plugin validate --strict plugins/plumb
   `docs/USAGE.md`, TEST.md, `docs/what-you-get.html`) mentions a command that doesn't exist, a skill doesn't link
   the reference, a link points nowhere, `docs/USAGE.md` lacks a section for a command, a README doesn't link
   `docs/USAGE.md` near the top, a message the docs quote is no longer printed by the code, the what-you-get page
-  loads anything from the network, or an internal project name appears under `plugins/` — keep it green.
+  loads anything from the network, TEST.md's expected output no longer matches the code that prints it, or an
+  internal project name appears under `plugins/` or in the user docs (extra names, uncommitted:
+  `PLUMB_INTERNAL_NAMES=a,b`) — keep it green.
   `tests/test_portability.py` covers every `.py` in `plugins/`, `scripts/` and `tests/`.
 - **Parallel work, safely.** Each task runs in its own isolated git worktree, branched from
   `feat/1.0.0`, and is reviewed before it merges. Merge one at a time, with a merge commit. After

@@ -240,8 +240,10 @@ footer{border-top:1px solid var(--batten);padding-top:var(--s4);font-size:.9rem;
   .frame{grid-template-columns:minmax(0,1fr);gap:0}
   .rail{position:sticky;height:auto;padding-block:var(--s2);background:var(--plaster);z-index:5;border-bottom:1px solid var(--batten)}
   .rail .line,.rail .bob{display:none}
-  .rail nav{display:flex;gap:var(--s3);overflow-x:auto;padding-left:0;white-space:nowrap}
-  .rail .tools{display:none}
+  .rail{display:flex;align-items:center;gap:var(--s2)}
+  .rail nav{display:flex;gap:var(--s3);overflow-x:auto;padding-left:0;white-space:nowrap;flex:1;min-width:0}
+  .rail .tools{margin-top:0;padding-left:0;flex:none}  /* the theme button stays reachable on phones */
+  .rail .tools .btn{padding:3px 8px;font-size:.9rem;white-space:nowrap}
   .edit{grid-template-columns:minmax(0,1fr)}
   .shell{grid-template-columns:minmax(0,1fr)}
   .shell .snav{grid-auto-flow:column;border-right:none;border-bottom:1px solid var(--u-line);overflow-x:auto}
