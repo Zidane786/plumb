@@ -221,9 +221,9 @@ def test_stop_in_copilot_blocks_with_the_same_json(launcher, tmp_path, proj):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["decision"] == "block" and "#ff0000" in out["reason"]
-    # Copilot sends no stop_hook_active: the second stop only reports
+    # Copilot sends no stop_hook_active: the second stop never blocks again, and says nothing new
     r = run_hook(launcher, "stop_check.py", payload("copilot", "stop", CWD=str(proj)), proj, env)
-    assert "decision" not in json.loads(r.stdout)
+    assert r.returncode == 0 and r.stdout == ""
 
 
 # ---------------------------------------------------------------- hooks.json and run.cmd for both tools

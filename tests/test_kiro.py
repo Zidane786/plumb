@@ -665,9 +665,9 @@ def test_stop_blocks_once_with_the_decision_json(tmp_path, proj):
     out = json.loads(r.stdout)
     assert out["decision"] == "block" and "#ff0000" in out["reason"]
     actionable(out["reason"])
-    # Kiro sends no stop_hook_active: the next stop only reports, so it can never loop
+    # Kiro sends no stop_hook_active: the next stop never blocks again (and repeats nothing), so it can never loop
     r = hook(tmp_path, proj, "stop_check.py", "stop", env=env)
-    assert "decision" not in json.loads(r.stdout)
+    assert r.returncode == 0 and r.stdout == ""
 
 
 @needs_sh

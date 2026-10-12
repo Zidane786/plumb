@@ -7,11 +7,15 @@ audit.py (never the project's copy: trust boundary, see _hooklib) on the changed
 changed file gained this session, a new route with no prototype, and prototype sync (a built screen whose source files
 changed while its screen file did not; a screen that changed and is not approved).
 
-- New errors: {"decision": "block", "reason": "<the list, at most 10, each error: + fix:>"} on stdout, so the agent
-  goes on to fix them or say why not. It blocks once per finding: findings already blocked on this session (kept in
-  <snapshot>.blocked.json) and any run with stop_hook_active true (the agent is already continuing because of this
-  hook) only report them as {"systemMessage": ...}, so it can never loop.
+- New errors: {"decision": "block", "reason": "<the list, at most 10, each error: + fix:>, then 'If the user asked you
+  not to fix these now, say so and stop.'"} on stdout, so the agent goes on to fix them or say why not. It blocks once
+  per finding: findings already blocked on this session (kept in <snapshot>.blocked.json) and any run with
+  stop_hook_active true (the agent is already continuing because of this hook) only report them as
+  {"systemMessage": ...}, so it can never loop.
 - No errors: one line, "Plumb: N UI files checked, consistent".
+- Quiet when nothing changed: the systemMessage and the consistent line are printed only when the set of errors
+  differs from the last summary printed this session (kept in <snapshot>.summary.json), so the same errors are not
+  repeated at the end of every turn.
 
 GitHub Copilot CLI: whether a plugin's Stop hook reaches Copilot's agentStop and can make the agent continue is not
 verified yet (spec §17); the hook answers it with the same JSON, and live testing decides. Without that, the edit check
@@ -83,8 +87,23 @@ def main() -> int:
         H.note(f"the end-of-turn check was skipped ({type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''})")
         return 0
     errors = [f for f in findings if f.severity == "error"]
+    keys = sorted({_key(f) for f in errors})
+    summary_path = path.with_name(path.name[:-len(".json")] + ".summary.json")
+    try:
+        last = json.loads(H.read_private(summary_path) or "null")
+    except (OSError, ValueError, TypeError):
+        last = None
+    changed = last != keys  # the summary is printed again only when the findings differ from the last one shown
+
+    def shown() -> None:
+        try:
+            H.write_json(summary_path, keys)
+        except OSError:
+            pass  # without the record the next turn prints the summary again: noise, never a loop
+
     if not errors:
-        if checked:
+        if checked and changed:
+            shown()
             print(f"Plumb: {checked} UI file{'' if checked == 1 else 's'} checked, consistent")
         return 0
     n = len(errors)
@@ -93,16 +112,21 @@ def main() -> int:
         seen = set(json.loads(H.read_private(blocked_path) or "[]"))
     except (OSError, ValueError, TypeError):
         seen = set()
-    keys = [_key(f) for f in errors]
     if not p.stop_hook_active and any(k not in seen for k in keys):
         try:
             H.write_json(blocked_path, sorted(seen | set(keys)))
         except OSError:
             pass  # without the record the next turn may block again: still never a loop (stop_hook_active)
+        shown()
         head = (f"Plumb end-of-turn check: {n} new design-system error{'' if n == 1 else 's'} in the files changed this "
                 f"session. Fix them now, or tell the user why not (this check stops you once):")
-        print(json.dumps({"decision": "block", "reason": H.tool_text("\n".join([head] + _listing(proj, errors)))}))
+        tail = "If the user asked you not to fix these now, say so and stop."
+        print(json.dumps({"decision": "block",
+                          "reason": H.tool_text("\n".join([head] + _listing(proj, errors) + [tail]))}))
         return 0
+    if not changed:
+        return 0  # the same errors as the last summary this session: said already
+    shown()
     head = f"Plumb end-of-turn check: {n} design-system error{'' if n == 1 else 's'} remain in the files changed this session:"
     print(json.dumps({"systemMessage": H.tool_text("\n".join([head] + _listing(proj, errors)))}))
     return 0

@@ -7,7 +7,9 @@ In such a project, in this order:
 1. Guard, always on: refuses a hand edit to
    - a generated file: <skill>/assets/platforms/web/tokens.css and tailwind.tokens.js, the mobile themes
      (assets/platforms/mobile/ios/*Theme.swift, android/*Theme.kt, and any *Theme.swift / *Theme.kt that carries the
-     GENERATED header), the copies listed in $extensions.plumb.web.copies, <docs>/specimen.html, <docs>/prototype.html,
+     GENERATED header), Plumb's block in the copies listed in $extensions.plumb.web.copies (an edit tool's change that
+     leaves the text from /* plumb:start ... */ to /* plumb:end */ as it is passes: the rest of a copy is the
+     project's; a shell write or removal of a copy is refused), <docs>/specimen.html, <docs>/prototype.html,
      <docs>/screens.html, <docs>/prototype/screens.json and <docs>/tours/*.html (a tour page that does not carry the
      GENERATED header is someone's own page and is left alone);
    - one of Plumb's own files: the design-system skill's [P] files (scripts/*.py, templates/*,
@@ -135,6 +137,54 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
     if _THEME.search(in_project) and os.path.isfile(path) and _generated_header(path):
         return _tokens_output(proj, shown)
     return None
+
+
+def is_copy(proj: H.Project, path: str) -> bool:
+    """The path is one of the web copies ($extensions.plumb.web.copies), where Plumb owns only its marked block."""
+    in_home = H.under(path, proj.home_root())
+    return bool(in_home) and H.fold(in_home) in {H.fold(c) for c in proj.copies}
+
+
+def copy_edit_keeps_block(path: str, change: H.Change) -> bool:
+    """True when this edit to a web copy leaves Plumb's block exactly as it is: the rest of the file is the project's.
+    A copy with no block yet is the project's own file (the next build adds the block), unless it is a whole file an
+    older build generated (its GENERATED header); so is one with broken markers (the build refuses it until they are
+    fixed by hand). A delete or move, or an edit whose result cannot be known (an old string not in the file, a patch
+    that does not apply), counts as changing the block."""
+    if change.kind in ("delete", "move", "path"):
+        return False
+    try:
+        with open(path, "rb") as fh:
+            before: Optional[str] = H.normalise(fh.read().decode("utf-8", "replace"))
+    except FileNotFoundError:
+        before = None
+    except OSError:
+        return False
+    if before is None:
+        return True  # no file yet: nothing generated to protect
+    block = H.block_text(before)
+    if block is None:
+        if H.BLOCK_START in before or H.BLOCK_END in before:
+            return True  # broken markers (no edit can break them: it would change the block): the build refuses
+            #              until they are fixed, so let them be fixed by hand
+        return not _generated_header(path)
+    after = change.after(before)
+    return after is not None and H.block_text(after) == block
+
+
+def _has_block(path: str) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            return H.BLOCK_START in fh.read().decode("utf-8", "replace")
+    except OSError:
+        return False
+
+
+def _copy_block_output(proj: H.Project, shown: str) -> str:
+    return (f"error: {shown} is generated from the design tokens between its /* plumb:start ... */ and /* plumb:end */ "
+            f"lines, and this edit changes that block; a hand edit there is lost on the next build\n"
+            f"fix: edit only outside the block (the rest of {shown} is yours), or change the tokens with /plumb:update, "
+            f"then rebuild: {proj.script('build-tokens.py')}")
 
 
 def guarded_files(proj: H.Project, cwd: str) -> List[str]:
@@ -311,7 +361,13 @@ def main() -> int:
     if not p.changes:
         return 0
     for c in p.changes:
-        why = guard(proj, H.resolve(c.path, base))
+        path = H.resolve(c.path, base)
+        why = guard(proj, path)
+        if why and is_copy(proj, path):
+            if copy_edit_keeps_block(path, c):
+                why = None  # an edit outside Plumb's block: the rest of a web copy is the project's
+            elif _has_block(path):
+                why = _copy_block_output(proj, why.split(" is generated", 1)[0][len("error: "):])
         if why:
             return H.refuse(why, p.copilot)
     why = checks(p, proj, base)
