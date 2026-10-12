@@ -23,6 +23,8 @@ def test_every_approve_suggestion_asks_the_user_first() -> None:
             if SUGGESTION.search(line) and "add_argument" not in line:
                 around = " ".join(lines[max(0, i - 4):i + 4])
                 assert re.search(r"[Oo]nly after|ask the user|_ask_approve", around), f"{path.name}:{i + 1}: {line.strip()}"
+                if "ask the user:" in around:  # one wording everywhere: the yes comes before the command
+                    assert re.search(r"[Oo]nly after[\s\"f]*their yes", around), f"{path.name}:{i + 1}: {line.strip()}"
 
 
 def test_audit_prints_ask_the_user_lines_as_they_are() -> None:
