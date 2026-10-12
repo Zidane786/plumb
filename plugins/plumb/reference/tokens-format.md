@@ -36,7 +36,7 @@ records `Themes: light-only` in `PLUMB.md` (and a decision entry); then the dark
 
 | Group | `$type` | Keys and notes |
 |---|---|---|
-| `color` | `color` | Roles, not hues: `background`, `surface`, `sunk`, `on-surface`, `on-surface-muted`, `primary`, `on-primary`, `outline`, `outline-input`, `danger`, `on-danger`, `success`, `on-success`, `warning`, `info`, `link`, `scrim` … Every `X` that text sits on has an `on-X`. Values `#rgb`, `#rrggbb`, `#rrggbbaa`. |
+| `color` | `color` | Roles, not hues: `background`, `surface`, `sunk`, `on-surface`, `on-surface-muted`, `primary`, `on-primary`, `outline`, `outline-input`, `danger`, `on-danger`, `success`, `on-success`, `warning`, `info`, `link`, `scrim` … Every `X` that text sits on has an `on-X`. Values `#rgb`, `#rrggbb`, `#rrggbbaa`; `oklch(L C H [/ A])` and `oklab(L a b [/ A])` (as shadcn writes them) are read too and built as sRGB (clipped to the sRGB gamut). |
 | `label` | `color` | Category or status label colours (tags, chips): `label.blue`, `label.amber`… Each with a dark value. CSS `--color-label-<name>`. |
 | `font` | `fontFamily` | Arrays, first family then the system stack: `["Inter", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]`. No hosted fonts: a project font is embedded from the project's own files. |
 | `typography` | `typography` | Composite: `fontSize`, `lineHeight`, `fontWeight` (+ optional `letterSpacing`, `fontFamily`). Default names `display h1 h2 h3 body-lg body sm xs`; the names are the type scale the audit enforces. |

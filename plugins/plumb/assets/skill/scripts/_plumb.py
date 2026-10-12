@@ -300,13 +300,67 @@ _HEX = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 def _bad_color(v: object) -> PlumbError:
     return _err(
         f"not a colour value: {v!r}",
-        "use #rgb, #rrggbb, #rrggbbaa or a DTCG colour object with a hex field (named colours are not supported)",
+        "use #rgb, #rrggbb, #rrggbbaa, oklch(L C H) / oklab(L a b) or a DTCG colour object with a hex field (named colours are not supported)",
     )
 
 
+_OK = re.compile(r"^(oklch|oklab)\(\s*([^\s/)]+)\s+([^\s/)]+)\s+([^\s/)]+)\s*(?:/\s*([^\s)]+)\s*)?\)$", re.I)
+
+
+def _ok_number(s: str, percent_of: float) -> float:
+    s = s.strip().lower()
+    if s == "none":
+        return 0.0
+    if s.endswith("%"):
+        return float(s[:-1]) / 100 * percent_of
+    if s.endswith("deg"):
+        s = s[:-3]
+    return float(s)
+
+
+def oklab_to_hex(lightness: float, a: float, b: float) -> str:
+    """#rrggbb for an OKLab colour (Björn Ottosson's matrices), clipped to sRGB."""
+    l_ = lightness + 0.3963377774 * a + 0.2158037573 * b
+    m_ = lightness - 0.1055613458 * a - 0.0638541728 * b
+    s_ = lightness - 0.0894841775 * a - 1.2914855480 * b
+    l3, m3, s3 = l_ ** 3, m_ ** 3, s_ ** 3
+    rgb = (4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3,
+           -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3,
+           -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3)
+
+    def encode(x: float) -> int:
+        x = min(1.0, max(0.0, x))
+        x = 12.92 * x if x <= 0.0031308 else 1.055 * x ** (1 / 2.4) - 0.055
+        return round(min(1.0, max(0.0, x)) * 255)
+
+    return "#" + "".join(f"{encode(c):02x}" for c in rgb)
+
+
+def _parse_ok(text: str) -> Optional[Tuple[str, float]]:
+    """('#rrggbb', alpha) for CSS oklch(L C H [/ A]) or oklab(L a b [/ A]) (as shadcn writes them), else None."""
+    m = _OK.match(text.strip())
+    if not m:
+        return None
+    try:
+        lightness = _ok_number(m.group(2), 1.0)
+        if m.group(1).lower() == "oklch":
+            chroma, hue = _ok_number(m.group(3), 0.4), math.radians(_ok_number(m.group(4), 1.0))
+            a, b = chroma * math.cos(hue), chroma * math.sin(hue)
+        else:
+            a, b = _ok_number(m.group(3), 0.4), _ok_number(m.group(4), 0.4)
+        alpha = _ok_number(m.group(5), 1.0) if m.group(5) else 1.0
+    except ValueError:
+        return None
+    return oklab_to_hex(lightness, a, b), round(min(1.0, max(0.0, alpha)), 4)
+
+
 def parse_color(v: object) -> Tuple[str, float]:
-    """('#rrggbb', alpha) from #abc, #aabbcc, #aabbccdd or a DTCG object {colorSpace, components, alpha, hex}."""
+    """('#rrggbb', alpha) from #abc, #aabbcc, #aabbccdd, oklch(...) / oklab(...) (converted to sRGB, clipped) or a DTCG
+    object {colorSpace, components, alpha, hex}."""
     if isinstance(v, str):
+        ok = _parse_ok(v)
+        if ok is not None:
+            return ok
         m = _HEX.match(v.strip())
         if not m:
             raise _bad_color(v)

@@ -212,3 +212,33 @@ def test_a_decimal_name_next_to_the_same_nested_groups_is_refused() -> None:
     with pytest.raises(P.PlumbError) as exc:
         P.resolve(_nested_and_decimal(), "z.1.2")
     assert_formatted(exc.value)
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("oklch(1 0 0)", ("#ffffff", 1.0)),
+    ("oklch(0 0 0)", ("#000000", 1.0)),
+    # Tailwind v4's neutral and red steps (oklch) and their published sRGB hex
+    ("oklch(0.145 0 0)", ("#0a0a0a", 1.0)),
+    ("oklch(0.205 0 0)", ("#171717", 1.0)),
+    ("oklch(0.556 0 0)", ("#737373", 1.0)),
+    ("oklch(0.922 0 0)", ("#e5e5e5", 1.0)),
+    ("oklch(0.985 0 0)", ("#fafafa", 1.0)),
+    ("oklch(0.577 0.245 27.325)", ("#e7000b", 1.0)),
+    # sRGB red in OKLab / OKLCH (Ottosson's reference values), with % lightness and deg hue
+    ("oklab(0.62796 0.22486 0.12585)", ("#ff0000", 1.0)),
+    ("oklch(62.8% 0.2577 29.23deg)", ("#ff0000", 1.0)),
+    ("OKLCH(0.6279 0.2577 29.23)", ("#ff0000", 1.0)),
+    # alpha as shadcn writes it
+    ("oklch(1 0 0 / 10%)", ("#ffffff", 0.1)),
+    ("oklch(1 0 0 / 0.06)", ("#ffffff", 0.06)),
+])
+def test_parse_color_reads_oklch_and_oklab(value: str, expected: tuple) -> None:
+    assert P.parse_color(value) == expected
+
+
+def test_parse_color_clips_out_of_gamut_and_refuses_bad_oklch() -> None:
+    assert P.parse_color("oklch(0.7 0.4 145)")[0].startswith("#")  # far outside sRGB: clipped, not an error
+    for bad in ("oklch(1 0)", "oklch(a b c)", "lch(50 30 20)"):
+        with pytest.raises(P.PlumbError) as exc:
+            P.parse_color(bad)
+        assert_formatted(exc.value)
