@@ -444,11 +444,30 @@ def kebab(text: str) -> str:
 
 
 def project_name(root: Path) -> str:
+    """The project id: the root package.json's name (without an @scope/), else the folder's name, made lower-case
+    with hyphens by kebab(); "project" when neither has a letter or digit. The one rule detect.py proposes the skill
+    folder (<id>-design-system) with and scaffold.py names the tokens file with (project_id)."""
     raw = ""
     if (root / "package.json").is_file():
         raw = str(load_package_json(root / "package.json").get("name") or "")
         raw = raw.split("/")[-1]
     return kebab(raw) or kebab(root.name) or "project"
+
+
+SKILL_SUFFIX = "-design-system"
+
+
+def project_id(root: Path, skill_dir: Optional[str] = None) -> str:
+    """The project id scaffold.py writes (tokens file <id>.tokens.json, $extensions.plumb.project, the theme names):
+    the confirmed skill folder's name without -design-system when it is named that way (detect.py proposed it from
+    project_name, or the person chose another), else project_name(root). So the two never disagree."""
+    if skill_dir:
+        folder = str(skill_dir).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        if folder.endswith(SKILL_SUFFIX):
+            own = kebab(folder[:-len(SKILL_SUFFIX)])
+            if own:
+                return own
+    return project_name(root)
 
 
 # --- PLUMB.md --------------------------------------------------------------------------------
