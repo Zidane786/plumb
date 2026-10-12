@@ -693,10 +693,15 @@ Copilot hooks), which adds about 0.3 s per hook.
 fails, only added lines are checked); camelCase `toolName`/`toolArgs` input; no
 `permission_mode`; `tool_result` instead of `tool_response`; exit-2 stderr is hidden, so with
 `COPILOT_CLI` set a refusal is `{"permissionDecision": "deny", …}` on stdout (flat and in
-`hookSpecificOutput`) with exit 0; session start returns `{"additionalContext": …}`. Whether a
-plugin's `Stop` hook reaches Copilot's `agentStop` and can make it continue is verified first in
-the build; if not, Copilot shows the end-of-turn summary only and the edit check remains the hard
-guard there, and the README says so.
+`hookSpecificOutput`) with exit 0; session start returns `{"additionalContext": …}`. A plugin's
+`Stop` hook reaches Copilot's `agentStop` and makes it continue (live run, 2026-10-12): the block
+arrives as a new prompt, so it can override an earlier "don't fix now"; the skills say to report
+and stop then. Copilot ignores a skill's `allowed-tools`, so every script run asks: the skills run
+a step's scripts in one shell call, keep temporary files in `<root>/.plumb-tmp/` (ignored through
+its own `.gitignore`, removed after the step) instead of the OS temp folder, and pass routes as
+`--route=<route>` (a bare `/` reads as a path). Copilot's skill tool lists only skills the model
+may start, so the user-only skills say they are already loaded (else Copilot prints a harmless
+`Skill not found`).
 
 **Safety:** hooks fail open (no Python, no `PLUMB.md`, a missing or broken `audit.py`, unreadable
 input → exit 0 with at most one stderr line); non-UI edits exit in about 50 ms and UI edits stay
@@ -933,7 +938,8 @@ framework (components are agent-written from specs); a hosted or shared prototyp
 ## 17. Verified during the build (not assumed)
 
 1. A plugin `Stop` hook in Copilot CLI: does it map to `agentStop`, and can it make the agent
-   continue? Decides the Copilot end-of-turn behaviour in §8.
+   continue? Decides the Copilot end-of-turn behaviour in §8. (Live run 2026-10-12: yes, it
+   continues.)
 2. Do both tools load root `.claude/skills/` when a session opens inside a monorepo package?
    Decides the pointer row in §4.
 3. Copilot's edit tool names for the PreToolUse matcher (Slate's matcher is the starting point).

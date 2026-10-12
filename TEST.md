@@ -211,15 +211,25 @@ claude --plugin-dir <repo>/plugins/plumb
 
 Try, in order, and report what happens. Use tmux (or a second terminal) if you want pane captures as evidence.
 
-- [ ] `/plumb:init` → the "Plumb found … I'll create … OK, or change something?" block, nothing written before you say
-      OK; then "existing or new?" with the detected one marked (Recommended).
+- [ ] `/plumb:init` → the **whole** "Plumb found … I'll create … OK, or change something?" block printed in the chat
+      (project, layout, UI, the skill dir, `PLUMB.md`, `docs/design/`, the generated copy with its `exists:` line when
+      the stylesheet already exists, the UI files), never a one-line summary or "the setup above" with nothing above;
+      nothing written before you say OK; then "existing or new?" with the detected one marked (Recommended).
 - [ ] Choose **create**. The product questions come before any design question; every question has options with one
       marked (Recommended) and a reason; it asks before writing `docs/design/directions.html`; the directions page
       opens from disk and shows 2–3 distinct directions in light and dark.
+- [ ] Dark mode asks how the app switches themes (system · class · both, both recommended) and reduced motion asks keep
+      fades or none; both land in the tokens file (`$extensions.plumb.web.theme_switch`,
+      `$extensions.plumb.motion.reduced`).
 - [ ] It shows the full token set (light and dark) and the `scaffold.py --dry-run` file list, and writes only after you
-      say OK. The audit on the components it writes exits 0; `docs/design/specimen.html` exists.
+      say OK. The answers JSON goes in `<project>/.plumb-tmp/` (never `/tmp`) and the folder is gone after the scaffold.
+      Before the first build it says what changes in your existing stylesheet (e.g. `app/globals.css`: only a marked
+      `plumb:start … plumb:end` block is Plumb's) and asks. The audit on the components it writes exits 0;
+      `docs/design/specimen.html` exists.
 - [ ] Every decision is in `docs/design/decisions.md` with `Decided by:` your git name.
-- [ ] Init's wire-in: each item is asked on its own (`PLUMB.md`, both checks, the `AGENTS.md` row, the Makefile).
+- [ ] Init's wire-in: each item is asked on its own (`PLUMB.md`, both checks, the `AGENTS.md` row, the Makefile),
+      also in a project with no `AGENTS.md` and no `Makefile`. Say no to the Makefile → `PLUMB.md`'s `## Commands`
+      lines show the direct commands (no `make …`), and `scaffold.py --verify` ends `verify: ok`.
 - [ ] Start a **new** session. The first context line is
       `Plumb: <project>-design-system 1.0.0 · tokens up to date · N audit issues · read the skill before UI changes`
       (ask the agent "what did the Plumb session note say?").
@@ -237,12 +247,14 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       asks you to approve it, then records the decision. Now the agent can create the page.
 - [ ] `/plumb:tour` → asks who is watching; shows the steps as a table; writes `tours/<id>.json` only on your OK;
       `docs/design/tours/<id>.html` plays offline.
-- [ ] Map the built screen (`build-prototype.py --map reports --route /reports --files "app/reports/**"`), then ask the
+- [ ] Map the built screen (`build-prototype.py --map reports --route=/reports --files "app/reports/**"`), then ask the
       agent to change what the reports page shows **without** touching its screen file → at the end of the turn the
       agent is stopped once with `Plumb end-of-turn check: …`; it updates the screen file and asks you to approve it.
       It does not loop.
-- [ ] `/plumb:audit` → terminal summary, `docs/design/audit-YYYY-MM-DD.html` with an Agent review section; then
-      `/plumb:audit fix` groups the issues and asks before each group.
+- [ ] `/plumb:audit` → terminal summary, `docs/design/audit-YYYY-MM-DD.html` with an Agent review section; exit 1 is
+      reported as "errors found", not as a crash; it asks for the dev server's URL instead of probing `localhost`; it
+      offers Slate tickets only in a project with `kanban/board.py`. Then `/plumb:audit fix` groups the issues and asks
+      before each group.
 - [ ] `/plumb:ux reports` → asks for the dev server URL (say "not running": it reviews the prototype and the code),
       writes `ux-review-YYYY-MM-DD.html`.
 - [ ] `/plumb:update add iOS` → shows the dry-run list (your files `skip: … (yours, kept)`), asks, then writes the
@@ -275,9 +287,14 @@ Restart Copilot, open the same kind of scratch project, and report:
 - [ ] The raw-colour edit, the hand edit to a generated file (with the edit tool and with a shell write) and the new
       page are **refused with Plumb's reason** (the `error:` and `fix:` text), not just "hook exited with code 2".
 - [ ] `/plumb:prototype` and `/plumb:status` run as in level 4.
-- [ ] End-of-turn: change a UI file with a raw colour while the edit check is off (`Edit check: off` in `PLUMB.md`),
-      and record whether Copilot continues to fix it (its `agentStop` honours the block) or only shows the summary.
-      Either is acceptable; record which.
+- [ ] `/plumb:init` on a scratch app with UI (it routes to extract): the full placement block is printed; screens are
+      mapped with `--route=/` (no "Allow path access" prompt for `/`); the answers JSON stays in `.plumb-tmp/`; the
+      agent never runs `build-prototype.py --approve` before you said yes to that screen; the wire-in asks the
+      `AGENTS.md` row and the Makefile even when neither file exists. A `✗ skill(plumb:init) Skill not found` line
+      at the start is expected and harmless. Count the permission prompts (Copilot ignores `allowed-tools`).
+- [ ] End-of-turn: change a UI file with a raw colour while the edit check is off (`Edit check: off` in `PLUMB.md`):
+      Copilot continues (its `agentStop` honours the block). Then repeat after telling the agent "don't fix it now":
+      it reports what the check found and stops.
 - [ ] **Windows only:** the same refusals in PowerShell (the hooks run `hooks/run.cmd`); a machine without Python must
       not block any tool call.
 
