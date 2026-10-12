@@ -69,7 +69,15 @@ form.addEventListener("submit", function (event) {
 ## The quality bar (Effective HTML)
 
 When the Effective HTML skills are installed, variants, screen files and directions follow `html-prototype` and
-`design-artifact`. When they are not, these rules are the bar:
+`design-artifact`. When they are not, these rules are the bar.
+
+**The project's design system outranks Effective HTML.** In a project, the `<project>-design-system` skill (its
+tokens file, `design.md` and `references/`) is the authority for every page and screen Plumb produces. Effective HTML
+(`html`, `html-prototype`, `design-artifact`) is followed for **craft only**: real content, states, interactions,
+accessibility and polish. It never chooses the palette, typography, spacing, radius or motion; where its guidance
+conflicts with the project's system, the system wins. Prototypes and screen files use only the inlined token block
+(CSS variables), and the audit exits 0 on them. The one exception is `/plumb:create`'s directions page, written before
+any system exists: each direction is a candidate system, so there Effective HTML may shape the look too.
 
 - **Real content:** the product's real words, names, numbers and lengths (a long name, a zero, a big number), never
   lorem ipsum or "Item 1".
@@ -79,7 +87,8 @@ When the Effective HTML skills are installed, variants, screen files and directi
 - **Keyboard and focus:** every control reachable by Tab in a sensible order, a visible focus ring (the focus token),
   Esc closes what opened, labels on every field and icon-only button.
 - **Both themes:** check light and dark; nothing disappears or loses contrast in dark.
-- **Reduced motion:** with `prefers-reduced-motion`, nothing slides or fades; state changes are instant.
+- **Reduced motion:** with `prefers-reduced-motion`, nothing slides; fades stay only when the tokens file's
+  `$extensions.plumb.motion.reduced` is `"keep-fades"`, otherwise state changes are instant.
 - **No generic look:** a deliberate hierarchy (one primary action per view), the system's type pairing and spacing
   rhythm, real density for the audience; nothing that looks machine-made or like three recolours of one layout.
 - **Mobile platforms** sit in a phone frame with that platform's conventions (iOS navigation bar and tab bar, Android

@@ -460,3 +460,24 @@ def test_copilot_reference_covers_the_live_findings() -> None:
     flat = _flat(REFERENCE / "copilot.md")
     for phrase in ("allowed-tools", "--allow-tool", "skill not found", "--route=/", ".plumb-tmp/", "one shell call"):
         assert phrase in flat, f"copilot.md: {phrase!r}"
+
+
+SYSTEM_WINS = "the project's design system outranks effective html"
+
+
+@pytest.mark.parametrize("name", HTML_WRITERS)
+def test_the_projects_design_system_outranks_effective_html(name: str) -> None:
+    # Owner requirement: Effective HTML is for craft only; palette, type, spacing, radius and motion come from the system.
+    flat = _flat(SKILLS / name / "SKILL.md").replace("*", "")
+    assert SYSTEM_WINS in flat and "craft only" in flat and "the system wins" in flat, name
+    if name == "create":
+        assert "directions page is the one exception" in flat
+
+
+def test_quality_bar_states_the_system_outranks_effective_html() -> None:
+    text = (REFERENCE / "prototypes.md").read_text(encoding="utf-8")
+    section = text.split("## The quality bar (Effective HTML)", 1)[1].split("\n## ", 1)[0]
+    flat = " ".join(section.split()).lower().replace("*", "")
+    for phrase in (SYSTEM_WINS, "craft only", "the system wins", "inlined token block", "audit exits 0",
+                   "directions page"):
+        assert phrase in flat, phrase

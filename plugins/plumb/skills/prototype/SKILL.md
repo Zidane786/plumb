@@ -69,7 +69,10 @@ now, report and stop. Copilot CLI asks for every command: join a step's script c
   each a distinct, finished-looking option. If the Effective HTML skills `html-prototype` and `design-artifact` are
   available in this session, follow them (optional; never install them); otherwise Plumb's built-in quality bar in
   [prototypes.md](../../reference/prototypes.md) (real content, every state,
-  working interactions, keyboard and focus, both themes, reduced motion, no generic look).
+  working interactions, keyboard and focus, both themes, reduced motion, no generic look). **The project's design
+  system outranks Effective HTML:** its tokens, `design.md` and references decide palette, type, spacing, radius and
+  motion; Effective HTML guides craft only (content, states, interactions, accessibility, polish), and where they
+  disagree the system wins.
 - **Ask before writing:** "I'll write the variants' screen files in
   `<docs>/prototype/proposals/<name>/<variant>/screens/` (+ an `idea.md` per variant) and build both views with
   `build-prototype.py --proposal <name>`. OK?" Write only on a yes.

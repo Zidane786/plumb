@@ -84,7 +84,11 @@ screen of a key task, each in light and dark. When the Effective HTML skills
 built-in quality bar: start from `ROOT/templates/directions.html` and its rules, and
 [prototypes.md](../../reference/prototypes.md) "The quality bar". Effective HTML is
 optional; never install it. Nothing from the network. **OK?** pick one · combine (which parts) ·
-change something.
+change something. **The project's design system outranks Effective HTML:** its tokens, `design.md` and references
+decide palette, type, spacing, radius and motion; Effective HTML guides craft only (content, states, interactions,
+accessibility, polish), and where they disagree the system wins. The directions page is the one exception: before any
+system exists each direction is a candidate system, so Effective HTML may shape its look; from E on (specimen,
+components, prototypes) the system wins.
 
 ## E. Generate (each checkpoint waits for the user)
 
