@@ -1,0 +1,126 @@
+# Walkthroughs: tour files, guide mode and play mode
+
+Three things, kept apart:
+
+- **the screens** (`/plumb:prototype`, [prototypes.md](prototypes.md));
+- **the walkthrough player**, built into every `prototype.html` by `build-prototype.py` (guide mode and play mode);
+- **a tour file** (`<docs>/prototype/tours/<id>.json`): which steps, which words. `/plumb:prototype` writes a default
+  one for every flow it builds and updates it when the flow changes; `/plumb:tour` writes extra or custom ones.
+
+The prototype stays fully clickable with or without tours. `<docs>` is the docs folder (default `docs/design`).
+
+## The two modes
+
+- **Guide mode:** step by step with Next and Back (arrow keys; Esc leaves), a spotlight and a coach mark on each step's
+  element. For a reviewer, a new teammate, a learner.
+- **Play mode:** plays the flow like a video for a client or a demo: actions run by themselves, captions narrate, a
+  progress bar has a marker per chapter you can jump to, Space pauses and resumes, restart, speed 0.5×, 1×, 1.5×, 2×.
+  With reduced motion it still plays by itself; only the cursor glide and animation are dropped.
+
+The `audience` picks the mode that opens first: `client` and `whats-new` open in play mode; `training`, `review` and
+`team` in guide mode. Either mode is one click away. Links: `prototype.html#tour-<id>` opens a tour,
+`#tour-<id>-<n>` its step n. Captions and callouts are `aria-live`; every control works by keyboard; a skip link leads
+to the walkthrough.
+
+## The file
+
+One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits, `_` and `-` (and not
+`<another tour>-<n>`, which reads as a step link).
+
+```json
+{
+  "title": "Taking a booking",
+  "audience": "client",
+  "purpose": "Show the owner how a host takes a booking in under a minute.",
+  "speed": 1,
+  "intro":   {"title": "Taking a booking", "text": "What you'll see: tonight's tables, a booking, the confirmation.", "hold": 600},
+  "chapters": [
+    {"title": "Tonight at a glance", "steps": [
+      {"screen": "home", "state": "ready", "title": "Tonight's tables",
+       "caption": "The host lands on tonight's tables, in time order.",
+       "target": ".tables", "point": "spotlight",
+       "labels": [{"target": "h2", "text": "1 Today"}, {"target": "[data-test=new-booking]", "text": "2 New booking"}]},
+      {"screen": "home", "title": "Start a booking", "caption": "One link starts a new booking.",
+       "target": "[data-test=new-booking]", "point": {"style": "arrow", "label": "Start here"},
+       "callout": {"text": "Every booking starts here", "side": "bottom"},
+       "action": {"click": "[data-test=new-booking]"}}
+    ]},
+    {"title": "Take the booking", "steps": [
+      {"screen": "booking", "title": "Type the guest's name", "caption": "The name is the only field to fill in.",
+       "target": "[data-test=guest]", "point": "ring", "action": {"type": "Zoë Brontë"}},
+      {"screen": "booking", "title": "Book the table", "caption": "Your turn: book the table.",
+       "target": "[data-test=save]", "point": "cursor", "action": {"click": true},
+       "your_turn": true, "hint": "Not that one: press “Book the table”, the highlighted button."},
+      {"screen": "booking", "state": "success", "title": "Booked", "caption": "Confirmed on the same page.",
+       "target": ".banner", "point": "beacon", "note": {"text": "Saved in one step", "x": 62, "y": 18}}
+    ]}
+  ],
+  "closing": {"title": "What to try next", "text": "Take a booking yourself, or try the error state.", "hold": 600}
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `title` | The tour's name (shown in the player and the tour page). |
+| `audience` | `client`, `training`, `review` (default), `team` or `whats-new`: sets the caption tone and the opening mode. |
+| `purpose` | One sentence: why this tour exists (shown on the intro). |
+| `speed` | Default play speed: `0.5`, `1`, `1.5` or `2`. |
+| `intro`, `closing` | Title cards: `{"title", "text", "hold"}` ("what you'll see", "what to try next"). |
+| `chapters` | Named groups of steps, shown as scene markers: `{"title", "text", "hold", "steps": [...]}`. Or a flat `steps` list instead. |
+| `hold` | Milliseconds to stay on a card, chapter title or step (longer for a step that needs reading), at most 60000. |
+
+**A step:**
+
+| Field | Meaning |
+|---|---|
+| `screen` | The screen id (its file name in `prototype/screens/`). |
+| `state` | One of that screen's `data-state` names (default: its first). |
+| `title`, `caption` | The coach-mark title and the subtitle / narration line. Use the project's vocabulary and the audience's tone. |
+| `target` or `targets` | One CSS selector, or several (several rings or labels in one step). |
+| `point` | How to point at the target: `spotlight` (dims the rest), `ring` (outline, rest visible), `arrow`, `beacon` (a pulsing dot; static with reduced motion), `zoom` (enlarges the area), `cursor` (moves and clicks in play mode), `none`; or `{"style": "arrow", "label": "Start here"}`. |
+| `callout` | A bubble attached to the target: `{"text", "side": "top" \| "right" \| "bottom" \| "left"}`. |
+| `labels` | Numbered or named tags on several elements: `[{"target", "text"}]`. |
+| `note` | Text placed anywhere: `{"text", "x", "y"}` (percent of the screen). |
+| `action` | What happens: `{"click": SELECTOR}` or `{"click": true}` (the target), `{"type": TEXT, "target"?}` (typed letter by letter in play mode), `{"choose": VALUE, "target"?}` (a select or radio), `{"wait": MS}`. |
+| `your_turn` | Teaching: in guide mode the tour waits until the learner performs the action on the real control (a wrong click shows `hint`); play mode performs it by itself. One tour is both the demo and the hands-on lesson. |
+| `hint` | What to say after a wrong try on a `your_turn` step. |
+| `hold` | As above. |
+
+## Targets must exist in the screen file
+
+Every selector a step uses (`target`, `targets`, `labels[].target`, `action` targets) must match an element **in the
+screen file's markup**, in that step's state or the screen's shared content. The element may be hidden (a
+`hidden` error message that appears after a wrong submit is a fine target); it may not be something a script creates at
+run time, because the check reads the file, not the running page. Prefer stable hooks: `[data-test=save]`, a class,
+an element type inside the section; avoid deep positional chains.
+
+`build-prototype.py` checks every tour against the screens with a standard-library CSS subset (type, `#id`, `.class`,
+`[attr op value i]`, descendant, `>`, `+`, `~`, `:first-child`, `:last-child`, `:only-child`, `:nth-child()`,
+`:nth-of-type()`, `:not()`, `:is()`, `:checked`, `:disabled`, `:required`). A bad field, an unknown screen or state, a
+selector that matches nothing, or one the check cannot read exits 2 naming the tour file, the line and the fix.
+
+**When a tour breaks** (a screen changed, an element was renamed): the build and `--check` exit 2 until the tour is fixed
+(update the step's selector or state, or the screen file). `--map`, `--approve` and `--synced` still write
+`screens.json`, warn about the tour and exit 0, so recording an approval never waits on a tour. Fix the tour in the same
+change that broke it: `/plumb:prototype` updates the default tour of the flow it changes; `/plumb:tour <id>` rewrites a
+custom one.
+
+## Every tour is also its own page
+
+`build-prototype.py` writes `<docs>/tours/<id>.html` for each tour: one self-contained file with the whole prototype
+(screens, tokens, interactions) and that tour, opening straight into it (play mode for a client or what's-new audience,
+guide mode otherwise). It opens from disk with no server and no network, so it can be emailed or put in training
+material; viewers can leave the tour and click around. It is generated: never edit it, it is rebuilt whenever a screen
+or the tour changes, and `--check` fails when it is stale. A tour page whose tour file was removed is deleted.
+
+Turning a tour into in-app onboarding in the live product is not part of Plumb 1.0.0.
+
+## Writing good tours
+
+- **Default tour per flow** (`/plumb:prototype`): the happy path of the flow, one step per meaningful screen or action,
+  plus one step on the most important non-happy state (the error or empty state); `audience: "review"`.
+- **Custom tours** (`/plumb:tour`): ask who is watching and what they should take away; pick the screens and states
+  across one flow or several; chapters per part of the story; an intro ("what you'll see") and a closing card ("what to
+  try next"); `your_turn` steps for training; a longer `hold` where there is something to read.
+- Captions say what the person does and why it matters, in the product's words (`vocabulary.md`), one sentence each.
+- Keep annotations few per step: one pointer plus at most a callout or a set of labels.

@@ -5,6 +5,7 @@ Usage:
   audit.py [PATHS...] [--json] [--no-tokens] [--root SKILL_DIR] [--project PATH]   full audit (default: the whole project)
   audit.py --quick FILE [--before -|PATH] [--root SKILL_DIR]                        one file, only what an edit adds (JSON)
   audit.py [PATHS...] --html [OUT.html]                                            also write the HTML report
+  audit.py [PATHS...] --html [OUT.html] --add-review REVIEW.json                   ... with the agent's review merged in
 
 Full mode prints every finding as `file:line: <severity> <rule>: <message>` and `  fix: <fix>`, then a summary
 ("N errors, N warnings" and, on its own line, "N suggestions"). It runs the per-file rules and then the cross-file
@@ -16,7 +17,15 @@ with the project's tokens: the summary, Issues (errors then warnings, grouped by
 fix, filterable by severity and rule), Improvements (the suggestions ranked by impact = the rule's weight x occurrences,
 each with why and fix) and how to re-run. The terminal output and the exit code are the same with or without it.
 --json prints {"version", "mode", "checked", "errors", "warnings", "suggestions",
-"findings": [{"rule","severity","file","line","message","fix"}]} (+ "scales" in inconsistency-only mode).
+"findings": [{"rule","severity","file","line","message","fix"}]} (+ "scales" in inconsistency-only mode, + "agent_review"
+with --add-review).
+--add-review FILE (with --html) merges the agent's review into the report: what the /plumb:audit skill found by reading the
+screens against design.md, ux.md and the prototype, beyond what any rule expresses. FILE is a JSON list of
+{"severity": error|warn|suggest, "file": path, "line": N (optional, 1 or more), "message", "fix", "why" (optional)}; no
+other keys. They are shown in their own "Agent review" section after Improvements, each marked "Agent review", ranked by
+severity, and listed in the rule filter as "agent review". They never change the terminal findings, the summary counts or
+the exit code (the rules are the gate). A missing or malformed FILE exits 2 naming the entry and the key, and no report
+is written.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
@@ -165,8 +174,8 @@ import _plumb as P  # noqa: E402
 from _plumb import PlumbError  # noqa: E402
 
 SCRIPT_REL = "scripts/audit.py"
-USAGE = (f"python3 {SCRIPT_REL} [PATHS...] [--json] [--html [OUT.html]] [--no-tokens] [--root SKILL_DIR] [--project PATH]"
-         " | --quick FILE --before -")
+USAGE = (f"python3 {SCRIPT_REL} [PATHS...] [--json] [--html [OUT.html]] [--add-review REVIEW.json] [--no-tokens] "
+         f"[--root SKILL_DIR] [--project PATH] | --quick FILE --before -")
 WEB_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss"))
 PLATFORM_OF = {**{e: "web" for e in WEB_EXT}, ".swift": "ios", ".kt": "android"}
 SKIP_DIRS = P.SKIP_DIRS
@@ -3664,6 +3673,13 @@ def _loc(path: str, line: int) -> str:
     return f'<code class="loc">{"/<wbr>".join(shown)}</code>'
 
 
+def _loc_file(path: str) -> str:
+    """A file with no line (an agent-review finding about a whole file), wrapping like _loc."""
+    parts = path.replace("\\", "/").split("/")
+    shown = [f'<span class="seg">{_t(s)}</span>' if len(s) <= SEGMENT_NOWRAP else _t(s) for s in parts]
+    return f'<code class="loc">{"/<wbr>".join(shown)}</code>'
+
+
 def _finding_item(f: Finding, with_fix: bool = True) -> str:
     fix = f'<p class="fix"><span class="fix-label">Fix</span>{_t(f.fix)}</p>' if with_fix else ""
     return (f'<li class="finding{"" if with_fix else " compact"}" data-severity="{_a(f.severity)}" data-rule="{_a(f.rule)}">'
@@ -3767,8 +3783,116 @@ def report_scales(scales: Optional[Dict[str, List[dict]]]) -> str:
             + "</tbody></table></div>\n  </section>")
 
 
+# ---------------------------------------------------------------- the agent review (--add-review)
+
+
+REVIEW_RULE = "agent-review"
+REVIEW_KEYS = ("severity", "file", "line", "message", "fix", "why")
+REVIEW_SHAPE = ('[{"severity": "warn", "file": "app/booking/page.tsx", "line": 12, "message": "what is wrong", '
+                '"fix": "what to do", "why": "why it matters"}]')
+
+
+@dataclass
+class ReviewFinding:
+    """One finding of the agent's review: judgement against design.md, ux.md and the prototype, not a rule."""
+
+    severity: str
+    file: str
+    line: Optional[int]
+    message: str
+    fix: str
+    why: str = ""
+
+    def to_json(self) -> dict:
+        return {"severity": self.severity, "file": self.file, "line": self.line, "message": self.message,
+                "fix": self.fix, "why": self.why}
+
+
+@dataclass
+class Review:
+    source: str  # the review file, relative to the project root when inside it
+    findings: List[ReviewFinding]
+
+
+def load_review(given: str, root: Path) -> Review:
+    """The --add-review file, validated: a JSON list of {severity, file, line?, message, fix, why?}. Raises PlumbError
+    naming the file, the entry (1-based) and the key."""
+    path = Path(given)
+    fix_shape = f"write a JSON list of findings, e.g. {REVIEW_SHAPE}"
+    if not path.is_file():
+        raise PlumbError(f"error: {given}: review file not found\nfix: {fix_shape}, save it, and pass its path")
+    try:
+        text = path.read_bytes().decode("utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PlumbError(f"error: {given}: cannot read the review file ({exc})\nfix: save it as UTF-8 JSON") from None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise PlumbError(f"error: {given}: invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}\n"
+                         f"fix: open {given} at line {exc.lineno} and correct the JSON (no trailing commas or comments)"
+                         ) from None
+    if not isinstance(data, list):
+        raise PlumbError(f"error: {given}: the review must be a JSON list of findings, got {type(data).__name__}\n"
+                         f"fix: {fix_shape}")
+    out: List[ReviewFinding] = []
+    for i, entry in enumerate(data, 1):
+        where = f"{given}: entry {i}"
+        if not isinstance(entry, dict):
+            raise PlumbError(f"error: {where} is not an object\nfix: {fix_shape}")
+        unknown = [k for k in entry if k not in REVIEW_KEYS]
+        if unknown:
+            raise PlumbError(f"error: {where}: unknown key {unknown[0]!r} (the keys are {', '.join(REVIEW_KEYS)})\n"
+                             f"fix: remove {unknown[0]!r} or put what it says into the message")
+        for key in ("severity", "file", "message", "fix"):
+            value = entry.get(key)
+            if not isinstance(value, str) or not value.strip():
+                raise PlumbError(f"error: {where}: {key!r} is missing or empty (it must be text)\nfix: {fix_shape}")
+        if entry["severity"] not in _SEVERITY_RANK:
+            raise PlumbError(f"error: {where}: severity {entry['severity']!r} is not one of error, warn, suggest\n"
+                             f"fix: use error (must change), warn (should change) or suggest (could be better)")
+        line = entry.get("line")
+        if line is not None and (isinstance(line, bool) or not isinstance(line, int) or line < 1):
+            raise PlumbError(f"error: {where}: line must be a whole number of 1 or more, got {line!r}\n"
+                             f"fix: give the line number, or leave line out when the finding is about the whole file")
+        why = entry.get("why", "")
+        if why is None:
+            why = ""
+        if not isinstance(why, str):
+            raise PlumbError(f"error: {where}: why must be text, got {why!r}\nfix: {fix_shape}")
+        out.append(ReviewFinding(entry["severity"], entry["file"].strip(), line, entry["message"].strip(),
+                                 entry["fix"].strip(), why.strip()))
+    out.sort(key=lambda r: (_SEVERITY_RANK[r.severity], r.file, r.line or 0))
+    return Review(rel(path, root), out)
+
+
+def _review_item(r: ReviewFinding) -> str:
+    where = _loc(r.file, r.line) if r.line else _loc_file(r.file)
+    why = f'<p class="why"><span class="why-label">Why</span>{_t(r.why)}</p>' if r.why else ""
+    return (f'<li class="finding agent" data-severity="{_a(r.severity)}" data-rule="{REVIEW_RULE}">'
+            f'<div class="f-where">{_sev(r.severity)}<span class="agent-mark">Agent review</span>{where}</div>'
+            f'<div class="f-what"><p class="msg">{_t(r.message)}</p>'
+            f'<p class="fix"><span class="fix-label">Fix</span>{_t(r.fix)}</p>{why}</div></li>')
+
+
+def report_review(review: Optional[Review]) -> str:
+    """The Agent review section, or "" when there was no review (the page is then exactly as before)."""
+    if review is None:
+        return ""
+    if review.findings:
+        body = ('    <div data-group><ul class="findings" role="list">' + "".join(_review_item(r) for r in review.findings)
+                + "</ul></div>")
+    else:
+        body = '    <p class="empty">The agent review found nothing beyond the rules.</p>'
+    return ('  <section id="agent-review" aria-labelledby="agent-review-h">\n    <div class="section-head">'
+            '<h2 id="agent-review-h">Agent review</h2><p class="note">Found by the agent reading the screens against '
+            "design.md, ux.md and the prototype: judgement, not from a rule. These never change the exit code, and "
+            f"running the script again does not repeat them (the review is kept in <code>{_t(review.source)}</code>)."
+            "</p></div>\n" + body + "\n  </section>")
+
+
 def render_report(template: str, findings: List[Finding], checked: int, mode: str, scales: Optional[Dict[str, List[dict]]],
-                  doc: Optional[dict], settings: dict, root: Path, skill_dir: Path, day: str) -> str:
+                  doc: Optional[dict], settings: dict, root: Path, skill_dir: Path, day: str,
+                  review: Optional["Review"] = None) -> str:
     """The audit report page from the fixed template: summary, Issues (errors then warnings, grouped by rule),
     Improvements (suggestions ranked by impact), and how to re-run. Styled with the project's tokens when there are any."""
     errors = sum(1 for f in findings if f.severity == "error")
@@ -3800,6 +3924,9 @@ def render_report(template: str, findings: List[Finding], checked: int, mode: st
     present += sorted({f.rule for f in findings} - set(present))
     options = "\n".join(f'          <option value="{_a(r)}">{_t(r)} ({sum(1 for f in findings if f.rule == r)})</option>'
                         for r in present)
+    if review is not None and review.findings:
+        options += (("\n" if options else "") + f'          <option value="{REVIEW_RULE}">agent review '
+                    f'({len(review.findings)})</option>')
     values = {
         "header": f"<!-- GENERATED by {_t(script)} --html on {day}. Do not edit: run the audit again. -->",
         "title": _t(f"{project}: design audit {day}"),
@@ -3818,6 +3945,7 @@ def render_report(template: str, findings: List[Finding], checked: int, mode: st
         "issues": report_issues(findings),
         "improvements": report_improvements(findings),
         "scales": report_scales(scales),
+        "agent_review": report_review(review),
         "rerun": _t(f"python3 {script} --html"),
     }
     text = P.fill_template(template, values, REPORT_TEMPLATE)
@@ -3849,7 +3977,7 @@ def _plural(n: int, word: str) -> str:
 
 
 def _report(findings: List[Finding], checked: int, as_json: bool, mode: Optional[str] = None,
-            scales: Optional[Dict[str, List[dict]]] = None) -> int:
+            scales: Optional[Dict[str, List[dict]]] = None, review: Optional[List["ReviewFinding"]] = None) -> int:
     errors = sum(1 for f in findings if f.severity == "error")
     warnings = sum(1 for f in findings if f.severity == "warn")
     suggestions = sum(1 for f in findings if f.severity == "suggest")
@@ -3861,6 +3989,8 @@ def _report(findings: List[Finding], checked: int, as_json: bool, mode: Optional
                     "findings": [f.to_json() for f in findings]})
         if scales is not None:
             out["scales"] = scales
+        if review is not None:
+            out["agent_review"] = [r.to_json() for r in review]
         sys.stdout.write(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
     else:
         for f in findings:
@@ -3951,12 +4081,12 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
     if ui and not explicit:
         looked += f", narrowed by PLUMB.md UI files: {ui}"
     return audit_files(files, root, skill_dir, doc, settings, tokens_file, explicit, args.json, looked,
-                       html_out=getattr(args, "html_out", None))
+                       html_out=getattr(args, "html_out", None), review=getattr(args, "review", None))
 
 
 def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
                 tokens_file: Optional[Path], explicit: bool, as_json: bool, looked: str = "the paths given",
-                html_out: Optional[Tuple[Path, str]] = None) -> int:
+                html_out: Optional[Tuple[Path, str]] = None, review: Optional["Review"] = None) -> int:
     """Full mode over a list of files: per-file rules, then the cross-file rules. With no tokens (doc None) this is
     inconsistency-only mode. A --changed mode (end-of-turn check) can call this with the changed files only."""
     inconsistency = doc is None
@@ -3995,12 +4125,16 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
     findings.extend(cross_findings(proj))
     mode = MODE_INCONSISTENCY if inconsistency else MODE_FULL
     scales = proj.scales_inferred() if inconsistency else None
-    code = _report(findings, len(ctxs), as_json, mode, scales)
+    code = _report(findings, len(ctxs), as_json, mode, scales, review.findings if review is not None else None)
     if html_out is not None:  # (path, template text): the terminal output above is unchanged
         page = render_report(html_out[1], findings, len(ctxs), mode, scales, doc, settings, root, skill_dir,
-                             datetime.date.today().isoformat())
+                             datetime.date.today().isoformat(), review)
         if not write_report(html_out[0], page, root):
             return 2
+        if review is not None:
+            n = len(review.findings)
+            print(f"agent review: {_plural(n, 'finding')} added to the report (marked agent review; they never change "
+                  f"the exit code)", file=sys.stderr)
     return code
 
 
@@ -4013,6 +4147,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     parser.add_argument("--html", nargs="?", const="", metavar="OUT.html",
                         help="also write the HTML report (default <docs_dir>/audit-YYYY-MM-DD.html); put it after the PATHS")
+    parser.add_argument("--add-review", metavar="FILE",
+                        help="with --html: merge the agent's review findings (a JSON list) into the report")
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     parser.add_argument("--no-tokens", action="store_true",
@@ -4024,6 +4160,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error("--quick checks one file: pass no other paths")
     if args.quick and args.html is not None:
         parser.error("--quick prints JSON for one edit; --html is for the full audit (drop --quick)")
+    if args.quick and args.add_review:
+        parser.error("--quick prints JSON for one edit; --add-review is for the full audit's report (drop --quick)")
+    if args.add_review and args.html is None:
+        parser.error("--add-review merges the agent's review into the HTML report: add --html (e.g. --html --add-review "
+                     f"{args.add_review})")
     if args.html and not args.html.lower().endswith((".html", ".htm")):
         parser.error(f"--html takes the report's path ending in .html, got {args.html!r} (put --html after the PATHS, "
                      f"or write --html=OUT.html)")
@@ -4041,6 +4182,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.html_out = None
         if args.html is not None:
             args.html_out = _html_target(args.html, root, skill_dir, settings)
+        args.review = load_review(args.add_review, root) if args.add_review else None
         return run_full(args, root, skill_dir, doc, settings, tokens_file)
     except PlumbError as exc:
         print(str(exc), file=sys.stderr)
