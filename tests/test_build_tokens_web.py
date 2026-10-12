@@ -600,7 +600,8 @@ def test_a_crlf_stylesheet_keeps_its_line_endings(project: Path) -> None:
 def dark_rules(css: str) -> dict:
     found = {}
     for name, opener in (("media", "@media (prefers-color-scheme: dark) {\n  :root:not(.light) {"),
-                         ("class", "\n.dark {"), ("light", "\n.light {")):
+                         ("class", "\n.dark {"), ("light", "\n.light {"),
+                         ("attr-dark", '\n[data-theme="dark"] {'), ("attr-light", '\n[data-theme="light"] {')):
         if opener in css:
             found[name] = css.split(opener, 1)[1].split("}", 1)[0]
     return found
@@ -620,15 +621,31 @@ def test_dark_values_follow_the_system_and_the_class_by_default(project: Path, m
 
 
 @pytest.mark.parametrize("switch,present", [("system", {"media", "light"}), ("class", {"class", "light"}),
-                                            ("both", {"media", "class", "light"})])
+                                            ("both", {"media", "class", "light"}),
+                                            ("data-theme", {"attr-dark", "attr-light"})])
 def test_theme_switch_selects_the_dark_rules(project: Path, switch: str, present: set) -> None:
     edit_tokens(project, lambda d: d["$extensions"]["plumb"]["web"].__setitem__("theme_switch", switch))
     assert run(project).returncode == 0
     css = css_out(project).read_text(encoding="utf-8")
     assert set(dark_rules(css)) == present
     variant = css.split("@custom-variant dark", 1)[1].split("\n\n", 1)[0]
-    assert ("&:where(.dark, .dark *)" in variant) == (switch != "system")
-    assert ("prefers-color-scheme: dark" in variant) == (switch != "class")
+    assert ("&:where(.dark, .dark *)" in variant) == (switch in ("class", "both"))
+    assert ("prefers-color-scheme: dark" in variant) == (switch in ("system", "both"))
+    assert ('&:where([data-theme="dark"], [data-theme="dark"] *)' in variant) == (switch == "data-theme")
+
+
+def test_data_theme_switches_on_the_attribute_next_themes_sets(project: Path) -> None:
+    # next-themes with attribute="data-theme" (its default) sets data-theme="dark" | "light" on <html>
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"]["web"].__setitem__("theme_switch", "data-theme"))
+    assert run(project).returncode == 0
+    rules = dark_rules(css_out(project).read_text(encoding="utf-8"))
+    assert "--color-primary: #4fb3c4;" in rules["attr-dark"] and "color-scheme: dark;" in rules["attr-dark"]
+    assert "--color-primary: #14857f;" in rules["attr-light"] and "color-scheme: light;" in rules["attr-light"]
+    set_mode(project, "tailwind-v3")
+    edit_tokens(project, lambda d: d["$extensions"]["plumb"]["web"].__setitem__("theme_switch", "data-theme"))
+    assert run(project).returncode == 0
+    js = (skill(project) / "assets/platforms/web/tailwind.tokens.js").read_text(encoding="utf-8")
+    assert 'darkMode: ["selector", "[data-theme=\\"dark\\"]"]' in js
 
 
 def test_v3_map_says_which_dark_mode_setting_matches(project: Path) -> None:

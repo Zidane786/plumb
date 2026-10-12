@@ -10,7 +10,7 @@ $extensions.plumb.web.copies (relative to the project root), Plumb's block: the 
 copy is the block alone; an existing file keeps every byte outside it (a file with no block gets it near the top, after
 the statements that must stay first, with a note; a whole copy an older build generated becomes the block); when the
 rest of the file imports Tailwind, the block leaves its own @import out. --check compares only the block. The template's
-{{@dark}} / {{@dark-variant}} lines follow $extensions.plumb.web.theme_switch (both | system | class, default both) and
+{{@dark}} / {{@dark-variant}} lines follow $extensions.plumb.web.theme_switch (both | system | class | data-theme, default both) and
 {{@reduced-motion}} follows $extensions.plumb.motion.reduced (none | keep-fades, default none). It also writes
 assets/platforms/mobile/ios/<Project>Theme.swift and
 mobile/android/<Project>Theme.kt for the platforms listed in $extensions.plumb.platforms, and refreshes the block between
@@ -297,18 +297,20 @@ def _lines(decls: List[Tuple[str, str]]) -> List[str]:
     return [f"{n}: {v};" for n, v in decls]
 
 
-THEME_SWITCHES = ("both", "system", "class")
+THEME_SWITCHES = ("both", "system", "class", "data-theme")
 REDUCED_MOTION = ("none", "keep-fades")
 
 
 def web_switches(doc: dict) -> Tuple[str, str]:
-    """(theme switch, reduced motion) from $extensions.plumb.web.theme_switch (both | system | class, default both)
+    """(theme switch, reduced motion) from $extensions.plumb.web.theme_switch (both | system | class | data-theme,
+    default both)
     and $extensions.plumb.motion.reduced (none | keep-fades, default none)."""
     settings = P.plumb_settings(doc)
     switch = settings["web"].get("theme_switch", "both")
     if switch not in THEME_SWITCHES:
         raise _err(f"$extensions.plumb.web.theme_switch is {switch!r}",
-                   'set it to "both" (the system setting, and the .dark / .light class), "system" or "class"')
+                   'set it to "both" (the system setting, and the .dark / .light class), "system", "class" or '
+                   '"data-theme" (data-theme="dark" / "light" on <html>, as next-themes sets it by default)')
     motion = settings.get("motion") if isinstance(settings.get("motion"), dict) else {}
     reduced = motion.get("reduced", "none")
     if reduced not in REDUCED_MOTION:
@@ -322,10 +324,14 @@ def _rule(selector: str, body: List[str], indent: str = "") -> List[str]:
     return [f"{indent}{selector} {{"] + [f"{indent}  {b}" for b in body] + [f"{indent}}}"]
 
 
+DATA_DARK, DATA_LIGHT = '[data-theme="dark"]', '[data-theme="light"]'
+
+
 def dark_css(doc: dict) -> List[str]:
     """The dark scheme for the {{@dark}} directive, as web.theme_switch says: system = the OS setting
     (prefers-color-scheme) unless <html> has .light; class = .dark on <html> (or any element); both = either. A .light
-    rule puts the light values back inside a dark page in every mode. Empty when no token has a dark value."""
+    rule puts the light values back inside a dark page. data-theme = the attribute (data-theme="dark" | "light"),
+    as next-themes sets it: [data-theme="dark"] and [data-theme="light"] only. Empty when no token has a dark value."""
     dark = declarations(doc, "dark")
     if not dark:
         return []
@@ -334,6 +340,11 @@ def dark_css(doc: dict) -> List[str]:
     light = [(n, v) for n, v in declarations(doc, "light") if n in names]
     body = _lines(dark) + ["color-scheme: dark;"]
     out: List[str] = []
+    if switch == "data-theme":
+        out += ["/* Dark scheme from the data-theme attribute (on <html>, or on any element for that part of the page). */"]
+        out += _rule(DATA_DARK, body)
+        out += ["/* data-theme=\"light\" keeps or puts back the light values (for a light part inside a dark page). */"]
+        return out + _rule(DATA_LIGHT, _lines(light) + ["color-scheme: light;"])
     if switch in ("system", "both"):
         out += ["/* Dark scheme from the system setting (prefers-color-scheme), unless <html> has the light class. */",
                 "@media (prefers-color-scheme: dark) {"] + _rule(":root:not(.light)", body, "  ") + ["}"]
@@ -351,6 +362,9 @@ def dark_variant_css(doc: dict) -> List[str]:
     if switch == "class":
         return ["/* dark: follows the dark class (on <html>). Tokens switch by themselves, so components rarely need it. */",
                 "@custom-variant dark (&:where(.dark, .dark *));"]
+    if switch == "data-theme":
+        return ["/* dark: follows data-theme=\"dark\" (on <html>). Tokens switch by themselves, so components rarely "
+                "need it. */", f"@custom-variant dark (&:where({DATA_DARK}, {DATA_DARK} *));"]
     media = ["  @media (prefers-color-scheme: dark) {", "    &:where(:not(.light, .light *)) { @slot; }", "  }"]
     if switch == "system":
         return ["/* dark: follows the system setting unless the light class is set. Tokens switch by themselves, so "
@@ -521,6 +535,7 @@ TAILWIND_V3_DARK = {
     "class": "\"class\"",
     "system": "[\"variant\", \"@media (prefers-color-scheme: dark) { &:not(.light *) }\"]",
     "both": "[\"variant\", [\"@media (prefers-color-scheme: dark) { &:not(.light *) }\", \"&:is(.dark *)\"]]",
+    "data-theme": "[\"selector\", \"[data-theme=\\\"dark\\\"]\"]",
 }
 
 
@@ -2652,7 +2667,8 @@ def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str
 
 
 MISSING_DEFAULTS = {
-    "web.theme_switch": ('"both" (dark from the system setting and from the .dark class)', '"both", "system" or "class"'),
+    "web.theme_switch": ('"both" (dark from the system setting and from the .dark class)',
+                         '"both", "system", "class" or "data-theme"'),
     "motion.reduced": ('"none" (no animation or transition when the user asks for less motion)', '"none" or "keep-fades"'),
 }
 
