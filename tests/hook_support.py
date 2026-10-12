@@ -200,6 +200,17 @@ def payload(tool: str, name: str, stringify: Optional[str] = None, **values: Any
 # ---------------------------------------------------------------- running a hook as the CLI does
 
 
+def plumb_tmp(tmp_path: Path) -> Path:
+    """The hooks' private folder in the OS temp folder hook_env() sets: plumb-<uid> (plumb-<user> on Windows)."""
+    if hasattr(os, "getuid"):
+        name = f"plumb-{os.getuid()}"
+    else:
+        import getpass
+        import re
+        name = "plumb-" + (re.sub(r"[^\w.-]", "_", getpass.getuser() or "") or "user")
+    return tmp_path / "os-tmp" / name
+
+
 def hook_env(tmp_path: Path, copilot: bool = False, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     ostmp = tmp_path / "os-tmp"
     ostmp.mkdir(exist_ok=True)

@@ -6,7 +6,10 @@ rem python3 that is Python 3.9 or newer; stdin and the arguments pass through un
 rem suitable Python is found it prints one line to stderr and exits 0: a missing Python must never
 rem block the user's tool calls. The version probes read nul so the hook's JSON input is kept.
 rem Keep CRLF line endings (cmd.exe needs them for labels; .gitattributes pins it).
+rem NoDefaultCurrentDirectoryInExePath: cmd.exe looks for py/python in the current directory (the project) before
+rem PATH; with it set, a py.bat or python.exe planted in a repository is never run as the hook interpreter.
 setlocal
+set "NoDefaultCurrentDirectoryInExePath=1"
 if "%~1"=="" (
   echo plumb: run.cmd needs a script name; hook skipped 1>&2
   exit /b 0

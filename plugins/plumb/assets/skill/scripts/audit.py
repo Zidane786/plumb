@@ -3683,12 +3683,49 @@ def _sha(text: str) -> str:
     return hashlib.sha256(normalise_text(text).encode("utf-8")).hexdigest()
 
 
-def _git(root: Path, *args: str) -> Optional[str]:
+_HEAD_RX = re.compile(r"[0-9a-f]{40,64}")
+# Every git call reads the repository only: none of the commands a repository's own config can name runs (fsmonitor,
+# hooks, an external diff, textconv, a pager, the filter drivers: the latter are listed with `git config` and emptied).
+_GIT_SAFE = ("-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", f"core.hooksPath={os.devnull}",
+             "-c", "diff.external=", "-c", "core.pager=cat", "--no-optional-locks", "--no-pager")
+_GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat", "PAGER": "cat", "GIT_OPTIONAL_LOCKS": "0"}
+_GIT_FILTERS: Dict[str, Tuple[str, ...]] = {}
+
+
+def _git_run(root: Path, args: Tuple[str, ...]) -> Optional[bytes]:
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_EXTERNAL_DIFF", "GIT_DIR", "GIT_WORK_TREE")}
+    env.update(_GIT_ENV)
     try:
-        r = subprocess.run(["git", *args], cwd=str(root), capture_output=True, timeout=15, stdin=subprocess.DEVNULL)
+        r = subprocess.run(["git", *args], cwd=str(root), capture_output=True, timeout=15, stdin=subprocess.DEVNULL,
+                           env=env)
     except (OSError, subprocess.SubprocessError):
         return None
-    return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _git_filters(root: Path) -> Tuple[str, ...]:
+    """`-c filter.<name>.clean= ...` for every filter driver the repository's config names (reading config runs
+    nothing), so `git status` cannot run them."""
+    key = str(root)
+    if key not in _GIT_FILTERS:
+        out = _git_run(root, _GIT_SAFE + ("config", "--null", "--get-regexp", r"^filter\..*\.(clean|smudge|process)$"))
+        names = set()
+        for item in (out or b"").decode("utf-8", errors="replace").split("\0"):
+            k = item.split("\n", 1)[0]
+            if k.startswith("filter.") and k.count(".") >= 2:
+                names.add(k[len("filter."):].rsplit(".", 1)[0])
+        args: List[str] = []
+        for name in sorted(names):
+            for part in ("clean", "smudge", "process"):
+                args += ["-c", f"filter.{name}.{part}="]
+        _GIT_FILTERS[key] = tuple(args)
+    return _GIT_FILTERS[key]
+
+
+def _git(root: Path, *args: str) -> Optional[str]:
+    """git, read-only and with the repository's configured commands neutralised (see _GIT_SAFE)."""
+    out = _git_run(root, _GIT_SAFE + _git_filters(root) + args)
+    return out.decode("utf-8", errors="replace") if out is not None else None
 
 
 class _GitState(NamedTuple):
@@ -3704,7 +3741,8 @@ def _git_state(root: Path) -> Optional[_GitState]:
     if not top_text or not top_text.strip():
         return None
     top = Path(os.path.realpath(top_text.strip()))
-    out = _git(root, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--", ".")
+    out = _git(root, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--ignore-submodules=all",
+               "--", ".")
     if out is None:
         return None
     real_root = Path(os.path.realpath(root))
@@ -3713,7 +3751,7 @@ def _git_state(root: Path) -> Optional[_GitState]:
         entry, i = entries[i], i + 1
         if entry.startswith("# branch.oid "):
             oid = entry[len("# branch.oid "):].strip()
-            head = oid if re.fullmatch(r"[0-9a-f]{40,64}", oid) else None
+            head = oid if _HEAD_RX.fullmatch(oid) else None
             continue
         kind = entry[:2]
         if kind == "1 ":
@@ -3835,7 +3873,23 @@ def read_snapshot(path: Path) -> dict:
     if not isinstance(data, dict) or data.get("mode") not in ("git", "mtime"):
         raise PlumbError(f"error: {path} is not a snapshot (no \"mode\" of git or mtime)\n"
                          f"fix: take a new one: python3 {SCRIPT_REL} --snapshot {path}")
+    head = data.get("head")
+    if head is not None and not (isinstance(head, str) and _HEAD_RX.fullmatch(head)):
+        raise PlumbError(f"error: {path} is not a valid snapshot (its \"head\" is not a commit hash)\n"
+                         f"fix: take a new one: python3 {SCRIPT_REL} --snapshot {path}")
+    for key in ("files", "mtimes", "texts"):
+        names = data.get(key) or {}
+        if not isinstance(names, dict) or any(not _safe_rel(n) for n in names):
+            raise PlumbError(f"error: {path} is not a valid snapshot (\"{key}\" names a path outside the project)\n"
+                             f"fix: take a new one: python3 {SCRIPT_REL} --snapshot {path}")
     return data
+
+
+def _safe_rel(name: object) -> bool:
+    """A project-relative posix path: not absolute, no drive, no `..`."""
+    if not isinstance(name, str) or not name or name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
+        return False
+    return ".." not in name.replace("\\", "/").split("/")
 
 
 def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -> List[Change]:
@@ -3844,7 +3898,7 @@ def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -
     tracked = _tracked_matcher(root, skill_dir, settings)
     out: List[Change] = []
     if snapshot.get("mode") == "mtime":
-        before = {k: v for k, v in (snapshot.get("mtimes") or {}).items() if isinstance(k, str)}
+        before = {k: v for k, v in (snapshot.get("mtimes") or {}).items() if _safe_rel(k)}
         texts = snapshot.get("texts") if isinstance(snapshot.get("texts"), dict) else {}
         now = _mtimes(root, tracked)
         for name in sorted(set(before) | set(now)):
@@ -3861,11 +3915,14 @@ def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -
     state = _git_state(root)
     if state is None:
         return out
-    files = {k: v for k, v in (snapshot.get("files") or {}).items() if isinstance(k, str) and isinstance(v, dict)}
+    files = {k: v for k, v in (snapshot.get("files") or {}).items() if _safe_rel(k) and isinstance(v, dict)}
     head = snapshot.get("head") if isinstance(snapshot.get("head"), str) else None
+    if head is not None and not _HEAD_RX.fullmatch(head):
+        return out  # not a commit hash: never handed to git (read_snapshot refuses such a snapshot)
     candidates = set(files) | set(state.dirty)
     if head and state.head and head != state.head:  # committed during the session
-        diff = _git(root, "diff", "--name-only", "-z", head, state.head, "--", ".")
+        diff = _git(root, "diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all",
+                    "--end-of-options", head, state.head, "--", ".")
         real_root = Path(os.path.realpath(root))
         for name in (diff or "").split("\0"):
             if name:
@@ -3888,7 +3945,8 @@ def changed_since(snapshot: dict, root: Path, skill_dir: Path, settings: dict) -
             then = None
             if head and shows < GIT_SHOW_MAX:
                 shows += 1
-                then = _git(root, "show", f"{head}:./{name}")  # ./ = relative to the project folder (git's cwd)
+                then = _git(root, "show", "--no-ext-diff", "--no-textconv", "--end-of-options",
+                            f"{head}:./{name}")  # ./ = relative to the project folder (git's cwd)
             existed = then is not None
             then_sha = _sha(then) if then is not None else None
         if now_sha != then_sha:

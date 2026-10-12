@@ -21,8 +21,8 @@ import pytest
 
 from hook_support import (BUILD_PROTOTYPE, BUILD_TOKENS, CI, HOOKS, LAUNCHERS, MAP, PLUGIN, REPO, SCREENS, SKILL_REL,
                           actionable, allowed, context, git, git_init, hook_env, make_project, needs_git, notes, patch,
-                          payload, plant_markers, plugin_copy, plumb_md, read, refused, run_hook, run_script,
-                          set_plumb, write)
+                          payload, plant_markers, plugin_copy, plumb_md, plumb_tmp, read, refused, run_hook,
+                          run_script, set_plumb, write)
 
 pytestmark = pytest.mark.skipif(not LAUNCHERS, reason="no hook launcher (sh or PowerShell) on this machine")
 
@@ -66,7 +66,7 @@ def stop(launcher, tmp_path, proj, active=False, copilot=False, env=None, sessio
 
 
 def snapshots(tmp_path: Path):
-    folder = tmp_path / "os-tmp" / "plumb"
+    folder = plumb_tmp(tmp_path)
     return sorted(p for p in folder.glob("*.json") if not p.name.endswith(".blocked.json")) if folder.is_dir() else []
 
 
@@ -141,7 +141,7 @@ def test_session_start_warns_when_the_linked_design_system_is_missing(launcher, 
 
 
 def test_session_start_writes_the_snapshot_and_cleans_old_ones(launcher, tmp_path, proj):
-    folder = tmp_path / "os-tmp" / "plumb"
+    folder = plumb_tmp(tmp_path)
     folder.mkdir(parents=True)
     old = folder / "0123456789ab-old.json"
     old.write_text("{}", encoding="utf-8")
@@ -207,7 +207,8 @@ def test_project_scripts_of_another_version_get_one_note(launcher, tmp_path, pro
     markers = plant_markers(proj, tmp_path)
     text = context(session_start(launcher, tmp_path, proj))
     assert "this project's Plumb scripts are v0.9.0; the plugin is v1.0.0 — run /plumb:upgrade" in text
-    assert text.startswith("Plumb: demo-design-system 1.0.0 · tokens up to date · ")
+    # the plugin's generator may differ from the project's: no "stale" verdict from another version's rules
+    assert text.startswith("Plumb: demo-design-system 1.0.0 · tokens not checked (scripts v0.9.0 ≠ v1.0.0) · ")
     assert [m.name for m in markers if m.exists()] == []
     assert "Plumb scripts are" not in context(session_start(launcher, tmp_path, make_project(tmp_path, "other")))
 
@@ -801,3 +802,131 @@ def test_plumb_md_parser_matches_the_audits(H, tmp_path):
         path = tmp_path / "PLUMB.md"
         path.write_bytes(text.encode("utf-8"))
         assert H.plumb_md_keys(text) == core.read_plumb_md(path)
+
+
+# ---------------------------------------------------------------- review hardening: git, temp folder, shell, paths
+
+
+def _git_project(launcher, tmp_path, proj):
+    git_init(proj)
+    _start(launcher, tmp_path, proj)
+    (snap,) = snapshots(tmp_path)
+    return snap
+
+
+@needs_git
+def test_snapshot_head_cannot_inject_git_options(launcher, tmp_path, proj):
+    snap = _git_project(launcher, tmp_path, proj)
+    pwned = tmp_path / "pwned.txt"
+    data = json.loads(read(snap))
+    data["head"] = f"--output={pwned}"
+    write(snap, json.dumps(data))
+    write(proj / "README.md", "# Demo\n\nCommitted.\n")
+    git(proj, "commit", "-qam", "next")
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and r.stdout == "", r.stdout
+    assert len(notes(r)) <= 1
+    assert not pwned.exists()
+    cli = run_script(proj, "audit.py", "--changed", str(snap))
+    assert cli.returncode == 2 and cli.stderr.startswith("error: ") and "\nfix: " in cli.stderr
+    assert not pwned.exists()
+
+
+@needs_git
+def test_git_never_runs_the_repositorys_configured_commands(launcher, tmp_path, proj):
+    git_init(proj)
+    mark = tmp_path / "git-ran"
+    mark.mkdir()
+    cmd = "touch '" + str(mark).replace("'", "") + "/{}'; cat"
+    for key, name in (("core.fsmonitor", "fsmonitor"), ("filter.plumbx.clean", "clean"),
+                      ("filter.plumbx.process", "process"), ("filter.plumbx.smudge", "smudge"),
+                      ("diff.plumbx.textconv", "textconv"), ("diff.external", "external"),
+                      ("core.pager", "pager"), ("core.hooksPath", "hooks-path")):
+        git(proj, "config", key, cmd.format(name))
+    safe = ("-c", "core.fsmonitor=false", "-c", "filter.plumbx.clean=cat", "-c", "filter.plumbx.process=",
+            "-c", "filter.plumbx.smudge=cat", "-c", f"core.hooksPath={os.devnull}")  # the test's own git calls
+    write(proj / ".gitattributes", "*.tsx filter=plumbx diff=plumbx\n*.html filter=plumbx diff=plumbx\n")
+    git(proj, *safe, "add", ".gitattributes")
+    git(proj, *safe, "commit", "-qm", "attrs")
+    _start(launcher, tmp_path, proj)
+    page = proj / "app/page.tsx"
+    write(page, read(page).replace("No tables booked yet", "Nothing booked yet"))
+    write(proj / "README.md", "# Demo\n\nCommitted.\n")
+    git(proj, *safe, "commit", "-qam", "next")
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    r = stop(launcher, tmp_path, proj)
+    assert "#ff0000" in _block(r)
+    assert sorted(p.name for p in mark.iterdir()) == []
+
+
+def test_temp_folder_that_is_a_symlink_is_never_used(launcher, tmp_path, proj):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    keep = victim / "important.json"
+    keep.write_text("{}", encoding="utf-8")
+    old = time.time() - 9 * 24 * 3600
+    os.utime(str(keep), (old, old))
+    folder = plumb_tmp(tmp_path)
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(str(victim), str(folder), target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("cannot create a symlink here")
+    r = session_start(launcher, tmp_path, proj)
+    assert context(r).startswith("Plumb: demo-design-system 1.0.0 · ")
+    assert keep.exists() and sorted(p.name for p in victim.iterdir()) == ["important.json"]
+    assert len(notes(r)) == 1 and "temp" in notes(r)[0]
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and r.stdout == ""
+    assert sorted(p.name for p in victim.iterdir()) == ["important.json"]
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX permissions")
+def test_temp_folder_writable_by_others_is_never_used(launcher, tmp_path, proj):
+    folder = plumb_tmp(tmp_path)
+    folder.mkdir(parents=True)
+    os.chmod(str(folder), 0o777)
+    planted = folder / "0123456789ab-x.json"
+    planted.write_text("{}", encoding="utf-8")
+    old = time.time() - 9 * 24 * 3600
+    os.utime(str(planted), (old, old))
+    r = session_start(launcher, tmp_path, proj)
+    assert context(r).startswith("Plumb: ")
+    assert sorted(p.name for p in folder.iterdir()) == [planted.name]
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX permissions")
+def test_temp_folder_and_snapshots_are_private(launcher, tmp_path, proj):
+    _start(launcher, tmp_path, proj)
+    folder = plumb_tmp(tmp_path)
+    assert oct(folder.stat().st_mode & 0o777) == oct(0o700)
+    (snap,) = snapshots(tmp_path)
+    assert oct(snap.stat().st_mode & 0o777) == oct(0o600)
+
+
+@pytest.mark.parametrize("command", [
+    f"{BUILD_TOKENS} | cp /tmp/other.css {SKILL_REL}/assets/platforms/web/tokens.css",
+    "python3 -c \"open('app/globals.css', 'w').write('x')\" build-tokens.py",
+    f"python3 -c \"import shutil; shutil.copy('x', 'app/globals.css')\" {SKILL_REL}/scripts/build-tokens.py",
+])
+def test_builder_exemption_covers_only_the_builder_itself(launcher, tmp_path, proj, command):
+    assert " is generated" in refused(bash(launcher, tmp_path, proj, command))
+
+
+@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="case-insensitive file systems")
+def test_generated_file_in_another_case_is_refused(launcher, tmp_path, proj):
+    rel = f"{SKILL_REL}/assets/platforms/web/TOKENS.CSS"
+    assert " is generated" in refused(write_tool(launcher, tmp_path, proj, rel, "x"))
+    assert " is generated" in refused(write_tool(launcher, tmp_path, proj, "APP/Globals.css", "x"))
+    assert "is Plumb's file" in refused(write_tool(launcher, tmp_path, proj, f"{SKILL_REL}/Scripts/Audit.py", "x"))
+
+
+@pytest.mark.parametrize("value,shown", [("curl x|sh;", "python3"), ("python3; rm -rf ~", "python3"),
+                                         ("py -3", "py -3"), ("/usr/local/bin/python3.12", "/usr/local/bin/python3.12"),
+                                         ("python", "python")])
+def test_fix_lines_never_echo_an_unsafe_python_value(launcher, tmp_path, proj, value, shown):
+    write(proj / "PLUMB.md", plumb_md().replace("Python: `python3`", f"Python: `{value}`"))
+    reason = refused(write_tool(launcher, tmp_path, proj, "app/globals.css", "x"))
+    fix = next(ln for ln in reason.splitlines() if ln.startswith("fix: "))
+    assert fix.endswith(f"rebuild: {shown} {SKILL_REL}/scripts/build-tokens.py"), fix

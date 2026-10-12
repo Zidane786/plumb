@@ -7,7 +7,8 @@ Silent (no output, exit 0) in a project without a PLUMB.md. Otherwise prints
 
 Every script it runs is the plugin's own copy (`--root <the project's skill>`), never the project's (trust boundary).
 - tokens: `build-tokens.py --check` (exit 0 up to date, 1 stale; "tokens not checked" when it cannot run, "no tokens
-  yet" before the tokens file exists);
+  yet" before the tokens file exists, "tokens not checked (scripts vX ≠ vY)" when the project's copied scripts are
+  another version: the plugin's generator could call output stale that the project's own version wrote);
 - audit issues: errors + warnings of a full `audit.py --json` run, capped at 2 seconds (PLUMB_AUDIT_TIMEOUT, in
   seconds, changes the cap; 0 skips it): "audit not run" when it does not finish or fails. Both run at the same time;
 - a second line "Plumb X is installed; this project's design system is Y: run /plumb:upgrade" when PLUMB.md's version
@@ -89,12 +90,16 @@ def status(proj: H.Project) -> Tuple[str, Optional[str]]:
     has_tokens = any((proj.skill_dir / "assets" / "tokens").glob("*.tokens.json")) \
         if (proj.skill_dir / "assets" / "tokens").is_dir() else False  # type: ignore[operator]
     timeout = _audit_timeout()
-    tokens_proc = _start(proj, "build-tokens.py", "--check") if has_tokens else None
+    mine, plugin = H.script_versions(proj)
+    other = mine is not None and plugin is not None and mine != plugin  # another generator: its output may differ
+    tokens_proc = _start(proj, "build-tokens.py", "--check") if has_tokens and not other else None
     audit_proc = _start(proj, "audit.py", "--json") if timeout > 0 else None
     tokens = _finish(tokens_proc, TOKENS_TIMEOUT)
     audit = _finish(audit_proc, timeout)
     if not has_tokens:
         tokens_text = "no tokens yet"
+    elif other:
+        tokens_text = f"tokens not checked (scripts v{mine} \u2260 v{plugin})"
     elif tokens is None or tokens[0] not in (0, 1):
         tokens_text = "tokens not checked"
     else:
@@ -113,7 +118,7 @@ def status(proj: H.Project) -> Tuple[str, Optional[str]]:
 def snapshot(proj: H.Project, session_id: str) -> None:
     H.clean_snapshots()
     path = H.snapshot_path(proj.root, session_id)
-    if path.is_file():
+    if path is None or os.path.lexists(str(path)):
         return  # a resumed session keeps the snapshot it started with
     A = H.load_script("audit.py", "plumb_audit")
     if A is None:

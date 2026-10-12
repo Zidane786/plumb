@@ -43,10 +43,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib as H  # noqa: E402
 
 MAX_ISSUES = 10
-_THEME = re.compile(r"Theme\.(?:swift|kt)$")
-_PLATFORM_OUTPUTS = (re.compile(r"assets/platforms/web/(?:tokens\.css|tailwind\.tokens\.js)"),
-                     re.compile(r"assets/platforms/mobile/ios/[^/]*Theme\.swift"),
-                     re.compile(r"assets/platforms/mobile/android/[^/]*Theme\.kt"))
+_CASE = re.I if H.CASELESS else 0
+_THEME = re.compile(r"Theme\.(?:swift|kt)$", _CASE)
+_PLATFORM_OUTPUTS = (re.compile(r"assets/platforms/web/(?:tokens\.css|tailwind\.tokens\.js)", _CASE),
+                     re.compile(r"assets/platforms/mobile/ios/[^/]*Theme\.swift", _CASE),
+                     re.compile(r"assets/platforms/mobile/android/[^/]*Theme\.kt", _CASE))
 
 
 def _generated_header(path: str) -> bool:
@@ -88,29 +89,30 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
         return _own(path)
     in_project = H.under(path, proj.root_s)
     shown = in_project if in_project else path
+    f = H.fold  # compare paths without case where the file system ignores it
     if proj.skill_dir is not None:
         in_skill = H.under(path, str(proj.skill_dir))
         if in_skill:
-            parts = in_skill.split("/")
+            parts = f(in_skill).split("/")
             if ((len(parts) == 2 and parts[0] == "scripts" and parts[1].endswith(".py"))
-                    or (len(parts) >= 2 and parts[0] == "templates") or in_skill == "assets/platforms/README.md"):
+                    or (len(parts) >= 2 and parts[0] == "templates") or f(in_skill) == f("assets/platforms/README.md")):
                 return _own(shown)
             if any(rx.fullmatch(in_skill) for rx in _PLATFORM_OUTPUTS):
                 return _tokens_output(proj, shown)
     home = proj.home_root()
     in_home = H.under(path, home)
-    if in_home and in_home in proj.copies:
+    if in_home and f(in_home) in {f(c) for c in proj.copies}:
         return _tokens_output(proj, in_home if home == proj.root_s else path)
     if not in_project:
         return None
-    docs = proj.docs_rel
-    if in_project == f"{docs}/specimen.html":
+    docs, here = f(proj.docs_rel), f(in_project)
+    if here == f"{docs}/specimen.html":
         return _tokens_output(proj, shown)
-    if in_project in (f"{docs}/prototype.html", f"{docs}/screens.html"):
+    if here in (f"{docs}/prototype.html", f"{docs}/screens.html"):
         return _prototype_output(proj, shown)
-    if in_project == f"{docs}/prototype/screens.json":
+    if here == f"{docs}/prototype/screens.json":
         return _map_output(proj, shown)
-    if in_project.startswith(f"{docs}/tours/") and in_project.endswith(".html") and "/" not in in_project[len(docs) + 7:]:
+    if here.startswith(f"{docs}/tours/") and here.endswith(".html") and "/" not in here[len(docs) + 7:]:
         if not os.path.isfile(path) or _generated_header(path):
             return _prototype_output(proj, shown)
     if _THEME.search(in_project) and os.path.isfile(path) and _generated_header(path):

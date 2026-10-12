@@ -259,6 +259,10 @@ def test_run_cmd_has_crlf_endings_and_tries_each_python():
     for py in ("py -3", "python", "python3"):
         assert f'{py} -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" <nul' in text
     assert 'set "PLUMB_PYTHON=py -3"' in text
+    # cmd.exe must not find py/python in the current directory (the project) before PATH
+    lines = text.splitlines()
+    first_lookup = next(i for i, ln in enumerate(lines) if ln.startswith(("py ", "python")))
+    assert any(ln.strip() == 'set "NoDefaultCurrentDirectoryInExePath=1"' for ln in lines[:first_lookup])
     assert "exit /b 0" in text and "slate" not in text.lower()
 
 
@@ -275,3 +279,15 @@ def test_windows_powershell_hook_without_plugin_root_never_blocks(tmp_path):
                        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=str(tmp_path),
                        timeout=60)
     assert r.returncode == 0
+
+
+@windows_only
+def test_windows_launcher_never_runs_a_python_planted_in_the_project(tmp_path):
+    proj = make_project(tmp_path)
+    marker = tmp_path / "planted-ran"
+    for name in ("py.bat", "py.cmd", "python.bat", "python.cmd", "python3.bat", "python3.cmd"):
+        write(proj / name, f"@echo off\r\necho ran > \"{marker}\"\r\n", newline="")
+    r = run_hook("powershell", "pre_edit.py", payload("copilot", "bash", CWD=str(proj), COMMAND="echo hi"), proj,
+                 hook_env(tmp_path, copilot=True))
+    assert r.returncode == 0
+    assert not marker.exists()

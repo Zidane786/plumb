@@ -57,6 +57,8 @@ def main() -> int:
     if proj is None or not proj.on("End-of-turn check") or not proj.skill_ok:
         return 0
     path = H.snapshot_path(proj.root, p.session_id)
+    if path is None:
+        return 0  # no private temp folder (snapshot_dir said why): stay quiet
     A = H.load_script("audit.py", "plumb_audit")
     if A is None:
         return 0
@@ -66,8 +68,10 @@ def main() -> int:
     try:
         doc = A.load_doc(proj.skill_dir)
         settings = A.make_settings(proj.root, doc)
-        if not path.is_file():
+        if not os.path.lexists(str(path)):
             H.write_json(path, A.take_snapshot(proj.root, proj.skill_dir, settings))
+            return 0
+        if H.read_private(path) is None:
             return 0
         snap = A.read_snapshot(path)
         changes = A.changed_since(snap, proj.root, proj.skill_dir, settings)
@@ -86,7 +90,7 @@ def main() -> int:
     n = len(errors)
     blocked_path = path.with_name(path.name[:-len(".json")] + ".blocked.json")
     try:
-        seen = set(json.loads(blocked_path.read_text(encoding="utf-8")))
+        seen = set(json.loads(H.read_private(blocked_path) or "[]"))
     except (OSError, ValueError, TypeError):
         seen = set()
     keys = [_key(f) for f in errors]

@@ -27,9 +27,10 @@ need no import at all (a non-UI edit stays far under 150 ms).
 
 Trust boundary: the checks load audit.py (and through it build-prototype.py, build-tokens.py, _plumb.py) only from the
 plugin's own install (PLUGIN_SCRIPTS, next to these hooks), never the copies in the project's design-system skill: the
-project is data (PLUMB.md, the tokens JSON, screens.json, screen and source files), so opening a repository never makes
-a hook run its code. When the project's copies are another version, scripts_note() says so (run /plumb:upgrade); the
-checks still use the plugin's. When loading fails the checks are skipped with one stderr line: hooks fail open.
+project is data (PLUMB.md, the tokens JSON, screens.json, screen and source files); the git calls in audit.py turn off
+the commands a repository's config can name (see SECURITY.md "Trust boundary"). When the project's copies are another
+version, scripts_note() says so (run /plumb:upgrade); the checks still use the plugin's. When loading fails the checks
+are skipped with one stderr line: hooks fail open. Snapshots live in a private per-user temp folder (snapshot_dir).
 
 Python 3.9+, standard library only.
 """
@@ -41,6 +42,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import time
@@ -54,7 +56,8 @@ PLUGIN_SCRIPTS = os.path.join(os.path.dirname(HOOKS_DIR), "assets", "skill", "sc
 PLUMB_MD = "PLUMB.md"
 SNAPSHOT_DAYS = 7
 UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
-_CASELESS = sys.platform == "win32"
+# Windows and macOS (APFS, HFS+ by default) file systems ignore case: TOKENS.CSS is tokens.css there.
+CASELESS = sys.platform in ("win32", "darwin")
 
 # Tool names (lower case, without "_" and "-") -> what the tool does. Claude Code: Edit, Write, MultiEdit, Bash,
 # PowerShell; Copilot CLI: the same names for a plugin's hooks, or edit, create, str_replace, apply_patch, bash,
@@ -356,7 +359,7 @@ def resolve(path: str, base: str) -> str:
 def under(path: str, root: str) -> Optional[str]:
     """path relative to root (posix), "" for root itself, None when it is outside."""
     a, b = path.rstrip("/\\"), root.rstrip("/\\")
-    ca, cb = (os.path.normcase(a), os.path.normcase(b)) if _CASELESS else (a, b)
+    ca, cb = (os.path.normcase(a).lower(), os.path.normcase(b).lower()) if CASELESS else (a, b)
     if len(ca) != len(a) or len(cb) != len(b):
         ca, cb = a, b
     if ca == cb:
@@ -365,6 +368,11 @@ def under(path: str, root: str) -> Optional[str]:
         if ca.startswith(cb + sep):
             return a[len(b) + 1:].replace("\\", "/")
     return None
+
+
+def fold(text: str) -> str:
+    """text for comparing paths: lower case where the file system ignores case."""
+    return text.lower() if CASELESS else text
 
 
 def plugin_root() -> str:
@@ -394,6 +402,13 @@ _NOTE = re.compile(r"\s{2,}\([^)]*\)\s*$")
 _VERSION = re.compile(r"<!--\s*plumb\s+v(\d+(?:\.\d+)*)", re.I)
 _PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 _ON = re.compile(r"^\s*(?:on|yes|true)\b", re.I)
+_SAFE_PYTHON = re.compile(r"py -3|py(?:\.exe)?|(?:[\w.:/\\-]*[/\\])?python[\d.]*(?:\.exe)?")
+_SAFE_ARG = re.compile(r"[\w.@+/:\\-]+")
+
+
+def _safe_arg(text: str) -> str:
+    """A path for a fix: line, double-quoted (with no ", $ or backtick left in it) unless it is plain."""
+    return text if _SAFE_ARG.fullmatch(text) else '"' + re.sub(r'["`$]', "", text) + '"'
 
 
 def plumb_md_keys(text: str) -> Dict[str, str]:
@@ -457,7 +472,9 @@ class Project:
         self.skill_rel = self.keys.get("Design system", "").strip().replace("\\", "/").rstrip("/")
         self.skill_dir: Optional[Path] = Path(resolve(self.skill_rel, self.root_s)) if self.skill_rel else None
         self.linked = self.keys.get("Role", "").strip().lower().startswith("linked")
-        self.python = self.keys.get("Python", "").strip() or "python3"
+        python = self.keys.get("Python", "").strip()
+        # Echoed into fix: lines an agent may run, so only an interpreter name or path is taken from PLUMB.md.
+        self.python = python if _SAFE_PYTHON.fullmatch(python) else "python3"
         self._doc: Optional[dict] = None
         self._doc_read = False
 
@@ -474,7 +491,7 @@ class Project:
 
     def script(self, name: str) -> str:
         """The command that runs one of the skill's scripts, for fix lines."""
-        return f"{self.python} {self.skill_rel}/scripts/{name}"
+        return f"{self.python} {_safe_arg(f'{self.skill_rel}/scripts/{name}')}"
 
     def tokens_doc(self) -> Optional[dict]:
         """The tokens file (the one *.tokens.json in the skill's assets/tokens/), or None (missing, several, broken)."""
@@ -541,7 +558,7 @@ def load_script(file_name: str, module_name: str):
     """One of the plugin's own design-system scripts (audit.py, build-prototype.py) as a module, or None with one note.
 
     Trust boundary: always the copy installed with the plugin (PLUGIN_SCRIPTS, next to these hooks), never the copy in
-    the project's skill folder, so opening a repository can never make a hook run that repository's code; the project
+    the project's skill folder, so a hook never runs the repository's own Plumb scripts; the project
     is only read as data (PLUMB.md, the tokens JSON, screens.json, the screen and source files). The module is
     registered in sys.modules before it runs (its dataclasses need that); its folder goes first on sys.path so its own
     `import _plumb` is the plugin's too."""
@@ -577,13 +594,16 @@ def _script_version(path: Path) -> Optional[str]:
     return m.group(1) if m else None
 
 
+def script_versions(project: Project) -> Tuple[Optional[str], Optional[str]]:
+    """(the project's copied scripts' version, the plugin's), both read as text."""
+    mine = _script_version(project.skill_dir / "scripts" / "_plumb.py") if project.skill_dir is not None else None
+    return mine, _script_version(Path(PLUGIN_SCRIPTS) / "_plumb.py")
+
+
 def scripts_note(project: Project) -> Optional[str]:
     """One line when the project's copied scripts are another version than the plugin's (the hooks check with the
     plugin's either way), else None."""
-    if project.skill_dir is None:
-        return None
-    mine = _script_version(project.skill_dir / "scripts" / "_plumb.py")
-    plugin = _script_version(Path(PLUGIN_SCRIPTS) / "_plumb.py")
+    mine, plugin = script_versions(project)
     if mine is None or plugin is None or mine == plugin:
         return None
     return f"this project's Plumb scripts are v{mine}; the plugin is v{plugin} \u2014 run /plumb:upgrade"
@@ -592,27 +612,93 @@ def scripts_note(project: Project) -> Optional[str]:
 # ---------------------------------------------------------------- session snapshots
 
 
-def snapshot_dir() -> Path:
-    return Path(tempfile.gettempdir()) / "plumb"
+def _private_dir_name() -> str:
+    if hasattr(os, "getuid"):
+        return f"plumb-{os.getuid()}"
+    import getpass
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001
+        user = ""
+    return "plumb-" + (re.sub(r"[^\w.-]", "_", user or "") or "user")
 
 
-def snapshot_path(project: Path, session_id: str) -> Path:
-    """Where the session's snapshot lives: the OS temp folder, keyed by project and session, never in the repo."""
+def _ours(st: os.stat_result, folder: bool) -> bool:
+    """A real directory (folder) or regular file, not a symlink, owned by this user and not writable by others."""
+    if stat.S_ISLNK(st.st_mode) or not (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)):
+        return False
+    if hasattr(os, "getuid"):
+        return st.st_uid == os.getuid() and not st.st_mode & 0o022
+    return True
+
+
+_DIR_CHECKED: List[Optional[Path]] = []
+
+
+def snapshot_dir() -> Optional[Path]:
+    """The hooks' private folder in the OS temp folder: plumb-<uid> (plumb-<user> on Windows), created 0700. None (with
+    one note) when it is a symlink, someone else's, or writable by others: then nothing is read, written or deleted."""
+    if _DIR_CHECKED:
+        return _DIR_CHECKED[0]
+    folder = Path(tempfile.gettempdir()) / _private_dir_name()
+    result: Optional[Path] = None
+    try:
+        try:
+            os.mkdir(str(folder), 0o700)
+        except FileExistsError:
+            pass
+        if _ours(os.lstat(str(folder)), folder=True):
+            result = folder
+        else:
+            note(f"the temp folder {folder} is not private to you (a symlink, someone else's or writable by others), "
+                 f"so no session snapshot is kept; remove it")
+    except OSError as exc:
+        note(f"no temp folder for the session snapshot ({exc.strerror or exc})")
+    _DIR_CHECKED.append(result)
+    return result
+
+
+def snapshot_path(project: Path, session_id: str) -> Optional[Path]:
+    """Where the session's snapshot lives: the private temp folder, keyed by project and session, never in the repo.
+    None when there is no private folder (see snapshot_dir)."""
+    folder = snapshot_dir()
+    if folder is None:
+        return None
     key = hashlib.sha256(os.path.realpath(str(project)).encode("utf-8")).hexdigest()[:12]
     sid = re.sub(r"[^\w.-]", "_", session_id or "")[:80] or "session"
-    return snapshot_dir() / f"{key}-{sid}.json"
+    return folder / f"{key}-{sid}.json"
+
+
+def read_private(path: Path) -> Optional[str]:
+    """A file of ours in the private folder (a regular file we own), else None."""
+    try:
+        if not _ours(os.lstat(str(path)), folder=False):
+            return None
+        with open(path, "rb") as fh:
+            return fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
 
 
 def write_json(path: Path, data: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write a file in the private folder: a fresh 0600 file (O_EXCL, no symlink followed), then renamed into place."""
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(data, ensure_ascii=False) + "\n")
-    os.replace(tmp, path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        os.unlink(str(tmp))
+    except OSError:
+        pass
+    fd = os.open(str(tmp), flags, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write((json.dumps(data, ensure_ascii=False) + "\n").encode("utf-8"))
+    os.replace(str(tmp), str(path))
 
 
 def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
+    """Delete our snapshots older than `days`: only regular files we own, only in the private folder."""
     folder = snapshot_dir()
+    if folder is None:
+        return
     cutoff = time.time() - days * 24 * 3600
     try:
         entries = list(folder.iterdir())
@@ -620,7 +706,8 @@ def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
         return
     for p in entries:
         try:
-            if p.suffix == ".json" and p.stat().st_mtime < cutoff:
+            st = os.lstat(str(p))
+            if p.suffix in (".json", ".tmp") and _ours(st, folder=False) and st.st_mtime < cutoff:
                 p.unlink()
         except OSError:
             pass
@@ -640,9 +727,11 @@ _NO_WRITE = re.compile(r"\d?>&\d|\d?>>?\s*(?:/dev/null|\$null|nul)(?![\w./\\-])"
 _GENERIC = re.compile(r"write_text|write_bytes|\.write\(|json\.dump|shutil\.(?:copy\w*|move)|os\.(?:replace|rename)\(|"
                       r"\bopen\([^)]*,\s*(?:mode\s*=\s*)?\\?['\"][rbt]*[wax+]|\btruncate\b|\bdd\b[^|;&]*\bof=|"
                       r"::(?:write|append)all\w*\(", re.I)
-# Running Plumb's own builders is how generated files are meant to change.
-_RUNS_BUILDER = re.compile(r"^\s*(?:\S*[/\\])?(?:python[\d.]*(?:\.exe)?|py(?:\.exe)?|uv)\b.*\b(?:build-tokens|build-prototype)"
-                           r"\.py\b", re.I)
+# Running Plumb's own builders is how generated files are meant to change: a pipeline stage whose interpreter's script
+# argument (the first word after its flags) is build-tokens.py or build-prototype.py.
+_BUILDER_SCRIPT = re.compile(r"(?:^|[/\\])build-(?:tokens|prototype)\.py$", re.I)
+_UV_VALUE_FLAGS = ("--with", "--python", "-p", "--project", "--directory", "--from", "--env-file", "--group", "--extra",
+                   "--with-requirements", "--index", "--index-url")
 _CD = re.compile(r"^\s*(?:cd|pushd|set-location|sl)\s+(?:/d\s+)?(\"[^\"]*\"|'[^']*'|\S+)\s*$", re.I)
 
 
@@ -732,24 +821,51 @@ def _sed_files(args: List[str], perl: bool = False) -> List[str]:
     return [f for f in files if f]
 
 
-def _stage_targets(stage: str, builder: bool = False) -> List[str]:
-    """The files one pipeline stage writes (best effort). builder: the stage runs a Plumb builder, whose own writes are
-    allowed; only its redirects and tee count."""
+def _command_name(word: str) -> str:
+    name = re.split(r"[/\\]", word)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _runs_builder(words: List[str]) -> bool:
+    """The stage runs build-tokens.py or build-prototype.py itself: python[3][.x] / py [-3] / uv run [flags] python,
+    then interpreter flags (not -c or -m), then that script as the first argument."""
+    i, n = 0, len(words)
+    name = _command_name(words[0]) if words else ""
+    if name == "uv":
+        if n < 2 or words[1] != "run":
+            return False
+        i = 2
+        while i < n and words[i].startswith("-"):
+            i += 2 if words[i] in _UV_VALUE_FLAGS else 1
+        if i >= n:
+            return False
+        name = _command_name(words[i])
+    if not re.fullmatch(r"python[\d.]*|py", name):
+        return False
+    i += 1
+    while i < n and words[i].startswith("-") and len(words[i]) > 1:
+        if words[i] in ("-c", "-m"):
+            return False
+        i += 2 if words[i] in ("-X", "-W", "-Q") else 1
+    return i < n and _BUILDER_SCRIPT.search(words[i]) is not None
+
+
+def _stage_targets(stage: str) -> List[str]:
+    """The files one pipeline stage writes (best effort). A stage that runs a Plumb builder may write generated files
+    itself; only its redirects and tee count."""
     cleaned = _NO_WRITE.sub(" ", stage)
     targets = [_unquote(m.group(1)) for m in _REDIR.finditer(cleaned)]
     for m in _TEE.finditer(cleaned):
         targets += [_unquote(w) for w in re.findall(_WORD, m.group(2))]
-    if builder:
-        return targets
     rest = _TEE.sub(" ", _REDIR.sub(" ", cleaned))
     words = [_unquote(w) for w in re.findall(_WORD, rest)]
     while words and re.match(r"^[A-Za-z_]\w*=", words[0]):  # FOO=bar cmd
         words.pop(0)
     if words and words[0] in ("sudo", "command", "env", "nohup", "time"):
         words.pop(0)
-    if not words:
+    if not words or _runs_builder(words):
         return targets
-    name = re.split(r"[/\\]", words[0])[-1].lower()
+    name = _command_name(words[0])
     args = words[1:]
     if name in ("sed", "gsed") and any(re.match(r"^-[a-zA-Z]*i", a) or a.startswith("--in-place") for a in args):
         targets += _sed_files(args)
@@ -775,7 +891,7 @@ def _stage_targets(stage: str, builder: bool = False) -> List[str]:
 def shell_targets(command: str, cwd: str) -> List[str]:
     """The files a shell command (Bash or PowerShell) looks like it writes, as absolute paths (best effort). What
     build-tokens.py and build-prototype.py write themselves does not count (that is how generated files are meant to
-    change); only their redirects do.
+    change), only the redirects of the pipeline stage that runs them; every other stage is read as usual.
     `cd DIR` moves the base for the commands after it."""
     out: List[str] = []
     base = cwd
@@ -785,9 +901,8 @@ def shell_targets(command: str, cwd: str) -> List[str]:
             target = _unquote(m.group(1))
             base = os.path.normpath(os.path.join(base, target.replace("\\", "/") if os.sep == "/" else target))
             continue
-        builder = _RUNS_BUILDER.search(part) is not None
         for stage in _split(part, ("|",)):
-            for t in _stage_targets(stage, builder):
+            for t in _stage_targets(stage):
                 if not t or t in ("-", "/dev/null"):
                     continue
                 p = t.replace("\\", "/") if os.sep == "/" else t
