@@ -15,13 +15,14 @@ Copilot CLI and other agent tools all read the same text. Edit this file, never 
 | Need | Read |
 |---|---|
 | What Plumb is, every decision | `docs/specs/2026-10-11-plumb-design.md` |
-| How a release was built (contracts) | `docs/plans/*-build-plan.md` (newest last) |
-| What a project gets, as a page | `docs/what-you-get.html` |
+| How a release is built: tasks, contracts, owner amendments | `docs/plans/*-build-plan.md` (newest last) |
+| The complete usage guide | `docs/USAGE.md` (being written in Task 17) |
+| What a project gets, as a page | `docs/what-you-get.html` (being written in Task 17) |
 | User-facing overview | `README.md`, `plugins/plumb/README.md` |
-| Every script command and flag, "use it when…" | `plugins/plumb/reference/` |
+| Every script command and flag, "use it when…", the shared rules | `plugins/plumb/reference/` (in progress: written with the skills, Tasks 15-16; `ls` it to see what exists) |
 | What changed per version | `plugins/plumb/CHANGELOG.md` |
-| How to test on a machine by hand | `TEST.md` |
-| The exact output of `create` | `examples/caredesk/` |
+| How to test on a machine by hand | `TEST.md` (being written in Task 17) |
+| The exact output of `create` | `examples/caredesk/` (added after the owner validates it, Task 19) |
 | Reference implementations (**read only, never write there**) | below |
 
 The spec is the source of truth while Plumb is being designed; update this file when it changes
@@ -47,28 +48,41 @@ to a temporary folder to test against them):
 
 ## 2. Layout
 
+Marked *in progress* = planned in the build plan, not in the tree yet; remove the mark when it lands.
+
 ```
 .claude-plugin/marketplace.json      marketplace "plumb" → plugins/plumb
 .claude/settings.json                 repo settings for agents (no AI attribution)
 plugins/plumb/                        the installed plugin (only this folder ships)
   .claude-plugin/plugin.json          name + VERSION (source of truth for the plugin version)
-  skills/<name>/SKILL.md              /plumb:init create extract audit update upgrade status
-  assets/                             the design-system skill template copied into projects
-                                      (SKILL.md, design.md, tokens, references, build-tokens.py, audit)
-  hooks/                              hooks.json, run.sh / run.cmd (python launchers), the hook scripts
-  templates/                          PLUMB.md and the CLAUDE.md / AGENTS.md rows for projects
-  reference/                          shared reference all skills link
-  upgrades/<version>.md               per-release "What's new" + upgrade steps
+  skills/<name>/SKILL.md              the 10 commands (in progress: none built yet): init create
+                                      extract prototype tour audit ux update upgrade status
+  reference/                          shared reference all skills link (in progress, with the skills)
+  assets/skill/                       the design-system skill template copied into projects
+    SKILL.md.tmpl  design.md.tmpl     filled from the interview answers
+    references/                       reference templates (web/, mobile/ios, mobile/android)
+    assets/                           icons, tokens, platforms/web (tokens.css templates)
+    scripts/                          _plumb.py (shared core), build-tokens.py, audit.py,
+                                      build-prototype.py: copied into projects, tested here
+    templates/                        specimen, audit report, prototype shell and screens page
+                                      templates, player.js / player.css (the walkthrough player),
+                                      directions.html (in progress)
+  scripts/                            plugin-side helpers the skills run (not copied into projects)
+    detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
+    version.py  screenshot.py  kiro.py   in progress (Tasks 12b, 16)
+  hooks/                              hooks.json, run.sh / run.cmd, the hook scripts (in progress, Task 12)
+  templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet
+  upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
   CHANGELOG.md  README.md
-examples/caredesk/                    golden example: the full skill `create` produces (a regression fixture)
-tests/                                pytest suite
-.github/workflows/test.yml            CI: Windows/macOS/Linux × Python 3.9/3.13
-.github/workflows/release.yml         publishes vX.Y.Z releases from the CHANGELOG on merge
-.github/dependabot.yml                keeps the GitHub Actions up to date
-scripts/release_notes.py              prints a version's release notes from the CHANGELOG
-scripts/check_version_bump.py         CI guard: plugin changes carry a new version + CHANGELOG section
-TEST.md                               hands-on test guide for any machine
-docs/                                 specs, build plans, what-you-get.html
+examples/caredesk/                    golden example of `create` (regression fixture; after validation, Task 19)
+tests/                                pytest suite; fixtures/ holds audit cases and sample projects;
+                                      conftest.py enforces the skip rules
+docs/                                 specs/, plans/, USAGE.md and what-you-get.html (Task 17)
+scripts/                              repo tooling: release_notes.py, check_version_bump.py
+.github/                              workflows/test.yml (CI: Windows/macOS/Linux × Python 3.9/3.13),
+                                      workflows/release.yml (publishes vX.Y.Z from the CHANGELOG on
+                                      merge), dependabot.yml (keeps the Actions up to date)
+TEST.md                               hands-on test guide for any machine (Task 17)
 ```
 
 ## 3. Rules that must hold in every change
@@ -100,6 +114,30 @@ docs/                                 specs, build plans, what-you-get.html
   `.claude/skills/<project>-design-system/` by default (the repo root in a monorepo; the frontend
   repo when frontend and backend are separate). Both tools read it there: Copilot CLI loads skills
   from `.claude/skills`, `.github/skills`, `~/.copilot/skills` and `~/.agents/skills`.
+- **Prototype first.** UI work goes prototype → the user approves → build. Hooks refuse a new
+  page or route with no approved screen; skills never skip it for visual changes.
+- **Light and dark, everywhere.** Every colour token has a dark value; a missing one is an audit
+  error unless marked same-in-dark. Pages never write `dark:` overrides. Every generated page
+  and check covers both themes. Light-only is allowed only as a recorded decision
+  (`Themes: light-only` in `PLUMB.md` + the decision log).
+- **No downloads.** Plumb and its skills never install or download anything (no pip, npm,
+  browsers, fonts): they tell the user what is missing, ask, and wait.
+- **Plumb's own files are guarded in projects.** The copied `[P]` files (`scripts/*.py`,
+  `templates/*`) and the plugin's files are never hand-edited there; improvements go upstream to
+  this repo and reach projects through `/plumb:upgrade`. The guard is off here (no `PLUMB.md`).
+- **Scripts are the floor, not the ceiling.** `detect.py` is a first guess: the skill verifies it
+  and the user confirms before anything is written. `audit.py` rules catch what can be
+  expressed; an agent review pass covers the rest, and recurring findings become new rules.
+- **Exceptions by path, never by comment.** Audit allowances live on `PLUMB.md`'s allow list
+  (e.g. `components/ui/**`); no `// plumb-ignore` style comments.
+- **Generated pages load nothing from the network:** no CDN, no hosted fonts; system font
+  stacks or the project's own files. Generated files start with a `GENERATED … do not edit`
+  header.
+- **Every design choice goes in the decision log** (`docs/design/decisions.md` in a project):
+  directions, variants, screens, light-only. The prototype shows it.
+- **Kiro is supported too** (skills via `scripts/kiro.py`, hooks through an adapter in
+  `_hooklib.py`), built from Kiro's documented formats; the live check on a real Kiro is pending.
+  Not built yet.
 - **Lean skills.** `SKILL.md` files stay short; details go in `reference/` and are loaded only
   when needed.
 - **Product text never mentions internal projects.** Plumb is generic.
@@ -143,13 +181,18 @@ claude plugin validate --strict plugins/plumb
   changed". CI installs Playwright + Chromium and runs the browser tests on every OS; unexpected
   skips fail the run (`PLUMB_STRICT_SKIPS=1`, `tests/conftest.py`). A manual run always runs
   everything. Keep this list and the workflow's list in step.
-- `tests/test_docs_consistency.py` fails if a skill/doc mentions a command that doesn't exist,
-  or a skill doesn't link the reference — keep it green.
+- `tests/test_docs_consistency.py` (being written in Task 17) will fail if a skill/doc mentions
+  a command that doesn't exist, or a skill doesn't link the reference — keep it green.
+- **Parallel work, safely.** Each task runs in its own isolated git worktree, branched from
+  `feat/1.0.0`, and is reviewed before it merges. Merge one at a time, with a merge commit. After
+  every merge run the full suite, Playwright included, on Python 3.13 and 3.9 before pushing.
+  Never force-push.
 
 ## 5. Keeping docs in step (do this in the SAME change as the feature)
 
 Every feature, fix or behaviour change updates **all** that apply, before it's considered done:
 
+- [ ] **`docs/USAGE.md`**, the complete usage guide (every command, flag and flow).
 - [ ] **`plugins/plumb/reference/`** — new/changed commands and flags, "use it when…".
 - [ ] **Skills** (`plugins/plumb/skills/*/SKILL.md`) that should use or mention it.
 - [ ] **`plugins/plumb/templates/PLUMB.md`** if projects need to know or configure it.
@@ -162,7 +205,7 @@ Every feature, fix or behaviour change updates **all** that apply, before it's c
 - [ ] **`TEST.md`** — add or adjust the hands-on check for the feature (and the expected result).
 - [ ] **Spec** (`docs/specs/…`) for new decisions or commands.
 - [ ] **Tests** — unit tests, docs-consistency, portability and Copilot checks as relevant.
-- [ ] **This file (`AGENTS.md`)** if the rules, layout or workflow changed.
+- [ ] **This file (`AGENTS.md`)** whenever layout, rules or workflow change, in the same change.
 
 ## 6. Releasing a version
 
