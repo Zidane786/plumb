@@ -548,8 +548,11 @@ project's own framework, from `references/components.md`, and must pass `audit.p
 ## 6. Engine
 
 Four standard-library Python 3.9 files, copied into each project's skill `scripts/`. The
-project's copy is what runs everywhere (Make, the hooks, CI, Windows), so the hook and the full
-audit always apply the same rules, and `upgrade` updates them together. The plugin repo keeps the
+project's copy is what explicit commands run (Make, CI, the skills), and `upgrade` keeps it in step
+with the plugin. **The hooks never run a project's copy:** they run the plugin's own installed
+scripts, so a cloned repository cannot get code executed just by containing a `PLUMB.md`; when the
+project's copy is a different version, the hook says "run /plumb:upgrade" (trust boundary
+documented in `SECURITY.md`). The plugin repo keeps the
 masters in `plugins/plumb/assets/skill/scripts/`.
 
 ### 6.1 `build-tokens.py`
