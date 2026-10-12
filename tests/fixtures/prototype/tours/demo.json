@@ -1,0 +1,94 @@
+{
+  "title": "Taking a booking at Café Ünïcode",
+  "audience": "client",
+  "purpose": "Show the owner how a host takes a booking in under a minute.",
+  "speed": 1,
+  "intro": {
+    "title": "Taking a booking",
+    "text": "What you'll see: tonight's tables, a new booking typed in, and the confirmation.",
+    "hold": 600
+  },
+  "chapters": [
+    {
+      "title": "Tonight at a glance",
+      "hold": 500,
+      "steps": [
+        {
+          "screen": "home",
+          "state": "ready",
+          "title": "Tonight's tables",
+          "caption": "The host lands on tonight's tables, in time order.",
+          "target": ".tables",
+          "point": "spotlight",
+          "labels": [
+            { "target": "h2", "text": "1 Today" },
+            { "target": "[data-test=new-booking]", "text": "2 New booking" }
+          ],
+          "hold": 700
+        },
+        {
+          "screen": "home",
+          "title": "Start a booking",
+          "caption": "One link starts a new booking.",
+          "target": "[data-test=new-booking]",
+          "point": { "style": "arrow", "label": "Start here" },
+          "callout": { "text": "Every booking starts here", "side": "bottom" },
+          "action": { "click": "[data-test=new-booking]" },
+          "hold": 700
+        }
+      ]
+    },
+    {
+      "title": "Take the booking",
+      "hold": 500,
+      "steps": [
+        {
+          "screen": "booking",
+          "state": "ready",
+          "title": "Type the guest's name",
+          "caption": "The name is the only field the host has to fill in.",
+          "target": "[data-test=guest]",
+          "point": "ring",
+          "action": { "type": "Zoë Brontë" },
+          "hold": 600
+        },
+        {
+          "screen": "booking",
+          "state": "ready",
+          "title": "Book the table",
+          "caption": "Your turn: book the table.",
+          "target": "[data-test=save]",
+          "point": "cursor",
+          "action": { "click": true },
+          "your_turn": true,
+          "hint": "Not that one: press “Book the table”, the highlighted button.",
+          "hold": 600
+        },
+        {
+          "screen": "booking",
+          "state": "success",
+          "title": "Booked",
+          "caption": "The booking is confirmed on the same page, with a way back.",
+          "target": ".banner",
+          "point": "beacon",
+          "note": { "text": "Saved in one step", "x": 62, "y": 18 },
+          "hold": 600
+        },
+        {
+          "screen": "home",
+          "state": "ready",
+          "title": "Back on the list",
+          "caption": "Tonight's list is where the host goes next.",
+          "targets": [".tables li:first-child", "[data-test=new-booking]"],
+          "point": "zoom",
+          "hold": 600
+        }
+      ]
+    }
+  ],
+  "closing": {
+    "title": "What to try next",
+    "text": "Open the prototype and take a booking yourself, or try the error state.",
+    "hold": 600
+  }
+}

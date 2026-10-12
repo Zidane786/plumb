@@ -1567,15 +1567,21 @@ def refresh_prototype_theme(text: str, doc: dict) -> Optional[str]:
 
 
 def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
-    """prototype.html and screens.html (when build-prototype.py has written them) with their theme refreshed."""
+    """prototype.html, screens.html and the tour pages in tours/ (when build-prototype.py has written them) with their
+    theme refreshed."""
     docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
     out: Dict[Path, str] = {}
-    for name in PROTOTYPE_PAGES:
-        path = safe_copy_path(root, f"{str(docs).rstrip('/')}/{name}", "$extensions.plumb.docs_dir")
+    paths = [safe_copy_path(root, f"{str(docs).rstrip('/')}/{name}", "$extensions.plumb.docs_dir") for name in PROTOTYPE_PAGES]
+    tours = safe_copy_path(root, f"{str(docs).rstrip('/')}/tours", "$extensions.plumb.docs_dir")
+    if tours.is_dir():
+        paths += sorted(p for p in tours.glob("*.html") if p.is_file())
+    for path in paths:
         try:
             text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
         except (OSError, UnicodeDecodeError):
             text = None  # build-prototype.py --check reports an unreadable page
+        if text is not None and path.parent == tours and not P.is_generated_text(text):
+            continue  # a hand-written page in tours/ is not Plumb's
         refreshed = refresh_prototype_theme(text, doc) if text is not None else None
         if refreshed is not None:
             out[path] = refreshed

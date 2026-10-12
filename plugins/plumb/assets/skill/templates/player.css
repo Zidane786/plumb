@@ -1,0 +1,150 @@
+/* Plumb walkthrough player and guide panel (inlined by build-prototype.py into prototype.html and every tour page).
+   Colours come from the shell's --pl-* roles, which the token block maps to the project's tokens, so the player follows
+   the project's palette in light and dark. Overlays sit on the stage and never take a click from the screen. */
+.pp-stage { position: relative; }
+.pp-stage.pl-zooming { overflow: hidden; }
+.pp-frame.pl-zoom-in { transition: transform 360ms var(--pl-ease); }
+
+.pl-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; border-radius: 12px; }
+.pl-layer > * { position: absolute; }
+.pl-dim { left: 0; top: 0; }
+.pl-dim path { fill: rgb(10 12 16 / 0.52); }
+.pl-edge, .pl-ring {
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px var(--pl-accent), 0 0 0 7px color-mix(in srgb, var(--pl-accent) 28%, transparent);
+}
+.pl-edge { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pl-accent) 85%, white); }
+.pl-flash .pl-ring, .pl-flash .pl-edge { animation: pl-flash 0.5s ease-in-out 2; }
+@keyframes pl-flash { 50% { box-shadow: 0 0 0 5px var(--pl-warn), 0 0 0 10px color-mix(in srgb, var(--pl-warn) 30%, transparent); } }
+
+.pl-arrow { display: grid; justify-items: center; gap: 2px; color: var(--pl-accent); }
+.pl-arrow svg { width: 22px; height: 30px; display: block; }
+.pl-arrow-up { grid-auto-flow: row; }
+.pl-arrow-label, .pl-label {
+  font: 600 12px/1.25 var(--pl-font); white-space: nowrap; max-width: 14rem; overflow: hidden; text-overflow: ellipsis;
+  padding: 4px 9px; border-radius: 999px; color: var(--pl-on-accent); background: var(--pl-accent);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.25);
+}
+.pl-label { padding: 3px 8px; }
+
+.pl-beacon { width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--pl-accent);
+  border: 2px solid var(--pl-surface); box-shadow: 0 1px 4px rgb(0 0 0 / 0.3); }
+.pl-beacon::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--pl-accent);
+  animation: pl-pulse 1.6s ease-out infinite; }
+@keyframes pl-pulse { from { transform: scale(1); opacity: 0.9; } to { transform: scale(3); opacity: 0; } }
+
+.pl-callout, .pl-note {
+  font: 500 14px/1.4 var(--pl-font); max-width: min(18rem, calc(100% - 16px)); padding: 9px 12px;
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong); border-radius: 10px;
+  box-shadow: var(--pl-shadow-lg); overflow-wrap: anywhere;
+}
+.pl-callout::before { content: ""; position: absolute; width: 10px; height: 10px; background: inherit;
+  border: inherit; border-width: 0 0 1px 1px; }
+.pl-side-bottom::before { top: -6px; left: calc(50% - 5px); transform: rotate(135deg); }
+.pl-side-top::before { bottom: -6px; left: calc(50% - 5px); transform: rotate(-45deg); }
+.pl-side-right::before { left: -6px; top: calc(50% - 5px); transform: rotate(45deg); }
+.pl-side-left::before { right: -6px; top: calc(50% - 5px); transform: rotate(-135deg); }
+.pl-note { border-left: 4px solid var(--pl-accent); font-size: 13px; }
+
+.pl-cursor { width: 24px; height: 24px; margin: -3px 0 0 -5px; z-index: 3; color: #111;
+  transition: left 700ms var(--pl-ease), top 700ms var(--pl-ease); filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.35)); }
+.pl-cursor svg { display: block; width: 24px; height: 24px; }
+.pl-cursor svg path { fill: #fff; stroke: #111; stroke-width: 1.5; stroke-linejoin: round; }
+.pl-cursor.pl-still { transition: none; }
+.pl-cursor::after { content: ""; position: absolute; left: -6px; top: -6px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--pl-accent); opacity: 0; }
+.pl-cursor.pl-tap::after { animation: pl-tap 0.36s ease-out; }
+@keyframes pl-tap { from { transform: scale(0.4); opacity: 0.7; } to { transform: scale(1.8); opacity: 0; } }
+
+.pl-badge { top: 10px; right: 10px; z-index: 4; font: 600 12px/1 var(--pl-mono); padding: 6px 9px; border-radius: 6px;
+  color: #f5f5f5; background: rgb(15 17 20 / 0.86); }
+.pl-subtitle { left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 4; width: max-content;
+  max-width: calc(100% - 24px); margin: 0; padding: 8px 14px; border-radius: 8px; text-align: center; text-wrap: balance;
+  font: 500 16px/1.4 var(--pl-font); color: #fff; background: rgb(12 13 15 / 0.84); }
+
+.pl-card { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; padding: 16px;
+  border-radius: 12px; background: color-mix(in srgb, var(--pl-bg) 90%, transparent); }
+.pl-card-box { max-width: 30rem; display: grid; gap: 10px; text-align: center; padding: 28px 24px;
+  background: var(--pl-surface); border: 1px solid var(--pl-border); border-radius: 14px; box-shadow: var(--pl-shadow-lg); }
+.pl-card-box h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.pl-card-box p { margin: 0; color: var(--pl-muted); overflow-wrap: anywhere; }
+
+.pl-eyebrow { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+.pl-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The dock: the walkthrough's own controls, at the bottom of the window. */
+.pl-dock {
+  position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 40; margin: 0 auto; max-width: 46rem;
+  max-height: 55vh; overflow: auto; display: grid; gap: 8px; padding: 12px 14px;
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong); border-radius: 14px;
+  box-shadow: 0 12px 32px -6px rgb(0 0 0 / 0.35);
+}
+body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
+.pl-dock .pl-eyebrow { font-size: 12px; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; }
+.pl-dock-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-dock .pl-title { margin: 0; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
+.pl-dock .pl-caption { margin: 0; color: var(--pl-text); overflow-wrap: anywhere; }
+.pl-dock .pl-caption:empty { display: none; }
+.pl-hint { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 14px; color: var(--pl-text);
+  background: color-mix(in srgb, var(--pl-warn) 14%, var(--pl-surface)); border: 1px solid var(--pl-warn); }
+.pl-progress { position: relative; height: 24px; }
+.pl-track { position: absolute; left: 0; right: 0; top: 9px; height: 6px; border-radius: 999px; background: var(--pl-sunk);
+  box-shadow: inset 0 0 0 1px var(--pl-border); overflow: hidden; }
+.pl-fill { height: 100%; width: 0; background: var(--pl-accent); border-radius: inherit; }
+.pl-marks { position: absolute; inset: 0; }
+.pl-marks button { position: absolute; top: 0; width: 24px; height: 24px; margin-left: -12px; padding: 0; border: 0;
+  background: transparent; cursor: pointer; }
+.pl-marks button::before { content: ""; position: absolute; left: 7px; top: 5px; width: 10px; height: 14px; border-radius: 3px;
+  background: var(--pl-surface); border: 2px solid var(--pl-border-strong); }
+.pl-marks button[aria-current="step"]::before { background: var(--pl-accent); border-color: var(--pl-accent); }
+.pl-marks button:hover::before { border-color: var(--pl-accent); }
+.pl-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.pl-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pl-controls .pl-spacer { flex: 1 1 0; min-width: 0; }
+.pl-btn {
+  font: inherit; font-size: 14px; font-weight: 600; min-height: 36px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+  color: var(--pl-text); background: var(--pl-bg); border: 1px solid var(--pl-border-strong);
+}
+.pl-btn:hover { background: var(--pl-sunk); }
+.pl-btn:disabled { opacity: 0.5; cursor: default; }
+.pl-btn.pl-primary { color: var(--pl-on-accent); background: var(--pl-accent); border-color: var(--pl-accent); }
+.pl-btn.pl-primary:hover { background: color-mix(in srgb, var(--pl-accent) 88%, var(--pl-text)); }
+.pl-speeds .seg { min-height: 32px; padding: 0 10px; }
+.pl-typing { outline: 2px solid var(--pl-accent) !important; outline-offset: 2px; }
+.pl-show { position: relative; z-index: 1; }
+
+/* The guide panel: this screen, what you can do, try it, walkthroughs, what just happened. */
+.pp-guide:not([hidden]) { display: grid; gap: 12px; padding: 16px; background: var(--pl-surface);
+  border: 1px solid var(--pl-border); border-radius: 12px; }
+.pl-guide-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-guide-top h2 { font-size: 15px; line-height: 1.3; }
+.pl-guide-top .pp-btn { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.pl-guide-body { display: grid; gap: 14px; }
+.pl-guide-body section { display: grid; gap: 6px; }
+.pl-guide-body h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-muted); }
+.pl-guide-body p, .pl-guide-body li { font-size: 14px; overflow-wrap: anywhere; }
+.pl-gs-title { font-weight: 600; }
+.pl-guide-body ul, .pl-guide-body ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pl-gs-do button { font: inherit; font-size: 14px; text-align: left; width: 100%; padding: 6px 8px; border-radius: 6px;
+  color: var(--pl-text); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.pl-gs-do button:hover { background: var(--pl-sunk); border-color: var(--pl-border); }
+.pl-gs-do .pl-from { display: block; font-size: 12px; color: var(--pl-muted); }
+.pl-gs-try, .pl-tours li .pl-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.pl-guide-body .pl-btn { min-height: 32px; font-size: 13px; padding: 0 12px; }
+.pl-tours li { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--pl-border); }
+.pl-tours li:first-child { border-top: 0; padding-top: 0; }
+.pl-tour-meta { font-size: 12px !important; color: var(--pl-muted); }
+.pl-feed li { font-size: 13px !important; color: var(--pl-muted); }
+.pl-feed li:first-child { color: var(--pl-text); }
+
+@media (max-width: 30rem) {
+  .pl-dock { padding: 10px 12px; }
+  .pl-subtitle { font-size: 14px; bottom: 10px; }
+  .pl-card-box { padding: 20px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-cursor, .pp-frame.pl-zoom-in { transition: none !important; }
+  .pl-beacon::after { animation: none !important; transform: scale(1.8); opacity: 0.45; }
+  .pl-cursor.pl-tap::after { animation: none !important; opacity: 0.5; transform: scale(1.4); }
+  .pl-flash .pl-ring, .pl-flash .pl-edge { animation: none !important; }
+}

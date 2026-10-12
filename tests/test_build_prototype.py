@@ -75,8 +75,9 @@ def make_project(dest: Path, screens: bool = True, decisions: bool = True, build
     for name in ("_plumb.py", "build-tokens.py", "build-prototype.py"):
         shutil.copy(SCRIPTS / name, skill / "scripts" / name)
     (skill / "templates").mkdir(parents=True, exist_ok=True)
-    for tpl in TEMPLATES.glob("*.tmpl"):
-        shutil.copy(tpl, skill / "templates" / tpl.name)
+    for tpl in TEMPLATES.iterdir():
+        if tpl.is_file():
+            shutil.copy(tpl, skill / "templates" / tpl.name)
     doc = json.loads(read(TOKENS_FIXTURE))
     if mutate:
         mutate(doc)

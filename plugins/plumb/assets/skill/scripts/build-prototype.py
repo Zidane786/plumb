@@ -5,7 +5,7 @@ Usage: build-prototype.py [--check] [--root SKILL_DIR] [--project PATH]
                           [--map ID --route ROUTE --files GLOB [GLOB ...]] [--approve ID] [--synced ID]
 
 Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, default docs/design), the decision log
-<docs>/decisions.md and the project's tokens, and writes three generated files:
+<docs>/decisions.md, the walkthroughs in <docs>/prototype/tours/ and the project's tokens, and writes these generated files:
 
   <docs>/prototype.html            the clickable app: a nav entry per screen, hash routing (#screen-ID, #screen-ID/STATE),
                                    a state switcher listing the screen's states, phone/desktop and light/dark toggles,
@@ -22,6 +22,26 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
   <docs>/prototype/screens.json    the screen map. This script is its only writer: id, title, states, route, files
                                    (globs relative to the project root), files_hash, approved {by, at, hash} | null,
                                    synced_from_code, status (to-build | built).
+
+  <docs>/tours/<tour>.html          one per tour file: the whole prototype plus that tour, opening straight into it (play
+                                   mode for a client or whats-new audience, guide mode otherwise). It sits one folder
+                                   down, so a <base href="../"> keeps links and images resolving from the docs folder.
+                                   A page whose tour file is gone is removed (only pages this script generated).
+
+Walkthroughs: <docs>/prototype/tours/<id>.json, one tour per file (id: letters, digits, _ and -, and not "<other tour>-<n>",
+which reads as step n of that tour in a #tour- link). Every prototype.html carries the walkthrough player
+(templates/player.js and player.css) with every tour; #tour-<id> and #tour-<id>-<n> open a tour or one of its steps.
+  {"title", "audience": client|training|review|team|whats-new (default review), "purpose", "speed": 0.5|1|1.5|2,
+   "intro": {"title", "text", "hold"}, "closing": {...}, "chapters": [{"title", "text", "hold", "steps": [...]}] | "steps": [...]}
+  step: {"screen", "state" (default: the screen's first), "title", "caption", "target": SEL | "targets": [SEL, ...],
+         "point": spotlight|ring|arrow|beacon|zoom|cursor|none | {"style", "label"}, "callout": {"text", "side"},
+         "labels": [{"target", "text"}], "note": {"text", "x", "y"} (percent of the screen),
+         "action": {"click": SEL|true} | {"type": TEXT, "target"?} | {"choose": VALUE, "target"?} | {"wait": MS},
+         "your_turn": bool (guide mode waits for the learner's own click, typing or choice), "hint", "hold": MS}
+  Every selector must match an element of that screen in that state (checked against the screen file's markup with a
+  standard-library CSS subset: type, #id, .class, [attr op value i], descendant, >, +, ~, :first-/last-/only-child,
+  :nth-child(), :nth-of-type(), :not(), :is(), :checked, :disabled, :required). A bad field, an unknown screen or state,
+  a selector that matches nothing or one the check cannot read exits 2 naming the tour file, line and fix, also on --check.
 
 The two pages come from templates/prototype-shell.html.tmpl and templates/screens.html.tmpl. Both inline the project's
 `build-tokens.py --css-vars` export between /* plumb:tokens */ and /* plumb:tokens:end */, a small runtime and each
@@ -82,6 +102,8 @@ from _plumb import PlumbError  # noqa: E402
 SCRIPT_REL = "scripts/build-prototype.py"
 SHELL_TEMPLATE = "prototype-shell.html.tmpl"
 CATALOGUE_TEMPLATE = "screens.html.tmpl"
+PLAYER_CSS = "player.css"
+PLAYER_JS = "player.js"
 SCHEMA = 1
 USAGE = ("[--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--root SKILL_DIR] "
          "[--project PATH]")
@@ -142,6 +164,13 @@ class Screen:
         self.styles: List[str] = []
         self.scripts: List[str] = []
         self.warnings: List[str] = []
+        self._tree: Optional["_Node"] = None
+
+    def tree(self) -> "_Node":
+        """The section as an element tree (parsed once), for checking the selectors tours point at."""
+        if self._tree is None:
+            self._tree = parse_markup(self.section)
+        return self._tree
 
     def render(self, state: Optional[str], hide_section: bool = False) -> str:
         """The section with every state block but `state` hidden (and the section itself, when asked)."""
@@ -625,6 +654,753 @@ def map_text(entries: List[dict], header: str) -> str:
     return json.dumps({"$generated": header, "version": SCHEMA, "screens": entries}, indent=2, ensure_ascii=False) + "\n"
 
 
+# ---------------------------------------------------------------- screen markup as a tree (for the tour target check)
+
+
+class _Node:
+    __slots__ = ("tag", "attrs", "children", "parent")
+
+    def __init__(self, tag: str, attrs: Dict[str, str], parent: Optional["_Node"]) -> None:
+        self.tag = tag
+        self.attrs = attrs
+        self.children: List["_Node"] = []
+        self.parent = parent
+
+    def walk(self):
+        for child in self.children:
+            yield child
+            yield from child.walk()
+
+
+_BLOCKS_CLOSE_P = frozenset("address article aside blockquote details dialog div dl fieldset figcaption figure footer form "
+                            "h1 h2 h3 h4 h5 h6 header hgroup hr main menu nav ol p pre section table ul".split())
+_IMPLIED_END = {"li": ("li",), "dt": ("dt", "dd"), "dd": ("dt", "dd"), "option": ("option",), "tr": ("tr", "td", "th"),
+                "td": ("td", "th"), "th": ("td", "th")}
+
+
+class _TreeBuilder(HTMLParser):
+    """A forgiving element tree: void elements never open, a few implied end tags close (li, p, dt/dd, option, td)."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.root = _Node("#root", {}, None)
+        self.stack = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        closes = _IMPLIED_END.get(tag, ())
+        while len(self.stack) > 1 and self.stack[-1].tag in closes:
+            self.stack.pop()
+        if tag in _BLOCKS_CLOSE_P and len(self.stack) > 1 and self.stack[-1].tag == "p":
+            self.stack.pop()
+        node = _Node(tag, {k: ("" if v is None else v) for k, v in attrs}, self.stack[-1])
+        self.stack[-1].children.append(node)
+        if tag not in _VOID:
+            self.stack.append(node)
+
+    def handle_endtag(self, tag: str) -> None:
+        for i in range(len(self.stack) - 1, 0, -1):
+            if self.stack[i].tag == tag:
+                del self.stack[i:]
+                return
+
+
+def parse_markup(text: str) -> _Node:
+    builder = _TreeBuilder()
+    builder.feed(text)
+    builder.close()
+    return builder.root
+
+
+# ---------------------------------------------------------------- CSS selectors (the subset a tour may use)
+
+
+class SelectorError(Exception):
+    """A selector the check cannot read (`unsupported` names the part it cannot check, e.g. ":hover")."""
+
+    def __init__(self, message: str, unsupported: str = "") -> None:
+        super().__init__(message)
+        self.unsupported = unsupported
+
+
+_SIMPLE = re.compile(r"""
+    (?P<type>\*|[A-Za-z][\w-]*)
+  | \#(?P<id>(?:[\w-]|\\.)+)
+  | \.(?P<cls>(?:[\w-]|\\.)+)
+  | \[\s*(?P<attr>[\w:-]+)\s*(?:(?P<op>[~|^$*]?=)\s*(?:"(?P<dq>[^"]*)"|'(?P<sq>[^']*)'|(?P<uq>(?:[\w-]|\\.)+))
+        \s*(?:(?P<flag>[iIsS])\s*)?)?\]
+  | ::(?P<element>[\w-]+)
+  | :(?P<pseudo>[\w-]+)(?:\((?P<arg>(?:[^()"']|"[^"]*"|'[^']*'|\([^()]*\))*)\))?
+""", re.X)
+_NTH = re.compile(r"^\s*(?:(?P<odd>odd)|(?P<even>even)|(?P<b0>[+-]?\d+)|(?P<a>[+-]?\d*)n\s*(?:(?P<sign>[+-])\s*(?P<b>\d+))?)\s*$",
+                  re.I)
+_STRUCTURAL = ("first-child", "last-child", "only-child", "first-of-type", "last-of-type", "only-of-type")
+_NTH_PSEUDO = ("nth-child", "nth-last-child", "nth-of-type", "nth-last-of-type")
+_LIST_PSEUDO = ("not", "is", "where")
+_STATE_PSEUDO = ("checked", "disabled", "enabled", "required", "optional")
+_FORM_CONTROLS = frozenset(("button", "input", "select", "textarea", "option", "optgroup", "fieldset"))
+
+
+def _unescape(text: str) -> str:
+    return re.sub(r"\\(.)", r"\1", text)
+
+
+def _split_top(text: str) -> List[str]:
+    """Split on commas outside brackets, parentheses and quotes."""
+    parts, depth, quote, cur = [], 0, "", []
+    for ch in text:
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
+def _nth(arg: str) -> Tuple[int, int]:
+    m = _NTH.match(arg or "")
+    if not m:
+        raise SelectorError(f"\"{arg}\" is not an nth formula (use a number, odd, even or An+B)")
+    if m.group("odd"):
+        return 2, 1
+    if m.group("even"):
+        return 2, 0
+    if m.group("b0") is not None:
+        return 0, int(m.group("b0"))
+    a_text = m.group("a")
+    a = -1 if a_text == "-" else 1 if a_text in ("", "+") else int(a_text)
+    b = int(m.group("b") or 0) * (-1 if m.group("sign") == "-" else 1)
+    return a, b
+
+
+def _parse_compound(text: str, i: int) -> Tuple[dict, int]:
+    comp: dict = {"tag": None, "ids": [], "classes": [], "attrs": [], "pseudos": []}
+    start = i
+    while i < len(text):
+        m = _SIMPLE.match(text, i)
+        if not m:
+            break
+        if m.group("type"):
+            if i != start:
+                raise SelectorError(f"the element name \"{m.group('type')}\" must come first in \"{text[start:m.end()]}\"")
+            comp["tag"] = m.group("type").lower()
+        elif m.group("id"):
+            comp["ids"].append(_unescape(m.group("id")))
+        elif m.group("cls"):
+            comp["classes"].append(_unescape(m.group("cls")))
+        elif m.group("attr"):
+            value = next((m.group(g) for g in ("dq", "sq", "uq") if m.group(g) is not None), None)
+            comp["attrs"].append((m.group("attr").lower(), m.group("op"), _unescape(value) if value is not None else None,
+                                  (m.group("flag") or "").lower() == "i"))
+        elif m.group("element"):
+            raise SelectorError(f"the pseudo-element ::{m.group('element')} is not an element on the screen",
+                                f"::{m.group('element')}")
+        else:
+            name, arg = m.group("pseudo").lower(), m.group("arg")
+            if name in _STRUCTURAL or name in _STATE_PSEUDO:
+                if arg is not None:
+                    raise SelectorError(f":{name} takes no argument")
+                comp["pseudos"].append((name, None))
+            elif name in _NTH_PSEUDO:
+                comp["pseudos"].append((name, _nth(arg)))
+            elif name in _LIST_PSEUDO:
+                if not (arg or "").strip():
+                    raise SelectorError(f":{name}() needs a selector")
+                comp["pseudos"].append((name, parse_selector(arg)))
+            else:
+                raise SelectorError(f"it uses :{name}", f":{name}")
+        i = m.end()
+    if i == start:
+        what = repr(text[i]) if i < len(text) else "the end"
+        raise SelectorError(f"unexpected {what} at position {i + 1}")
+    return comp, i
+
+
+def _parse_complex(text: str) -> List[Tuple[Optional[str], dict]]:
+    text = text.strip()
+    if not text:
+        raise SelectorError("it is empty")
+    parts: List[Tuple[Optional[str], dict]] = []
+    comb: Optional[str] = None
+    i, n = 0, len(text)
+    while True:
+        comp, i = _parse_compound(text, i)
+        parts.append((comb, comp))
+        j = i
+        while j < n and text[j].isspace():
+            j += 1
+        if j >= n:
+            return parts
+        if text[j] in ">+~":
+            comb = text[j]
+            j += 1
+            while j < n and text[j].isspace():
+                j += 1
+            if j >= n:
+                raise SelectorError(f"it ends with the combinator \"{comb}\"")
+        elif j > i:
+            comb = " "
+        else:
+            raise SelectorError(f"unexpected {text[j]!r} at position {j + 1}")
+        i = j
+
+
+def parse_selector(text: str) -> List[List[Tuple[Optional[str], dict]]]:
+    if not isinstance(text, str) or not text.strip():
+        raise SelectorError("it is empty")
+    return [_parse_complex(part) for part in _split_top(text)]
+
+
+def _elements(node: Optional[_Node]) -> List[_Node]:
+    return [c for c in node.children] if node is not None else []
+
+
+def _attr_ok(node: _Node, name: str, op: Optional[str], value: Optional[str], fold: bool) -> bool:
+    if name not in node.attrs:
+        return False
+    if op is None:
+        return True
+    have, want = node.attrs[name], value or ""
+    if fold:
+        have, want = have.casefold(), want.casefold()
+    if op == "=":
+        return have == want
+    if op == "~=":
+        return bool(want) and want in have.split()
+    if op == "|=":
+        return have == want or have.startswith(want + "-")
+    if not want:
+        return False
+    return {"^=": have.startswith, "$=": have.endswith, "*=": have.__contains__}[op](want)
+
+
+def _nth_ok(index: int, ab: Tuple[int, int]) -> bool:
+    a, b = ab
+    if a == 0:
+        return index == b
+    return (index - b) % a == 0 and (index - b) // a >= 0
+
+
+def _pseudo_ok(node: _Node, name: str, arg) -> bool:
+    siblings = _elements(node.parent)
+    if name in _LIST_PSEUDO:
+        hit = any(_complex_ok(node, parts, len(parts) - 1) for parts in arg)
+        return not hit if name == "not" else hit
+    if name == "checked":
+        return ("checked" in node.attrs and node.tag == "input") or ("selected" in node.attrs and node.tag == "option")
+    if name in ("disabled", "enabled"):
+        if node.tag not in _FORM_CONTROLS:
+            return False
+        return ("disabled" in node.attrs) == (name == "disabled")
+    if name in ("required", "optional"):
+        if node.tag not in ("input", "select", "textarea"):
+            return False
+        return ("required" in node.attrs) == (name == "required")
+    same = [s for s in siblings if s.tag == node.tag]
+    pool = same if "of-type" in name else siblings
+    pos = pool.index(node) + 1
+    last = len(pool) - pos + 1
+    if name in ("first-child", "first-of-type"):
+        return pos == 1
+    if name in ("last-child", "last-of-type"):
+        return last == 1
+    if name in ("only-child", "only-of-type"):
+        return len(pool) == 1
+    return _nth_ok(last if "last" in name else pos, arg)
+
+
+def _compound_ok(node: _Node, comp: dict) -> bool:
+    if node.tag == "#root":
+        return False
+    if comp["tag"] not in (None, "*") and node.tag != comp["tag"]:
+        return False
+    if any(node.attrs.get("id") != i for i in comp["ids"]):
+        return False
+    classes = node.attrs.get("class", "").split()
+    if any(c not in classes for c in comp["classes"]):
+        return False
+    if not all(_attr_ok(node, *a) for a in comp["attrs"]):
+        return False
+    return all(_pseudo_ok(node, name, arg) for name, arg in comp["pseudos"])
+
+
+def _complex_ok(node: _Node, parts: List[Tuple[Optional[str], dict]], idx: int) -> bool:
+    comb, comp = parts[idx]
+    if not _compound_ok(node, comp):
+        return False
+    if idx == 0:
+        return True
+    if comb in (" ", ">"):
+        parent = node.parent
+        while parent is not None and parent.tag != "#root":
+            if _complex_ok(parent, parts, idx - 1):
+                return True
+            if comb == ">":
+                return False
+            parent = parent.parent
+        return False
+    siblings = _elements(node.parent)
+    before = siblings[: siblings.index(node)]
+    if comb == "+":
+        return bool(before) and _complex_ok(before[-1], parts, idx - 1)
+    return any(_complex_ok(s, parts, idx - 1) for s in before)
+
+
+def select(tree: _Node, selector: str, state: str) -> List[_Node]:
+    """The elements of the screen section matching `selector` that show in `state`, as section.querySelectorAll would
+    find them (the section itself takes part in combinators but is not a result). Raises SelectorError."""
+    parsed = parse_selector(selector)
+    section = next((n for n in tree.walk() if "data-screen" in n.attrs), None)
+    if section is None:
+        return []
+    found, stack = [], list(reversed(section.children))
+    while stack:
+        node = stack.pop()
+        name = node.attrs.get("data-state")
+        if name is not None and name.strip() != state and _outer_state(node, section):
+            continue
+        if any(_complex_ok(node, parts, len(parts) - 1) for parts in parsed):
+            found.append(node)
+        stack.extend(reversed(node.children))
+    return found
+
+
+def _outer_state(node: _Node, section: _Node) -> bool:
+    """True when no [data-state] or [data-screen] sits between this element and the section (an outer state block)."""
+    parent = node.parent
+    while parent is not None and parent is not section:
+        if "data-state" in parent.attrs or "data-screen" in parent.attrs:
+            return False
+        parent = parent.parent
+    return parent is section
+
+
+# ---------------------------------------------------------------- tour files (<docs>/prototype/tours/<id>.json)
+
+AUDIENCES = ("client", "training", "review", "team", "whats-new")
+PLAY_AUDIENCES = ("client", "whats-new")
+SPEEDS = (0.5, 1, 1.5, 2)
+POINTS = ("spotlight", "ring", "arrow", "beacon", "zoom", "cursor", "none")
+SIDES = ("top", "right", "bottom", "left")
+ACTIONS = ("click", "type", "choose", "wait")
+MAX_MS = 60000
+TOUR_FIELDS = ("title", "audience", "purpose", "speed", "intro", "closing", "chapters", "steps")
+CARD_FIELDS = ("title", "text", "hold")
+CHAPTER_FIELDS = ("title", "text", "hold", "steps")
+STEP_FIELDS = ("screen", "state", "title", "caption", "target", "targets", "point", "callout", "labels", "note", "action",
+               "your_turn", "hint", "hold")
+TOUR_FIX = "see the tour format in the design-system skill's references (or run /plumb:tour <flow> to rewrite it)"
+
+
+def json_lines(text: str) -> Dict[tuple, int]:
+    """{path: line} for every value in a valid JSON document; a path is a tuple of keys and list indexes."""
+    starts = [0] + [m.end() for m in re.finditer("\n", text)]
+    lines: Dict[tuple, int] = {}
+    n = len(text)
+
+    def line_at(i: int) -> int:
+        lo, hi = 0, len(starts)
+        while lo + 1 < hi:
+            mid = (lo + hi) // 2
+            if starts[mid] <= i:
+                lo = mid
+            else:
+                hi = mid
+        return lo + 1
+
+    def ws(i: int) -> int:
+        while i < n and text[i] in " \t\r\n":
+            i += 1
+        return i
+
+    def string_end(i: int) -> int:
+        i += 1
+        while i < n:
+            if text[i] == "\\":
+                i += 2
+                continue
+            if text[i] == '"':
+                return i + 1
+            i += 1
+        return n
+
+    def value(i: int, path: tuple) -> int:
+        i = ws(i)
+        lines[path] = line_at(i)
+        ch = text[i] if i < n else ""
+        if ch in "{[":
+            close, index = ("}" if ch == "{" else "]"), 0
+            i = ws(i + 1)
+            if i < n and text[i] == close:
+                return i + 1
+            while i < n:
+                i = ws(i)
+                if ch == "{":
+                    end = string_end(i)
+                    key = json.loads(text[i:end])
+                    i = ws(end) + 1  # the colon
+                    i = value(i, path + (key,))
+                else:
+                    i = value(i, path + (index,))
+                    index += 1
+                i = ws(i)
+                if i < n and text[i] == ",":
+                    i += 1
+                    continue
+                return i + 1
+            return n
+        if ch == '"':
+            return string_end(i)
+        m = re.compile(r"[^\s,\]}]*").match(text, i)
+        return m.end() if m else i + 1
+
+    try:
+        value(0, ())
+    except (IndexError, ValueError):
+        pass
+    return lines
+
+
+def _path_text(path: tuple) -> str:
+    out = ""
+    for p in path:
+        out += f"[{p}]" if isinstance(p, int) else (f".{p}" if out else str(p))
+    return out
+
+
+def _show(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+class _TourReader:
+    """Validates one tour file against the screens and normalises it for the player."""
+
+    def __init__(self, tid: str, rel: str, text: str, screens: Dict[str, Screen], screens_rel: str) -> None:
+        self.id, self.rel, self.text = tid, rel, text
+        self.screens, self.screens_rel = screens, screens_rel
+        self.lines: Dict[tuple, int] = {}
+
+    def fail(self, path: tuple, what: str, fix: str) -> PlumbError:
+        line = None
+        for cut in range(len(path), -1, -1):
+            line = self.lines.get(path[:cut])
+            if line is not None:
+                break
+        where = f"{self.rel}:{line}" if line is not None else self.rel
+        return _err(f"{where}: {what}", fix)
+
+    def known(self, obj: dict, path: tuple, allowed: Tuple[str, ...], name: str) -> None:
+        for key in obj:
+            if key.startswith("$"):
+                continue
+            if key not in allowed:
+                raise self.fail(path + (key,), f"{name} has an unknown field {_show(key)}",
+                                f"use only {', '.join(allowed)} (or remove it)")
+
+    def text_field(self, obj: dict, key: str, path: tuple, name: str, required: bool = False) -> str:
+        value = obj.get(key)
+        if value is None:
+            if required:
+                raise self.fail(path, f"{name} has no {_show(key)}", f"add {_show(key)}: \"...\" to {name}")
+            return ""
+        if not isinstance(value, str):
+            raise self.fail(path + (key,), f"{_label(path + (key,))} must be text", f"write it in quotes: {_show(key)}: \"...\"")
+        if required and not value.strip():
+            raise self.fail(path + (key,), f"{name}: {_show(key)} is empty", f"write the {key} of {name}")
+        return " ".join(value.split()) if key == "title" else value.strip()
+
+    def ms(self, obj: dict, key: str, path: tuple) -> Optional[int]:
+        value = obj.get(key)
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value) or not 0 <= value <= MAX_MS:
+            raise self.fail(path + (key,), f"{_label(path + (key,))} {_show(value)} must be a whole number of milliseconds "
+                                           f"from 0 to {MAX_MS}", f"set {_show(key)}: 1500 (milliseconds at 1x speed)")
+        return int(value)
+
+    def obj(self, value: object, path: tuple, shape: str) -> dict:
+        if not isinstance(value, dict):
+            raise self.fail(path, f"{_label(path)} must be an object like {shape}", f"write it as {shape}")
+        return value
+
+    def selector(self, sel: object, path: tuple, screen: Screen, state: str) -> str:
+        label = _label(path)
+        if not isinstance(sel, str) or not sel.strip():
+            raise self.fail(path, f"{label} must be a CSS selector in quotes", "write it like \"[data-tour=save]\" or \".save\"")
+        sel = sel.strip()
+        tree = screen.tree()
+        try:
+            found = select(tree, sel, state)
+        except SelectorError as exc:
+            if exc.unsupported:
+                raise self.fail(path, f"{label} {_show(sel)} uses {exc.unsupported}, which build-prototype.py cannot check "
+                                      f"against the screen file",
+                                "point at the element with a class or data attribute, e.g. [data-tour=save]") from None
+            raise self.fail(path, f"{label} {_show(sel)} is not a CSS selector build-prototype.py can read ({exc})",
+                            "write a selector such as [data-tour=save], .save or form > button") from None
+        if not found:
+            raise self.fail(path, f"{label} {_show(sel)} matches nothing in {screen.rel} (state {state})",
+                            f"point it at an element of screen {screen.id} in state {state} (a class or data attribute "
+                            f"such as [data-tour=save]), or add the element to {screen.rel}")
+        return sel
+
+    def card(self, value: object, path: tuple) -> Optional[dict]:
+        if value is None:
+            return None
+        name = _label(path)
+        card = self.obj(value, path, '{"title": "...", "text": "..."}')
+        self.known(card, path, CARD_FIELDS, name)
+        return {"title": self.text_field(card, "title", path, name, True), "text": self.text_field(card, "text", path, name),
+                "hold": self.ms(card, "hold", path)}
+
+    def read(self) -> dict:
+        try:
+            doc = json.loads(self.text)
+        except json.JSONDecodeError as exc:
+            raise _err(f"{self.rel}:{exc.lineno}: the tour is not valid JSON ({exc.msg})",
+                       f"fix the JSON in {self.rel} (a missing comma or bracket near line {exc.lineno})") from None
+        self.lines = json_lines(self.text)
+        if not isinstance(doc, dict):
+            raise _err(f"{self.rel}: a tour file holds one JSON object", 'write it as {"title": "...", "audience": '
+                       '"review", "steps": [{"screen": "...", "title": "...", "caption": "..."}]}')
+        self.known(doc, (), TOUR_FIELDS, "the tour")
+        title = self.text_field(doc, "title", (), "the tour", True)
+        audience = doc.get("audience", "review")
+        if audience not in AUDIENCES:
+            raise self.fail(("audience",), f"audience {_show(audience)} is not one of {', '.join(AUDIENCES)}",
+                            "use client or whats-new for a demo that plays by itself; training, review or team for a "
+                            "step-by-step guide")
+        speed = doc.get("speed", 1)
+        if isinstance(speed, bool) or speed not in SPEEDS:
+            raise self.fail(("speed",), f"speed {_show(speed)} is not one of 0.5, 1, 1.5, 2", "set \"speed\": 1")
+        purpose = self.text_field(doc, "purpose", (), "the tour")
+        intro, closing = self.card(doc.get("intro"), ("intro",)), self.card(doc.get("closing"), ("closing",))
+        chapters_in, steps_in = doc.get("chapters"), doc.get("steps")
+        if chapters_in is not None and steps_in:
+            raise self.fail(("steps",), "the tour has both \"steps\" and \"chapters\"",
+                            "put every step inside a chapter, or drop \"chapters\" and keep one \"steps\" list")
+        raw: List[Tuple[tuple, object, Optional[int]]] = []
+        chapters = []
+        if chapters_in is not None:
+            if not isinstance(chapters_in, list):
+                raise self.fail(("chapters",), "\"chapters\" must be a list of {\"title\": \"...\", \"steps\": [...]}",
+                                "write \"chapters\": [{\"title\": \"...\", \"steps\": [...]}]")
+            for ci, ch in enumerate(chapters_in):
+                path = ("chapters", ci)
+                ch = self.obj(ch, path, '{"title": "...", "steps": [...]}')
+                self.known(ch, path, CHAPTER_FIELDS, _label(path))
+                ctitle = self.text_field(ch, "title", path, _label(path), True)
+                steps = ch.get("steps")
+                if not isinstance(steps, list) or not steps:
+                    raise self.fail(path + ("steps",), f"{_label(path)} has no steps",
+                                    f"add \"steps\": [{{\"screen\": \"...\", \"title\": \"...\"}}] to {_label(path)}")
+                chapters.append({"title": ctitle, "text": self.text_field(ch, "text", path, _label(path)),
+                                 "hold": self.ms(ch, "hold", path), "first": len(raw)})
+                raw += [(path + ("steps", si), s, ci) for si, s in enumerate(steps)]
+        else:
+            if steps_in is not None and not isinstance(steps_in, list):
+                raise self.fail(("steps",), "\"steps\" must be a list of steps", "write \"steps\": [{\"screen\": \"...\"}]")
+            raw = [(("steps", si), s, None) for si, s in enumerate(steps_in or [])]
+        if not raw:
+            raise self.fail(("steps",), "the tour has no steps",
+                            "add \"steps\": [{\"screen\": \"...\", \"title\": \"...\", \"caption\": \"...\"}]")
+        steps = [self.step(path, s, chapter, n) for n, (path, s, chapter) in enumerate(raw, 1)]
+        return {"id": self.id, "title": title, "audience": audience, "purpose": purpose,
+                "mode": "play" if audience in PLAY_AUDIENCES else "guide", "speed": speed, "intro": intro,
+                "closing": closing, "chapters": chapters, "steps": steps}
+
+    def step(self, path: tuple, value: object, chapter: Optional[int], n: int) -> dict:
+        name = _label(path)
+        s = self.obj(value, path, '{"screen": "...", "title": "...", "caption": "..."}')
+        self.known(s, path, STEP_FIELDS, name)
+        sid = s.get("screen")
+        if sid is None:
+            raise self.fail(path, f"{name} has no \"screen\"", f"add \"screen\": \"<id>\" (one of {', '.join(self.screens)})")
+        screen = self.screens.get(sid) if isinstance(sid, str) else None
+        if screen is None:
+            raise self.fail(path + ("screen",), f"{name} names screen {_show(sid)}, which has no screen file",
+                            f"use one of: {', '.join(self.screens)} (or write {self.screens_rel}{sid}.html with "
+                            f"/plumb:prototype {sid})")
+        state = s.get("state")
+        if state is None:
+            state = screen.states[0]
+        elif state not in screen.states:
+            raise self.fail(path + ("state",), f"{name} names state {_show(state)} of screen {screen.id}, which has states "
+                                               f"{', '.join(screen.states)}",
+                            f"use one of those states, or add <div data-state=\"{state}\"> to {screen.rel}")
+        title = self.text_field(s, "title", path, name)
+        caption = self.text_field(s, "caption", path, name)
+        if not title and not caption:
+            raise self.fail(path, f"{name} needs a \"title\" or a \"caption\"",
+                            "add \"title\": \"...\" (the step's name) and \"caption\": \"...\" (what to notice)")
+        if s.get("target") is not None and s.get("targets") is not None:
+            raise self.fail(path + ("targets",), f"{name} has both \"target\" and \"targets\"",
+                            "keep one: \"target\": \".x\" for one element, \"targets\": [\".x\", \".y\"] for several")
+        if s.get("targets") is not None:
+            targets_in = s["targets"]
+            if not isinstance(targets_in, list) or not targets_in:
+                raise self.fail(path + ("targets",), f"{name}: \"targets\" must be a list of selectors",
+                                "write \"targets\": [\".x\", \".y\"] (or \"target\": \".x\" for one element)")
+            targets = [self.selector(t, path + ("targets", i), screen, state) for i, t in enumerate(targets_in)]
+        elif s.get("target") is not None:
+            targets = [self.selector(s["target"], path + ("target",), screen, state)]
+        else:
+            targets = []
+        point, point_label = s.get("point"), ""
+        if isinstance(point, dict):
+            self.known(point, path + ("point",), ("style", "label"), _label(path + ("point",)))
+            point_label = self.text_field(point, "label", path + ("point",), _label(path + ("point",)))
+            point = point.get("style")
+        if point is None:
+            point = "spotlight" if targets else "none"
+        if point not in POINTS:
+            raise self.fail(path + ("point",), f"{name}: point {_show(point)} is not one of {', '.join(POINTS)}",
+                            "use spotlight (dims the rest), ring, arrow, beacon, zoom, cursor or none")
+        if point != "none" and not targets:
+            raise self.fail(path + ("point",), f"{name} has point {point} but no target",
+                            "add \"target\": \"<selector>\" (the element to point at), or set \"point\": \"none\"")
+        callout = None
+        if s.get("callout") is not None:
+            cpath = path + ("callout",)
+            c = self.obj(s["callout"], cpath, '{"text": "...", "side": "bottom"}')
+            self.known(c, cpath, ("text", "side"), _label(cpath))
+            side = c.get("side", "bottom")
+            if side not in SIDES:
+                raise self.fail(cpath + ("side",), f"{_label(cpath)}.side {_show(side)} is not one of {', '.join(SIDES)}",
+                                "set \"side\": \"bottom\" (or top, right, left)")
+            if not targets:
+                raise self.fail(cpath, f"{_label(cpath)} needs a target to attach to", "add \"target\": \"<selector>\" to the step")
+            callout = {"text": self.text_field(c, "text", cpath, _label(cpath), True), "side": side}
+        labels = []
+        if s.get("labels") is not None:
+            if not isinstance(s["labels"], list):
+                raise self.fail(path + ("labels",), f"{name}: \"labels\" must be a list",
+                                "write \"labels\": [{\"target\": \".x\", \"text\": \"1\"}]")
+            for li, lab in enumerate(s["labels"]):
+                lpath = path + ("labels", li)
+                lab = self.obj(lab, lpath, '{"target": ".x", "text": "1 Title"}')
+                self.known(lab, lpath, ("target", "text"), _label(lpath))
+                text = self.text_field(lab, "text", lpath, _label(lpath), True)
+                if lab.get("target") is None:
+                    raise self.fail(lpath, f"{_label(lpath)} has no \"target\"", "add \"target\": \"<selector>\"")
+                labels.append({"target": self.selector(lab["target"], lpath + ("target",), screen, state), "text": text})
+        note = None
+        if s.get("note") is not None:
+            npath = path + ("note",)
+            nt = self.obj(s["note"], npath, '{"text": "...", "x": 60, "y": 20}')
+            self.known(nt, npath, ("text", "x", "y"), _label(npath))
+            text = self.text_field(nt, "text", npath, _label(npath), True)
+            xy = []
+            for axis in ("x", "y"):
+                v = nt.get(axis)
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 100:
+                    raise self.fail(npath + (axis,), f"{_label(npath)}.{axis} {_show(v)} must be a number from 0 to 100 "
+                                                     f"(percent of the screen)", f"set \"{axis}\": 50")
+                xy.append(v)
+            note = {"text": text, "x": xy[0], "y": xy[1]}
+        action = self.action(s, path, screen, state, targets)
+        your_turn = s.get("your_turn", False)
+        if your_turn is None:
+            your_turn = False
+        if not isinstance(your_turn, bool):
+            raise self.fail(path + ("your_turn",), f"{name}: your_turn must be true or false", "set \"your_turn\": true")
+        if your_turn and (action is None or action["kind"] == "wait"):
+            raise self.fail(path + ("your_turn",), f"{name}: your_turn needs an action the learner does: click, type or choose",
+                            "add \"action\": {\"click\": \"<selector>\"} (or type / choose), or drop \"your_turn\"")
+        return {"n": n, "screen": screen.id, "state": state, "title": title, "caption": caption, "targets": targets,
+                "point": point, "pointLabel": point_label, "callout": callout, "labels": labels, "note": note,
+                "action": action, "yourTurn": your_turn, "hint": self.text_field(s, "hint", path, name),
+                "hold": self.ms(s, "hold", path), "chapter": chapter}
+
+    def action(self, s: dict, path: tuple, screen: Screen, state: str, targets: List[str]) -> Optional[dict]:
+        if s.get("action") is None:
+            return None
+        apath = path + ("action",)
+        a = self.obj(s["action"], apath, '{"click": "<selector>"}')
+        self.known(a, apath, ACTIONS + ("target",), _label(apath))
+        kinds = [k for k in ACTIONS if a.get(k) is not None]
+        if len(kinds) != 1:
+            raise self.fail(apath, f"{_label(apath)} needs exactly one of click, type, choose, wait",
+                            "write {\"click\": \"<selector>\"}, {\"type\": \"text\"}, {\"choose\": \"option\"} or {\"wait\": 1000}")
+        kind = kinds[0]
+        value = a[kind]
+        kpath = apath + (kind,)
+        if kind == "wait":
+            return {"kind": "wait", "target": "", "value": "", "ms": self.ms(a, "wait", apath)}
+        own = a.get("target")
+        if kind == "click":
+            if isinstance(value, str):
+                if own is not None:
+                    raise self.fail(apath + ("target",), f"{_label(apath)} names its element twice (click and target)",
+                                    "keep {\"click\": \"<selector>\"}")
+                return {"kind": "click", "target": self.selector(value, kpath, screen, state), "value": "", "ms": 0}
+            if value is not True:
+                raise self.fail(kpath, f"{_label(kpath)} must be a selector or true (the step's target)",
+                                "write {\"click\": \"<selector>\"} or {\"click\": true}")
+        elif not isinstance(value, str) or not value:
+            raise self.fail(kpath, f"{_label(kpath)} must be the text to {'type' if kind == 'type' else 'choose'}",
+                            f"write {{\"{kind}\": \"...\"}}")
+        if own is not None:
+            target = self.selector(own, apath + ("target",), screen, state)
+        elif targets:
+            target = targets[0]
+        else:
+            raise self.fail(kpath, f"{_label(kpath)} needs a target: give the step a \"target\" or the action one",
+                            f"add \"target\": \"<selector>\" to the step (or to {_label(apath)})")
+        return {"kind": kind, "target": target, "value": "" if kind == "click" else value, "ms": 0}
+
+
+def _label(path: tuple) -> str:
+    return _path_text(path) or "the tour"
+
+
+def check_tour_ids(ids: List[Tuple[str, str]]) -> None:
+    """Refuse two tours whose ids differ only in case (one file on Windows and macOS) and ids that read as another
+    tour's step in a link (#tour-demo-2 is step 2 of demo, so no tour may be called demo-2)."""
+    seen: Dict[str, str] = {}
+    for tid, rel in ids:
+        key = tid.casefold()
+        if key in seen:
+            raise _err(f"{rel}: duplicate tour id \"{key}\" (also {seen[key]})",
+                       "give each tour its own file name: rename one of them")
+        seen[key] = rel
+    names = {tid for tid, _rel in ids}
+    for tid, rel in ids:
+        m = re.match(r"^(.+)-(\d+)$", tid)
+        if m and m.group(1) in names:
+            raise _err(f"{rel}: the tour id \"{tid}\" reads as step {m.group(2)} of tour \"{m.group(1)}\" in a link "
+                       f"(#tour-{tid})", f"rename {rel} so its name does not end in -<number>, e.g. {m.group(1)}-part-{m.group(2)}.json")
+
+
+def load_tours(folder: Path, screens: List[Screen], root: Path, rel, screens_rel: str) -> List[dict]:
+    files = sorted((p for p in folder.glob("*.json") if p.is_file()), key=lambda p: p.name) if folder.is_dir() else []
+    by_id = {s.id: s for s in screens}
+    ids = []
+    for path in files:
+        tid, prel = path.name[: -len(".json")], rel(path, root)
+        if not _ID.match(tid):
+            raise _err(f"{prel}: tour id \"{tid}\" may only use letters, digits, _ and -",
+                       "rename the file to an id such as booking-demo.json")
+        ids.append((tid, prel))
+    check_tour_ids(ids)
+    tours = []
+    for path, (tid, prel) in zip(files, ids):
+        try:
+            text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _err(f"{prel}: cannot read the tour file ({exc})", "save it as UTF-8") from None
+        tours.append(_TourReader(tid, prel, text, by_id, screens_rel).read())
+    return tours
+
+
 # ---------------------------------------------------------------- pages
 
 
@@ -760,7 +1536,21 @@ def _meta_line(entry: dict, approval: str) -> str:
     return '<span class="sep" aria-hidden="true">·</span>'.join(bits)
 
 
-def build_prototype(ctx: dict, template: str) -> str:
+def player_slots(ctx: dict, tour: Optional[dict]) -> Dict[str, str]:
+    """The walkthrough player (templates/player.css and player.js) and the tours it plays: every tour in prototype.html,
+    one tour that starts by itself in a standalone tour page."""
+    config = {"tours": [tour] if tour else ctx["tours"],
+              "autostart": {"tour": tour["id"], "mode": tour["mode"]} if tour else None}
+    return {
+        "player_css": f"<style>\n{ctx['player_css'].strip()}\n</style>",
+        "player": (f'<script type="application/json" id="plumb-tours">{json_script(config)}</script>\n'
+                   f"<script>\n{ctx['player_js'].strip()}\n</script>"),
+    }
+
+
+def build_prototype(ctx: dict, template: str, tour: Optional[dict] = None) -> str:
+    """prototype.html, or with `tour` the standalone page docs/tours/<id>.html: the same prototype one folder down (a
+    <base> keeps links and images resolving from the docs folder) that opens straight into that tour."""
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
     nav, groups, frame, data = [], [], [], []
@@ -783,8 +1573,9 @@ def build_prototype(ctx: dict, template: str) -> str:
                      "approval": appr, "approvalText": APPROVAL_TEXT[appr], "meta": _meta_line(e, appr)})
     first = screens[0]
     values = {
-        "header": f"<!-- {_e(ctx['header'])} -->",
-        "title": _e(f"{first.title} · {ctx['project']} prototype"),
+        "header": f"<!-- {_e(tour_header(ctx, tour) if tour else ctx['header'])} -->",
+        "base": '<base href="../">' if tour else "",
+        "title": _e(f"{tour['title']} · {ctx['project']} walkthrough" if tour else f"{first.title} · {ctx['project']} prototype"),
         "project": _e(ctx["project"]),
         "plumb_version": _e(P.PLUMB_VERSION),
         "source": _e(ctx["screens_rel"]),
@@ -800,11 +1591,16 @@ def build_prototype(ctx: dict, template: str) -> str:
         "decisions": decisions_page(ctx["decisions"], screens, ctx["decisions_rel"], "pp-decisions pp-ui", hidden=True),
         "data": json_script({"project": ctx["project"], "screens": data}),
         "screen_scripts": ctx["scripts"],
-        "player_css": "",
-        "player": "",
     }
+    values.update(player_slots(ctx, tour))
     text = P.fill_template(template, values, SHELL_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
+
+
+def tour_header(ctx: dict, tour: dict) -> str:
+    return (f"GENERATED by {ctx['script_rel']} from {ctx['tours_rel']}{tour['id']}.json, {ctx['screens_rel']}*.html, "
+            f"{ctx['decisions_rel']} and {ctx['tokens_rel']}. Do not edit: edit the tour file or the screen files, then run "
+            f"build-prototype.py.")
 
 
 def build_catalogue(ctx: dict, template: str, bt) -> str:
@@ -858,6 +1654,23 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     }
     text = P.fill_template(template, values, CATALOGUE_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
+
+
+def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
+    """Generated pages in <docs>/tours/ whose tour file is gone (a hand-written file there is never touched)."""
+    if not folder.is_dir():
+        return []
+    found = []
+    for path in sorted(folder.glob("*.html")):
+        if path in pages or not path.is_file():
+            continue
+        try:
+            head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        if P.is_generated_text(head) and "build-prototype.py" in head:
+            found.append(path)
+    return found
 
 
 def read_template(skill_dir: Path, name: str) -> str:
@@ -950,6 +1763,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
                    "write the first screen with /plumb:prototype <screen> (one <id>.html per screen)")
     screens = load_screens(folder, root, rel)
     by_id = {s.id: s for s in screens}
+    tours_folder, pages_folder = docs / "prototype" / "tours", docs / "tours"
+    tours = load_tours(tours_folder, screens, root, rel, rel(folder, root) + "/")
     old = read_map(map_path, rel(map_path, root))
     for flag in ("map", "approve", "synced"):
         sid = getattr(args, flag)
@@ -999,14 +1814,21 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     ctx = {
         "screens": screens, "entries": entries, "decisions": decisions, "header": header, "project": project_name,
         "screens_rel": rel(folder, root) + "/", "decisions_rel": rel(decisions_path, root),
-        "styles": screen_styles(screens), "scripts": screen_scripts(screens),
+        "styles": screen_styles(screens), "scripts": screen_scripts(screens), "tours": tours,
+        "tours_rel": rel(tours_folder, root) + "/", "tokens_rel": tokens_rel, "script_rel": rel(skill_dir / SCRIPT_REL, root),
+        "player_css": read_template(skill_dir, PLAYER_CSS), "player_js": read_template(skill_dir, PLAYER_JS),
     }
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
-    proto = build_prototype(ctx, read_template(skill_dir, SHELL_TEMPLATE))
+    shell = read_template(skill_dir, SHELL_TEMPLATE)
+    proto = build_prototype(ctx, shell)
+    tour_pages = {pages_folder / f"{t['id']}.html": build_prototype(ctx, shell, t) for t in tours}
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=True)
     catalogue = build_catalogue(ctx, read_template(skill_dir, CATALOGUE_TEMPLATE), bt)
     files = {proto_path: proto, cat_path: catalogue,
              map_path: map_text([entries[s.id] for s in screens], header)}
+    files.update(tour_pages)
+    orphans = orphan_tour_pages(pages_folder, tour_pages)
+    count = f"{len(screens)} screens, {len(tours)} tour{'s' if len(tours) != 1 else ''}"
 
     if args.check:
         stale = []
@@ -1023,11 +1845,12 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
                 stale.append(f"stale: {rel(path, root)} (token block: the tokens changed since the last build)")
             else:
                 stale.append(f"stale: {rel(path, root)}")
+        stale += [f"stale: {rel(path, root)} (its tour file is gone)" for path in orphans]
         if stale:
             print("\n".join(stale))
             print(f"fix: {command}")
             return 1
-        print(f"ok: {len(files)} generated files are up to date ({len(screens)} screens)")
+        print(f"ok: {len(files)} generated files are up to date ({count})")
         return 0
 
     for s in screens:
@@ -1052,6 +1875,20 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             return 2
         wrote += 1
         print(f"wrote {rel(path, root)}")
+    for path in orphans:
+        try:
+            path.unlink()
+        except OSError as exc:
+            print(f"error: cannot remove {rel(path, root)} ({exc})\nfix: delete it by hand: its tour file is gone",
+                  file=sys.stderr)
+            return 2
+        wrote += 1
+        print(f"removed {rel(path, root)} (its tour file is gone)")
+    if orphans and pages_folder.is_dir() and not any(pages_folder.iterdir()):
+        try:
+            pages_folder.rmdir()
+        except OSError:
+            pass
     for line in done:
         print(line)
     states = {s.id: approval_state(entries[s.id], s) for s in screens}
@@ -1063,7 +1900,11 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     counts = {k: sum(1 for v in states.values() if v == k) for k in APPROVAL_TEXT}
     to_build = sum(1 for s in screens if entries[s.id]["status"] == "to-build")
     if not wrote:
-        print(f"ok: {rel(proto_path, root)}, {rel(cat_path, root)} and {rel(map_path, root)} are up to date")
+        extra = f" and {len(tour_pages)} tour page{'s' if len(tour_pages) != 1 else ''}" if tour_pages else ""
+        print(f"ok: {rel(proto_path, root)}, {rel(cat_path, root)} and {rel(map_path, root)}{extra} are up to date")
+    if tours:
+        print(f"{len(tours)} tour{'s' if len(tours) != 1 else ''}: "
+              + ", ".join(f"{t['id']} ({len(t['steps'])} steps, {t['mode']} mode)" for t in tours))
     print(f"{len(screens)} screens: {counts['approved']} approved, {counts['stale']} changed since approval, "
           f"{counts['synced']} synced from code, {counts['none']} not approved; {to_build} to build")
     return 0
