@@ -30,11 +30,13 @@ user and wait. Every colour has a light and a dark value (unless `Themes: light-
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Platforms:`,
-   `Themes:`, and **docs**: the folder of the `## Prototype` `Main:` path (else the tokens file's
-   `$extensions.plumb.docs_dir`, else `docs/design`). `Role: linked` → the system lives in the home repo named by
-   `Design system:`; updates happen there (say so and stop unless the user wants to work there).
-4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → recommend `/plumb:upgrade` first (the
-   user decides; adding a platform requires it, step 2).
+   `Themes:`. **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which
+   is where the scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask the
+   user which is right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder").
+   `Role: linked` → the system lives in the home repo named by `Design system:`; updates happen there (say so and stop
+   unless the user wants to work there).
+4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → recommend `/plumb:upgrade` first
+   (the user decides; adding a platform requires it, step 2).
 5. `PY SKILL/scripts/build-tokens.py --check`: stale → say so; the build in step 3 brings it up to date.
 
 ## Step 1: what changes
@@ -69,16 +71,16 @@ recommendation. Apply what the user approves (step 2).
   states, tokens, accessibility) and the `inventory.md` line; ask; then write. Then propose the component change in the
   project's own framework (the framework's accessible primitives; only tokens), ask, write. No app yet →
   `SKILL/assets/platforms/<platform>/starter/`.
-- **Add a platform** (e.g. "web only, now add iOS and Android"): **when version.py said `older`, require `/plumb:upgrade`
-  first** (a new platform needs the current scaffold and generator; adding it on old files gives a partial upgrade) and
-  stop until the user has run it; only if the user explicitly declines, continue and say plainly in the dry-run review
-  that Plumb's files will also be refreshed to the plugin's version. Ask which platforms; show and ask for the tokens
-  file's `$extensions.plumb.platforms` change; run `PY "<ROOT>/scripts/scaffold.py" --project-root . --name "<name>"
-  --skill-dir <SKILL> --platforms <all platforms> --styling <styling> --docs-dir <docs> --dry-run`, show the new files
-  (`would write:`; your files show `skip: … (yours, kept)`), ask, then run it without `--dry-run`: it adds that
-  platform's references and never overwrites yours. Ask before updating `PLUMB.md`'s `Platforms:` line. Then fill the
-  new references from `design.md` and `components.md` and write the platform's starter components, each shown and asked
-  first.
+- **Add a platform** (e.g. "web only, now add iOS and Android"): **when version.py said `older`, require
+  `/plumb:upgrade` first** (a new platform needs the current scaffold and generator; adding it on old files gives a
+  partial upgrade) and stop until the user has run it; only if the user explicitly declines, continue and say plainly in
+  the dry-run review that Plumb's files will also be refreshed to the plugin's version. Ask which platforms; show and
+  ask for the tokens file's `$extensions.plumb.platforms` change; run `PY "<ROOT>/scripts/scaffold.py" --project-root .
+  --name "<name>" --skill-dir <SKILL> --platforms <all platforms> --styling <styling> --docs-dir <docs> --dry-run`, show
+  the new files (`would write:`; your files show `skip: … (yours, kept)`), ask, then run it without `--dry-run`: it adds
+  that platform's references and never overwrites yours. Ask before updating `PLUMB.md`'s `Platforms:` line. Then fill
+  the new references from `design.md` and `components.md` and write the platform's starter components, each shown and
+  asked first.
 - **Improve a part** (motion, dark mode, density…): read its reference (`motion.md`, `dark-mode.md`, …), propose the
   change with options, show the token and reference edits, ask, then write them together.
 - **Rules screens keep breaking** (`ux.md`, `design.md`): show the evidence; options: change the rule, keep it and fix
@@ -93,8 +95,10 @@ recommendation. Apply what the user approves (step 2).
    passing value it suggests, ask, change the token, build again.
 3. **Prototype and proposals:** `PY SKILL/scripts/build-prototype.py` rebuilds the main pages and refreshes the token
    block of every proposal (`<docs>/prototype/proposals/*/`), so old variants still render; their screen files are never
-   touched. A proposal page that is not generated (written by hand before `--proposal` existed): offer
-   `PY SKILL/scripts/build-prototype.py --proposal <name>` when its variants have `screens/` folders.
+   touched. A proposal folder whose pages were written by hand (before `--proposal` existed) is not refreshed: when its
+   variants have `screens/` folders, offer `PY SKILL/scripts/build-prototype.py --proposal <name>`, saying that it
+   **replaces** the hand-written `index.html` and each variant's `prototype.html` and `screens.html` in that folder
+   with generated ones (the screen files stay); run it only on a yes.
 4. A spec or rule change that changes what screens show → propose the screen-file edits, ask, edit, rebuild, show the
    user and ask for approval again (`--approve <id>`); built screens then follow in code.
 

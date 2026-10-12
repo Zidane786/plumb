@@ -1579,8 +1579,7 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
     proposals = safe_copy_path(root, f"{str(docs).rstrip('/')}/prototype/proposals", "$extensions.plumb.docs_dir")
     generated_only = set()
     if proposals.is_dir():  # /plumb:prototype's variants, built by build-prototype.py --proposal
-        found = sorted(p for pattern in ("*/index.html", "*/*/prototype.html", "*/*/screens.html")
-                       for p in proposals.glob(pattern) if p.is_file())
+        found = sorted(p for pattern in P.PROPOSAL_PAGE_GLOBS for p in proposals.glob(pattern) if p.is_file())
         paths += found
         generated_only.update(found)
     for path in paths:
@@ -1588,8 +1587,10 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
             text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
         except (OSError, UnicodeDecodeError):
             text = None  # build-prototype.py --check reports an unreadable page
-        if text is not None and (path.parent == tours or path in generated_only) and not P.is_generated_text(text):
-            continue  # a hand-written page in tours/ or proposals/ is not Plumb's
+        if text is not None and path.parent == tours and not P.is_generated_text(text):
+            continue  # a hand-written page in tours/ is not Plumb's
+        if text is not None and path in generated_only and not P.is_generated_proposal_page(text):
+            continue  # nor is a page in proposals/ that build-prototype.py --proposal did not write
         refreshed = refresh_prototype_theme(text, doc) if text is not None else None
         if refreshed is not None:
             out[path] = refreshed

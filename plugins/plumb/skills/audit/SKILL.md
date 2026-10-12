@@ -29,10 +29,12 @@ rule changes upstream). Anything that changes how a screen looks goes through th
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → offer `/plumb:init`; with no design system yet the audit can still run
    in inconsistency-only mode on the folders the user names (ask which).
-3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Themes:`, and **docs**: the
-   folder of the `## Prototype` `Main:` path (else the tokens file's `$extensions.plumb.docs_dir`, else `docs/design`).
-   `Role: linked` → run the home repo's `audit.py` on this repo's
-   UI folders: `PY <SKILL>/scripts/audit.py <ui folders> --html <docs>/audit-YYYY-MM-DD.html`.
+3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Themes:`.
+   **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is
+   where the scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask
+   the user which is right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder").
+   `Role: linked` → run the home repo's `audit.py` on this repo's UI folders:
+   `PY <SKILL>/scripts/audit.py <ui folders> --html <docs>/audit-YYYY-MM-DD.html`.
 4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → say once that `/plumb:upgrade` is
    available, then continue.
 5. The mode is the first argument: none → report only; `fix`; `improve`. Other arguments are paths to check.
@@ -72,8 +74,8 @@ Write them to `<docs>/audit-YYYY-MM-DD.review.json` (a JSON list, format in `<RO
 report as its record.
 
 **Recurring problems:** when the same kind of finding shows up in 3+ places (or in the previous audit's review file
-too), propose it to the user as a new rule (`<ROOT>/reference/rules.md`, "Proposing a new rule"): on a yes, write it into
-`design.md` or `ux.md`, and offer to propose it to Plumb as an audit rule.
+too), propose it to the user as a new rule (`<ROOT>/reference/rules.md`, "Proposing a new rule"): on a yes, write it
+into `design.md` or `ux.md`, and offer to propose it to Plumb as an audit rule.
 
 ## Step 4: summary (every mode), then stop unless fix or improve
 
@@ -85,9 +87,9 @@ passes) · Slate tickets · nothing now.
 **Slate tickets** (only when `kanban/board.py` exists and the user says yes): group findings by area (one ticket per
 area or rule group, not per line), show the list, ask, then write them only with Slate's `board.py`
 (`python3 kanban/board.py new --help` for the flags; `add --dry-run --file <batch>` for several, then `add`), with the
-Python command from `SLATE.md`. Each ticket: what to fix, the files, the fix, "`make design-audit` exits 0" in done-when;
-a ticket that changes a screen starts with "prototype approved" and links `<docs>/prototype.html#screen-<id>`. Never
-edit `kanban/` yourself.
+Python command from `SLATE.md`. Each ticket: what to fix, the files, the fix, "`make design-audit` exits 0" in
+done-when; a ticket that changes a screen starts with "prototype approved" and links
+`<docs>/prototype.html#screen-<id>`. Never edit `kanban/` yourself.
 
 ## Mode `fix`: repair errors and warnings, with the user's OK
 
@@ -96,7 +98,8 @@ edit `kanban/` yourself.
    one before → after example; ask "Apply this group?" — Apply / Show every change first / Skip.
 2. Apply it:
    - code-level fixes (raw values → the token the fix names, `outline-none`, inline styles, emoji, icon library): the
-     group's yes covers exactly the changes shown; when a value has no close token, don't invent one: collect it for `/plumb:update`.
+     group's yes covers exactly the changes shown; when a value has no close token, don't invent one: collect it for
+     `/plumb:update`.
    - `generated-drift`: `PY SKILL/scripts/build-tokens.py` (never edit the generated file).
    - token-level (`contrast`, `missing-dark-value`, a missing token): these change the system; list them and ask the
      user to run `/plumb:update` (only the user starts it).
@@ -125,9 +128,9 @@ edit `kanban/` yourself.
 4. Ask which items to do (multi-select; recommend the top ones). For each picked item:
    - a screen change: prototype first (`/plumb:prototype` flow: screen file, user approval, `--approve`), then build it
      to match, then audit;
-   - a system change (tokens, component specs, `ux.md`/`design.md` rules): it is already a system proposal in the
-     review file (step 3); ask the user to run `/plumb:update`, which applies the audit's system suggestions one at a time, regenerates,
-     refreshes the prototypes, records the decision and re-runs the audit;
+   - a system change (tokens, component specs, `ux.md`/`design.md` rules): it is already a system proposal in the review
+     file (step 3); ask the user to run `/plumb:update`, which applies the audit's system suggestions one at a time,
+     regenerates, refreshes the prototypes, records the decision and re-runs the audit;
    - or a Slate ticket instead.
 5. Every change made is recorded in `<docs>/decisions.md` (`<ROOT>/templates/decision-entry.md`). End with the audit
    run again, `git diff --stat` and a summary. The user commits.

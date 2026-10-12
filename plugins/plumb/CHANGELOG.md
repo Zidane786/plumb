@@ -14,6 +14,8 @@
 - Ask a few plain questions and get a design system: colours, type, spacing, light and dark modes.
 - Pull the design system out of an existing app instead of starting from scratch.
 - Build clickable prototypes and guided tours of your screens.
+- Compare 2–3 variants of a new screen side by side, each as a clickable prototype and as every state in light and
+  dark, before choosing one (`build-prototype.py --proposal <name>`).
 - Audit a project for off-system colours, sizes and spacing, and for accessibility problems.
 - Checks that run while an agent edits files, so drift is caught early.
 - Upgrade and status commands that keep a project in step with the plugin.

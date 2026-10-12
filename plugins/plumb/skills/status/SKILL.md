@@ -7,8 +7,8 @@ description: Report the health of the project's design system, read-only - Plumb
 
 **Read-only.** Change nothing: no regeneration, no audit fixes, no approvals, no upgrade. The one exception: when the
 placement check offers a move and the user says yes, run that `--relocate` command. Never install or download anything;
-if something is missing (Python, git, the home repo of a linked system), report it and ask the user what to do. Commands:
-`<ROOT>/reference/scripts.md`.
+if something is missing (Python, git, the home repo of a linked system), report it and ask the user what to do.
+Commands: `<ROOT>/reference/scripts.md`.
 
 ## Step 0: context
 
@@ -16,9 +16,10 @@ if something is missing (Python, git, the home repo of a linked system), report 
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Platforms:`, `UI packages:`, `Python:` (**PY**, `python3`
-   when unset), `## Checks` (`Edit check`, `End-of-turn check`, `Themes`), **docs** (the folder of the
-   `## Prototype` `Main:` path, else the tokens file's `$extensions.plumb.docs_dir`, else `docs/design`), `Prototype
-   sync`, the last `## Plumb updates` line.
+   when unset), `## Checks` (`Edit check`, `End-of-turn check`, `Themes`), `Prototype sync`, the last
+   `## Plumb updates` line. **docs**: the tokens file's `$extensions.plumb.docs_dir` (default `docs/design`), where the
+   scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, report it as a health problem and
+   the question to settle ("which is right?"); status changes nothing.
 
 ## Gather
 

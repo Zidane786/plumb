@@ -28,9 +28,11 @@ wait for their decision. Both themes, unless `PLUMB.md` says `Themes: light-only
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
-3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), `Themes:`, `Platforms:`, and
-   **docs**: the folder of the `## Prototype` `Main:` path (else the tokens file's `$extensions.plumb.docs_dir`, else
-   `docs/design`). `Role: linked` → the prototype lives in the home repo named by `Design system:`; say so and work there
+3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), `Themes:`, `Platforms:`.
+   **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is
+   where the scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask
+   the user which is right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder").
+   `Role: linked` → the prototype lives in the home repo named by `Design system:`; say so and work there
    only if the user agrees.
 4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → say once "Plumb <plugin> is
    available for this project (on <project>): run `/plumb:upgrade` when ready." and continue; never run it yourself.
@@ -64,11 +66,12 @@ wait for their decision. Both themes, unless `PLUMB.md` says `Themes: light-only
   each a distinct, finished-looking option. If the `html-prototype` and `design-artifact` skills are available in this
   session, follow them; otherwise the quality bar in `<ROOT>/reference/prototypes.md` (real content, every state,
   working interactions, keyboard and focus, both themes, reduced motion, no generic look).
-- **Ask before writing:** "I'll write the variants' screen files in `<docs>/prototype/proposals/<name>/<variant>/screens/`
-  (+ an `idea.md` per variant) and build both views with `build-prototype.py --proposal <name>`. OK?" Write only on a yes.
-- Write each variant's screen files (`<variant>/screens/<id>.html`, the contract in `<ROOT>/reference/prototypes.md`) and
-  `<variant>/idea.md` (`# Title`, the idea in a sentence or two, `- ` lines with the trade-offs). Mobile platforms: a
-  phone layout with that platform's conventions.
+- **Ask before writing:** "I'll write the variants' screen files in
+  `<docs>/prototype/proposals/<name>/<variant>/screens/` (+ an `idea.md` per variant) and build both views with
+  `build-prototype.py --proposal <name>`. OK?" Write only on a yes.
+- Write each variant's screen files (`<variant>/screens/<id>.html`, the contract in `<ROOT>/reference/prototypes.md`)
+  and `<variant>/idea.md` (`# Title`, the idea in a sentence or two, `- ` lines with the trade-offs). Mobile platforms:
+  a phone layout with that platform's conventions.
 - `PY SKILL/scripts/build-prototype.py --proposal <name>` builds, per variant, `prototype.html` (clickable, state
   switcher, phone/desktop and light/dark toggles) and `screens.html` (every screen × every state, light and dark side by
   side), plus `proposals/<name>/index.html` with the variants side by side. Exit 2 → fix the file it names.
@@ -90,15 +93,15 @@ files, run `--proposal <name>` again, ask again.
   file(s). Write only on a yes. The other variants stay in `proposals/<name>/` as the record.
 - **Links into other screens change those screen files, which makes their approvals stale.** After the build, show each
   of them too and ask to approve it again (`--approve <id>`), as for the new screen.
-- **Default walkthrough:** `<docs>/prototype/tours/<flow>.json` for each flow this builds or changes: the happy path, one
-  step per meaningful screen or action, plus the most important non-happy state; `"audience": "review"`; captions in the
-  product's words; every target present in the screen file's markup (`<ROOT>/reference/tours.md`).
+- **Default walkthrough:** `<docs>/prototype/tours/<flow>.json` for each flow this builds or changes: the happy path,
+  one step per meaningful screen or action, plus the most important non-happy state; `"audience": "review"`; captions in
+  the product's words; every target present in the screen file's markup (`<ROOT>/reference/tours.md`).
 - `PY SKILL/scripts/build-prototype.py`. Exit 2 → fix what it names (a screen file, a tour step) and run it again.
   `PY SKILL/scripts/audit.py <docs>/prototype/screens` reports no findings in those screen files.
-- Show the user `<docs>/prototype.html#screen-<id>` (each new or changed screen), `<docs>/screens.html` (every state, both
-  themes) and the walkthrough (`prototype.html#tour-<flow>`, or the standalone `<docs>/tours/<flow>.html`). Ask, per
-  screen: "Approve <screen> as the reference to build?" — Approve (recommended when they are happy) / Change something.
-  Changes → edit the screen file or tour (say what), rebuild, ask again.
+- Show the user `<docs>/prototype.html#screen-<id>` (each new or changed screen), `<docs>/screens.html` (every state,
+  both themes) and the walkthrough (`prototype.html#tour-<flow>`, or the standalone `<docs>/tours/<flow>.html`). Ask,
+  per screen: "Approve <screen> as the reference to build?" — Approve (recommended when they are happy) / Change
+  something. Changes → edit the screen file or tour (say what), rebuild, ask again.
 - On each yes: `PY SKILL/scripts/build-prototype.py --approve <id>`.
 
 ## Step 5: record (ask first)

@@ -47,6 +47,10 @@ elif mode == "notpng":
 elif mode == "fail":
     sys.stderr.write("[0101/000000.000:ERROR:headless_shell.cc] cannot open the page\\n")
     sys.exit(1)
+elif mode == "hang":  # writes nothing and never exits
+    with open(os.environ["STUB_PID"], "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
+    time.sleep(60)
 elif mode == "slow":
     time.sleep(4)
 ''' % (PNG, PNG, PNG)
@@ -215,6 +219,32 @@ def alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def test_an_interrupted_shot_stops_the_browser_before_removing_its_profile(tmp_path: Path, stub, monkeypatch) -> None:
+    bin_dir, _log = stub
+    launcher = next(p for p in bin_dir.iterdir() if p.name.startswith("google-chrome"))
+    pid_file = tmp_path / "hang.pid"
+    monkeypatch.setenv("STUB_MODE", "hang")
+    monkeypatch.setenv("STUB_PID", str(pid_file))
+    temp_root = tmp_path / "tmp"
+    temp_root.mkdir()
+    monkeypatch.setattr(S.tempfile, "tempdir", str(temp_root))
+    real_sleep = time.sleep
+    seen = {}
+
+    def interrupt(seconds: float) -> None:  # Ctrl-C arrives once the browser is up
+        if "profiles" not in seen and pid_file.is_file() and pid_file.read_text(encoding="utf-8").strip():
+            seen["profiles"] = [p.name for p in temp_root.iterdir()]
+            raise KeyboardInterrupt
+        real_sleep(seconds)
+
+    monkeypatch.setattr(S.time, "sleep", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        S.shoot(launcher, page(tmp_path).resolve().as_uri(), tmp_path / "x.png", 390, 844, "light", 0, 30)
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    assert not alive(pid), "an interrupted shot left the browser running"
+    assert seen["profiles"] and list(temp_root.iterdir()) == []  # the profile existed, and is gone after the stop
 
 
 def test_a_browser_that_hangs_is_stopped(tmp_path: Path, stub) -> None:

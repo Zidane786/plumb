@@ -199,30 +199,46 @@ def run_browser(args: List[str], shot: Path, log: Path, timeout: float) -> Optio
 
     Some browser builds keep running after writing the screenshot, so a complete PNG (signature to IEND) ends the run.
     Output goes to a file, not a pipe: helper processes (crash handler, updater) can outlive the browser and would hold
-    a pipe open until they exit."""
+    a pipe open until they exit.
+
+    The browser runs in a session of its own, so Ctrl-C in the terminal does not reach it: anything that interrupts the
+    wait (KeyboardInterrupt, SystemExit, an error) stops the browser before it goes on, so no headless browser is left
+    running and its profile is removed only after it has stopped."""
     try:
-        with open(log, "wb") as out_log:
+        out_log = open(log, "wb")
+    except OSError as exc:
+        raise Refusal(f"cannot write the browser log in {log.parent} ({exc.strerror or exc})",
+                      "check the temporary folder is writable, then run this again", 1) from None
+    with out_log:
+        try:
             proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=out_log, stderr=subprocess.STDOUT,
                                     start_new_session=not WINDOWS)
-            deadline = time.monotonic() + timeout
-            while True:
-                code = proc.poll()
-                if code is not None:
-                    return code
-                try:
-                    done = shot.is_file() and complete_png(shot.read_bytes())
-                except OSError:
-                    done = False
-                if done:
-                    _stop(proc)
-                    return 0
-                if time.monotonic() > deadline:
-                    _stop(proc)
-                    return None
-                time.sleep(POLL_SECONDS)
-    except OSError as exc:
-        raise Refusal(f"cannot run {args[0]} ({exc.strerror or exc})",
-                      "pass a working browser with --browser PATH, or use the agent's browser tool", 1) from None
+        except OSError as exc:
+            raise Refusal(f"cannot run {args[0]} ({exc.strerror or exc})",
+                          "pass a working browser with --browser PATH, or use the agent's browser tool", 1) from None
+        try:
+            return _wait(proc, shot, time.monotonic() + timeout)
+        except BaseException:
+            _stop(proc)
+            raise
+
+
+def _wait(proc: "subprocess.Popen[bytes]", shot: Path, deadline: float) -> Optional[int]:
+    while True:
+        code = proc.poll()
+        if code is not None:
+            return code
+        try:
+            done = shot.is_file() and complete_png(shot.read_bytes())
+        except OSError:
+            done = False
+        if done:
+            _stop(proc)
+            return 0
+        if time.monotonic() > deadline:
+            _stop(proc)
+            return None
+        time.sleep(POLL_SECONDS)
 
 
 def shoot(browser: Path, url: str, out: Path, width: int, height: int, theme: str, wait_ms: int, timeout: float) -> None:

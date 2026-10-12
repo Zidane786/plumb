@@ -25,8 +25,10 @@ download anything; ask the user and wait. Tours play in light and dark. Never ed
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
-3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), and **docs**: the folder of
-   the `## Prototype` `Main:` path (else the tokens file's `$extensions.plumb.docs_dir`, else `docs/design`).
+3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset).
+   **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is
+   where the scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask
+   the user which is right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder").
 4. No screen files in `<docs>/prototype/screens/` → nothing to tour yet: offer `/plumb:prototype` and stop.
 5. Read `<docs>/prototype/screens.json` (screens, their states) and the existing tours in `<docs>/prototype/tours/`.
    An id was given and that tour exists → show its steps as a table and ask what to change (skip to step 3).
@@ -36,8 +38,8 @@ download anything; ask the user and wait. Tours play in light and dark. Never ed
 Ask, one at a time:
 
 1. **Audience:** a client or stakeholder demo (`client`, opens in play mode) · training for users (`training`, guide
-   mode, with your-turn steps) · a design review (`review`) · teammate onboarding (`team`) · what's new (`whats-new`, play
-   mode). Recommend from what the user said.
+   mode, with your-turn steps) · a design review (`review`) · teammate onboarding (`team`) · what's new (`whats-new`,
+   play mode). Recommend from what the user said.
 2. **Purpose:** one sentence: what they should take away.
 3. **Scope:** which flows, screens and states (list them from `screens.json`), across one flow or several; which
    non-happy states are worth showing (an error, an empty state).

@@ -1714,14 +1714,14 @@ def proposal_pages(docs: Path) -> List[Path]:
     base = docs / "prototype" / "proposals"
     if not base.is_dir():
         return []
-    found = sorted([*base.glob("*/index.html"), *base.glob("*/*/prototype.html"), *base.glob("*/*/screens.html")])
+    found = sorted(p for pattern in P.PROPOSAL_PAGE_GLOBS for p in base.glob(pattern))
     out = []
     for path in found:
         try:
             head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
         except OSError:
             continue
-        if path.is_file() and P.is_generated_text(head) and "build-prototype.py" in head:
+        if path.is_file() and P.is_generated_proposal_page(head):
             out.append(path)
     return out
 
@@ -1766,6 +1766,17 @@ def read_idea(path: Path) -> Tuple[Optional[str], List[str], List[str]]:
     return title, paras, trade
 
 
+def inside_or_refuse(path: Path, parent: Path, root: Path, rel) -> None:
+    """Refuse a proposal or variant folder that resolves outside where it sits (a symlink to somewhere else): pages are
+    written into it, so it must stay inside the proposals folder."""
+    try:
+        path.resolve().relative_to(parent)
+    except ValueError:
+        raise _err(f"{rel(path, root)} leads outside {rel(parent, root)} (a link to another folder), so nothing is "
+                   f"written there", f"replace the link with a real folder inside {rel(parent, root)}/ (copy the "
+                   f"variant's screen files into it), then run the command again") from None
+
+
 def proposal_entry(s: Screen) -> dict:
     return {"id": s.id, "title": s.title, "states": list(s.states), "route": None, "files": [], "files_hash": None,
             "approved": None, "synced_from_code": False, "status": "proposal"}
@@ -1792,6 +1803,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     if not base.is_dir():
         raise _err(f"{rel(base, root)}/: no such proposal",
                    f"write the variants first with /plumb:prototype <screen> (screen files in {rel(base, root)}/<variant>/screens/)")
+    proposals_root = (docs / "prototype" / "proposals").resolve()
+    inside_or_refuse(base, proposals_root, root, rel)
     folders = sorted(p for p in base.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
     if not folders:
         raise _err(f"{rel(base, root)}/ has no variant folders",
@@ -1809,6 +1822,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             raise _err(f"{rel(folder, root)}: a variant folder name may hold only letters, digits, _ and -",
                        "rename the folder, e.g. a-calm-list")
         screens_dir = folder / "screens"
+        inside_or_refuse(folder, base.resolve(), root, rel)
+        inside_or_refuse(screens_dir, base.resolve(), root, rel)
         if not screens_dir.is_dir() or not any(p.is_file() for p in screens_dir.glob("*.html")):
             raise _err(f"{rel(folder, root)}: variant {folder.name} has no screen files in screens/",
                        f"write its screens as {rel(screens_dir, root)}/<id>.html (or remove the folder), then run {again}")

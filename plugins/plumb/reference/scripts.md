@@ -21,6 +21,13 @@ themes, `specimen.html`, `prototype.html`, `screens.html`, `prototype/screens.js
 written only by these scripts; Plumb's own files (`[P]`: `<skill>/scripts/*`, `<skill>/templates/*`,
 `assets/platforms/README.md`) only by `scaffold.py` during `/plumb:upgrade`. The edit check refuses hand edits to both.
 
+**The docs folder.** The scripts read it from the tokens file's `$extensions.plumb.docs_dir` (default `docs/design`):
+the specimen, the prototype pages, `screens.json`, tours, proposals and reports all go there. `PLUMB.md`'s
+`## Prototype` lines name the same files for people and agents. When `PLUMB.md`'s `Main:` path sits in another folder,
+the two disagree: a skill says so, asks the user which is right, and then fixes the other one (the tokens file's
+`docs_dir` through `/plumb:update`, or the `## Prototype` lines of `PLUMB.md`), each change shown and asked first.
+Never guess which one wins.
+
 ## build-tokens.py: the tokens → every theme
 
 `python3 <skill>/scripts/build-tokens.py [--check | --contrast | --migrate | --css-vars] [--root SKILL_DIR] [--project PATH]`
