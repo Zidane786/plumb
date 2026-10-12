@@ -1749,8 +1749,8 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         else:
             by_hand.append(f"{src} (line {', '.join(map(str, lines))}) shares a line with other code: delete it by hand")
         for u in re.finditer(r"var\(\s*" + re.escape(src) + r"\s*([),])", code):
-            if in_theme(u.start()) or L.line(u.start()) in remove:
-                continue
+            if L.line(u.start()) in remove:
+                continue  # an override that goes (a use left in one that stays, calc(var(--radius) - 4px), changes)
             replace.append({"line": L.line(u.start()), "old": text[u.start():u.end()], "new": f"var({name}{u.group(1)}",
                             "why": f"{src} fed {name}, which is now the token's variable"})
         project_vars.append({"name": src, "declared": lines, "maps_to": name})

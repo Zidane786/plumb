@@ -122,6 +122,40 @@ def test_a_declaration_sharing_its_line_is_left_for_the_user(project: Path) -> N
     assert "--color-brand" in (project / "app/globals.css").read_text(encoding="utf-8")
 
 
+SHADCN = '''@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-card: var(--card);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+}
+
+:root {
+  --radius: 0.625rem;
+  --card: oklch(1 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+'''
+
+
+def test_a_shadcn_stylesheet_moves_what_it_can_and_leaves_nothing_dangling(project: Path) -> None:
+    (project / "app/globals.css").write_text(SHADCN, encoding="utf-8")
+    found = by_name(plan(project))
+    assert found["@custom-variant dark"]["kind"] == "dark-variant"
+    assert found["--color-card"]["token_change"] == {"add": "color.card", "$value": "{color.background}"}
+    assert found["--color-sidebar-ring"]["token_change"] is None  # no role, no colour Plumb can read: the user decides
+    assert found["--radius-lg"]["kind"] == "token"
+    assert run(project, "build-tokens.py", "--overrides", "--apply").returncode == 0
+    css = (project / "app/globals.css").read_text(encoding="utf-8")
+    assert "@custom-variant" not in css and "--color-card" not in css and "--radius: 0.625rem" not in css
+    # --radius fed --radius-lg (moved); --radius-sm stays for the user, so its use points at the token too
+    assert "--radius-sm: calc(var(--radius-lg) - 4px);" in css and "var(--radius)" not in css
+    assert "--color-sidebar-ring: var(--sidebar-ring);" in css and "--sidebar-ring: oklch(0.708 0 0);" in css
+
+
 def test_nothing_to_move(project: Path) -> None:
     (project / "app/globals.css").write_text('@import "tailwindcss";\n\nbody {\n  margin: 0;\n}\n', encoding="utf-8")
     assert plan(project)["copies"][0]["overrides"] == []
