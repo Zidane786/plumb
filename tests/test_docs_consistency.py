@@ -3,7 +3,9 @@
 - every `/plumb:<x>` mentioned in a skill or reference is a 1.0.0 command, and (once built) a skill folder;
 - every skill has the required frontmatter, resolves ROOT like Slate's skills, links reference/ and says
   "ask the user and wait" (Plumb never installs or downloads anything);
-- every relative markdown link in skills and references points at a file that exists;
+- every relative markdown link, and every `ROOT/...` or `<ROOT>/...` path, in skills and references exists;
+- skills ask one question at a time with a "(Recommended)" option; init, create and extract say that nothing is
+  written without the user's OK;
 - no internal project names anywhere under plugins/ (Slate is the companion plugin and is allowed).
 """
 
@@ -30,6 +32,11 @@ INTERNAL_NAMES = re.compile(r"\b(keel|caredesk)\b", re.I)
 TEXT_SUFFIXES = {".md", ".py", ".json", ".html", ".css", ".js", ".tmpl", ".snippet", ".sh", ".cmd", ".txt", ".toml",
                  ".yml", ".yaml", ".swift", ".kt", ".tailwind-v3", ".tailwind-v4"}
 MAX_SKILL_LINES = 200
+# Skills that write into a project keep the user in the loop (owner requirement).
+CONFIRM_FIRST = {"init", "create", "extract"}
+# Read-only skills that ask nothing.
+NO_QUESTIONS = {"status"}
+ROOT_PATH = re.compile(r"<?ROOT>?/([A-Za-z0-9_./-]*)")
 
 
 def skill_files() -> List[Path]:
@@ -90,6 +97,30 @@ def test_skill_body_rules(path: Path) -> None:
     assert re.search(r"\]\(\.\./\.\./reference/[a-z0-9-]+\.md\)", text), "link at least one reference/ file"
     assert "ask the user and wait" in text.lower(), "the never-install rule"
     assert "install or download" in text.lower()
+
+
+@pytest.mark.parametrize("path", skill_files(), ids=lambda p: p.parent.name)
+def test_skill_keeps_the_user_in_the_loop(path: Path) -> None:
+    text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+    name = path.parent.name
+    if name not in NO_QUESTIONS:
+        assert "(recommended)" in text, "options carry a recommendation marked (Recommended)"
+        assert "one at a time" in text, "questions go one at a time"
+    if name in CONFIRM_FIRST:
+        assert "nothing is written without the user's ok" in text
+
+
+@pytest.mark.parametrize("path", doc_files(), ids=lambda p: p.relative_to(PLUGIN).as_posix())
+def test_root_paths_exist(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for m in ROOT_PATH.finditer(text):
+        if text[m.end():m.end() + 1] == "<":
+            continue  # a placeholder segment such as ROOT/skills/<name>/SKILL.md
+        rel = m.group(1).rstrip(".,")
+        parts = rel.split("/")
+        if parts[0] == "skills" and len(parts) > 1 and parts[1] in PENDING:
+            continue
+        assert (PLUGIN / rel).exists(), f"{path.relative_to(REPO)}: {m.group(0)} does not exist in the plugin"
 
 
 @pytest.mark.parametrize("path", doc_files(), ids=lambda p: p.relative_to(PLUGIN).as_posix())

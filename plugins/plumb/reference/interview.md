@@ -3,6 +3,24 @@
 Used by `/plumb:create` (all of it) and `/plumb:extract` (only what the code cannot answer). Every answer lands in a
 file; nothing asked is lost.
 
+## Nothing is written without the user's OK
+
+The user stays in the loop from the first detection to the last file. Each checkpoint is a question-tool step that
+waits for the answer:
+
+| # | Checkpoint | Shown to the user |
+|---|---|---|
+| 1 | Detected facts | Project root, framework, styling, platforms, brand colours and fonts found in the code: **suggestions** to confirm or correct, never used silently. |
+| 2 | After the product questions | A five-line summary: "Right?" |
+| 3 | Each design decision | Options, the recommendation and why. |
+| 4 | Before generating | The full token set: colours light and dark, type, spacing, radius, shadows, motion (the chosen direction as the preview). |
+| 5 | Before writing files | `scaffold.py --dry-run`'s full list of files and paths. |
+| 6 | Each contrast fix | The failing pair, its ratio and the proposed value. |
+| 7 | Before writing components | Which components, the framework and primitives, and the paths. |
+| 8 | Wiring in | Each item (PLUMB.md values, checks, AGENTS/CLAUDE row, Makefile, Slate, Kiro) asked on its own. |
+
+Extract adds: the UI folders to scan, each token group, the screens to prototype and the screen files to write.
+
 ## How to ask
 
 - Use the question tool (Claude Code: `AskUserQuestion`; Copilot CLI: its ask-the-user tool). If there is none, ask
@@ -40,12 +58,15 @@ Group A1–A4 in one call and A5–A6 in a second. Then summarise A in five line
 | B2 | Web framework (confirm) | the detected one (Recommended) · React/Next · Vue · Svelte · Angular · plain HTML | `ui_packages[].framework`, else ask |
 | B3 | Styling (confirm) | detected `tailwind-v4` / `tailwind-v3` / `css` (Recommended); shadcn noted when `components.json` exists | `ui_packages[].styling`; a new project with no stack: Tailwind v4 |
 
-React Native is not supported in 1.0.0: offer web, iOS and Android only. Platforms can be added later with
-`/plumb:update`.
+Detected values are suggestions: show them and ask the user to confirm or correct. React Native is not supported in
+1.0.0 (a 1.1.0 candidate): offer design only, web, iOS or Android, never React Native components. **Design only**
+(no app yet, a backend repo, a React Native app) skips B: web, plain CSS, no copies, reference starters only, an HTML
+prototype. Platforms can be added later with `/plumb:update`.
 
 ## C. Design decisions, one at a time
 
-Each answer becomes token values, a line in `design.md`, and a decision entry (G). Recommend from A and B.
+Each answer becomes token values, a line in `design.md`, and a decision entry (G). Recommend from A and B, and say
+why in one clause with every recommendation. Brand colours or fonts found in the code are offered as suggestions.
 
 | # | Decision | Options (recommendation first, chosen from A) | Lands in |
 |---|---|---|---|
@@ -88,8 +109,10 @@ as the record and is linked from the decision entry.
 
 ## The answers file for scaffold.py
 
-Write the confirmed answers as JSON to a temporary file **outside the repo** (the system temp folder) and pass it to
-`scaffold.py --answers`. Keys (all optional; see `scaffold.py`'s docstring for the exact names): `description`,
+**Before generating**, show the full token set (colours light and dark, type, spacing, radius, shadows, motion; the
+chosen direction is the preview) and wait for the user's OK. Then write the confirmed answers as JSON to a temporary
+file **outside the repo** (the system temp folder) and pass it to `scaffold.py --answers`, first with `--dry-run`:
+show its full file list and paths, and run it for real only on the user's OK. Keys (all optional; see `scaffold.py`'s docstring for the exact names): `description`,
 `audience`, `direction`, `voice`, `themes`, `python`, `role`, `ui_packages`, `ui_files`, `allowed_raw`, `web_copies`,
 `colors` (`light`/`dark` for background, surface, sunk, on-surface, on-surface-muted, primary, on-primary, outline,
 outline-input, danger, on-danger, success, on-success, scrim), `fonts` (`sans`, `mono`), `type_scale`

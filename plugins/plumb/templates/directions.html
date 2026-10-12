@@ -70,7 +70,8 @@
     <h2 id="d1-title">1. {{D1_NAME}}</h2>
     <p class="idea">{{D1_IDEA: one sentence, why it fits the product and its people}}</p>
     <div class="themes">
-      <!-- the same block twice: class="theme" (light) and class="theme theme-dark" (dark) -->
+      <!-- the same block twice: class="theme" (light) and class="theme theme-dark" (dark). Ids must stay unique:
+           end every id with the theme (d1-err-light, d1-err-dark) and update aria-describedby / for to match. -->
       <div class="theme">
         <h3>Light</h3>
         <div class="swatches">
@@ -82,11 +83,11 @@
           <button class="btn primary" type="button">{{PRIMARY_ACTION}}</button>
           <button class="btn" type="button">{{SECONDARY_ACTION}}</button>
           <span class="chip">{{STATUS_WORD}}</span>
-          <label class="field">{{FIELD_LABEL}}<input value="{{BAD_VALUE}}" aria-invalid="true" aria-describedby="d1-err"><span class="error" id="d1-err">{{ERROR_IN_WORDS}}</span></label>
+          <label class="field">{{FIELD_LABEL}}<input value="{{BAD_VALUE}}" aria-invalid="true" aria-describedby="d1-err-light"><span class="error" id="d1-err-light">{{ERROR_IN_WORDS}}</span></label>
         </div>
         <div class="screen"><!-- one real screen of a key task, laid out the way THIS direction would --></div>
       </div>
-      <div class="theme theme-dark"><h3>Dark</h3><!-- the same content as above --></div>
+      <div class="theme theme-dark"><h3>Dark</h3><!-- the same content as above, every id ending in -dark (id="d1-err-dark") --></div>
     </div>
   </section>
   <!-- <section class="direction" id="d2"> … </section>  <section class="direction" id="d3"> … </section> -->

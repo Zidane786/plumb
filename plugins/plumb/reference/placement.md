@@ -1,12 +1,18 @@
 # Placement: where the design system lives
 
 `/plumb:init` decides where the design-system skill and `PLUMB.md` go, **with the user**. Init never assumes the
-folder it was opened in is the project.
+folder it was opened in is the project. **Nothing is written without the user's OK**: every detected fact (project
+root, layout, framework, styling, platforms, copy paths) is a suggestion the user confirms or corrects.
+
+**The project root (`<root>`)** is the absolute `root` from detect.py, as the user confirmed or corrected it. From then
+on every path is relative to `<root>` and every command names it explicitly (`--project-root "<root>"`,
+`"<root>/<skill dir>/scripts/…"`); never write outside it, and never use `.` for it (the session may be open in a
+subfolder of the project, or in a parent folder of several).
 
 ## Detection is a first guess, never the decision
 
-`python3 <ROOT>/scripts/detect.py --cwd . --json` only looks for well-known marker files and folders. No script knows
-every layout, so:
+`python3 "<ROOT>/scripts/detect.py" --cwd <the folder the session opened in> --json` only looks for well-known marker
+files and folders. No script knows every layout, so:
 
 1. Read the JSON. Note `confidence` (`high`, `medium`, `low`) and every line in `reasons`.
 2. When `confidence` is not `high`, when `ui_packages` and `no_ui` are both empty, when a UI package has
@@ -27,8 +33,8 @@ Plumb found:
   UI         apps/web   Next.js · Tailwind v4 · shadcn   (142 UI files → extract)
   no UI      apps/api   FastAPI
 I'll create:
-  .claude/skills/acme-design-system/   at the repo root
-  PLUMB.md                             at the repo root
+  .claude/skills/acme-design-system/   in ~/Projects/acme
+  PLUMB.md                             in ~/Projects/acme
   generated copy → apps/web/app/globals.css
 OK, or change something?
 ```
@@ -39,28 +45,38 @@ OK, or change something?
 
 | Field | Means |
 |---|---|
-| `root`, `opened` | The repo root (git, else the nearest folder with `.git`) and where the session was opened, relative to it. |
-| `layout` | `parent` (not inside a repo), `monorepo`, `mixed` (UI and backend without monorepo markers), `frontend`, `backend`, `single` (nothing recognised). |
+| `root`, `opened` | The repo root (git, else the nearest folder with `.git`; outside git, the folder opened) and where the session was opened, relative to it. |
+| `in_repo`, `git`, `git_available` | Inside a repo; a git repo with git working; git installed. git is optional: outside a repo the opened folder is the project when it has markers. |
+| `layout` | `parent` (outside git, no markers here but child folders have some), `new` (outside git and empty, or only dotfiles), `monorepo`, `mixed` (UI and backend without monorepo markers), `frontend`, `backend`, `single` (nothing recognised). |
 | `monorepo` | The marker found: `pnpm-workspace.yaml`, `turbo.json`, `nx.json`, `lerna.json`, `rush.json`, `package.json workspaces`, `apps/ + packages/`, `frontend/ + backend/`. |
 | `ui_packages[]` | `path`, `framework` (`next react vue svelte angular html swiftui uikit compose android-views react-native`), `styling` (`tailwind-v4 tailwind-v3 css native`), `shadcn`, `platforms`, `files` (UI file count), `supported`, `note`, `global_css {path, exists}`. |
 | `no_ui[]` | Backend packages: `path`, `stack` (`fastapi django flask go java rust rails express …`). |
 | `children[]` | Only for `parent`: `name`, `is_repo`, `has_ui`. |
 | `existing` | `plumb_md` (a `PLUMB.md` is there), `skill`, `role`. |
 | `proposal` | `project` (kebab-case name), `skill_dir`, `plumb_md`, `copies` (generated CSS copy paths), `platforms`, `alternatives`. |
-| `confidence`, `reasons` | How sure the guess is and why not more. `low`: no markers, a guessed CSS path, several UI packages without monorepo markers, a parent folder. `medium`: an unsupported stack, backend and UI side by side. |
+| `confidence`, `reasons` | How sure the guess is and why not more. `low`: no markers, a guessed CSS path, several UI packages without monorepo markers, a parent folder. `medium`: an unsupported stack, backend and UI side by side, not a git repo. |
 
 ## Layouts
 
 | Situation | What init does |
 |---|---|
 | **Parent folder** (`layout: parent`, e.g. opened at `~/Desktop`) | List `children` (repo or folder, has UI) and ask which project. Write **nothing** in the parent. Run detect again with `--cwd <child>` and continue there; tell the user to open future sessions in that folder (the hooks look for `PLUMB.md` upwards from where a session opens). |
-| **Opened in a subfolder** (`opened` is not `.`) | Use the repo root. Say so in the block ("you opened apps/web"). |
+| **New, empty folder** (`layout: new`) | Ask "Start a new project here?" (a) Yes (Recommended) (b) it is somewhere else (ask the path). On yes route to `/plumb:create` in this folder. git is optional; offer `git init` once, the user decides. |
+| **Not a git repo, with project markers** (`in_repo: false`) | The opened folder is the project root. Say so in the block; confirm it is the whole project and not a package of a bigger one. |
+| **Opened in a subfolder** (`opened` is not `.`) | Use the repo root as `<root>`. Say so in the block ("you opened apps/web"). |
 | **Monorepo** | Skill and `PLUMB.md` at the **repo root**. Every UI package is listed in `PLUMB.md` `UI packages:` with its stack, and each one's global CSS is a generated copy in `web.copies`. A package that is not UI is listed as "no UI". |
 | **Separate frontend repo** | Skill and `PLUMB.md` in this repo. |
-| **Backend-only repo** | Ask: (a) the frontend is in another repo (ask for its path; set it up there, and offer this repo a linked `PLUMB.md`); (b) the frontend will live here (create here, platforms chosen in the interview); (c) design only for now (create here; platforms added later with `/plumb:update`). |
+| **Backend-only repo** | Ask "Where will the UI live?" (a) the frontend is in another repo (Recommended): ask for its path, run detect with `--cwd <that path>`, set Plumb up there (it becomes `<root>`), then offer this repo a linked `PLUMB.md` and row, and tell the user to open the frontend repo for UI work; (b) the frontend will live here (create here, platforms chosen in the interview); (c) design only for now (below). |
 | **Several UI repos share one system** | One **home** repo owns the tokens (`Role: home`). The others get only a linked `PLUMB.md` and the AGENTS/CLAUDE row pointing at the home skill. The home's `build-tokens.py` can write generated copies into the other repos (their paths in the home tokens' `web.copies`), asked in the home repo. |
-| **React Native** (`framework: react-native`, `supported: false`) | Say plainly: React Native themes are not supported in Plumb 1.0.0 (a candidate for a later release). Offer only what is supported: web (when the repo has a web part), iOS (SwiftUI) and Android (Compose) native themes, or design only for now. Never generate a React Native theme. |
+| **React Native** (`framework: react-native`, `supported: false`) | Say plainly: React Native themes are not supported in Plumb 1.0.0 (a candidate for 1.1.0). Offer only: design only (Recommended, below), web (when the repo has a web part), or iOS (SwiftUI) / Android (Compose) themes for native apps. Never generate a React Native theme or write React Native components. |
 | **Nothing recognised** (`layout: single`, low confidence) | Explore (above). If there really is no UI yet, the project is new: route to `/plumb:create`. |
+
+## Design only
+
+Chosen for a backend repo, a React Native app, or by the user ("design only for now"). The system is made but nothing
+goes into an app: `scaffold.py --platforms web --styling css`, no `web_copies`, no components inside the app (reference
+starters only, in `<skill dir>/assets/platforms/web/starter/`), and the prototype is HTML only. `PLUMB.md` records the
+choice in `UI packages:` ("none yet: design only"). Platforms are added later with `/plumb:update`.
 
 ## The skill folder
 
@@ -92,8 +108,8 @@ the home's path. Nothing else is copied into a linked repo.
 If the system ends up in the wrong place, or the user changes their placement answer, never move files by hand:
 
 ```
-python3 <ROOT>/scripts/scaffold.py --relocate FROM TO --project-root . --dry-run   # show every change first
-python3 <ROOT>/scripts/scaffold.py --relocate FROM TO --project-root .
+python3 "<ROOT>/scripts/scaffold.py" --relocate FROM TO --project-root "<root>" --dry-run   # show every change first
+python3 "<ROOT>/scripts/scaffold.py" --relocate FROM TO --project-root "<root>"
 ```
 
 It moves the skill folder and updates `PLUMB.md` (the `Design system:` line and the commands), the Plumb row in
@@ -101,6 +117,6 @@ It moves the skill folder and updates `PLUMB.md` (the `Design system:` line and 
 because generated headers name the old path). It refuses when `TO` exists and is not empty, is outside the project, or
 `FROM` is not a Plumb design-system skill. Show the dry run, ask, then run it.
 
-`python3 <ROOT>/scripts/scaffold.py --verify --project-root .` checks that `PLUMB.md`, the row, the Makefile and the
+`python3 "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"` checks that `PLUMB.md`, the row, the Makefile and the
 copy targets agree with where the skill actually is, and prints the `--relocate` command when they do not
 (`/plumb:status` runs it too).

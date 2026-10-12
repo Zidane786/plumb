@@ -437,9 +437,62 @@ def test_backend_plus_ui_without_markers_is_mixed(tmp_path: Path) -> None:
 
 
 def test_parent_git_flags(tmp_path: Path) -> None:
+    pkg(tmp_path, "shop/package.json", {"react": "18"})
     r = run(tmp_path)
-    assert r["layout"] == "parent" and r["git"] is False
+    assert r["layout"] == "parent" and r["git"] is False and r["in_repo"] is False
     assert r["git_available"] is (shutil.which("git") is not None)
+
+
+# Not inside git (git is optional): the opened folder is the project when it has markers, a new project when empty.
+
+
+def test_non_git_project_folder_is_the_project(tmp_path: Path) -> None:
+    pkg(tmp_path, "package.json", {"next": "14", "react": "18"}, "loose-app")
+    put(tmp_path, "app/globals.css", '@import "tailwindcss";\n')
+    put(tmp_path, "app/page.tsx", "x")
+    r = run(tmp_path)
+    assert r["layout"] == "frontend" and r["git"] is False and r["in_repo"] is False
+    assert Path(r["root"]).resolve() == tmp_path.resolve() and r["opened"] == "."
+    assert r["ui_packages"][0]["framework"] == "next" and r["ui_packages"][0]["styling"] == "tailwind-v4"
+    assert r["proposal"]["skill_dir"] == ".claude/skills/loose-app-design-system"
+    assert r["proposal"]["copies"] == ["app/globals.css"] and r["children"] == []
+    assert r["confidence"] == "medium" and any("not a git repo" in x for x in r["reasons"])
+
+
+def test_non_git_monorepo_and_backend(tmp_path: Path) -> None:
+    mono, api = tmp_path / "mono", tmp_path / "api"
+    put(mono, "turbo.json", "{}")
+    pkg(mono, "apps/web/package.json", {"react": "18"})
+    put(api, "pyproject.toml", "[project]\ndependencies=['fastapi']\n")
+    assert run(mono)["layout"] == "monorepo"
+    assert run(api)["layout"] == "backend"
+
+
+def test_empty_folder_is_a_new_project(tmp_path: Path) -> None:
+    new = tmp_path / "Fresh Idea"
+    put(new, ".DS_Store", "x")
+    r = run(new)
+    assert r["layout"] == "new" and r["git"] is False and r["in_repo"] is False
+    assert r["ui_packages"] == [] and r["no_ui"] == [] and r["children"] == []
+    assert r["proposal"]["skill_dir"] == ".claude/skills/fresh-idea-design-system" and r["proposal"]["copies"] == []
+    assert any("new project" in x for x in r["reasons"])
+    human = detect.human(r)
+    assert "new project" in human and "OK, or change something?" in human
+
+
+def test_folder_without_markers_or_marked_children_is_a_single_project(tmp_path: Path) -> None:
+    put(tmp_path, "notes/readme.txt", "hi")
+    put(tmp_path, "sketch.md", "hi")
+    r = run(tmp_path)
+    assert r["layout"] == "single" and Path(r["root"]).resolve() == tmp_path.resolve()
+    assert r["confidence"] == "low"
+
+
+def test_in_repo_flag(tmp_path: Path) -> None:
+    repo(tmp_path)
+    pkg(tmp_path, "package.json", {"react": "18"})
+    r = run(tmp_path)
+    assert r["in_repo"] is True and "not a git repo" not in " ".join(r["reasons"])
 
 
 def test_parent_listing_does_not_deep_scan(tmp_path: Path) -> None:

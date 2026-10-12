@@ -6,6 +6,11 @@
 Finds where the project and its UI live, so init can show "Plumb found: ..." and wait for the
 user's confirmation. It only reads; it never writes anything.
 
+Layouts: monorepo, mixed, frontend, backend, single (nothing recognised), parent (outside git, the folder has no
+project markers but child folders do), new (outside git and empty, or only dotfiles: a new project starts here).
+git is optional: outside a repo, a folder with project markers is itself the project root ("in_repo": false, with a
+reason, so confidence is at most medium). Detection is a first guess; the init skill confirms it with the user.
+
 Standard library only, Python 3.9+.
 """
 
@@ -465,13 +470,23 @@ def detect(cwd) -> dict:
     cwd = Path(cwd).resolve()
     root, git_ok = find_root(cwd)
     existing = {"plumb_md": False, "skill": None, "role": None}
+    in_repo = root is not None
     if root is None:
-        return {
-            "root": cwd.as_posix(), "opened": ".", "layout": "parent", "monorepo": None,
-            "ui_packages": [], "no_ui": [], "children": list_children(cwd), "git": False,
-            "git_available": git_ok, "existing": existing, "proposal": None,
-            "confidence": "low", "reasons": ["not inside a repo: the folder is a parent of projects"],
-        }
+        # Not inside git (git is optional): the opened folder is the project when it has project markers, a parent
+        # of projects when only its children do, and a new project when it is empty (or holds only dotfiles).
+        names = [x.name for x in _safe_iter(cwd)]
+        if not _has_markers(cwd, names):
+            children = list_children(cwd)
+            if children:
+                return {
+                    "root": cwd.as_posix(), "opened": ".", "layout": "parent", "monorepo": None,
+                    "ui_packages": [], "no_ui": [], "children": children, "git": False, "in_repo": False,
+                    "git_available": git_ok, "existing": existing, "proposal": None,
+                    "confidence": "low", "reasons": ["not inside a repo: the folder is a parent of projects"],
+                }
+            if not [n for n in names if not n.startswith(".")]:
+                return _new_project(cwd, git_ok)
+        root = cwd
     root = root.resolve()
     try:
         opened = cwd.relative_to(root).as_posix()
@@ -500,18 +515,43 @@ def detect(cwd) -> dict:
         for p in u["platforms"]:
             if p not in platforms:
                 platforms.append(p)
-    skill = ".claude/skills/" + name + "-design-system"
     conf, reasons = confidence(layout, marker, ui, no_ui)
+    if not in_repo:
+        reasons.append(NO_GIT_REASON)
+        conf = "medium" if conf == "high" else conf
     return {
         "root": root.as_posix(), "opened": opened, "layout": layout, "monorepo": marker,
-        "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok, "git_available": git_ok,
-        "existing": read_existing(root),
-        "proposal": {
-            "project": name, "skill_dir": skill, "plumb_md": "PLUMB.md", "copies": copies,
-            "platforms": platforms,
-            "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
-        },
+        "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok and in_repo, "in_repo": in_repo,
+        "git_available": git_ok, "existing": read_existing(root), "proposal": _proposal(name, copies, platforms),
         "confidence": conf, "reasons": reasons,
+    }
+
+
+NO_GIT_REASON = "not a git repo: the folder you opened is taken as the project root (git is optional)"
+
+
+def _proposal(name: str, copies: List[str], platforms: List[str]) -> dict:
+    return {
+        "project": name, "skill_dir": ".claude/skills/" + name + "-design-system", "plumb_md": "PLUMB.md",
+        "copies": copies, "platforms": platforms,
+        "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
+    }
+
+
+def _has_markers(folder: Path, names: List[str]) -> bool:
+    """The folder itself looks like a project: a manifest, an Xcode project or a monorepo marker."""
+    if any(n in MARKER_FILES or n in MONOREPO_FILES or n.endswith(".xcodeproj") for n in names):
+        return True
+    return monorepo_marker(folder) is not None
+
+
+def _new_project(cwd: Path, git_ok: bool) -> dict:
+    """An empty folder (or only dotfiles) outside git: a new project starts here."""
+    return {
+        "root": cwd.as_posix(), "opened": ".", "layout": "new", "monorepo": None,
+        "ui_packages": [], "no_ui": [], "children": [], "git": False, "in_repo": False,
+        "git_available": git_ok, "existing": read_existing(cwd), "proposal": _proposal(project_name(cwd), [], []),
+        "confidence": "medium", "reasons": ["empty folder: a new project starts here", NO_GIT_REASON],
     }
 
 
@@ -531,7 +571,12 @@ def human(r: dict) -> str:
             lines.append("No projects found under it.")
         lines.append("Which one? Nothing is written in the parent.")
         return "\n".join(lines) + "\n"
-    note = "git root" if r["git"] else "repo root, git not available"
+    if not r.get("in_repo", True):
+        note = "the folder you opened; not a git repo, git is optional"
+        if r["layout"] == "new":
+            note = "empty folder: a new project starts here; " + note
+    else:
+        note = "git root" if r["git"] else "repo root, git not available"
     if r["opened"] != ".":
         note += "; you opened " + r["opened"]
     lines.append("Plumb found:")
