@@ -1,0 +1,24 @@
+# Web dark mode
+
+How the web build switches themes. The scheme itself and the contrast evidence are in [../dark-mode.md](../dark-mode.md).
+
+## How it works
+
+- The generated CSS defines the light values on `:root` and the dark values under `.dark` (and `color-scheme: dark`).
+- The theme class goes on `<html>`. The default follows the system setting; a user's explicit choice is remembered and wins.
+- Components use token utilities only, so they switch with no extra code. Pages never write `dark:` overrides; a raw colour
+  is an audit error because it does not switch.
+
+## Switching without a flash
+
+Set the class before first paint (a tiny inline script in the document head, reading the saved choice, falling back to the
+system setting). Use the project's theme provider if it already has one; do not add a library without asking the owner.
+
+## Shadows and images
+
+Shadows are tokens with their own dark values (deeper, not glowing). Images and illustrations that assume a white page need a
+dark variant or a neutral background; check them in both themes.
+
+## Checking
+
+Open every changed screen in light and dark, at 390px and wide. `make design-audit` flags missing dark values and raw colours.

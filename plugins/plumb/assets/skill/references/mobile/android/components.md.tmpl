@@ -1,0 +1,22 @@
+# Android components
+
+The Compose building block for each component in [../../components.md](../../components.md), where Android differs. Mobile
+behaviour: [../components.md](../components.md). Conventions: [android.md](android.md).
+
+| Component | Compose |
+|---|---|
+| Button | `Button` / `OutlinedButton` / `TextButton` colours from the theme; height at least 48dp. |
+| Input | `OutlinedTextField` with `label` and `supportingText`; `keyboardOptions` set. |
+| Select | `ExposedDropdownMenuBox`; long lists use a separate screen or sheet. |
+| Checkbox, radio, switch | `Checkbox`, `RadioButton`, `Switch` inside a labelled, clickable row. |
+| Card | `Card` with the theme's shape and container colour. |
+| Badge, chip | `AssistChip` / `FilterChip` or a small icon-plus-word row. |
+| Dialog | `AlertDialog`. |
+| Sheet | `ModalBottomSheet`. |
+| Menu | `DropdownMenu`. |
+| Tabs | `NavigationBar` (top-level) or `TabRow`. |
+| Toast | `Snackbar` through a `SnackbarHost`, with an action for undo. |
+| Empty / error state | A column with icon, message and action, styled with the theme. |
+| Skeleton | A shimmer-free placeholder `Box` with the `sunk` colour. |
+
+Add the project's own composables here, with the file they live in; update [../../inventory.md](../../inventory.md).

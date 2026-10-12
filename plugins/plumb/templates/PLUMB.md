@@ -11,6 +11,7 @@ No downloads: nothing is installed or downloaded; if something is missing, ask t
 ## Checks
 Edit check: {{EDIT_CHECK}}
 End-of-turn check: {{END_CHECK}}
+Themes: {{THEMES}}          (light-and-dark | light-only: an explicit decision)
 UI files: {{UI_FILES}}
 Allowed raw values: {{ALLOWED_RAW}}
 

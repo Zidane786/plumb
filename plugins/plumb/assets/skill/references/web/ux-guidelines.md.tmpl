@@ -1,0 +1,32 @@
+# Web UX guidelines
+
+Web-specific behaviour. The product-wide UX is in [../ux.md](../ux.md).
+
+## Breakpoints and layout
+
+- Mobile first: 390px baseline; the tokens have an `md` value from 768px up for type that grows.
+- Content width: readable line length (about 65 characters) for prose; tables and boards may use the full width.
+- The app shell collapses to a top bar and menu (or bottom navigation) on narrow screens; the model is in [../ux.md](../ux.md).
+
+## Page anatomy
+
+Header (title, description, primary action), content, optional side panel. One `h1` per page; headings in order; one `main`.
+
+## Forms
+
+Native inputs and labels; `autocomplete` and the right `type` and `inputmode`; validate on blur and submit; errors linked with
+`aria-describedby` and summarised at the top on submit; submit buttons stay enabled and explain what is missing.
+
+## Feedback
+
+Toasts for confirmation (polite live region); inline messages for errors; skeletons for loading after 200 ms; optimistic
+updates only when the action can be undone.
+
+## Keyboard
+
+Every interaction has a keyboard path. Escape closes layers; arrows move inside menus, tabs and lists; Tab order follows
+reading order; a visible skip link goes to `main`. List any app-wide shortcuts here.
+
+## URLs and state
+
+Every screen has a URL; filters and tabs that change what is shown live in the URL; the back button works.
