@@ -36,6 +36,7 @@ import argparse
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,7 @@ WIN_APPS = ("Google/Chrome/Application/chrome.exe", "Microsoft/Edge/Application/
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_END = b"IEND\xaeB`\x82"  # the IEND chunk's type and CRC: the last bytes of every complete PNG
 POLL_SECONDS = 0.2
+RMTREE_RETRY_SECONDS = 1.0
 URL_SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
 NO_BROWSER = ("note: visual comparison skipped: no browser found (looked for Chrome, Edge and Chromium; Plumb installs "
               "nothing)\nfix: use the agent's own browser tool if it has one; otherwise ask the user whether a Chrome, "
@@ -162,11 +164,32 @@ def complete_png(data: bytes) -> bool:
     return data.startswith(PNG_SIGNATURE) and data.endswith(PNG_END)
 
 
+WINDOWS = os.name == "nt"
+
+
 def _stop(proc: "subprocess.Popen[bytes]") -> None:
+    """Stop the browser and the processes it started: its process group on macOS and Linux (it runs in a session of its
+    own), its process tree on Windows (taskkill /T, a system tool, no shell)."""
+    if WINDOWS:
+        try:
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
     proc.terminate()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
+        if not WINDOWS:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
         proc.kill()
         proc.wait()
 
@@ -179,7 +202,8 @@ def run_browser(args: List[str], shot: Path, log: Path, timeout: float) -> Optio
     a pipe open until they exit."""
     try:
         with open(log, "wb") as out_log:
-            proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=out_log, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=out_log, stderr=subprocess.STDOUT,
+                                    start_new_session=not WINDOWS)
             deadline = time.monotonic() + timeout
             while True:
                 code = proc.poll()
@@ -224,7 +248,16 @@ def shoot(browser: Path, url: str, out: Path, width: int, height: int, theme: st
         except OSError as exc:
             raise Refusal(f"cannot write {out} ({exc.strerror or exc})", "pass a writable --out path ending in .png") from None
     finally:
-        shutil.rmtree(str(tmp), ignore_errors=True)  # a helper process still writing there must not fail the shot
+        remove_tree(tmp)
+
+
+def remove_tree(path: Path) -> None:
+    """Delete the throwaway profile. On Windows a browser helper that is still exiting can hold a file open for a moment,
+    so try once more after a short wait; never fail the shot over it."""
+    shutil.rmtree(str(path), ignore_errors=True)
+    if path.exists():
+        time.sleep(RMTREE_RETRY_SECONDS)
+        shutil.rmtree(str(path), ignore_errors=True)
 
 
 # ---------------------------------------------------------------- command line

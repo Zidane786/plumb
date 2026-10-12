@@ -6,7 +6,8 @@ description: Report the health of the project's design system, read-only - Plumb
 # /plumb:status — how healthy is the design system?
 
 **Read-only.** Change nothing: no regeneration, no audit fixes, no approvals, no upgrade. The one exception: when the
-placement check offers a move and the user says yes, run that `--relocate` command. Commands:
+placement check offers a move and the user says yes, run that `--relocate` command. Never install or download anything;
+if something is missing (Python, git, the home repo of a linked system), report it and ask the user what to do. Commands:
 `<ROOT>/reference/scripts.md`.
 
 ## Step 0: context
@@ -15,8 +16,9 @@ placement check offers a move and the user says yes, run that `--relocate` comma
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Platforms:`, `UI packages:`, `Python:` (**PY**, `python3`
-   when unset), `## Checks` (`Edit check`, `End-of-turn check`, `Themes`), the `## Prototype` paths (**docs**, default
-   `docs/design`) and `Prototype sync`, the last `## Plumb updates` line.
+   when unset), `## Checks` (`Edit check`, `End-of-turn check`, `Themes`), **docs** (the folder of the
+   `## Prototype` `Main:` path, else the tokens file's `$extensions.plumb.docs_dir`, else `docs/design`), `Prototype
+   sync`, the last `## Plumb updates` line.
 
 ## Gather
 
@@ -26,7 +28,7 @@ PY "<ROOT>/scripts/scaffold.py" --verify --project-root .
 PY SKILL/scripts/build-tokens.py --check
 PY SKILL/scripts/audit.py --json
 PY SKILL/scripts/build-prototype.py --check        # only when <docs>/prototype/screens/ has screen files
-git status --short 2>/dev/null
+git status --short                                   # skip it when the project is not a git repo
 ```
 
 - `Role: linked` → check that the `Design system:` path exists (a missing path is the first thing to report, with
@@ -38,8 +40,8 @@ git status --short 2>/dev/null
 - From `audit.py --json`: errors, warnings, suggestions; the prototype-fidelity findings (`screen-drift`,
   `screen-unapproved`, `route-not-prototyped`, `synced-from-code`, `screen-not-built`) by screen; `mode`
   (inconsistency-only means there are no tokens yet).
-- Hooks: on when the plugin's `<ROOT>/hooks/hooks.json` exists; the edit check and the end-of-turn check are each on or
-  off by `PLUMB.md`.
+- Checks: the edit check, the end-of-turn check and prototype sync are each on or off as `PLUMB.md` says (its
+  `## Checks` and `## Prototype` lines); report those switches, nothing else.
 - A script that exits 2 → report its `error:` and `fix:` lines as a health problem; never fix it here.
 
 ## Report (under 200 words)
@@ -55,7 +57,7 @@ git status --short 2>/dev/null
 6. **Prototype:** N screens (N built, N to build, with routes), approvals pending, synced from code to confirm, drift
    (code changed after approval), routes not prototyped, N tours, and whether the pages are stale
    (`build-prototype.py --check`). Prototype sync on or off.
-7. **Checks:** edit check on/off, end-of-turn check on/off, hooks installed or not.
+7. **Checks:** edit check on/off, end-of-turn check on/off (from `PLUMB.md`).
 8. **Uncommitted** design files from `git status`, when there are any.
 9. **Next:** the one most useful next step (e.g. "approve the booking screen", "build `billing` (to build)",
    "`/plumb:audit fix` for 3 errors", "`/plumb:upgrade`"). Say "healthy" in one word when there is nothing.

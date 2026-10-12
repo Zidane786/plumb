@@ -33,6 +33,8 @@ if mode == "ok":
     with open(shot, "wb") as fh:
         fh.write(%r)
 elif mode == "linger":  # some browser builds keep running after writing the shot
+    with open(os.environ["STUB_PID"], "w", encoding="utf-8") as fh:
+        fh.write(str(os.getpid()))
     with open(shot, "wb") as fh:
         fh.write(%r)
     time.sleep(8)
@@ -85,7 +87,8 @@ def stub(tmp_path: Path):
 
 def run(stub, *args: str, mode: str = "ok", cwd: Path | None = None, path: str | None = None):
     bin_dir, log = stub
-    env = dict(os.environ, PATH=str(bin_dir) if path is None else path, STUB_LOG=str(log), STUB_MODE=mode)
+    env = dict(os.environ, PATH=str(bin_dir) if path is None else path, STUB_LOG=str(log), STUB_MODE=mode,
+               STUB_PID=str(log.parent / "stub.pid"))
     return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8",
                           env=env, cwd=str(cwd) if cwd else None, timeout=60)
 
@@ -196,6 +199,22 @@ def test_a_browser_that_lingers_after_a_complete_shot_is_stopped(tmp_path: Path,
     assert r.returncode == 0, r.stderr
     assert out.read_bytes() == PNG
     assert time.monotonic() - start < 7
+    pid = int((tmp_path / "stub.pid").read_text(encoding="utf-8"))
+    assert not alive(pid), "the browser was left running"
+
+
+def alive(pid: int) -> bool:
+    if os.name == "nt":
+        r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace")
+        return str(pid) in r.stdout
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def test_a_browser_that_hangs_is_stopped(tmp_path: Path, stub) -> None:

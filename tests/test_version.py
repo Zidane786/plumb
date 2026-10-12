@@ -106,6 +106,7 @@ def test_plain_output_says_what_to_do(tmp_path: Path, plugin: Path) -> None:
     assert r.returncode == 0 and "up to date" in r.stdout
     r = run("--project", str(project(tmp_path, "1.3.0", "c")), "--plugin", str(plugin))
     assert r.returncode == 0 and "newer" in r.stdout and "plugin update" in r.stdout
+    assert r.stdout.index("marketplace update plumb") < r.stdout.index("plugin update plumb@plumb")
 
 
 def test_relative_paths_from_the_working_folder(tmp_path: Path, plugin: Path) -> None:

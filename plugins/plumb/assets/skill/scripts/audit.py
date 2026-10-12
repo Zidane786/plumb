@@ -132,7 +132,7 @@ Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt
 (.next dist build out coverage Pods DerivedData ...), never files over 5 MB. A `GENERATED ... do not edit` header exempts
 a file only on the paths Plumb's generators own: <skill>/assets/platforms/** (not starter/), the copies listed in
 $extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, screens.html,
-tours/*.html, audit-*.html); anywhere else the header is just a comment and the file is audited. With no PATHS the project
+tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited. With no PATHS the project
 is walked: PLUMB.md `UI files:` narrows it, the design-system skill's own folder is left out except
 assets/platforms/*/starter/, and docs/design is left to the prototype checks. PATHS given are always checked.
 
@@ -425,7 +425,9 @@ def is_generated(text: str) -> bool:
     return P.is_generated_text(text)
 
 
-_GENERATED_PAGES = ("specimen.html", "prototype.html", "screens.html", "tours/*.html", "audit-*.html")
+_GENERATED_PAGES = ("specimen.html", "prototype.html", "screens.html", "tours/*.html", "audit-*.html",
+                    "prototype/proposals/*/index.html", "prototype/proposals/*/*/prototype.html",
+                    "prototype/proposals/*/*/screens.html")
 _PLATFORM_OUTPUT = re.compile(r"(?:^|/)assets/platforms/")
 # Folder names that are build output wherever they appear; build, out, dist and coverage only count inside the project
 # (a relative path), because a project may itself live under a folder with one of those names.
@@ -3665,17 +3667,10 @@ def _sev(severity: str, plural: bool = False) -> str:
 SEGMENT_NOWRAP = 32  # path parts up to this long never break inside; longer ones may (rare: a very long file name)
 
 
-def _loc(path: str, line: int) -> str:
-    """file:line that wraps only after a /: each part is unbreakable (hyphens included), with a break chance after
-    every separator."""
-    parts = f"{path}:{line}".replace("\\", "/").split("/")
-    shown = [f'<span class="seg">{_t(s)}</span>' if len(s) <= SEGMENT_NOWRAP else _t(s) for s in parts]
-    return f'<code class="loc">{"/<wbr>".join(shown)}</code>'
-
-
-def _loc_file(path: str) -> str:
-    """A file with no line (an agent-review finding about a whole file), wrapping like _loc."""
-    parts = path.replace("\\", "/").split("/")
+def _loc(path: str, line: Optional[int] = None) -> str:
+    """file:line (just the file when there is no line) that wraps only after a /: each part is unbreakable (hyphens
+    included), with a break chance after every separator."""
+    parts = (f"{path}:{line}" if line else path).replace("\\", "/").split("/")
     shown = [f'<span class="seg">{_t(s)}</span>' if len(s) <= SEGMENT_NOWRAP else _t(s) for s in parts]
     return f'<code class="loc">{"/<wbr>".join(shown)}</code>'
 
@@ -3866,7 +3861,7 @@ def load_review(given: str, root: Path) -> Review:
 
 
 def _review_item(r: ReviewFinding) -> str:
-    where = _loc(r.file, r.line) if r.line else _loc_file(r.file)
+    where = _loc(r.file, r.line)
     why = f'<p class="why"><span class="why-label">Why</span>{_t(r.why)}</p>' if r.why else ""
     return (f'<li class="finding agent" data-severity="{_a(r.severity)}" data-rule="{REVIEW_RULE}">'
             f'<div class="f-where">{_sev(r.severity)}<span class="agent-mark">Agent review</span>{where}</div>'

@@ -120,8 +120,10 @@ def plain(result: dict) -> str:
     if result["state"] == "same":
         return f"Plumb {p}: the project is up to date with the plugin."
     if result["state"] == "newer":
-        return (f"The project is on Plumb {p}, newer than this plugin ({g}): a teammate upgraded it. Update the plugin "
-                f"(claude plugin update plumb@plumb, or copilot plugin update plumb@plumb); never downgrade the project.")
+        return (f"The project is on Plumb {p}, newer than this plugin ({g}): a teammate upgraded it. Never downgrade the "
+                f"project; update the plugin by running, in your own terminal: claude plugin marketplace update plumb, then "
+                f"claude plugin update plumb@plumb (Copilot CLI: copilot plugin marketplace update plumb, then copilot "
+                f"plugin update plumb@plumb).")
     steps = ", ".join(result["between"]) or "none"
     return f"The project is on Plumb {p}, the plugin is {g}: run /plumb:upgrade. Upgrade notes in between: {steps}."
 

@@ -113,6 +113,15 @@ never change the exit code; the rules stay the gate. The review file is a JSON l
 `severity` is `error` (must change), `warn` (should change) or `suggest` (could be better); `line` is optional (leave it
 out for a whole-file finding); `why` is optional but recommended; no other keys.
 
+**System proposals.** An entry whose `file` is a path under the design-system skill is a proposal to change **the
+system itself**, not a screen: the tokens file (`<skill>/assets/tokens/<project>.tokens.json`),
+`<skill>/references/components.md`, `<skill>/references/ux.md` or `<skill>/design.md`. Write it with the change as the
+`message`, the proposed value or wording as the `fix`, and the evidence (which screens, how often) as the `why`.
+`/plumb:audit improve` writes system changes this way, and `/plumb:update` reads exactly these entries (from the latest
+`<docs>/audit-*.review.json`), together with the audit's system rules (`missing-token`, `duplicate-tokens`,
+`unused-token`, `contrast-headroom`, `consolidate-components`, `missing-state`, `contrast`, `missing-dark-value`), and
+proposes them one at a time. Every other entry is about screens or code and stays with `/plumb:audit`.
+
 **Proposing a new rule.** When the review keeps finding the same kind of problem (the same kind in 3+ places, or in two
 audits running), propose it to the user as a rule: say what it would check, one failing and one passing example, and its
 severity. On a yes, write it into the project's `design.md` or `ux.md` (agents follow it from the next screen on), and

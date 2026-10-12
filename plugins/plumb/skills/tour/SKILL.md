@@ -10,9 +10,10 @@ argument-hint: "[tour id or flow]"
 different audience, a story across several flows, a hands-on lesson. The format, the two modes, pointing and text,
 `your_turn`, chapters and the rules for targets: `<ROOT>/reference/tours.md`. Commands: `<ROOT>/reference/scripts.md`.
 
-**Rules.** One question at a time through the question tool, options with the recommendation first. Say where you will
-write before writing. Never install or download anything; ask the user and wait. Tours play in light and dark. Never
-edit `tours/*.html` or `prototype.html`: `build-prototype.py` writes them.
+**Rules.** One question at a time through the question tool, options with the recommendation first. **Nothing is
+written without the user's OK:** say what you will write and where, and ask; write only on a yes. Never install or
+download anything; ask the user and wait. Tours play in light and dark. Never edit `tours/*.html` or `prototype.html`:
+`build-prototype.py` writes them.
 
 ```
  audience + purpose ─▶ screens, states, chapters ─▶ draft steps (table) ─▶ user OKs ─▶ write tours/<id>.json
@@ -24,8 +25,8 @@ edit `tours/*.html` or `prototype.html`: `build-prototype.py` writes them.
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
-3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), the `## Prototype` paths
-   (**docs**, default `docs/design`).
+3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), and **docs**: the folder of
+   the `## Prototype` `Main:` path (else the tokens file's `$extensions.plumb.docs_dir`, else `docs/design`).
 4. No screen files in `<docs>/prototype/screens/` → nothing to tour yet: offer `/plumb:prototype` and stop.
 5. Read `<docs>/prototype/screens.json` (screens, their states) and the existing tours in `<docs>/prototype/tours/`.
    An id was given and that tour exists → show its steps as a table and ask what to change (skip to step 3).
@@ -49,7 +50,8 @@ Ask, one at a time:
 Show a short table, one row per step: chapter · screen/state · target (what is pointed at) · title and caption ·
 pointer (spotlight, ring, arrow, beacon, zoom, cursor; labels, callout, note) · action (click, type, choose, wait) ·
 your turn. Captions in the product's words (`SKILL/references/vocabulary.md`) and the audience's tone, one sentence
-each; one pointer per step plus at most a callout or a set of labels. Ask: "Write this tour?" — Write it / Change steps.
+each; one pointer per step plus at most a callout or a set of labels. Ask: "Write this tour to
+`<docs>/prototype/tours/<id>.json`?" — Write it / Change steps.
 
 Every target must exist in that screen file's markup (it may be hidden in its state). Prefer the hooks the screen
 already has (`[data-test=…]`, a class). If a step needs an element the screen file lacks, say so: adding a hook changes
@@ -58,8 +60,8 @@ the screen file, which makes its approval stale, so ask before touching it and a
 
 ## Step 3: write and build
 
-- Say the path, then write `<docs>/prototype/tours/<id>.json` (`<id>`: letters, digits, `_`, `-`; not
-  `<another tour>-<n>`).
+- Write `<docs>/prototype/tours/<id>.json` (`<id>`: letters, digits, `_`, `-`; not `<another tour>-<n>`). The "Write it"
+  answer in step 2 is the OK, so name this path in that question.
 - `PY SKILL/scripts/build-prototype.py`. Exit 2 names the tour file, the line and the problem (an unknown screen or
   state, a selector that matches nothing, a bad field): fix the step and run it again until it exits 0.
 - `PY SKILL/scripts/build-prototype.py --check` exits 0.

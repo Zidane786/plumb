@@ -16,7 +16,8 @@ the plugin root (`${CLAUDE_PLUGIN_ROOT}`, or the skill's base directory + `/../.
 traceback. Bad input exits 2. Do what the `fix:` line says, or ask the user when it says so; never guess.
 
 **Never by hand.** Generated files (`[G]`: `tokens.css` and its copies, `tailwind.tokens.js`, the Swift and Kotlin
-themes, `specimen.html`, `prototype.html`, `screens.html`, `prototype/screens.json`, `tours/*.html`, `audit-*.html`) are
+themes, `specimen.html`, `prototype.html`, `screens.html`, `prototype/screens.json`, `tours/*.html`, the proposal pages,
+`audit-*.html`) are
 written only by these scripts; Plumb's own files (`[P]`: `<skill>/scripts/*`, `<skill>/templates/*`,
 `assets/platforms/README.md`) only by `scaffold.py` during `/plumb:upgrade`. The edit check refuses hand edits to both.
 
@@ -26,7 +27,7 @@ written only by these scripts; Plumb's own files (`[P]`: `<skill>/scripts/*`, `<
 
 | Flag | Does |
 |---|---|
-| (none) | Writes every output from the one tokens file: web CSS (`tailwind-v4`, `tailwind-v3` + `tailwind.tokens.js`, or `css`), the copies in `$extensions.plumb.web.copies`, the iOS and Android themes for the platforms listed, the contrast block in `references/dark-mode.md`, `<docs>/specimen.html`, and the token region of `prototype.html`, `screens.html` and `tours/*.html` when they exist. Deterministic: running it twice changes nothing. |
+| (none) | Writes every output from the one tokens file: web CSS (`tailwind-v4`, `tailwind-v3` + `tailwind.tokens.js`, or `css`), the copies in `$extensions.plumb.web.copies`, the iOS and Android themes for the platforms listed, the contrast block in `references/dark-mode.md`, `<docs>/specimen.html`, and the token region of `prototype.html`, `screens.html`, `tours/*.html` and the generated proposal pages when they exist. Deterministic: running it twice changes nothing. |
 | `--check` | Writes nothing; exit 1 naming every stale or missing output, copy or prototype token block. |
 | `--contrast` | Rewrites only the contrast evidence block of `references/dark-mode.md` (exit 2 if the file or its markers are missing). Exits 0 even when pairs fail: the audit is the gate. |
 | `--migrate` | Brings the tokens JSON up to the current schema by **adding** missing settings; never removes or changes a value. Used by `/plumb:upgrade`. |
@@ -58,6 +59,7 @@ Exit codes: 0 no errors (warnings and suggestions allowed) · 1 errors found · 
 ## build-prototype.py: the main prototype and its map
 
 `python3 <skill>/scripts/build-prototype.py [--check] [--map ID --route ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--root SKILL_DIR] [--project PATH]`
+`python3 <skill>/scripts/build-prototype.py --proposal NAME [--check]`
 
 | Flag | Does |
 |---|---|
@@ -66,6 +68,7 @@ Exit codes: 0 no errors (warnings and suggestions allowed) · 1 errors found · 
 | `--map ID --route ROUTE --files GLOB ...` | Records a screen's route (`/billing`, `/b/:id`) and source files (globs from the project root) and their hash, the baseline the audit compares against. `status` becomes `built` once every glob matches a file. Confirm route and files with the user first. |
 | `--approve ID` | Records the user's approval: git `user.name` (else `$USER`/`%USERNAME%`), today's date, the screen file's hash; clears "synced from code". Run it only after the user said yes to that screen. Editing the screen afterwards makes the approval stale. |
 | `--synced ID` | Marks a screen updated to match code that was already built (a small fix, code written before Plumb); listed for the user to confirm, never blocking. |
+| `--proposal NAME` | Builds `/plumb:prototype`'s variants instead of the main prototype: for each `<docs>/prototype/proposals/NAME/<variant>/screens/*.html` (+ optional `idea.md`), that variant's `prototype.html` and `screens.html` (both views, light and dark, the token block inlined), and `NAME/index.html` with the variants side by side. Generated and byte-stable; `screens.json` is not touched. With `--check`, exit 1 when one is stale. Does not combine with `--map`, `--approve` or `--synced`. The main build (and build-tokens.py) refreshes the token block of every generated proposal page. |
 | `--root`, `--project` | As for build-tokens.py. |
 
 `screens.json` is written only by this script (never by hand). Every command rebuilds the pages. **A broken tour does not
@@ -109,9 +112,10 @@ always shows the user to confirm.
 | `--plugin R` | The plugin root (its `.claude-plugin/plugin.json` and `upgrades/`). |
 | `--json` | `{"project": "1.0.0", "plugin": "1.2.0", "state": "same" \| "older" \| "newer", "between": ["1.1.0", "1.2.0"]}`: `between` is every `upgrades/<v>.md` with project < v ≤ plugin, ascending, compared as numbers; empty unless `older`. |
 
-`older` → offer `/plumb:upgrade`. `newer` → a teammate upgraded with a newer plugin: update the plugin
-(`claude plugin marketplace update plumb` then `claude plugin update plumb@plumb`; in Copilot CLI
-`copilot plugin marketplace update plumb` then `copilot plugin update plumb@plumb`); never downgrade the project.
+`older` → offer `/plumb:upgrade`. `newer` → a teammate upgraded with a newer plugin: print the commands for the user to
+run in their own terminal (`claude plugin marketplace update plumb`, then `claude plugin update plumb@plumb`; in Copilot
+CLI `copilot plugin marketplace update plumb`, then `copilot plugin update plumb@plumb`) and wait; never run them
+yourself, and never downgrade the project.
 Exit codes: 0 · 2 bad input (no `PLUMB.md`, no version line, a damaged `plugin.json`).
 
 ## screenshot.py (plugin): a headless screenshot with a browser already installed

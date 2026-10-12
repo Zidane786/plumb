@@ -10,9 +10,11 @@ argument-hint: "[fix | improve] [paths]"
 every time (the hooks and CI rely on it). Then you review what no rule expresses. Rules and how to fix each:
 `<ROOT>/reference/rules.md`. Commands: `<ROOT>/reference/scripts.md`. Prototype rules: `<ROOT>/reference/prototypes.md`.
 
-**Rules.** One question at a time through the question tool, options with the recommendation first. Say where you will
-write before writing. Never install or download anything; if something seems missing, ask the user and wait. Check both
-themes unless `Themes: light-only`. Never edit generated files or Plumb's own scripts and templates (regenerate; propose
+**Rules.** One question at a time through the question tool, options with the recommendation first. **Nothing is
+written without the user's OK:** the report, its review file and the screenshots are the output this command was asked
+for; any other write (a code fix, a screen file, a rule, a decision) is shown first (what and where) and made only on a
+yes. Never install or download anything; if something seems missing, ask the user and wait. Check both themes unless
+`Themes: light-only`. Never edit generated files or Plumb's own scripts and templates (regenerate; propose
 rule changes upstream). Anything that changes how a screen looks goes through the prototype first.
 
 ```
@@ -27,8 +29,9 @@ rule changes upstream). Anything that changes how a screen looks goes through th
    skill's base directory (printed when the skill loads) + `/../..`, made absolute.
 2. Find `PLUMB.md` at the project root. Missing → offer `/plumb:init`; with no design system yet the audit can still run
    in inconsistency-only mode on the folders the user names (ask which).
-3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Themes:`, the
-   `## Prototype` paths (**docs**, default `docs/design`). `Role: linked` → run the home repo's `audit.py` on this repo's
+3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Themes:`, and **docs**: the
+   folder of the `## Prototype` `Main:` path (else the tokens file's `$extensions.plumb.docs_dir`, else `docs/design`).
+   `Role: linked` → run the home repo's `audit.py` on this repo's
    UI folders: `PY <SKILL>/scripts/audit.py <ui folders> --html <docs>/audit-YYYY-MM-DD.html`.
 4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → say once that `/plumb:upgrade` is
    available, then continue.
@@ -44,7 +47,9 @@ show the `error:` and do what its `fix:` says (or ask). No tokens yet → it run
 
 For each **built** screen in `<docs>/prototype/screens.json` (status `built`, with a route): screenshot the built route
 and its prototype screen at the same width and theme (1280 and 390 px; light and dark), and compare: missing screens or
-states, different components or copy, layout drift. Pixel-perfect matching is not the goal.
+states, different components or copy, layout drift. Pixel-perfect matching is not the goal: a layout difference worth
+flagging is a block that is missing, added or moved (a different order or column), a different component, or a clearly
+different size or spacing; anti-aliasing, font hinting and sub-pixel shifts are not.
 
 - Browser, first available: the agent's own browser tool → `PY "<ROOT>/scripts/screenshot.py" <url-or-file> --out <png>
   --width <w> --theme <light|dark>` (a Chrome, Edge or Chromium already installed) → none: `screenshot.py` exits 3 with
@@ -61,13 +66,13 @@ the vocabulary, an unhelpful empty or error state, a missing state the flow need
 mode, the layout drift from step 2. Each finding: severity (`error` must change, `warn` should, `suggest` could be
 better), file and line (line optional), message, fix, why. Don't repeat what a rule already reported.
 
-Write them to `<docs>/audit-YYYY-MM-DD.review.json` (a JSON list, format in `reference/rules.md`) and run
+Write them to `<docs>/audit-YYYY-MM-DD.review.json` (a JSON list, format in `<ROOT>/reference/rules.md`) and run
 `PY SKILL/scripts/audit.py [paths] --html --add-review <docs>/audit-YYYY-MM-DD.review.json`: the report gets an
 **Agent review** section, each finding marked so; the exit code stays the rules'. The review file is kept with the
 report as its record.
 
 **Recurring problems:** when the same kind of finding shows up in 3+ places (or in the previous audit's review file
-too), propose it to the user as a new rule (`reference/rules.md`, "Proposing a new rule"): on a yes, write it into
+too), propose it to the user as a new rule (`<ROOT>/reference/rules.md`, "Proposing a new rule"): on a yes, write it into
 `design.md` or `ux.md`, and offer to propose it to Plumb as an audit rule.
 
 ## Step 4: summary (every mode), then stop unless fix or improve
@@ -90,8 +95,8 @@ edit `kanban/` yourself.
    "3 screens drifted from the prototype", "2 contrast failures"). For each group: show how many, the files, the fix,
    one before → after example; ask "Apply this group?" — Apply / Show every change first / Skip.
 2. Apply it:
-   - code-level fixes (raw values → the token the fix names, `outline-none`, inline styles, emoji, icon library): edit the
-     code; when a value has no close token, don't invent one: collect it for `/plumb:update`.
+   - code-level fixes (raw values → the token the fix names, `outline-none`, inline styles, emoji, icon library): the
+     group's yes covers exactly the changes shown; when a value has no close token, don't invent one: collect it for `/plumb:update`.
    - `generated-drift`: `PY SKILL/scripts/build-tokens.py` (never edit the generated file).
    - token-level (`contrast`, `missing-dark-value`, a missing token): these change the system; list them and ask the
      user to run `/plumb:update` (only the user starts it).
@@ -112,11 +117,16 @@ edit `kanban/` yourself.
    mergeable token, a component spec that needs a variant, a `ux.md` or `design.md` rule that real screens keep breaking
    for a good reason. Rank by impact on the key tasks and how many screens it reaches; say the effort.
 3. Add the plan to the report as agent-review `suggest` findings (`--add-review`), and show it as a numbered list.
+   **A system proposal** is an entry whose `file` is a path under SKILL: the tokens file
+   (`SKILL/assets/tokens/<project>.tokens.json`), `SKILL/references/components.md`, `SKILL/references/ux.md` or
+   `SKILL/design.md`. That is exactly what `/plumb:update` reads as the audit's system suggestions, so write system
+   changes that way (message: the change; fix: the proposed value or wording; why: the evidence) and screen changes
+   with the screen's or the code's path.
 4. Ask which items to do (multi-select; recommend the top ones). For each picked item:
    - a screen change: prototype first (`/plumb:prototype` flow: screen file, user approval, `--approve`), then build it
      to match, then audit;
-   - a system change (tokens, component specs, `ux.md`/`design.md` rules): record it as a proposal in the review file
-     and ask the user to run `/plumb:update`, which applies the audit's system suggestions one at a time, regenerates,
+   - a system change (tokens, component specs, `ux.md`/`design.md` rules): it is already a system proposal in the
+     review file (step 3); ask the user to run `/plumb:update`, which applies the audit's system suggestions one at a time, regenerates,
      refreshes the prototypes, records the decision and re-runs the audit;
    - or a Slate ticket instead.
 5. Every change made is recorded in `<docs>/decisions.md` (`<ROOT>/templates/decision-entry.md`). End with the audit
