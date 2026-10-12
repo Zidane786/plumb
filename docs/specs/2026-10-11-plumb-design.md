@@ -316,6 +316,15 @@ and exits 0 when there are no errors. When Slate is set up, it offers to create 
 fixes, grouped by area, written only through `board.py`. With no design system yet (a prototype or
 a project before extract) it runs in inconsistency-only mode.
 
+**The script is the floor, not the ceiling.** `audit.py` catches everything that can be written as
+a rule, the same way every time (and is what the hooks and CI rely on). The audit skill does not
+rely on it alone: after the script, the agent reviews the screens in scope against `design.md`,
+`ux.md` and the prototype for what no rule expresses (hierarchy broken while still using tokens,
+two screens solving the same thing differently, wording off the vocabulary, an unhelpful state,
+something that looks wrong in dark mode). Those findings are marked **agent review** in the report,
+separate from rule findings; when the agent keeps finding the same kind of problem, it proposes it
+as a new rule.
+
 **Three modes.** `/plumb:audit` reports only (errors, warnings, and the Improvements list).
 `/plumb:audit fix` fixes errors and warnings: it groups them (e.g. "12 raw colours → tokens"), shows
 each group, asks, applies it, and re-runs until clean; anything that changes how a screen looks goes
