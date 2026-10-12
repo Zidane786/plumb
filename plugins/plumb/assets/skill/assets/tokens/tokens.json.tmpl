@@ -1,0 +1,88 @@
+{
+  "$description": "{{NAME}} design tokens (W3C DTCG). The one source: edit here, then run build-tokens.py.",
+  "$extensions": {
+    "plumb": {
+      "schema": 1,
+      "project": "{{SLUG}}",
+      "platforms": {{PLATFORMS_JSON}},
+      "docs_dir": "{{DOCS_DIR}}",
+      "web": { "styling": "{{STYLING}}", "copies": {{COPIES_JSON}} }
+    }
+  },
+  "color": {
+    "$type": "color",
+    "background": { "$value": "{{COLOR_BACKGROUND}}", "$extensions": { "plumb": { "dark": "{{COLOR_BACKGROUND_DARK}}" } } },
+    "surface": { "$value": "{{COLOR_SURFACE}}", "$extensions": { "plumb": { "dark": "{{COLOR_SURFACE_DARK}}" } } },
+    "sunk": { "$value": "{{COLOR_SUNK}}", "$extensions": { "plumb": { "dark": "{{COLOR_SUNK_DARK}}" } } },
+    "on-surface": { "$value": "{{COLOR_ON_SURFACE}}", "$extensions": { "plumb": { "dark": "{{COLOR_ON_SURFACE_DARK}}" } } },
+    "on-surface-muted": { "$value": "{{COLOR_ON_SURFACE_MUTED}}", "$extensions": { "plumb": { "dark": "{{COLOR_ON_SURFACE_MUTED_DARK}}" } } },
+    "primary": { "$value": "{{COLOR_PRIMARY}}", "$description": "The accent: focus ring, active, primary action", "$extensions": { "plumb": { "dark": "{{COLOR_PRIMARY_DARK}}" } } },
+    "on-primary": { "$value": "{{COLOR_ON_PRIMARY}}", "$extensions": { "plumb": { "dark": "{{COLOR_ON_PRIMARY_DARK}}" } } },
+    "outline": { "$value": "{{COLOR_OUTLINE}}", "$extensions": { "plumb": { "dark": "{{COLOR_OUTLINE_DARK}}" } } },
+    "outline-input": { "$value": "{{COLOR_OUTLINE_INPUT}}", "$description": "Control boundaries (3:1)", "$extensions": { "plumb": { "dark": "{{COLOR_OUTLINE_INPUT_DARK}}" } } },
+    "danger": { "$value": "{{COLOR_DANGER}}", "$extensions": { "plumb": { "dark": "{{COLOR_DANGER_DARK}}" } } },
+    "on-danger": { "$value": "{{COLOR_ON_DANGER}}", "$extensions": { "plumb": { "dark": "{{COLOR_ON_DANGER_DARK}}" } } },
+    "success": { "$value": "{{COLOR_SUCCESS}}", "$extensions": { "plumb": { "dark": "{{COLOR_SUCCESS_DARK}}" } } },
+    "on-success": { "$value": "{{COLOR_ON_SUCCESS}}", "$extensions": { "plumb": { "dark": "{{COLOR_ON_SUCCESS_DARK}}" } } },
+    "link": { "$value": "{color.primary}" },
+    "scrim": { "$value": "{{COLOR_SCRIM}}", "$extensions": { "plumb": { "dark": "{{COLOR_SCRIM_DARK}}" } } }
+  },
+  "font": {
+    "$type": "fontFamily",
+    "sans": { "$value": ["{{FONT_SANS}}", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"] },
+    "mono": { "$value": ["{{FONT_MONO}}", "ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"] }
+  },
+  "typography": {
+    "$type": "typography",
+    "display": { "$value": { "fontSize": "{{TYPE_DISPLAY_SIZE}}", "lineHeight": "{{TYPE_DISPLAY_LINE}}", "fontWeight": 700 } },
+    "h1": { "$value": { "fontSize": "{{TYPE_H1_SIZE}}", "lineHeight": "{{TYPE_H1_LINE}}", "fontWeight": 700 } },
+    "h2": { "$value": { "fontSize": "{{TYPE_H2_SIZE}}", "lineHeight": "{{TYPE_H2_LINE}}", "fontWeight": 600 } },
+    "h3": { "$value": { "fontSize": "{{TYPE_H3_SIZE}}", "lineHeight": "{{TYPE_H3_LINE}}", "fontWeight": 600 } },
+    "body-lg": { "$value": { "fontSize": "{{TYPE_BODY_LG_SIZE}}", "lineHeight": "{{TYPE_BODY_LG_LINE}}", "fontWeight": 400 } },
+    "body": { "$value": { "fontSize": "{{TYPE_BODY_SIZE}}", "lineHeight": "{{TYPE_BODY_LINE}}", "fontWeight": 400 } },
+    "sm": { "$value": { "fontSize": "{{TYPE_SM_SIZE}}", "lineHeight": "{{TYPE_SM_LINE}}", "fontWeight": 400 } },
+    "xs": { "$value": { "fontSize": "{{TYPE_XS_SIZE}}", "lineHeight": "{{TYPE_XS_LINE}}", "fontWeight": 400 } }
+  },
+  "radius": {
+    "$type": "dimension",
+    "sm": { "$value": "{{RADIUS_SM}}" },
+    "md": { "$value": "{{RADIUS_MD}}" },
+    "lg": { "$value": "{{RADIUS_LG}}" }
+  },
+  "spacing": {
+    "$type": "dimension",
+    "1": { "$value": "{{SPACE_1}}" },
+    "2": { "$value": "{{SPACE_2}}" },
+    "3": { "$value": "{{SPACE_3}}" },
+    "4": { "$value": "{{SPACE_4}}" },
+    "5": { "$value": "{{SPACE_5}}" },
+    "6": { "$value": "{{SPACE_6}}" },
+    "8": { "$value": "{{SPACE_8}}" },
+    "10": { "$value": "{{SPACE_10}}" },
+    "12": { "$value": "{{SPACE_12}}" },
+    "16": { "$value": "{{SPACE_16}}" }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "card": {
+      "$value": [{ "offsetX": "0px", "offsetY": "1px", "blur": "3px", "spread": "0px", "color": "{{SHADOW_CARD}}" }],
+      "$extensions": { "plumb": { "dark": [{ "offsetX": "0px", "offsetY": "1px", "blur": "3px", "spread": "0px", "color": "{{SHADOW_CARD_DARK}}" }] } }
+    },
+    "popover": {
+      "$value": [{ "offsetX": "0px", "offsetY": "8px", "blur": "24px", "spread": "0px", "color": "{{SHADOW_POPOVER}}" }],
+      "$extensions": { "plumb": { "dark": [{ "offsetX": "0px", "offsetY": "8px", "blur": "24px", "spread": "0px", "color": "{{SHADOW_POPOVER_DARK}}" }] } }
+    }
+  },
+  "motion": {
+    "duration": {
+      "$type": "duration",
+      "fast": { "$value": "{{DURATION_FAST}}" },
+      "mid": { "$value": "{{DURATION_MID}}" },
+      "slow": { "$value": "{{DURATION_SLOW}}" }
+    },
+    "easing": {
+      "$type": "cubicBezier",
+      "out": { "$value": [0.2, 0.8, 0.2, 1] }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+.PHONY: tokens tokens-check design-audit
+
+# Plumb design system: write every theme from the tokens file.
+tokens:
+	{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py
+
+# Fail when a generated theme is stale or missing.
+tokens-check:
+	{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py --check
+
+# Check the UI code against the design system.
+design-audit:
+	{{PYTHON}} {{SKILL_DIR}}scripts/audit.py
