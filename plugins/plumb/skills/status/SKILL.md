@@ -56,7 +56,7 @@ the counts, never as a failure of status.
 2. **System:** the skill path, home or linked, platforms, styling, themes (light and dark, or light-only by decision).
 3. **Placement:** `scaffold.py --verify` ok, or each `problem:` line; when it prints a suggested `--relocate` command,
    offer the move (one question: "Move the design system to <TO> and update every reference?"); run it only on yes.
-4. **Generated files:** up to date, or the stale ones and "run `PY SKILL/scripts/build-tokens.py`" (`make tokens`).
+4. **Generated files:** up to date, or the stale ones and the tokens command from `PLUMB.md` → Commands.
 5. **Audit:** N errors · N warnings · N suggestions, the top rules, the last report's date; errors → `/plumb:audit fix`;
    clean → `/plumb:audit improve`.
 6. **Prototype:** N screens (N built, N to build, with routes), approvals pending, synced from code to confirm, drift
