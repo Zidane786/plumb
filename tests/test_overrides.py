@@ -1,0 +1,135 @@
+"""build-tokens.py --overrides: the project's own variables in the tokens' namespaces (a stock create-next-app or
+shadcn globals.css), listed with the token each maps onto, and moved into the tokens with --apply after the user's OK."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPTS = REPO / "plugins/plumb/assets/skill/scripts"
+FIXTURE = REPO / "tests/fixtures/projects/web-v4"
+STOCK = REPO / "tests/fixtures/apps/next-tailwind-stock/app/globals.css"
+SKILL_REL = ".claude/skills/demo-design-system"
+
+
+@pytest.fixture()
+def project(tmp_path: Path) -> Path:
+    dest = tmp_path / "proj"
+    shutil.copytree(FIXTURE, dest)
+    for name in ("_plumb.py", "build-tokens.py", "audit.py"):
+        shutil.copy(SCRIPTS / name, dest / SKILL_REL / "scripts" / name)
+    (dest / "app").mkdir(exist_ok=True)
+    shutil.copy(STOCK, dest / "app/globals.css")
+    return dest
+
+
+def run(p: Path, script: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(p / SKILL_REL / "scripts" / script), *args], cwd=str(p),
+                          capture_output=True, text=True, encoding="utf-8")
+
+
+def tokens_file(p: Path) -> Path:
+    return p / SKILL_REL / "assets/tokens/demo.tokens.json"
+
+
+def plan(p: Path) -> dict:
+    r = run(p, "build-tokens.py", "--overrides")
+    assert r.returncode == 0, r.stdout + r.stderr
+    return json.loads(r.stdout)
+
+
+def by_name(data: dict) -> dict:
+    (copy,) = data["copies"]
+    return {o["name"]: o for o in copy["overrides"]}
+
+
+def test_overrides_lists_each_variable_with_the_token_it_maps_onto(project: Path) -> None:
+    before = (project / "app/globals.css").read_bytes(), tokens_file(project).read_bytes()
+    data = plan(project)
+    (copy,) = data["copies"]
+    assert copy["file"] == "app/globals.css"
+    found = by_name(data)
+    assert list(found) == ["--color-background", "--color-foreground", "--font-sans", "--font-mono"]
+    bg = found["--color-background"]
+    assert (bg["line"], bg["kind"], bg["token"], bg["value"]) == (9, "token", "color.background", "var(--background)")
+    assert bg["project_values"] == {"light": "#ffffff", "dark": "#0a0a0a"}
+    fg = found["--color-foreground"]
+    assert (fg["kind"], fg["token"]) == ("new-name", "color.foreground")
+    assert fg["token_change"] == {"add": "color.foreground", "$value": "{color.on-surface}"}
+    sans = found["--font-sans"]
+    assert (sans["kind"], sans["token"], sans["token_change"]) == ("token", "font.sans", None)
+    assert any("var(--font-geist-sans)" in n and "Inter" in n for n in copy["by_hand"])  # the tokens' font differs
+    mono = found["--font-mono"]
+    assert mono["kind"] == "new-name" and mono["token_change"]["add"] == "font.mono"
+    assert mono["token_change"]["$value"][0] == "var(--font-geist-mono)" and "monospace" in mono["token_change"]["$value"]
+    assert [(r["line"], r["old"], r["new"]) for r in copy["replace"]] == [
+        (23, "var(--background)", "var(--color-background)"), (24, "var(--foreground)", "var(--color-foreground)"),
+        (25, "Arial, Helvetica, sans-serif", "var(--font-sans)")]
+    assert all(r["why"] for r in copy["replace"])
+    # the :root and dark variables that only fed the overrides, the @theme block, and the blocks left empty
+    assert copy["remove_lines"] == [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    assert ((project / "app/globals.css").read_bytes(), tokens_file(project).read_bytes()) == before  # read only
+
+
+def test_apply_moves_them_into_the_tokens_and_the_audit_passes(project: Path) -> None:
+    assert run(project, "build-tokens.py").returncode == 0
+    r = run(project, "audit.py", "--json", "app/globals.css")
+    assert {f["rule"] for f in json.loads(r.stdout)["findings"]} >= {"block-override", "raw-colour"}
+    r = run(project, "build-tokens.py", "--overrides", "--apply")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "wrote app/globals.css" in r.stdout and "added color.foreground" in r.stdout
+    css = (project / "app/globals.css").read_text(encoding="utf-8")
+    assert "--background:" not in css and "@theme inline" not in css and "prefers-color-scheme" not in css.split(
+        "/* plumb:end */")[1]
+    assert css.split("/* plumb:end */")[1].strip() == (
+        "body {\n  background: var(--color-background);\n  color: var(--color-foreground);\n"
+        "  font-family: var(--font-sans);\n}")
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    assert doc["color"]["foreground"] == {"$value": "{color.on-surface}"}
+    assert doc["font"]["mono"]["$value"][0] == "var(--font-geist-mono)"
+    assert run(project, "build-tokens.py").returncode == 0
+    r = run(project, "audit.py", "--json", "app/globals.css")
+    assert [f for f in json.loads(r.stdout)["findings"] if f["file"] == "app/globals.css"] == []
+    assert plan(project)["copies"][0]["overrides"] == []
+
+
+def test_a_font_variable_the_tokens_name_goes_first_in_the_token(project: Path) -> None:
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    doc["font"]["sans"]["$value"] = ["Geist", "system-ui", "sans-serif"]
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    sans = by_name(plan(project))["--font-sans"]
+    assert sans["token_change"] == {"prepend": "font.sans", "family": "var(--font-geist-sans)"}
+    assert run(project, "build-tokens.py", "--overrides", "--apply").returncode == 0
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    assert doc["font"]["sans"]["$value"] == ["var(--font-geist-sans)", "Geist", "system-ui", "sans-serif"]
+
+
+def test_a_declaration_sharing_its_line_is_left_for_the_user(project: Path) -> None:
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n@theme inline { --color-brand: var(--brand); --radius-sm: 2px; }\n', encoding="utf-8")
+    data = plan(project)
+    (copy,) = data["copies"]
+    assert copy["remove_lines"] == [] and len(copy["by_hand"]) >= 1
+    assert any("line 2" in n for n in copy["by_hand"])
+    r = run(project, "build-tokens.py", "--overrides", "--apply")
+    assert r.returncode == 0 and "by hand" in r.stdout
+    assert "--color-brand" in (project / "app/globals.css").read_text(encoding="utf-8")
+
+
+def test_nothing_to_move(project: Path) -> None:
+    (project / "app/globals.css").write_text('@import "tailwindcss";\n\nbody {\n  margin: 0;\n}\n', encoding="utf-8")
+    assert plan(project)["copies"][0]["overrides"] == []
+    r = run(project, "build-tokens.py", "--overrides", "--apply")
+    assert r.returncode == 0 and "nothing to move" in r.stdout
+
+
+def test_apply_needs_overrides(project: Path) -> None:
+    r = run(project, "build-tokens.py", "--apply")
+    assert r.returncode == 2
+    assert r.stderr.startswith("error:") and "\nfix:" in r.stderr and "--overrides --apply" in r.stderr

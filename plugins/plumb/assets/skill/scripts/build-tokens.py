@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """build-tokens.py: turn the one tokens JSON into the web CSS, the SwiftUI / Jetpack Compose themes and the contrast evidence.
 
-Usage: build-tokens.py [--check | --contrast | --migrate | --css-vars] [--root SKILL_DIR] [--project PATH]
+Usage: build-tokens.py [--check | --contrast | --migrate | --css-vars | --overrides [--apply]] [--root SKILL_DIR] [--project PATH]
 
 Reads <skill>/assets/tokens/*.tokens.json (exactly one) and the web template, writes
 <skill>/assets/platforms/web/tokens.css (+ tailwind.tokens.js for tailwind-v3) and, in each copy listed in
@@ -26,7 +26,11 @@ in step; --check names a stale one as a prototype token block.
 
   --check      write nothing; exit 1 naming every stale or missing file.
   --contrast   rewrite only the contrast block of references/dark-mode.md (exit 2 if the file or the markers are missing).
-  --migrate    bring the tokens JSON up to the current schema (1) by adding missing settings; never removes or changes a value.
+  --migrate    bring the tokens JSON up to the current schema (1) by adding missing settings (and the defaults the build
+               applies for a missing web.theme_switch / motion.reduced); never removes or changes a value.
+  --overrides  print, as JSON, what each web copy sets in the tokens' namespaces outside Plumb's block (the audit's
+               block-override), with the token each maps onto and the exact edits; --overrides --apply makes them
+               (only after the user's OK).
   --css-vars   print the tokens as plain CSS custom properties (:root, the md breakpoint, .dark and prefers-color-scheme).
 
 The default build prints one `note:` line to stderr when dark-mode.md exists without the markers.
@@ -60,6 +64,7 @@ import json
 import re
 import sys
 import unicodedata
+from bisect import bisect_right
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -1180,9 +1185,9 @@ def _override_notes(shown: str, text: str) -> List[str]:
     if not found:
         return []
     what = ", ".join(dict.fromkeys(w for _pos, w in found))
-    return [f"note: {shown} sets {what} outside Plumb's block, which overrides the design system's own (the later "
-            f"definition wins); move the value into the tokens with /plumb:update and delete it there (the audit reports "
-            f"it as block-override)"]
+    return [f"note: {shown} sets {what} outside Plumb's block, which adds to or overrides the design system's own (the "
+            f"later definition wins); `build-tokens.py --overrides` shows the token each maps onto; ask the user, then "
+            f"move them with `--overrides --apply` or /plumb:update (the audit reports it as block-override)"]
 
 
 def copy_output(path: Path, css: str, root: Path) -> CopyPlan:
@@ -1544,6 +1549,321 @@ def contrast_output(doc: dict, skill_dir: Path, required: bool) -> Optional[Tupl
               f"add those two lines where the table should go, then run build-tokens.py --contrast", file=sys.stderr)
         return None
     return path, new
+
+
+# ---------------------------------------------------------------- overrides: the project's own theme variables
+
+# A web copy the project already had (a stock create-next-app or shadcn globals.css) often sets variables in the
+# tokens' namespaces in its own @theme block (--color-background: var(--background); --font-sans: var(--font-geist-sans)),
+# which override Plumb's block. --overrides lists each with the token it maps onto and the exact edits that move it into
+# the tokens; --overrides --apply makes them, only after the person's OK.
+
+_NS_GROUP = {"color": "color", "radius": "radius", "shadow": "shadow", "text": "typography", "font": "font",
+             "ease": "motion.easing", "spacing": "spacing", "duration": "motion.duration"}
+_GROUP_TYPE = {"color": "color", "font": "fontFamily"}
+# A colour name a project gives (create-next-app, shadcn) -> the token roles it means, the first that exists wins.
+_ROLE_NAMES = {"background": ("background", "surface"), "bg": ("background", "surface"), "page": ("background", "surface"),
+               "foreground": ("on-surface", "on-background", "text"), "fg": ("on-surface", "on-background", "text"),
+               "text": ("on-surface", "on-background", "text"), "card": ("surface", "background"),
+               "popover": ("surface", "background"), "border": ("outline",), "input": ("outline-input", "outline"),
+               "ring": ("primary",), "destructive": ("danger",), "error": ("danger",),
+               "muted-foreground": ("on-surface-muted",)}
+_FONT_STACKS = {"mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
+                "serif": ["Georgia", "serif"],
+                "sans": ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]}
+_DARK_PRELUDE = re.compile(r"prefers-color-scheme\s*:\s*dark|\.dark\b|data-theme\s*=\s*[\"']?dark")
+_VAR_ONLY = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,[^()]*)?\)")
+
+
+def _role_token(colors: dict, name: str) -> Optional[str]:
+    """The colour token a project's colour name means: its own role table, or on-X for X-foreground."""
+    for cand in _ROLE_NAMES.get(name, ()):
+        if P.is_token(colors.get(cand)):
+            return cand
+    if name.endswith("-foreground"):
+        base = name[:-len("-foreground")]
+        for cand in (f"on-{base}",) + tuple(f"on-{r}" for r in _ROLE_NAMES.get(base, ())):
+            if P.is_token(colors.get(cand)):
+                return cand
+    return None
+
+
+def _font_stack(name: str) -> List[str]:
+    key = "mono" if "mono" in name else "serif" if "serif" in name and "sans" not in name else "sans"
+    return list(_FONT_STACKS[key])
+
+
+def _squash(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+class _Lines:
+    """Line numbers (1-based) and whole-line tests for one stylesheet."""
+
+    def __init__(self, text: str, code: str) -> None:
+        self.text, self.code = text, code
+        self.starts = [0] + [m.end() for m in re.finditer("\n", text)]
+
+    def line(self, pos: int) -> int:
+        return bisect_right(self.starts, pos)
+
+    def span(self, line: int) -> Tuple[int, int]:
+        start = self.starts[line - 1]
+        end = self.starts[line] - 1 if line < len(self.starts) else len(self.text)
+        return start, end
+
+    def alone(self, start: int, end: int) -> bool:
+        """code[start:end] is all the code on the lines it covers."""
+        a, _ = self.span(self.line(start))
+        _, b = self.span(self.line(max(start, end - 1)))
+        return not self.code[a:start].strip() and not self.code[end:b].strip()
+
+    def lines(self, start: int, end: int) -> List[int]:
+        return list(range(self.line(start), self.line(max(start, end - 1)) + 1))
+
+    def blank(self, line: int) -> bool:
+        a, b = self.span(line)
+        return not self.code[a:b].strip()
+
+
+def _enclosing(blocks: list, pos: int) -> List[tuple]:
+    return [b for b in blocks if b[1] < pos < b[2]]
+
+
+def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
+    """What moves where for one web copy: each override (line, name, value, kind token | new-name | namespace |
+    dark-variant, the token it is or becomes, the project's values, the token change), the lines to remove, the
+    replacements, the project variables that fed them, and what only the person can do (by_hand)."""
+    shown = rel(path, root)
+    text = path.read_bytes().decode("utf-8")
+    code = P.mask_comments(P.mask_block(text), ".css")
+    L = _Lines(text, code)
+    blocks = P.css_blocks(code)
+    themes = [(s, s + len(body)) for s, body in P.theme_bodies(code)]
+    in_theme = lambda pos: any(a <= pos < b for a, b in themes)  # noqa: E731
+    tokvars = {varname(p): (p, ty) for p, _t, ty in P.iter_tokens(doc)}
+    colors = doc.get("color") if isinstance(doc.get("color"), dict) else {}
+    overrides: List[dict] = []
+    remove: set = set()
+    by_hand: List[str] = []
+    feeds: Dict[str, str] = {}  # project variable -> the token variable it fed
+    for pos, name in P.block_overrides(text):
+        line = L.line(pos)
+        if name == "@custom-variant dark":
+            end = code.find(";", pos)
+            end = len(code) if end < 0 else end + 1
+            entry = {"line": line, "name": name, "value": " ".join(code[pos:end].split()), "kind": "dark-variant",
+                     "token": None, "project_values": {}, "token_change": None}
+            if L.alone(pos, end):
+                remove.update(L.lines(pos, end))
+            else:
+                by_hand.append(f"line {line}: delete {name} by hand (it shares its line with other code)")
+            overrides.append(entry)
+            continue
+        m = re.compile(re.escape(name) + r"\s*:\s*([^;{}]*);?").match(code, pos)
+        end = m.end() if m else pos + len(name)
+        value = text[m.start(1):m.end(1)].strip() if m else ""
+        ns, _, rest = name[2:].partition("-")
+        group = _NS_GROUP.get(ns, ns)
+        src_m = _VAR_ONLY.fullmatch(value)
+        src = src_m.group(1) if src_m else None
+        decls = [d for d in re.finditer(r"(?<![\w-])" + re.escape(src) + r"\s*:\s*([^;{}]*);?", code)
+                 if not in_theme(d.start())] if src else []
+        values: Dict[str, str] = {}
+        for d in decls:
+            mode = "dark" if any(_DARK_PRELUDE.search(code[b[0]:b[1]]) for b in _enclosing(blocks, d.start())) else "light"
+            values.setdefault(mode, text[d.start(1):d.end(1)].strip())
+        change: Optional[dict] = None
+        note = ""
+        if "*" in name:
+            kind, token = "namespace", None
+        elif name in tokvars:
+            kind, (token, ttype) = "token", tokvars[name]
+            if ttype == "fontFamily" and src and not decls:
+                fams = P.resolve(doc, token)
+                fams = fams if isinstance(fams, list) else [fams]
+                first = next((str(f) for f in fams if str(f).lower() not in GENERIC_FAMILIES), "")
+                if f"var({src})" in [str(f) for f in fams]:
+                    pass
+                elif first and _squash(first) in _squash(src[2:].replace("font-", "", 1)):
+                    change = {"prepend": token, "family": f"var({src})"}
+                else:
+                    is_ = f"is {first!r}" if first else "the system font"
+                    note = (f"line {line}: the app loads its font through var({src}), but {token} {is_}: "
+                            f"ask the user which font to keep; to keep the app's, put var({src}) first in {token} "
+                            f"(/plumb:update)")
+        else:
+            kind, token = "new-name", f"{group}.{rest}"
+            if ns == "color" and rest:
+                role = _role_token(colors, rest)
+                if role:
+                    change = {"add": token, "$value": f"{{color.{role}}}"}
+                else:
+                    try:
+                        light = P.parse_color(values.get("light") or value)[0]
+                        change = {"add": token, "$value": light}
+                        if values.get("dark"):
+                            change["$extensions"] = {"plumb": {"dark": P.parse_color(values["dark"])[0]}}
+                    except PlumbError:
+                        change = None
+            elif ns == "font" and rest:
+                if src and not decls:
+                    change = {"add": token, "$value": [f"var({src})"] + _font_stack(rest)}
+                elif not src and value and "var(" not in value:
+                    change = {"add": token, "$value": [f.strip().strip("\"'") for f in value.split(",") if f.strip()]}
+            if change is None:
+                note = (f"line {line}: {name} is not a token and Plumb cannot tell which token it means: ask the user "
+                        f"whether to add a {group} token for it (/plumb:update) or delete it")
+        if note:
+            by_hand.append(note)
+        entry = {"line": line, "name": name, "value": value, "kind": kind, "token": token, "project_values": values,
+                 "token_change": change}
+        overrides.append(entry)
+        if kind == "new-name" and change is None:
+            continue  # nothing to move it to yet: the line stays until the person decides
+        if not L.alone(pos, end):
+            by_hand.append(f"line {line}: {name} shares its line with other code: move it into the tokens and delete it "
+                           f"by hand")
+            continue
+        remove.update(L.lines(pos, end))
+        if src and decls:
+            feeds.setdefault(src, name)
+    # the project variables that only fed the overrides: their declarations go, their uses point at the token
+    replace: List[dict] = []
+    project_vars: List[dict] = []
+    for src, name in feeds.items():
+        decls = [d for d in re.finditer(r"(?<![\w-])" + re.escape(src) + r"\s*:\s*[^;{}]*;?", code)
+                 if not in_theme(d.start())]
+        lines = [L.line(d.start()) for d in decls]
+        if all(L.alone(d.start(), d.end()) for d in decls):
+            for d in decls:
+                remove.update(L.lines(d.start(), d.end()))
+        else:
+            by_hand.append(f"{src} (line {', '.join(map(str, lines))}) shares a line with other code: delete it by hand")
+        for u in re.finditer(r"var\(\s*" + re.escape(src) + r"\s*([),])", code):
+            if in_theme(u.start()) or L.line(u.start()) in remove:
+                continue
+            replace.append({"line": L.line(u.start()), "old": text[u.start():u.end()], "new": f"var({name}{u.group(1)}",
+                            "why": f"{src} fed {name}, which is now the token's variable"})
+        project_vars.append({"name": src, "declared": lines, "maps_to": name})
+    # a literal font stack outside the tokens (body { font-family: Arial, ... }) uses the font token instead
+    for f in re.finditer(r"(?<![\w-])font-family\s*:\s*([^;{}]+)", code):
+        val = text[f.start(1):f.end(1)].strip()
+        if "var(" in val or in_theme(f.start()) or L.line(f.start()) in remove:
+            continue
+        if any(re.match(r"\s*@font-face\b", code[b[0]:b[1]]) for b in _enclosing(blocks, f.start())):
+            continue
+        want = "--font-mono" if "monospace" in val.lower() else "--font-sans"
+        if want not in tokvars and not any(o["name"] == want and o["token_change"] for o in overrides):
+            continue
+        replace.append({"line": L.line(f.start()), "old": val, "new": f"var({want})",
+                        "why": f"a font stack outside the tokens: {tokvars.get(want, (want,))[0]} decides the font"})
+    replace.sort(key=lambda r: r["line"])
+    # blocks the removals leave empty go too, then one of the two blank lines they leave
+    changed = True
+    while changed:
+        changed = False
+        for pre, op, cl in blocks:
+            first = pre + (len(code[pre:op]) - len(code[pre:op].lstrip()))
+            inner = range(L.line(op) + 1, L.line(cl))
+            lines = range(L.line(first), L.line(cl) + 1)
+            if lines[0] in remove and lines[-1] in remove:
+                continue
+            touched = any(n in remove for n in inner)
+            empty = all(n in remove or L.blank(n) for n in inner) and not code[op + 1:L.span(L.line(op))[1]].strip()
+            if L.line(op) == L.line(cl):
+                empty, touched = not code[op + 1:cl].strip(), False
+            if touched and empty and L.alone(first, cl + 1):
+                remove.update(lines)
+                changed = True
+    total = len(L.starts)
+    for n in sorted(remove):
+        if n + 1 in remove or n + 1 > total:
+            continue
+        before = n - 1
+        while before in remove:
+            before -= 1
+        if (before < 1 or L.blank(before)) and L.blank(n + 1):
+            remove.add(n + 1)
+    return {"file": shown, "overrides": overrides, "remove_lines": sorted(remove), "replace": replace,
+            "project_variables": project_vars, "by_hand": by_hand}
+
+
+def override_plans(doc: dict, skill_dir: Path, project: Optional[Path]) -> List[Tuple[Path, dict]]:
+    root = find_project_root(skill_dir, project)
+    out = []
+    for copy in P.plumb_settings(doc)["web"].get("copies") or []:
+        path = safe_copy_path(root, copy)
+        if path.is_file():
+            out.append((path, copy_override_plan(doc, path, root)))
+    return out
+
+
+def apply_override_plan(path: Path, plan: dict) -> Optional[str]:
+    """The copy's new text after the plan's replacements and removals (None when nothing changes)."""
+    text = path.read_bytes().decode("utf-8")
+    lines = text.split("\n")
+    for r in plan["replace"]:
+        lines[r["line"] - 1] = lines[r["line"] - 1].replace(r["old"], r["new"], 1)
+    drop = set(plan["remove_lines"])
+    new = "\n".join(line for i, line in enumerate(lines, 1) if i not in drop)
+    return None if new == text else new
+
+
+def apply_token_changes(doc: dict, plans: List[dict]) -> List[str]:
+    """Make each override's token change in `doc`; returns what changed."""
+    done: List[str] = []
+    for plan in plans:
+        for o in plan["overrides"]:
+            change = o.get("token_change")
+            if not change:
+                continue
+            if "add" in change:
+                parts = change["add"].split(".")
+                node = doc
+                for i, part in enumerate(parts[:-1]):
+                    if not isinstance(node.get(part), dict):
+                        node[part] = {"$type": _GROUP_TYPE[part]} if i == 0 and part in _GROUP_TYPE else {}
+                    node = node[part]
+                if parts[-1] in node:
+                    continue
+                node[parts[-1]] = {k: v for k, v in change.items() if k != "add"}
+                done.append(f"added {change['add']} = {json.dumps(change['$value'], ensure_ascii=False)}")
+            elif "prepend" in change:
+                token, _rest, _ty = P._find(doc, change["prepend"])
+                value = token["$value"] if isinstance(token["$value"], list) else [token["$value"]]
+                if change["family"] not in value:
+                    token["$value"] = [change["family"]] + value
+                    done.append(f"changed {change['prepend']}: {change['family']} first (the font the app loads)")
+    return done
+
+
+def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project: Optional[Path], tokens_file: Path,
+                  root: Path) -> int:
+    plans = override_plans(doc, skill_dir, project)
+    if not args.apply:
+        print(json.dumps({"copies": [p for _path, p in plans]}, indent=2, ensure_ascii=False))
+        return 0
+    if not any(p["overrides"] for _path, p in plans):
+        print("ok: nothing to move: no web copy sets the tokens' variables outside Plumb's block")
+        return 0
+    changes = apply_token_changes(doc, [p for _path, p in plans])
+    if changes and not _write(tokens_file, json.dumps(doc, indent=2, ensure_ascii=False) + "\n", root):
+        return 2
+    for line in changes:
+        print(line)
+    for path, plan in plans:
+        new = apply_override_plan(path, plan)
+        if new is not None:
+            with open(path, "w", encoding="utf-8", newline="") as fh:
+                fh.write(new)
+            print(f"wrote {plan['file']}")
+        for v in plan["project_variables"]:
+            print(f"note: other files may still use var({v['name']}): point them at var({v['maps_to']})")
+        for note in plan["by_hand"]:
+            print(f"by hand: {plan['file']} {note}")
+    print(f"next: python3 {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")
+    return 0
 
 
 # ---------------------------------------------------------------- migrate and css-vars
@@ -2130,7 +2450,7 @@ def specimen_output(doc: dict, skill_dir: Path, root: Path, tokens_file: Path, h
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # shaped like every other refusal
-        self.exit(2, f"error: {message}\nfix: python3 {SCRIPT_REL} [--check | --contrast | --migrate | --css-vars] [--root SKILL_DIR] [--project PATH]\n")
+        self.exit(2, f"error: {message}\nfix: python3 {SCRIPT_REL} [--check | --contrast | --migrate | --css-vars | --overrides [--apply]] [--root SKILL_DIR] [--project PATH]\n")
 
 
 def _write(path: Path, text: str, root: Path) -> bool:
@@ -2154,8 +2474,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     args = parser.parse_args(argv)
-    if sum(bool(x) for x in (args.check, args.contrast, args.migrate, args.css_vars)) > 1:
-        parser.error("pass only one of --check, --contrast, --migrate, --css-vars")
+    parser.add_argument("--overrides", action="store_true",
+                        help="print, as JSON, the variables a web copy sets in the tokens' namespaces outside Plumb's "
+                             "block, each with the token it maps onto and the edits that move it there")
+    parser.add_argument("--apply", action="store_true",
+                        help="with --overrides: make those edits (the tokens file and the copies); only after the "
+                             "user's OK")
+    if sum(bool(x) for x in (args.check, args.contrast, args.migrate, args.css_vars, args.overrides)) > 1:
+        parser.error("pass only one of --check, --contrast, --migrate, --css-vars, --overrides")
+    if args.apply and not args.overrides:
+        print(f"error: --apply goes with --overrides\nfix: python3 {SCRIPT_REL} --overrides (show the plan to the "
+              f"user), then, only after their OK, python3 {SCRIPT_REL} --overrides --apply", file=sys.stderr)
+        return 2
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     project = Path(args.project) if args.project else None
     try:
@@ -2231,6 +2561,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         if not added:
             print(f"ok: {rel(tokens_file, root)} is at schema {P.SCHEMA_VERSION}, nothing to add")
             return 0
+    if args.overrides:
+        return run_overrides(args, doc, skill_dir, project, tokens_file, root)
         text = json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
         if not _write(tokens_file, text, root):
             return 2

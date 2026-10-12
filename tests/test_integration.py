@@ -94,6 +94,49 @@ def test_full_flow_finds_every_violation_then_passes_after_the_fixes(app, tmp_pa
     ok(skill_script(proj, app, "build-tokens.py", "--check"))
 
 
+STOCK_NEXT = Path(__file__).resolve().parent / "fixtures/apps/next-tailwind-stock"
+
+
+def test_a_stock_create_next_app_stylesheet_ends_with_audit_exit_0(tmp_path):
+    """create on a stock Next.js app: its globals.css sets --color-background, --color-foreground, --font-sans and
+    --font-mono in its own @theme inline block (block-override). The documented step: build-tokens.py --overrides lists
+    them with the token each maps onto, the user says yes, --overrides --apply moves them, the rebuild and the audit
+    pass."""
+    app = APPS["next-tailwind"]
+    proj = copy_app(app, tmp_path / "stock" / app.slug)
+    for rel in ("app/globals.css", "app/layout.tsx"):
+        write(proj / rel, read(STOCK_NEXT / rel))
+    fix(proj, app)
+    scaffold(proj, app, detect(proj), {"fonts": {"sans": "Geist", "mono": "Geist Mono"}})
+    prototype(proj, app)
+    code, report = audit(proj, app)
+    assert code == 1
+    overrides = sorted(f["message"].split()[0] for f in errors(report) if f["rule"] == "block-override")
+    assert overrides == ["--color-background", "--color-foreground", "--font-mono", "--font-sans"]
+    assert all(f["file"] == "app/globals.css" for f in errors(report)), errors(report)
+
+    data = json.loads(ok(skill_script(proj, app, "build-tokens.py", "--overrides")).stdout)
+    (copy,) = data["copies"]
+    kinds = {o["name"]: (o["kind"], o["token"], o["token_change"]) for o in copy["overrides"]}
+    assert kinds["--color-background"] == ("token", "color.background", None)
+    assert kinds["--color-foreground"][:2] == ("new-name", "color.foreground")
+    assert kinds["--font-sans"][2] == {"prepend": "font.sans", "family": "var(--font-geist-sans)"}
+    assert kinds["--font-mono"][2] == {"prepend": "font.mono", "family": "var(--font-geist-mono)"}
+    assert copy["by_hand"] == []
+
+    out = ok(skill_script(proj, app, "build-tokens.py", "--overrides", "--apply")).stdout
+    assert "wrote app/globals.css" in out
+    ok(skill_script(proj, app, "build-tokens.py"))
+    code, report = audit(proj, app)
+    assert code == 0, errors(report)
+    css = read(proj / "app/globals.css")
+    assert "@theme inline" not in css and "#ffffff" not in css.split("/* plumb:end */")[1]
+    tokens = json.loads(read(proj / app.tokens))
+    assert tokens["font"]["sans"]["$value"][:2] == ["var(--font-geist-sans)", "Geist"]
+    assert "--color-foreground: var(--color-on-surface);" in css  # text-foreground in layout.tsx is a token now
+    ok(skill_script(proj, app, "build-tokens.py", "--check"))
+
+
 def test_token_aware_fix_lines_name_the_token(tmp_path):
     proj = project(APPS["next-tailwind"], "built", tmp_path)
     _, report = audit(proj, APPS["next-tailwind"])

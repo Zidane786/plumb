@@ -663,19 +663,67 @@ def remove_block(text: str) -> str:
 # Outside Plumb's block, a stylesheet that defines Tailwind's dark variant again, or sets the tokens' variables in an
 # @theme block, overrides the design system without anyone seeing it (the later definition wins).
 _OVERRIDE_VARIANT = re.compile(r"@custom-variant\s+dark\b")
-_OVERRIDE_THEME = re.compile(r"@theme\b[^{;]*\{([^{}]*)\}")
-_OVERRIDE_VAR = re.compile(r"(--(?:color|radius|shadow|text|font|ease|spacing|duration)(?:-[\w*-]*)?)\s*:")
+_OVERRIDE_VAR = re.compile(r"(?<![\w-])(--(?:color|radius|shadow|text|font|ease|spacing|duration)(?:-[\w*-]*)?)\s*:")
+_CSS_STRING = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"?|'(?:[^'\\\n]|\\.)*'?")
+
+
+def css_blocks(code: str) -> list:
+    """(prelude start, "{" position, "}" position) of every brace block in CSS whose comments are already masked, in
+    the order they open; strings are skipped, an unclosed block runs to the end of the text. The prelude is the text
+    after the previous ";", "{" or "}" (e.g. "@theme inline ", ":root ", "@media (prefers-color-scheme: dark) ")."""
+    out: list = []
+    stack: list = []
+    last = 0  # where the current prelude starts
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\"'":
+            m = _CSS_STRING.match(code, i)
+            i = m.end() if m else i + 1
+            continue
+        if c == "{":
+            stack.append(len(out))
+            out.append([last, i, n])
+            last = i + 1
+        elif c == "}":
+            if stack:
+                out[stack.pop()][2] = i
+            last = i + 1
+        elif c == ";":
+            last = i + 1
+        i += 1
+    return [tuple(b) for b in out]
+
+
+def theme_bodies(code: str) -> list:
+    """(start, body) for each `@theme` block's own declarations: the text between its braces with any nested block (an
+    @keyframes inside @theme) blanked, so offsets stay those of `code`."""
+    blocks = css_blocks(code)
+    out = []
+    for pre, op, cl in blocks:
+        if not re.match(r"\s*@theme\b", code[pre:op]):
+            continue
+        body = list(code[op + 1:cl])
+        for _p, nop, ncl in blocks:
+            if op < nop < cl:
+                lo = code.rfind(";", op + 1, nop)
+                lo = max(lo, code.rfind("}", op + 1, nop), op) + 1  # the nested block's prelude goes too
+                for k in range(lo, min(ncl + 1, cl)):
+                    if body[k - op - 1] != "\n":
+                        body[k - op - 1] = " "
+        out.append((op + 1, "".join(body)))
+    return out
 
 
 def block_overrides(text: str) -> list:
     """(position, what) for each place outside Plumb's block that overrides it: a `@custom-variant dark` of the
-    project's own, or a variable of the tokens' namespaces set in an `@theme` block. Comments are ignored; the block
-    itself is skipped."""
+    project's own, or a variable of the tokens' namespaces set in an `@theme` block (its own declarations, not those
+    inside a nested @keyframes). Comments are ignored; the block itself is skipped."""
     code = mask_comments(mask_block(text), ".css")
     out = [(m.start(), "@custom-variant dark") for m in _OVERRIDE_VARIANT.finditer(code)]
-    for m in _OVERRIDE_THEME.finditer(code):
-        for v in _OVERRIDE_VAR.finditer(m.group(1)):
-            out.append((m.start(1) + v.start(1), v.group(1)))
+    for start, body in theme_bodies(code):
+        for v in _OVERRIDE_VAR.finditer(body):
+            out.append((start + v.start(1), v.group(1)))
     return sorted(out)
 
 
