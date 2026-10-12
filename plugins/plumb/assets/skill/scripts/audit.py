@@ -5,6 +5,7 @@ Usage:
   audit.py [PATHS...] [--json] [--no-tokens] [--root SKILL_DIR] [--project PATH]   full audit (default: the whole project)
   audit.py --quick FILE [--before -|PATH] [--root SKILL_DIR]                        one file, only what an edit adds (JSON)
   audit.py [PATHS...] --html [OUT.html]                                            also write the HTML report
+  audit.py [PATHS...] --inventory [--json] [--project PATH] [--exclude GLOB]...    every design value in use (extract)
 
 Full mode prints every finding as `file:line: <severity> <rule>: <message>` and `  fix: <fix>`, then a summary
 ("N errors, N warnings" and, on its own line, "N suggestions"). It runs the per-file rules and then the cross-file
@@ -17,6 +18,17 @@ fix, filterable by severity and rule), Improvements (the suggestions ranked by i
 each with why and fix) and how to re-run. The terminal output and the exit code are the same with or without it.
 --json prints {"version", "mode", "checked", "errors", "warnings", "suggestions",
 "findings": [{"rule","severity","file","line","message","fix"}]} (+ "scales" in inconsistency-only mode).
+
+--inventory lists every design value the code uses, for /plumb:extract: _plumb.scan_inventory (the inconsistency-only
+scanner) over PATHS (default: the project root), then _plumb.cluster per kind. It reads no tokens and runs no rules.
+The project root is --project, else the folder holding PLUMB.md above the skill, else the current folder (extract runs
+the plugin's own copy before a design system exists). The design-system skill folder, the docs folder (docs/design, or
+the tokens' docs_dir), build output, node_modules and generated files are skipped; --exclude GLOB (repeatable, from the
+project root) skips more. The terminal shows each kind's clusters (proposed value first, members with counts, a few
+places); --json prints {"version", "mode": "inventory", "root", "files", "kinds": {kind: {"values": [{"value", "count",
+"where": ["file:line", ...]}], "clusters": [{"canonical", "members", "count"}]}}}, values most used first. Kinds: color,
+font-family, font-size, font-weight, line-height, spacing, radius, shadow, duration, easing. Exit 0, or 2 when no UI
+file was found or the input is bad.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
@@ -166,7 +178,7 @@ from _plumb import PlumbError  # noqa: E402
 
 SCRIPT_REL = "scripts/audit.py"
 USAGE = (f"python3 {SCRIPT_REL} [PATHS...] [--json] [--html [OUT.html]] [--no-tokens] [--root SKILL_DIR] [--project PATH]"
-         " | --quick FILE --before -")
+         " | --quick FILE --before - | [PATHS...] --inventory [--json] [--project PATH] [--exclude GLOB]")
 WEB_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss"))
 PLATFORM_OF = {**{e: "web" for e in WEB_EXT}, ".swift": "ios", ".kt": "android"}
 SKIP_DIRS = P.SKIP_DIRS
@@ -4004,6 +4016,85 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
     return code
 
 
+INVENTORY_SHOWN = 3  # places shown per group in the terminal summary
+
+
+def inventory_root(skill_dir: Path, project: Optional[str]) -> Path:
+    """--project, else the folder holding PLUMB.md above the skill, else the current folder."""
+    if project:
+        root = Path(project).resolve()
+        if not root.is_dir():
+            raise PlumbError(f"error: --project {project}: not a folder\n"
+                             f"fix: pass the project's root folder, e.g. --project .")
+        return root
+    for parent in Path(skill_dir).resolve().parents:
+        if (parent / "PLUMB.md").is_file():
+            return parent
+    return Path.cwd().resolve()
+
+
+def _inventory_excludes(args: argparse.Namespace, skill_dir: Path, root: Path) -> List[str]:
+    """--exclude globs, plus the docs folder and every design-system skill folder (they are Plumb's, not the app)."""
+    exclude = [g.replace("\\", "/") for g in (args.exclude or [])]
+    skill = Path(skill_dir).resolve()
+    docs = "docs/design"
+    try:
+        skill_rel = skill.relative_to(root).as_posix()
+    except ValueError:
+        skill_rel = None
+    if skill_rel not in (None, "."):
+        exclude.append(skill_rel + "/**")
+        try:  # a project copy names its docs folder in the tokens file
+            docs = str(P.plumb_settings(load_doc(skill) or {}).get("docs_dir") or docs)
+        except PlumbError:
+            pass  # the inventory never needs the tokens; a broken file is the audit's business
+    exclude.append(docs.replace("\\", "/").strip("/") + "/**")
+    exclude += [".claude/skills/*-design-system/**", ".github/skills/*-design-system/**"]
+    return exclude
+
+
+def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
+    root = inventory_root(skill_dir, args.project)
+    targets = [Path(p) if Path(p).is_absolute() else Path.cwd() / p for p in args.paths] or [root]
+    missing = [str(p) for p, t in zip(args.paths, targets) if not t.exists()]
+    if missing:
+        raise PlumbError(f"error: {', '.join(missing)}: not found, nothing was scanned\n"
+                         f"fix: pass existing folders that hold UI code, e.g. audit.py app components --inventory")
+    seen: List[str] = []
+    inv = P.scan_inventory([t.resolve() for t in targets], _inventory_excludes(args, skill_dir, root), base=root,
+                           seen=seen)
+    if not seen:
+        exts = " ".join(sorted(PLATFORM_OF))
+        looked = ", ".join(rel(t, root) for t in targets)
+        raise PlumbError(f"error: no UI files ({exts}) in {looked}, nothing was scanned\n"
+                         f"fix: pass the folders that hold your UI code, e.g. audit.py app components --inventory")
+    kinds = {}
+    for kind in P.INVENTORY_KINDS:
+        values = sorted(inv[kind].items(), key=lambda kv: (-kv[1]["count"], kv[0]))
+        kinds[kind] = {"values": [{"value": v, "count": s["count"], "where": s["where"]} for v, s in values],
+                       "clusters": P.cluster(inv, kind)}
+    files = len(set(seen))
+    if args.json:
+        out = {"version": P.PLUMB_VERSION, "mode": "inventory", "root": root.as_posix(), "files": files, "kinds": kinds}
+        sys.stdout.write(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
+        return 0
+    total = sum(len(k["values"]) for k in kinds.values())
+    print(f"inventory: {_plural(files, 'file')} scanned in {root.as_posix()}, {_plural(total, 'distinct value')}")
+    for kind, data in kinds.items():
+        if not data["values"]:
+            continue
+        by_value = {v["value"]: v for v in data["values"]}
+        print(f"{kind}: {_plural(len(data['values']), 'value')} in {_plural(len(data['clusters']), 'group')}")
+        for group in data["clusters"]:
+            members = ", ".join(f"{m} x{by_value[m]['count']}" for m in group["members"])
+            places = by_value[group["canonical"]]["where"]
+            more = f" +{len(places) - INVENTORY_SHOWN} more" if len(places) > INVENTORY_SHOWN else ""
+            print(f"  {kind}: {group['canonical']} x{group['count']} ({members})  at "
+                  f"{', '.join(places[:INVENTORY_SHOWN])}{more}")
+    print("inventory: the first value of each group is the proposed token; --json lists every value with file:line")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     P.utf8_stdio()
     parser = _Parser(prog="audit.py", description="Check UI source against the design tokens.")
@@ -4017,7 +4108,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     parser.add_argument("--no-tokens", action="store_true",
                         help="inconsistency-only mode even when a tokens file exists (infer the scales from the code)")
+    parser.add_argument("--inventory", action="store_true",
+                        help="list every design value in use with counts, file:line and proposed clusters (extract)")
+    parser.add_argument("--exclude", action="append", metavar="GLOB",
+                        help="with --inventory: skip paths matching GLOB (from the project root; repeatable)")
     args = parser.parse_args(argv)
+    if args.exclude and not args.inventory:
+        parser.error("--exclude works only with --inventory")
+    if args.inventory:
+        for flag, used in (("--quick", args.quick), ("--before", args.before), ("--html", args.html is not None),
+                           ("--no-tokens", args.no_tokens)):
+            if used:
+                parser.error(f"--inventory lists the values in use and runs no rules: drop {flag}")
     if args.before and not args.quick:
         parser.error("--before works only with --quick FILE")
     if args.quick and args.paths:
@@ -4028,6 +4130,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error(f"--html takes the report's path ending in .html, got {args.html!r} (put --html after the PATHS, "
                      f"or write --html=OUT.html)")
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
+    if args.inventory:
+        try:
+            return run_inventory(args, skill_dir)
+        except PlumbError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     try:
         root = find_project_root(skill_dir, Path(args.project) if args.project else None)
         tokens_file = None if args.no_tokens else find_tokens(skill_dir)

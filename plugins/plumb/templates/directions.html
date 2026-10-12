@@ -1,0 +1,95 @@
+<!doctype html>
+<!--
+  Plumb's simple directions template (used by /plumb:create when Effective HTML is not installed).
+  Copy to docs/design/directions.html and fill every {{...}}. Rules:
+  - One self-contained file. Nothing from the network: no CDN, no hosted fonts (system stacks, or a font embedded
+    from the project's own files as a data: URI).
+  - One <section class="direction"> per direction (2 or 3). Each sets ITS OWN values as custom properties on the
+    section (light) and on .direction .theme-dark (dark). Components use only these properties.
+  - Directions must differ in palette, type pairing AND layout feel, not only colour: change the screen's layout,
+    density and radius per direction.
+  - Real content from the product interview (no lorem ipsum). Every screen shown in light and dark side by side.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PROJECT}} · design directions</title>
+<style>
+  :root { color-scheme: light dark; --page: #f6f6f4; --ink: #1d1f23; --muted: #5b616b; --rule: #d9dbde;
+          font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --page: #131416; --ink: #ecedef; --muted: #a3a8b1; --rule: #2c2f34; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); line-height: 1.5; }
+  header.page, nav.toc { max-width: 72rem; margin: 0 auto; padding: 2rem 1rem 0; }
+  header.page h1 { margin: 0 0 .25rem; font-size: 2rem; text-wrap: balance; }
+  header.page p { margin: 0; color: var(--muted); max-width: 65ch; }
+  nav.toc a { color: inherit; margin-right: 1rem; }
+  .direction { max-width: 72rem; margin: 2rem auto; padding: 1.5rem 1rem; border-top: 1px solid var(--rule); }
+  .direction > h2 { margin: 0; font-size: 1.5rem; }
+  .direction > .idea { margin: .25rem 0 1rem; color: var(--muted); max-width: 65ch; }
+  .themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1rem; }
+  .theme { background: var(--d-background); color: var(--d-on-surface); font-family: var(--d-font);
+           border: 1px solid var(--d-outline); border-radius: var(--d-radius-lg); padding: 1rem; }
+  .theme > h3 { margin: 0 0 .75rem; font-size: .75rem; letter-spacing: .06em; text-transform: uppercase; color: var(--d-on-surface-muted); }
+  .swatches { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+  .swatch { width: 4.5rem; font-size: .7rem; color: var(--d-on-surface-muted); }
+  .swatch span { display: block; height: 2.25rem; border-radius: var(--d-radius-sm); border: 1px solid var(--d-outline); margin-bottom: .25rem; }
+  .type p { margin: .25rem 0; }
+  .components { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 1rem 0; }
+  .btn { font: inherit; padding: .5rem 1rem; border-radius: var(--d-radius-md); border: 1px solid var(--d-outline-input);
+         background: var(--d-surface); color: var(--d-on-surface); cursor: pointer; }
+  .btn.primary { background: var(--d-primary); color: var(--d-on-primary); border-color: var(--d-primary); }
+  .btn:focus-visible, .field input:focus-visible { outline: 2px solid var(--d-primary); outline-offset: 2px; }
+  .chip { font-size: .8rem; padding: .125rem .5rem; border-radius: 999px; background: var(--d-sunk); }
+  .field { display: grid; gap: .25rem; font-size: .85rem; }
+  .field input { font: inherit; padding: .5rem; border-radius: var(--d-radius-md); border: 1px solid var(--d-danger);
+                 background: var(--d-surface); color: var(--d-on-surface); }
+  .field .error { color: var(--d-danger); }
+  .screen { background: var(--d-surface); border-radius: var(--d-radius-lg); box-shadow: var(--d-shadow); padding: 1rem; }
+  @media (prefers-reduced-motion: no-preference) { .btn { transition: background-color 150ms ease-out; } }
+
+  /* ---- one block per direction: light values on the section, dark values on its .theme-dark ---- */
+  #d1 { --d-font: {{D1_FONT_STACK}}; --d-radius-sm: 4px; --d-radius-md: 8px; --d-radius-lg: 12px;
+        --d-background: #ffffff; --d-surface: #ffffff; --d-sunk: #f3f5f7; --d-on-surface: #1b2230;
+        --d-on-surface-muted: #475467; --d-primary: #0f6b66; --d-on-primary: #ffffff; --d-outline: #d5dae1;
+        --d-outline-input: #6b7686; --d-danger: #b42318; --d-shadow: 0 1px 3px #0f121714; }
+  #d1 .theme-dark { --d-background: #0f1217; --d-surface: #171b22; --d-sunk: #0b0e12; --d-on-surface: #e7eaef;
+        --d-on-surface-muted: #a9b1bd; --d-primary: #4fb3c4; --d-on-primary: #0b1417; --d-outline: #2a313c;
+        --d-outline-input: #7a8696; --d-danger: #f97066; --d-shadow: 0 1px 3px #00000066; }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>{{PROJECT}}: design directions</h1>
+  <p>{{ONE_LINE_BRIEF}} Pick one, or combine parts of several. Each direction is shown in light and dark.</p>
+</header>
+<nav class="toc" aria-label="Directions"><a href="#d1">{{D1_NAME}}</a><!-- <a href="#d2">…</a> <a href="#d3">…</a> --></nav>
+<main>
+  <section class="direction" id="d1" aria-labelledby="d1-title">
+    <h2 id="d1-title">1. {{D1_NAME}}</h2>
+    <p class="idea">{{D1_IDEA: one sentence, why it fits the product and its people}}</p>
+    <div class="themes">
+      <!-- the same block twice: class="theme" (light) and class="theme theme-dark" (dark) -->
+      <div class="theme">
+        <h3>Light</h3>
+        <div class="swatches">
+          <div class="swatch"><span style="background: var(--d-primary)"></span>primary {{HEX}}</div>
+          <!-- background, surface, on-surface, on-surface-muted, outline, danger, success, warning … -->
+        </div>
+        <div class="type"><!-- the type scale with real product text: display, h1, h2, body, sm --></div>
+        <div class="components">
+          <button class="btn primary" type="button">{{PRIMARY_ACTION}}</button>
+          <button class="btn" type="button">{{SECONDARY_ACTION}}</button>
+          <span class="chip">{{STATUS_WORD}}</span>
+          <label class="field">{{FIELD_LABEL}}<input value="{{BAD_VALUE}}" aria-invalid="true" aria-describedby="d1-err"><span class="error" id="d1-err">{{ERROR_IN_WORDS}}</span></label>
+        </div>
+        <div class="screen"><!-- one real screen of a key task, laid out the way THIS direction would --></div>
+      </div>
+      <div class="theme theme-dark"><h3>Dark</h3><!-- the same content as above --></div>
+    </div>
+  </section>
+  <!-- <section class="direction" id="d2"> … </section>  <section class="direction" id="d3"> … </section> -->
+</main>
+</body>
+</html>
