@@ -13,8 +13,10 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-# Every .py under plugins/plumb (hooks, the generator and audit copied into projects, ...) and scripts/.
-SCRIPTS = sorted([*(REPO / "plugins/plumb").rglob("*.py"), *(REPO / "scripts").glob("*.py")])
+# Every .py Plumb ships or runs in CI: plugins/plumb (hooks, the generator and audit copied into projects, ...),
+# scripts/ (release tooling) and tests/ (run on Windows in CI too); sample projects under tests/fixtures are data.
+SCRIPTS = sorted([*(REPO / "plugins/plumb").rglob("*.py"), *(REPO / "scripts").glob("*.py"),
+                  *(REPO / "tests").glob("*.py")])
 
 
 def calls(tree: ast.AST):
