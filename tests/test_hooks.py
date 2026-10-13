@@ -432,6 +432,46 @@ def test_shell_removal_targets(H, command, removed, tmp_path):
     assert [str(p.relative_to(tmp_path)).replace("\\", "/") for p in found] == removed
 
 
+# Live test 2 (B12): a python heredoc whose comment has an apostrophe (next/font's) and whose body writes the screen
+# files given on its command line, then a cd and a build-prototype.py run. Refused as if it wrote build-prototype.py.
+HEREDOC_THEN_BUILD = (
+    'D="{screens}"; python3 -I - "$D/dashboard.html" "$D/api-keys.html" <<\'EOF\'\n'
+    "import sys, re\n"
+    "# --font-sans resolves at :root, where next/font's variable is undefined, so a var() fallback is used.\n"
+    "for p in sys.argv[1:]:\n"
+    "    s = open(p).read()\n"
+    "    s = s.replace(\"font-family: var(--font-sans);\", 'font-family: var(--font-sans, system-ui, sans-serif);')\n"
+    "    open(p, \"w\").write(s); print(p.rsplit(\"/\",1)[1])\n"
+    "EOF\n"
+    'cd "{root}" && python3 {skill}/scripts/build-prototype.py 2>&1 | tail -1'
+)
+
+
+def test_a_heredoc_script_then_a_plumb_build_is_allowed(launcher, tmp_path, proj):
+    command = HEREDOC_THEN_BUILD.format(screens=proj / SCREENS, root=proj, skill=SKILL_REL)
+    allowed(bash(launcher, tmp_path, proj, command))
+
+
+def test_heredoc_bodies_are_read_as_the_stage_input(H, tmp_path):
+    command = HEREDOC_THEN_BUILD.format(screens=tmp_path / "s", root=tmp_path, skill=SKILL_REL)
+    targets = [Path(t) for t in H.shell_targets(command, str(tmp_path))]
+    assert not any(t.name == "build-prototype.py" for t in targets), targets
+    # a heredoc that writes a guarded file it names is still caught, and so is a shell heredoc's own command
+    for cmd, name in (("python3 - <<EOF\nopen('app/globals.css', 'w').write('x')\nEOF", "globals.css"),
+                      ("bash <<'X'\necho x > docs/design/specimen.html\nX\necho done", "specimen.html"),
+                      ("cat > app/globals.css <<'EOF'\nbody {}\nEOF", "globals.css"),
+                      ("cat <<-EOF > docs/design/screens.html\n\t<p>it's</p>\n\tEOF", "screens.html")):
+        found = [Path(t).name for t in H.shell_targets(cmd, str(tmp_path))]
+        assert name in found, (cmd, found)
+    assert H.shell_targets("cat <<< 'x' > notes.txt", str(tmp_path)) == [str(tmp_path / "notes.txt")]
+
+
+def test_a_heredoc_writing_a_generated_file_is_refused(launcher, tmp_path, proj):
+    reason = refused(bash(launcher, tmp_path, proj, "python3 - <<'EOF'\n# it's the copy\n"
+                                                    "open('app/globals.css', 'w').write('x')\nEOF"))
+    assert " is generated" in reason
+
+
 def test_running_plumb_scripts_is_allowed(launcher, tmp_path, proj):
     allowed(bash(launcher, tmp_path, proj, f"python3 {SKILL_REL}/scripts/audit.py app"))
     allowed(bash(launcher, tmp_path, proj, f"python3 {PLUGIN / 'scripts' / 'scaffold.py'} --help"))
