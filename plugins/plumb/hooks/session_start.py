@@ -17,6 +17,8 @@ Every script it runs is the plugin's own copy (`--root <the project's skill>`), 
   (PLUMB_VERSION in its _plumb.py, read as text) differ from the plugin's;
 - when the design-system folder PLUMB.md names (`Design system:`) is missing, "design system not found" and a
   warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill);
+- one pointer line, "Plumb mistakes (a Plumb script, hook or skill got it wrong) → /plumb:feedback", so an agent knows
+  where Plumb's own mistakes go even in a project with no AGENTS.md or CLAUDE.md;
 - "Routes not recorded — run /plumb:init to record them" when PLUMB.md has no `Routes:` value (the route checks stay
   off: scripts never guess the app's layout) and a note for each entry _plumb.parse_routes cannot use, only where a
   route check would run (Prototype sync on, a web platform; never for `Routes: none`), and a note while
@@ -30,7 +32,10 @@ sits next to the plugin folder Kiro's copies point at ("Plumb X is installed but
 Then it writes the session snapshot (audit.take_snapshot: in git, the hash and text of each UI or screen file that is
 changed or untracked now, plus HEAD; elsewhere every UI and screen file's modification time) to
 <OS temp>/plumb/<project hash>-<session id>.json, unless the session (a resume) already has one, and deletes snapshots
-older than 7 days. Never fails the session: any problem leaves out that part (at most one stderr line), exit 0.
+older than 7 days. Never fails the session: any problem leaves out that part (at most one stderr line), exit 0. A
+crash or a timeout that failed open is also written, one line, to ~/.plumb/feedback/hooks.md (H.log_failure), for
+Plumb's developers; never into the project. An existing ~/.plumb/feedback of the user's own is made 0700 again
+(H.feedback_dir(create=False): the agent's records may have created it under a wider umask); none is created.
 Standard library only.
 """
 
@@ -49,6 +54,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib as H  # noqa: E402
 
 AUDIT_TIMEOUT = 2.0
+# The last stderr line of a Python crash (a SyntaxError prints no "Traceback" header); a script's own refusal is
+# "error: …" (exit 2), the project's problem, never this.
+CRASH_LINE = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Exit)\b")
 TOKENS_TIMEOUT = 5.0
 
 
@@ -66,18 +74,28 @@ def _start(proj: H.Project, script: str, *args: str) -> Optional[subprocess.Pope
         return None
 
 
-def _finish(proc: Optional[subprocess.Popen], timeout: float) -> Optional[Tuple[int, str]]:
+def _finish(proc: Optional[subprocess.Popen], timeout: float, label: str = "") -> Optional[Tuple[int, str]]:
+    """(exit code, stdout) of a script session start runs, or None when it did not finish in time. A timeout or a crash
+    (a traceback, or an exit code other than 0, 1 and 2, the scripts' refusal) is logged for Plumb's developers
+    (H.log_failure, ~/.plumb/feedback/hooks.md); the session never sees it beyond the status line."""
     if proc is None:
         return None
     try:
-        out, _err = proc.communicate(timeout=max(timeout, 0.01))
+        out, err = proc.communicate(timeout=max(timeout, 0.01))
     except subprocess.TimeoutExpired:
         proc.kill()
         try:
             proc.communicate(timeout=2)
         except subprocess.SubprocessError:
             pass
+        H.log_failure(f"{label} did not finish within {timeout:g} s, so the status line says it was not run",
+                      f"{label} finishes within {timeout:g} s", category="timeout")
         return None
+    errors = err.decode("utf-8", "replace")
+    tail = [ln.strip() for ln in errors.splitlines() if ln.strip()][-1:] or ["(no output)"]
+    if proc.returncode not in (0, 1, 2) or "Traceback (most recent call last)" in errors or CRASH_LINE.match(tail[0]):
+        H.log_failure(f"{label} crashed (exit {proc.returncode}): {tail[0]}",
+                      f"{label} exits 0 or 1 with its normal output")
     return proc.returncode, out.decode("utf-8", "replace")
 
 
@@ -103,8 +121,8 @@ def status(proj: H.Project) -> Tuple[str, Optional[str]]:
     other = mine is not None and plugin is not None and mine != plugin  # another generator: its output may differ
     tokens_proc = _start(proj, "build-tokens.py", "--check") if has_tokens and not other else None
     audit_proc = _start(proj, "audit.py", "--json") if timeout > 0 else None
-    tokens = _finish(tokens_proc, TOKENS_TIMEOUT)
-    audit = _finish(audit_proc, timeout)
+    tokens = _finish(tokens_proc, TOKENS_TIMEOUT, "build-tokens.py --check")
+    audit = _finish(audit_proc, timeout, "audit.py --json")
     if not has_tokens:
         tokens_text = "no tokens yet"
     elif other:
@@ -139,8 +157,12 @@ def snapshot(proj: H.Project, session_id: str) -> None:
     except Exception as exc:  # noqa: BLE001
         H.note(f"no session snapshot, so the end-of-turn check stays quiet this session ({type(exc).__name__}: "
                f"{str(exc).splitlines()[0] if str(exc) else ''})")
+        H.log_failure(f"no session snapshot ({type(exc).__name__}: {exc}), so the end-of-turn check stays quiet",
+                      "the session snapshot is written", exc=exc)
 
 
+# One short pointer for the agent (also in projects with no AGENTS.md or CLAUDE.md): where Plumb's own mistakes go.
+FEEDBACK_POINTER = "Plumb mistakes (a Plumb script, hook or skill got it wrong) \u2192 /plumb:feedback"
 ROUTE_KINDS = ("next-app", "next-pages", "nuxt", "sveltekit", "angular", "router")  # as _plumb.ROUTE_KINDS (a test)
 ROUTES_NOT_RECORDED = ("Routes not recorded \u2014 run /plumb:init to record them (PLUMB.md `Routes:`, the app's page "
                        "roots); until then the prototype-first check and route-not-prototyped are off")
@@ -207,6 +229,8 @@ def main() -> int:
             lines.append(scripts)
         lines += setup_notes(proj)
         snapshot(proj, p.session_id)
+    lines.append(FEEDBACK_POINTER)
+    H.feedback_dir(create=False)  # an existing ~/.plumb/feedback of the user's own is kept private (0700); none is made
     if H.kiro_run():
         stale = kiro_stale_note(proj, p)
         if stale:
@@ -235,5 +259,7 @@ if __name__ == "__main__":
         code = main()
     except Exception as _exc:  # noqa: BLE001 - a status line must never break the session
         H.note(f"session start skipped ({type(_exc).__name__})")
+        H.log_failure(f"session start skipped ({type(_exc).__name__}: {_exc})", "the status line is printed",
+                      exc=_exc)
         code = 0
     sys.exit(code)

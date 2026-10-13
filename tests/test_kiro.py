@@ -97,7 +97,18 @@ def _load_kiro():
 
 
 def test_there_are_skills_to_install():
-    assert {"init", "create", "extract", "audit", "update", "upgrade", "status"} <= set(SKILL_NAMES)
+    assert {"init", "create", "extract", "audit", "update", "upgrade", "status", "feedback"} <= set(SKILL_NAMES)
+
+
+def test_install_includes_plumb_feedback(tmp_path):
+    home = tmp_path / "home"
+    out = install(home).stdout
+    text = read(home / ".kiro" / "skills" / "plumb-feedback" / "SKILL.md")
+    assert frontmatter(text)["name"] == "plumb-feedback"
+    assert "/plumb-feedback" in text and "/plumb:feedback" not in text
+    assert "Record a mistake in Plumb itself" in frontmatter(text)["description"]
+    assert "~/.plumb/feedback/" in text  # the same log as in Claude Code and Copilot CLI
+    assert "/plumb-feedback" in out
 
 
 def test_install_copies_every_skill_with_its_kiro_name(tmp_path):

@@ -55,8 +55,9 @@ Marked *in progress* = planned in the build plan, not in the tree yet; remove th
 .claude/settings.json                 repo settings for agents (no AI attribution)
 plugins/plumb/                        the installed plugin (only this folder ships)
   .claude-plugin/plugin.json          name + VERSION (source of truth for the plugin version)
-  skills/<name>/SKILL.md              the 10 commands: init create extract prototype tour audit ux
-                                      update upgrade status
+  skills/<name>/SKILL.md              the 11 commands: init create extract prototype tour audit ux
+                                      update upgrade status feedback (Plumb's own mistakes →
+                                      ~/.plumb/feedback/, outside every project)
   reference/                          shared reference all skills link (scripts, rules, prototypes, tours, …)
   assets/skill/                       the design-system skill template copied into projects
     SKILL.md.tmpl  design.md.tmpl     filled from the interview answers
@@ -70,6 +71,7 @@ plugins/plumb/                        the installed plugin (only this folder shi
     detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
     version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install
   hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
+                                      (a hook that fails open also logs one line to ~/.plumb/feedback/hooks.md)
   templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,
                                       directions.html (the fallback directions page)
   upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
@@ -142,6 +144,12 @@ TEST.md                               hands-on test guide for any machine
   directions, variants, screens, light-only. The prototype shows it.
 - **Kiro is supported too** (skills via `scripts/kiro.py`, hooks through an adapter in
   `_hooklib.py`), built from Kiro's documented formats; the live check on a real Kiro is pending.
+- **Plumb's own mistakes go to `/plumb:feedback`.** Every skill keeps the pointer next to "Scripts give evidence,
+  not answers"; every pointer says "Plumb mistakes" / "Plumb's own mistakes"; the log lives in `~/.plumb/feedback/`,
+  never in a project, and the hooks' own log (`hooks.md`) stays private and redacted and can never fail or block a
+  hook. `tests/conftest.py` gives every test a throwaway `HOME`/`USERPROFILE` (keeping `PLAYWRIGHT_BROWSERS_PATH` on
+  the real browser cache) and fails the run if your real `~/.plumb` changed; `hook_env` adds a per-test home. Read your own
+  log with `/plumb:feedback` before planning fixes (docs/USAGE.md, "How to read findings").
 - **Lean skills.** `SKILL.md` files stay short; details go in `reference/` and are loaded only
   when needed.
 - **Product text never mentions internal projects.** Plumb is generic.

@@ -41,6 +41,31 @@ and write files in the project.
   (POSIX), the hooks keep no snapshot and never read, write or delete there. Snapshot files are written 0600 without following
   symlinks; cleanup only removes your own regular files in that folder. A snapshot's commit hash is checked before it
   reaches git.
+- **The feedback log** (Plumb's own mistakes, for Plumb's developers) lives outside every project, in
+  `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on Windows). Two writers:
+  - **The agent** writes one Markdown record per Plumb mistake it corrected (`/plumb:feedback`), with its normal
+    file-write tool, so your CLI's permission mode decides whether it asks. A record holds the command, what Plumb
+    gave and what was right, paths, `file:line`, match counts and the repo's shape; the skill forbids source code
+    and secrets, but it is the agent's text, so read a record before you share it.
+  - **The hooks** append one line to `hooks.md` when one fails open (a crash, a plugin script it cannot load, a
+    timeout), only in a project with a `PLUMB.md`: at most once a day for the same failure (a timeout once per
+    project and Plumb version), never more than 512 KB in all. The line holds the hook, the Plumb version, the CLI,
+    the OS, the project folder's name, the event, the tool name, the project-relative path of the edited file, the
+    exit code, the place in Plumb's code (`file:line`, base names only), and the failure's type and message, redacted
+    and cut to one short line: quoted literals longer than three characters become `'<redacted>'`, absolute paths
+    outside the project keep only their base name, and token-like strings (`sk-…`, `ghp_…`, `xox…-`, `AKIA…`, JWTs,
+    long hex or base64) and the values of `password=`, `token=`, `api_key:`, `Bearer …` become `<redacted>`. Never
+    the shell command or a file's contents. Redaction is pattern-based: it removes the usual shapes of data and
+    secrets, not every possible one.
+
+  `~/.plumb` and `feedback/` are created 0700 and `hooks.md` 0600, without following symlinks. When they are your own
+  real folders with wider permissions (the agent's write tool creates them with your umask, e.g. 0775 under umask 002),
+  session start and the hooks change them to 0700 (through a handle opened without following symlinks). If either
+  folder is a symlink (or on Windows any reparse point), someone else's, or still writable by others, or `hooks.md` is
+  a symlink, the hooks write nothing. A new `hooks.md` appears with its header already in it (a private temporary file
+  linked into place), so two hooks never write it twice. A problem with the log never fails or blocks a hook. Nothing
+  in it leaves the machine: `/plumb:feedback` reads it and drafts issue text that you post yourself, if you want to
+  (projects named only by their shape).
 - **Windows launcher.** `hooks/run.cmd` sets `NoDefaultCurrentDirectoryInExePath`, so cmd.exe never runs a `py`,
   `python` or `python3` found in the project folder instead of the one on `PATH`.
 - **A project's copied scripts run only when someone runs them on purpose:** a Plumb command such as `/plumb:audit`,

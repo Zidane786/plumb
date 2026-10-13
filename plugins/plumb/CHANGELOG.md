@@ -64,6 +64,13 @@
   audit run.
 - **`/plumb:upgrade`** and **`/plumb:status`**: bring a project's copied files up to the plugin's version (what's new
   first, additive token migration, each step asked), and a read-only health report with the next step.
+- **`/plumb:feedback`**: Plumb's own mistakes, recorded for Plumb's developers. When a Plumb script, hook or skill gets
+  something wrong and the agent corrects it, the agent records that Plumb mistake (only Plumb's: your project's design
+  issues stay audit findings) as one Markdown file in `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on
+  Windows), outside the project: the command, what it gave, what was right, the evidence, a repro and a suggested fix.
+  Typed, `/plumb:feedback` reports every record on the machine grouped by script, function and category, most frequent
+  first, and drafts GitHub issue text for Plumb that is never sent. Every skill, the `AGENTS.md` row, `PLUMB.md` and
+  the session-start line point to it; Kiro has it as `/plumb-feedback`.
 - **The decision log** (`docs/design/decisions.md`): every direction, variant, screen and token change, who decided
   and why, append-only with collision-free ids so several teams can add decisions on separate branches. The prototype
   shows each screen's decisions.
@@ -123,4 +130,9 @@
   hooks fail open without git.
 - Session snapshots live in a private folder in the OS temp folder, written without following symlinks; the Windows
   launcher never runs a Python found in the project folder.
+- A hook that fails open (a crash, a plugin script it cannot load, a timeout) writes one line to
+  `~/.plumb/feedback/hooks.md`, never into the project: the folders are kept 0700 (your own wider ones are tightened)
+  and the file 0600, nothing is written through a symlink or into someone else's folder, the message is redacted
+  (quoted literals, absolute paths outside the project, token-like strings and secret values), the log stops at
+  512 KB, and a problem with it never fails or blocks the hook.
 - Nothing is installed or downloaded, and no network call is made at run time.

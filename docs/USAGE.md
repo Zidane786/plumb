@@ -16,6 +16,8 @@ This guide teaches every part of it. Read "Start here" first; after that, jump t
 - [Tours: guide mode and play mode](#tours-guide-mode-and-play-mode)
 - [The design-system files and who owns them](#the-design-system-files-and-who-owns-them)
 - [Hooks: what they check, what they say, how to switch them](#hooks-what-they-check-what-they-say-how-to-switch-them)
+- [Plumb's own mistakes: the feedback log](#plumbs-own-mistakes-the-feedback-log): what gets recorded, how to read
+  findings
 - [Teams and enterprises](#teams-and-enterprises)
 - [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
@@ -55,7 +57,7 @@ Or inside Claude Code:
 /plugin install plumb@plumb
 ```
 
-Start a new session (or run `/reload-plugins`). Type `/plumb` and you see the ten commands.
+Start a new session (or run `/reload-plugins`). Type `/plumb` and you see the eleven commands.
 
 To try a local copy of the repository instead (for example a fork your organisation reviewed):
 
@@ -200,6 +202,10 @@ When it finishes, **commit the files** and **start a new session** in the projec
   `/plumb:upgrade`. Other commands may *offer* them, never start them.
 - **Every error is actionable:** `error: <what went wrong>` followed by `fix: <the exact command>` or
   `ask the user: <the question>`.
+- **When Plumb itself gets something wrong** (a script, a hook or a skill) and the agent corrects it, the agent
+  records that Plumb mistake with `/plumb:feedback`, in `~/.plumb/feedback/` on your machine, outside the project
+  ([the feedback log](#plumbs-own-mistakes-the-feedback-log)). Your project's own design issues stay with
+  `/plumb:audit`.
 
 ### Updating Plumb
 
@@ -332,6 +338,7 @@ python3 <plugin>/scripts/scaffold.py --relocate .github/skills/acme-design-syste
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, apply the audit's system suggestions |
 | `/plumb:upgrade` | The plugin has a new version | Brings the project's copied files and settings up to the plugin's version |
 | `/plumb:status` | You want a health check | Versions, placement, stale files, audit counts, prototype state, checks, what to do next |
+| `/plumb:feedback` | Plumb itself got something wrong, or you want to see what it got wrong | Records Plumb's own mistakes in `~/.plumb/feedback/` (the agent does this itself); typed, reports them grouped and drafts issue text |
 
 ### `/plumb:init`
 
@@ -693,6 +700,53 @@ plumb Version: project 1.0.0 · plugin 1.0.0
       Next: approve the billing screen.
 ```
 
+### `/plumb:feedback`
+
+**Use it when** Plumb itself got something wrong: a script's result the agent had to correct, a hook that refused
+the wrong thing (or missed something, or crashed), a skill step that was unclear, wrong or missing, a template or doc
+that disagrees with the code, a quirk of one CLI. Or when you want to see everything Plumb got wrong on this machine.
+
+**Plumb mistakes only.** The test: *would fixing this mean changing Plumb, not the project?* A detection that proposed
+`src/**` for a monorepo whose UI lives in `frontend/src/` is a Plumb mistake (feedback). A hard-coded `#123456` in your
+page is your project's design issue (`/plumb:audit`); a design choice goes in the decision log; your app's own bugs go
+in your tracker.
+
+It has two modes:
+
+- **Log** (the agent, by itself). Every Plumb skill says: "When a Plumb script or hook is wrong and you correct it,
+  record the Plumb mistake with /plumb:feedback." The agent writes one Markdown file per mistake,
+  `~/.plumb/feedback/YYYY-MM-DD-<script>-<category>-<project>.md`, with its normal file-write tool (your CLI's
+  permission mode decides whether it asks; Plumb adds no question), says so in one line and carries on. You can also
+  type `/plumb:feedback log <what went wrong>`.
+- **Report** (you type `/plumb:feedback`). It reads every record (all your projects) and the hooks' own `hooks.md`,
+  groups them by script · function · category with counts and projects, most frequent first, shows given vs expected,
+  then asks, one question at a time: show a group in full, draft a GitHub issue for Plumb (text only, never sent), mark
+  a group handled, or filter by project, script or date.
+
+A record (every field; "unknown" rather than a guess):
+
+```markdown
+# detect.py — missed structure
+
+- **When:** 2026-10-13 · Plumb 1.0.0 · Claude Code · macOS 15
+- **Project shape:** monorepo, UI in frontend/ (Next.js · Tailwind v4), backend in api/
+- **Where it failed:** scripts/detect.py → the UI-file patterns
+- **Command:** `python3 <plugin>/scripts/detect.py --cwd . --json` (cwd: the repo root)
+- **Given:** `"ui_files": ["src/**"]`
+- **Expected:** `frontend/src/**`: the UI package is frontend/
+- **Evidence:** `src/**` matched 0 files; `frontend/src/**` matches 48 (frontend/src/app/page.tsx:1 …)
+- **Repro:** a repo with frontend/package.json (next) and frontend/src/app/page.tsx; run detect.py at the root
+- **Category:** missed structure
+- **Suggested fix in Plumb:** detect.py writes the UI patterns relative to the root, with the package folder
+- **Handled here:** UI files corrected to `frontend/src/**` inside the placement question, recorded in PLUMB.md
+```
+
+A crash adds the exit code and the last lines of the traceback; a hook mistake adds the event, tool, path, exit code
+and its exact message. The categories: missed structure, wrong guess, false positive, missed problem, crash, timeout,
+confusing message, skill gap, docs mismatch, CLI quirk. A record holds paths, `file:line`, the repo's shape and short exact
+text: never your source code, never a secret. In Kiro the command is `/plumb-feedback`. More:
+[Plumb's own mistakes: the feedback log](#plumbs-own-mistakes-the-feedback-log).
+
 ---
 
 ## The daily loop: prototype first
@@ -976,7 +1030,9 @@ older than the plugin); `this project's Plumb scripts are v1.0.0; the plugin is 
 copied scripts differ); `design system not found` with a `warning:` and a `fix:` line (the path in `PLUMB.md` is
 missing; the checks are off until it is fixed). It also takes a snapshot of the UI files already changed, so the
 end-of-turn check only looks at what this session changed. The audit count is capped at 2 seconds; set the
-`PLUMB_AUDIT_TIMEOUT` environment variable (seconds, `0` skips it) to change that.
+`PLUMB_AUDIT_TIMEOUT` environment variable (seconds, `0` skips it) to change that. Last comes one short pointer,
+`Plumb mistakes (a Plumb script, hook or skill got it wrong) → /plumb:feedback`, so the agent knows where Plumb's own
+mistakes go even in a project with no `AGENTS.md` or `CLAUDE.md`.
 
 ### Before each edit (and shell write)
 
@@ -1072,6 +1128,47 @@ the plugin.
   the checks in `PLUMB.md` and refresh with `kiro.py install`.
 
 ---
+
+## Plumb's own mistakes: the feedback log
+
+Plumb's scripts are a first guess, and the agent corrects them (scripts give evidence, not answers). Each time it
+corrects one, it records the **Plumb mistake** so Plumb's developers can fix it for everyone: that is the feedback
+log. It holds Plumb mistakes only; your project's design issues are `/plumb:audit` findings.
+
+**Where it lives:** `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on Windows), plain Markdown, outside every
+project, never committed, never sent anywhere.
+
+- `YYYY-MM-DD-<script>-<category>-<project>.md`: one file per Plumb mistake the agent corrected (`/plumb:feedback`
+  above has the format).
+- `hooks.md`: the hooks write their own failures here, one line each, when one fails open (a crash, a plugin script
+  it cannot load, a script that timed out): the hook, the Plumb version, the CLI, the OS, the project folder's name, the
+  event, tool and path, the exit code, and `Given: … · Expected: …`. The same failure is written once a day; the file
+  stops growing at 512 KB; a timeout (a slow repo) is written once per project and Plumb version. The message is
+  redacted: quoted literals become `'<redacted>'`, absolute paths outside the project keep only their base name, and
+  token-like strings and secret values become `<redacted>`. It is private: `~/.plumb` and `feedback/` are kept 0700
+  (your own folders with wider permissions are tightened, e.g. after a umask of 002) and `hooks.md` is 0600; nothing
+  is written through a symlink or into someone else's folder (see `SECURITY.md`). A problem with the log never blocks or fails a hook. Your
+  project's own broken files (a tokens file that is not JSON) are not Plumb mistakes and are not logged.
+- `handled.md`: the index `/plumb:feedback` keeps when you mark a group handled (`handled in <version>`).
+
+### How to read findings
+
+- **Type `/plumb:feedback`.** The report groups everything by script · function · category, most frequent first, with
+  the projects, dates, versions and CLIs, and shows given vs expected for each group; then it asks what to do next,
+  one question at a time. A drafted issue names projects only by their shape and is never sent: post it yourself on
+  the Plumb repository if you want to.
+- **Or open the folder.** The records are plain Markdown: `open ~/.plumb/feedback` (macOS), `xdg-open ~/.plumb/feedback`
+  (Linux), `explorer %USERPROFILE%\.plumb\feedback` (Windows), or any editor. `hooks.md` is one line per failure.
+
+**For Plumb's developers**, the flow for one group:
+
+1. **A minimal repro**: the record's Repro line, as the smallest folder that shows it.
+2. **A failing test** in the Plumb repository (a fixture under `tests/fixtures/` and a test next to the script's
+   others), red before the fix.
+3. **The fix** in the plugin's script, hook, skill or doc.
+4. **A patch release** (1.0.x; see `AGENTS.md`, "Releasing a version"), so projects get it through `/plumb:upgrade`.
+5. **Mark the group handled** in `/plumb:feedback` with that version. A group seen again on that version or later shows
+   up as "came back".
 
 ## Teams and enterprises
 
@@ -1283,6 +1380,12 @@ A teammate upgraded first. Update your plugin (`claude plugin marketplace update
 `claude plugin update plumb@plumb`, then `/reload-plugins`). Plumb never downgrades a project.
 
 ---
+
+**The hooks never write `~/.plumb/feedback/hooks.md`, even after a crash note.**
+The log is private: if `~/.plumb` or `~/.plumb/feedback` is a symlink or someone else's folder, the hooks write
+nothing there (your own folders with wider permissions are made 0700 instead). Remove the link, or make the folders
+yours, and the next failure is logged. A full log (512 KB) is left alone too: move the old `hooks.md` aside. A
+project's own broken file (a tokens file that is not JSON) is not a Plumb mistake and is never logged.
 
 ## FAQ
 

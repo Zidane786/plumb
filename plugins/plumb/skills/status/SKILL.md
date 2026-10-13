@@ -12,9 +12,10 @@ Commands: [`scripts.md`](../../reference/scripts.md).
 **Scripts give evidence, not answers:** check each script result against the code (search and read any time),
 correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
 user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
-([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
-question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
-Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers").
+When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with /plumb:feedback. **What the user
+confirms goes inside the question** (its text, or the recommended option's preview when the tool has one), never only in
+a message before it: Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
 
 ## Step 0: context
 
@@ -24,7 +25,8 @@ Claude Code can hide that text; Copilot CLI's ask tool takes it in the question 
 2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
    else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
    made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
-   **Status writes no file at all**, not even a scratch file (no `/tmp`, no `.plumb-tmp/`, nothing next to the repo).
+   **Status writes no file at all**, not even a scratch file (no `/tmp`, no `.plumb-tmp/`, nothing next to the repo);
+   it writes nothing itself: recording a Plumb mistake goes through /plumb:feedback (its own skill, outside the project).
    Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Platforms:`, `UI packages:`, `Python:` (**PY**, `python3`
    when unset), `## Checks` (`Edit check`, `End-of-turn check`, `Themes`), `Prototype sync`, the last

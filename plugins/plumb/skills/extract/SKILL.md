@@ -27,9 +27,10 @@ These instructions are already loaded: don't load this skill again with a skill 
 - **What the user confirms goes inside the question**, in full: the question text, or the recommended option's preview
   when the tool has one (Claude Code's `AskUserQuestion`). Never only in a message before the question (Claude Code can
   hide it), never "the list above"; Copilot CLI's ask tool: in the question text ([interview.md](../../reference/interview.md), "How to ask").
-- **Scripts give evidence, not answers:** check every script result (inventory, clusters, overrides, audit, route
-  map) against the code, correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`), show that inside the
-  question. **Investigate first** (interview.md): what the code shows is a `found: … (file:line)` to confirm.
+- **Scripts give evidence, not answers:** check every script result (inventory, clusters, overrides, audit, route map)
+  against the code, correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`), show that inside the
+  question. When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with /plumb:feedback.
+  **Investigate first** (interview.md): what the code shows is a `found: … (file:line)` to confirm.
 - Questions go **one at a time**, the recommendation first marked "(Recommended)" and why. Light **and** dark by
   default. **Never install or download anything**; if something seems needed, **ask the user and wait**. App code
   changes only with the user's OK; the audit report (step 19) reports, it does not fix.

@@ -28,8 +28,9 @@ These instructions are already loaded: don't load this skill again with a skill 
   when the tool has one (Claude Code's `AskUserQuestion`). Never only in a message before the question (Claude Code can
   hide it), never "the list above"; Copilot CLI's ask tool: in the question text ([interview.md](../../reference/interview.md), "How to ask").
 - **Scripts give evidence, not answers:** check every script result against the code, correct or add to it (marked
-  `(corrected: <why>)` / `(added: <why>)`), show that inside the question. **Investigate first:** gather every fact
-  the code can answer before asking (interview.md); only what the code cannot tell is a question.
+  `(corrected: <why>)` / `(added: <why>)`), show that inside the question. When a Plumb script or hook is wrong and
+  you correct it, record the Plumb mistake with /plumb:feedback. **Investigate first:** gather every fact the code can
+  answer before asking (interview.md); only what the code cannot tell is a question.
 - **One at a time** (part A may group up to four), the recommendation first marked "(Recommended)" and **why**. Light
   **and** dark by default. **Never install or download anything**; if something seems needed, **ask the user and wait**.
 - Pre-approved commands: the `allowed-tools` above; anything else asks first. Copilot CLI asks for every command: run a
@@ -71,8 +72,7 @@ it is right. **STOP: ask, wait for the answer.**
 ## 4. Platforms and stack — STOP
 
 Web, iOS (SwiftUI), Android (Compose), multi-select; the framework and styling found (`found: Tailwind v4
-(app/globals.css:1)`) recommended (interview.md B). React Native is not supported in 1.0.0: offer design only, web,
-iOS or Android, never React Native components. **STOP: ask, wait for the answer.**
+(app/globals.css:1)`) recommended; React Native → interview.md B. **STOP: ask, wait for the answer.**
 
 ## 5. Design decisions, one each — STOP after each
 

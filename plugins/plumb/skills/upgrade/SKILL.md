@@ -20,9 +20,10 @@ Questions go **one at a time** through the question tool, options with the recom
 **Scripts give evidence, not answers:** check each script result against the code (search and read any time),
 correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
 user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
-([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
-question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
-Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers").
+When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with /plumb:feedback. **What the user
+confirms goes inside the question** (its text, or the recommended option's preview when the tool has one), never only in
+a message before it: Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
 
 ```
  versions ─▶ What's new (every version in between) ─▶ ask ─▶ refresh [P] (scaffold.py) ─▶ --migrate ─▶ regenerate [G]

@@ -61,6 +61,7 @@ project can run.
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, improve a part; regenerate; record; audit. |
 | `/plumb:upgrade` | The plugin has a new version | Brings the project's copied files, tokens format and `PLUMB.md` up to the plugin's version. |
 | `/plumb:status` | Health | Version, platforms, stale files, audit counts, hooks on/off, linked repos. Writes no file; in a set-up project never suggests create or extract. |
+| `/plumb:feedback` | Plumb itself got something wrong | Plumb mistakes only: the agent records each Plumb result it corrected in `~/.plumb/feedback/` (outside the project); typed, it reports every record grouped, most frequent first, and drafts GitHub issue text (never sent). Model-invocable. |
 
 Every skill asks one question at a time through the question tool, with options and a
 recommendation first, and never writes into a project without saying where. Skills that run a
@@ -75,7 +76,7 @@ the question text. **Scripts give evidence, not answers:** no script output is g
 checks every result against the code, corrects or adds to it (marked `(corrected: <why>)` /
 `(added: <why>)`) and shows that inside the question; a script wrong in a way that will recur is
 reported upstream (an audit false positive may go on `PLUMB.md`'s `Allowed raw values:` after the
-user's OK). **Investigate first:** before asking, the agent gathers every fact the code can answer
+user's OK), and every Plumb mistake the agent corrects is recorded with `/plumb:feedback` (§3.10). **Investigate first:** before asking, the agent gathers every fact the code can answer
 into an evidence table (fact, value, `file:line`, confidence); facts are shown as `found: …` to
 confirm, and only what the code cannot tell is asked. **Scripts read what the user confirmed;
 they don't guess the layout:** the UI files and the route roots (`PLUMB.md` `UI files:` and
@@ -463,6 +464,49 @@ Plugin and project versions, platforms, home or linked repo, stale generated fil
 (`build-tokens.py --check`), audit error and warning counts, hooks on/off, prototypes and their
 freshness.
 
+### 3.10 `/plumb:feedback`
+
+A local log of **Plumb's own mistakes**, for Plumb's developers (owner decision, 2026-10-13). Scripts give
+evidence, not answers, so the agent corrects them; each correction is also a bug report for Plumb, and this command
+keeps it.
+
+- **Scope: Plumb mistakes only.** The test: *would fixing this mean changing Plumb, not the project?* In: a script's
+  wrong or incomplete result the agent corrected; a hook's wrong refusal, missed refusal, crash or timeout that failed
+  open, or confusing message; a skill step that was unclear, wrong or missing; a template or doc that disagrees with
+  the code; a per-CLI quirk. Out: the project's design issues (→ `/plumb:audit`), decisions (→ the decision log), the
+  project's own bugs, and its source code (a record holds only paths, `file:line`, the repo's shape and short exact
+  text; never a secret). Examples: `detect.py` proposing `src/**` for a UI in `frontend/src/` is feedback; a
+  hard-coded `#123456` in a page is an audit finding.
+- **Where:** `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on Windows), plain Markdown, outside every
+  project, never written into one. One file per finding, `YYYY-MM-DD-<script>-<category>-<project>.md` (a `-2`, `-3`
+  suffix when taken); `hooks.md` for the hooks' own failures (§8); `handled.md`, the index of groups marked handled.
+- **One skill, model-invocable** (`skills/feedback/SKILL.md`, the single teacher and collector). Its description says
+  when to use it: "Record a mistake in Plumb itself: a Plumb script, hook, skill, template or doc that gave a wrong,
+  incomplete or confusing result you had to correct. Not for the project's own design issues — those are audit
+  findings." Its first lines: "Plumb mistakes only", the test, where non-Plumb things go, the two examples.
+- **Log mode** (the agent loads it after correcting a Plumb result, or the user types `/plumb:feedback log …`): one
+  record with the fields When (date, Plumb version, CLI, OS) · Project shape · Where it failed (file → function, rule
+  or step) · Command (exact, with cwd) · Given (exact output) · Expected · Evidence (`file:line`, match counts) · Repro
+  (minimal repo shape) · Category (missed structure | wrong guess | false positive | missed problem | crash | timeout
+  | confusing message | skill gap | docs mismatch | CLI quirk; `timeout` added in review, for the hooks' log) · Suggested fix in Plumb · Handled here; a crash adds the exit code
+  and the traceback's last lines, a hook mistake its event, tool, path, exit code and message. Written with the
+  agent's normal file-write tool: the CLI's permission mode governs; Plumb adds no question. Then one line to the user
+  and back to the task.
+- **Report mode** (the user types `/plumb:feedback`): read every record (all projects) and `hooks.md`; group by
+  script · function · category with counts and projects, most frequent first, given vs expected; then one question at
+  a time: show a group in full · draft a GitHub issue for Plumb (text only, projects only by shape, never sent) · mark
+  a group handled (`handled in <version>` in `handled.md`; records are never deleted) · filter by project, script or
+  date.
+- **Pointers only; the format lives in the skill.** Every Plumb skill, next to "Scripts give evidence, not answers":
+  "When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with /plumb:feedback."; the
+  `AGENTS.md`/`CLAUDE.md` row ends "· Plumb's own mistakes → /plumb:feedback"; `PLUMB.md` says "Plumb's own mistakes
+  (a script, hook or skill got it wrong): /plumb:feedback. The project's design issues: /plumb:audit."; session start
+  adds one short line, "Plumb mistakes (a Plumb script, hook or skill got it wrong) → /plumb:feedback" (it covers a
+  project that declined the `AGENTS.md` offer); Kiro installs the skill as `/plumb-feedback`. Every pointer says
+  "Plumb mistakes" or "Plumb's own mistakes" (a docs test enforces it).
+- **Developer flow:** a group → a minimal repro → a failing test in the Plumb repo → the fix → a patch release → mark
+  the group handled. Nothing leaves the machine.
+
 ## 4. Placement
 
 Init never assumes the folder it was opened in is the project.
@@ -780,7 +824,18 @@ removes the plugin folder's path prompts): the user's choice, documented in `cop
 input → exit 0 with at most one stderr line); non-UI edits exit in about 50 ms and UI edits stay
 under 1 s (a test measures it); at most 10 issues per refusal, each `error: line N: …` + `fix: …`;
 snapshots go in the OS temp folder keyed by project and session, never in the repo; switches are
-read from `PLUMB.md` on every run. The setup marker `<root>/.plumb-tmp/setup-in-progress` is an
+read from `PLUMB.md` on every run. **The hook log** (§3.10): a hook that fails open (a crash, a plugin script it
+cannot load, a session-start script that times out or crashes) also appends one line to
+`~/.plumb/feedback/hooks.md`, in Given / Expected form with the hook, Plumb version, CLI, OS, project folder name,
+event, tool, project-relative path and exit code; only in a project with a `PLUMB.md`, the same line once a day (a
+timeout once per project and Plumb version), at most 512 KB in all. Given and Expected are redacted (`redact`: quoted
+literals over three characters → `'<redacted>'`, absolute paths outside the project → their base name, token-like
+strings and key=value secrets → `<redacted>`). It is private like the snapshot folder: `~/.plumb` and `feedback/`
+created 0700 (the user's own wider folders are tightened to 0700 through an `O_NOFOLLOW` handle, by the hooks and at
+every session start; none is created there), `hooks.md` 0600 and created with its header already in it (a temporary
+file hard-linked into place), nothing written when either folder is a symlink (or reparse point) or someone else's,
+or when `hooks.md` is a symlink; a `PlumbError` (the project's own broken files) is not logged; the log never fails or
+blocks a hook and never prints. Session start's last line is the pointer to `/plumb:feedback`. The setup marker `<root>/.plumb-tmp/setup-in-progress` is an
 unprotected soft switch: anything that can write in the project can create it, and it turns off
 only the end-of-turn check (never the edit check or the guards), for at most 6 hours from its
 modification time; after that it is stale and session start says so.
@@ -800,6 +855,7 @@ Platforms: web
 UI packages: . (Next.js · Tailwind v4 · shadcn)
 Python: `python3`
 No downloads: nothing is installed or downloaded; if something is missing, ask the user and wait for their decision.
+Plumb's own mistakes (a script, hook or skill got it wrong): /plumb:feedback. The project's design issues: /plumb:audit.
 
 ## Checks
 Edit check: on
@@ -830,7 +886,7 @@ Each asked first, never silent:
   `<skill>/SKILL.md`; UI work is prototype first: update or create the screen with
   `/plumb:prototype`, get the user's approval, then build it to match. Don't install or download
   anything; if something is missing, ask the user and wait for their decision; never decide on
-  their behalf*;
+  their behalf · Plumb's own mistakes → /plumb:feedback*;
 - `Makefile` targets `tokens`, `tokens-check`, `design-audit` (plain `python` commands in
   `PLUMB.md` for machines without make);
 - the generated copy at the app's path (e.g. `app/globals.css`);
@@ -922,7 +978,7 @@ own CI.
 .claude-plugin/marketplace.json           marketplace "plumb" → plugins/plumb
 plugins/plumb/
   .claude-plugin/plugin.json               version 1.0.0
-  skills/{init,create,extract,prototype,tour,audit,ux,update,upgrade,status}/SKILL.md   lean
+  skills/{init,create,extract,prototype,tour,audit,ux,update,upgrade,status,feedback}/SKILL.md   lean
   reference/   interview.md · rules.md · tokens-format.md · placement.md · scripts.md ·
                prototypes.md · ux.md · copilot.md
   assets/skill/   the design-system template: SKILL.md, design.md and references/* skeletons;

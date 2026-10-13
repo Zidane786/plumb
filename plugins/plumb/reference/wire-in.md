@@ -32,6 +32,8 @@ Fill `<ROOT>/templates/agents-row.md` (`{{SKILL_DIR}}` = the skill dir with a tr
 
 - Show the exact lines (or the whole new file) inside the question, then write them only on yes.
 - `scaffold.py --verify` looks for this row (it names `/plumb:prototype`), so keep the template's wording.
+- The row ends with the pointer "Plumb's own mistakes → /plumb:feedback": keep it. A project that declines both
+  files still gets the pointer from the session-start line ("Plumb mistakes … → /plumb:feedback").
 
 ## Makefile targets
 
@@ -64,7 +66,8 @@ when there is no Makefile) under `## Extra review checks` in `SLATE.md`, replaci
 
 Ask only when `<root>/.kiro/` exists or the user mentions Kiro: "Write `.kiro/steering/plumb.md` so Kiro reads the
 design system on every task?" On yes write front matter `inclusion: always` and one paragraph: before any UI change
-read `<skill dir>/SKILL.md`; UI work is prototype first; never install or download anything, ask the user and wait.
+read `<skill dir>/SKILL.md`; UI work is prototype first; never install or download anything, ask the user and wait;
+Plumb's own mistakes (a script, hook or skill got it wrong) → `/plumb-feedback`.
 Kiro's own skills and hooks come from `kiro.py install`: tell the user; never run it for them.
 
 ## Monorepo package pointer

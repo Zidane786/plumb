@@ -21,7 +21,9 @@ existing or new? ─▶ /plumb:extract or /plumb:create ─▶ wire it in (each 
 - **Nothing is written without the user's OK.** What detect.py or you find (root, layout, stack, UI files, routes,
   copy paths) is a suggestion for the user to confirm or correct. Never overwrite a design system.
 - **Scripts give evidence, not answers:** check every script result against the files, correct or add to it (marked
-  `(corrected: <why>)` / `(added: <why>)`), show that inside the question ([interview.md](../../reference/interview.md)).
+  `(corrected: <why>)` / `(added: <why>)`), show that inside the question
+  ([interview.md](../../reference/interview.md)). When a Plumb script or hook is wrong and you correct it, record the
+  Plumb mistake with /plumb:feedback.
 - **Investigate first** (interview.md, "Investigate first"): gather every fact the code can answer before asking.
 - **What the user confirms goes inside the question** (its text, or the recommended option's preview when the tool has
   one, as Claude Code's `AskUserQuestion` does), never only in a message before it: Claude Code can hide text printed

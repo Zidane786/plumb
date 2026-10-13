@@ -17,9 +17,10 @@ Never install or download anything; ask the user and wait. Tours play in light a
 **Scripts give evidence, not answers:** check each script result against the code (search and read any time),
 correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
 user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
-([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
-question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
-Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers").
+When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with /plumb:feedback. **What the user
+confirms goes inside the question** (its text, or the recommended option's preview when the tool has one), never only in
+a message before it: Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
 
 **Pages.** Tour pages use Plumb's own walkthrough player (built by `build-prototype.py`). If you write any other HTML
 for a tour (a screen hook it needs, a standalone intro page the user asked for), follow Effective HTML's

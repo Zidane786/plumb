@@ -34,7 +34,10 @@ script's output to the user unchecked. This holds for every script:
 **When a script is wrong in a way that will recur**, say so and suggest the fix to Plumb: an audit rule's false
 positive → offer to add the path to `PLUMB.md`'s `Allowed raw values:` (after the user's OK) and suggest reporting the
 rule upstream (an issue on the Plumb repo); a detection miss → record the corrected setting (below) so no script
-guesses again.
+guesses again. **When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with
+/plumb:feedback:** one file in `~/.plumb/feedback/` (outside the project) with the command, what it gave, what was
+right and the evidence, so Plumb's developers can fix it. Plumb mistakes only: the project's own design issues are
+audit findings (`/plumb:audit`).
 
 ## Investigate first
 

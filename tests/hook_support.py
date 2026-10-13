@@ -210,8 +210,10 @@ def plumb_tmp(tmp_path: Path) -> Path:
 def hook_env(tmp_path: Path, copilot: bool = False, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     ostmp = tmp_path / "os-tmp"
     ostmp.mkdir(exist_ok=True)
+    home = tmp_path / "user-home"  # the hooks' feedback log (~/.plumb/feedback/hooks.md) never reaches the real home
+    home.mkdir(exist_ok=True)
     env = _clean_env({"CLAUDE_PLUGIN_ROOT": str(PLUGIN), "TMPDIR": str(ostmp), "TEMP": str(ostmp), "TMP": str(ostmp),
-                      "GIT_CEILING_DIRECTORIES": str(tmp_path)})
+                      "GIT_CEILING_DIRECTORIES": str(tmp_path), "HOME": str(home), "USERPROFILE": str(home)})
     env.pop("PYTHONDONTWRITEBYTECODE", None)  # hooks run as users run them (bytecode cache allowed)
     if copilot:
         env["COPILOT_CLI"] = "1"
