@@ -1627,7 +1627,8 @@ _ON_SUNK = ("on-sunk", "on-surface")
 _ROLE_NAMES = {"background": ("background", "surface"), "bg": ("background", "surface"), "page": ("background", "surface"),
                "foreground": ("on-surface", "on-background", "text"), "fg": ("on-surface", "on-background", "text"),
                "text": ("on-surface", "on-background", "text"), "card": ("surface", "background"),
-               "popover": ("surface", "background"), "sidebar": ("surface", "background"),
+               "popover": ("surface-raised", "raised", "surface", "background"),
+               "sidebar": ("surface", "background"),
                "secondary": _SUNK, "muted": _SUNK, "accent": _SUNK,
                "secondary-foreground": _ON_SUNK, "accent-foreground": _ON_SUNK,
                "muted-foreground": ("on-surface-muted", "on-sunk", "on-surface"),
@@ -1658,6 +1659,59 @@ def _role_token(colors: dict, name: str) -> Optional[str]:
             rest = name[len(prefix):]
             return rest if P.is_token(colors.get(rest)) else _role_token(colors, rest)
     return None
+
+
+COLOUR_TOLERANCE = 2  # per sRGB channel (0-255): oklch read twice may round one step apart
+
+
+def _rgba(text: object) -> Optional[Tuple[int, int, int, float]]:
+    try:
+        hexv, alpha = P.parse_color(str(text))
+    except (PlumbError, ValueError, TypeError):
+        return None
+    h = hexv.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), float(alpha)
+
+
+def _same_colour(a: Optional[tuple], b: Optional[tuple]) -> bool:
+    if a is None or b is None:
+        return False
+    return all(abs(x - y) <= COLOUR_TOLERANCE for x, y in zip(a[:3], b[:3])) and abs(a[3] - b[3]) <= 0.02
+
+
+def _token_colours(doc: dict, path: str) -> Optional[Tuple[tuple, tuple]]:
+    """(light, dark) of a colour token as (r, g, b, alpha), or None when it does not resolve to colours."""
+    try:
+        light, dark = _rgba(P.resolve(doc, path, "light")), _rgba(P.resolve(doc, path, "dark"))
+    except PlumbError:
+        return None
+    return (light, dark) if light is not None and dark is not None else None
+
+
+def _app_colours(values: Dict[str, str], value: str) -> Optional[Tuple[tuple, tuple]]:
+    """The app's (light, dark) for a variable (dark = light when the app sets it only once), or None."""
+    light = _rgba(values.get("light") or value)
+    if light is None:
+        return None
+    dark = _rgba(values["dark"]) if values.get("dark") else light
+    return (light, dark) if dark is not None else None
+
+
+def _is_text_token(name: str) -> bool:
+    """A colour token for text or icons: on-*, text*, *-ink, link (the contrast pairs' rule)."""
+    parts = name.split("-")
+    return name.startswith("on-") or name == "link" or "text" in parts or "ink" in parts
+
+
+def _show(cols: Optional[Tuple[tuple, tuple]]) -> str:
+    """light / dark as #rrggbb[aa]."""
+    if cols is None:
+        return "unknown"
+
+    def one(c: tuple) -> str:
+        return "#%02x%02x%02x" % c[:3] + ("" if c[3] >= 1 else "%02x" % round(c[3] * 255))
+
+    return one(cols[0]) if cols[0] == cols[1] else f"{one(cols[0])} / {one(cols[1])}"
 
 
 def _colour_value(text: str) -> str:
@@ -1730,16 +1784,22 @@ def _enclosing(blocks: list, pos: int) -> List[tuple]:
 USES_SHOWN = 20  # per variable
 
 
-def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict]) -> None:
+def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict], docs_rel: str = "docs/design") -> None:
     """Fill each project variable's used_in with the other UI files (file:line) that still read var(--x): the plan
-    removes it from the copy, so the skill shows these and points them at the token's variable too, after asking."""
+    removes it from the copy, so the skill shows these and points them at the token's variable too, after asking.
+    Plumb's own pages (the docs folder: extract.html, the specimen, the prototype) and the design-system skill are not
+    the app: they are never listed."""
     if not project_vars:
         return
+    docs = (root / docs_rel.replace("\\", "/").strip("/")).resolve() if docs_rel.strip("/") else None
     pattern = re.compile(r"var\(\s*(" + "|".join(re.escape(v["name"]) for v in project_vars) + r")\s*[),]")
     by_name = {v["name"]: v for v in project_vars}
     skip = copy.resolve()
     for dirpath, dirnames, filenames in os.walk(root):
         here = Path(dirpath)
+        if docs is not None and (here.resolve() == docs or docs in here.resolve().parents):
+            dirnames[:] = []
+            continue
         dirnames[:] = sorted(d for d in dirnames if d not in P.SKIP_DIRS and not (d == "skills" and here.name == ".claude"))
         for fname in sorted(filenames):
             path = here / fname
@@ -1777,6 +1837,67 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     by_hand: List[str] = []
     notes: List[str] = []  # what the plan decided for the person to know (not to decide)
     feeds: Dict[str, str] = {}  # project variable -> the token variable it fed
+    def project_values(name: str, value: str) -> Tuple[Optional[str], list, Dict[str, str]]:
+        """(the project variable it reads, its declarations outside @theme, its light and dark values)."""
+        src_m = _VAR_ONLY.fullmatch(value)
+        src = src_m.group(1) if src_m else None
+        decls = [d for d in re.finditer(r"(?<![\w-])" + re.escape(src) + r"\s*:\s*([^;{}]*);?", code)
+                 if not in_theme(d.start())] if src else []
+        values: Dict[str, str] = {}
+        for d in decls:
+            mode = "dark" if any(_DARK_PRELUDE.search(code[b[0]:b[1]]) for b in _enclosing(blocks, d.start())) else "light"
+            values.setdefault(mode, text[d.start(1):d.end(1)].strip())
+        return src, decls, values
+
+    # The app's colours, by name, so each role is checked against them (a role whose token has other colours would
+    # change the app's look) and a sidebar-<x> name follows what <x> becomes.
+    app: Dict[str, Optional[Tuple[tuple, tuple]]] = {}
+    for pos, name in P.block_overrides(text):
+        if name.startswith("--color-") and "*" not in name and name not in tokvars:
+            m = re.compile(re.escape(name) + r"\s*:\s*([^;{}]*);?").match(code, pos)
+            value = text[m.start(1):m.end(1)].strip() if m else ""
+            app[name[len("--color-"):]] = _app_colours(project_values(name, value)[2], value)
+    decided: Dict[str, Tuple[str, Optional[str]]] = {}  # rest -> ("alias", token name) | ("own", None)
+    looks: List[str] = []  # names whose role token has other colours than the app
+
+    def decide(rest: str) -> Tuple[str, Optional[str]]:
+        """How a project colour name moves into the tokens: ("alias", token) when a token has its colours (its role
+        token first: card -> surface, popover -> surface-raised or surface; then any token with the same light and
+        dark colours; a sidebar-<x> with <x>'s colours follows <x>), else ("own", why) to add the app's own values."""
+        if rest in decided:
+            return decided[rest]
+        decided[rest] = ("own", None)  # a guard against a loop
+        mine = app.get(rest)
+        out: Tuple[str, Optional[str]] = ("own", None)
+        for prefix in _ROLE_PREFIXES:
+            base = rest[len(prefix):] if rest.startswith(prefix) else ""
+            if base and (mine is None or (app.get(base) and _same_colour(mine[0], app[base][0])
+                                          and _same_colour(mine[1], app[base][1]))):
+                if base in app:
+                    kind, tok = decide(base)
+                    decided[rest] = ("alias", tok if kind == "alias" else base)
+                    if base in looks:
+                        looks.append(rest)
+                    return decided[rest]
+        role = _role_token(colors, rest)
+        role_cols = _token_colours(doc, f"color.{role}") if role else None
+        if role and (mine is None or role_cols is None or
+                     (_same_colour(mine[0], role_cols[0]) and _same_colour(mine[1], role_cols[1]))):
+            out = ("alias", role)
+        else:
+            text_like = rest.endswith("-foreground") or rest in ("foreground", "fg", "text")
+            same = [k for k in colors if mine is not None and not k.startswith("$") and P.is_token(colors.get(k))
+                    and _is_text_token(k) == text_like  # a foreground only ever becomes a text token, and back
+                    and (lambda c: c is not None and _same_colour(mine[0], c[0]) and _same_colour(mine[1], c[1]))(
+                        _token_colours(doc, f"color.{k}"))]
+            if same:  # a token already has the app's exact colours (extract recorded them): keep the look
+                out = ("alias", same[0])
+            elif role:  # the role token (create: the new design replaces the stock colours; extract: say so)
+                out = ("alias", role)
+                looks.append(rest)
+        decided[rest] = out
+        return out
+
     for pos, name in P.block_overrides(text):
         line = L.line(pos)
         if name == "@custom-variant dark":
@@ -1795,14 +1916,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         value = text[m.start(1):m.end(1)].strip() if m else ""
         ns, _, rest = name[2:].partition("-")
         group = _NS_GROUP.get(ns, ns)
-        src_m = _VAR_ONLY.fullmatch(value)
-        src = src_m.group(1) if src_m else None
-        decls = [d for d in re.finditer(r"(?<![\w-])" + re.escape(src) + r"\s*:\s*([^;{}]*);?", code)
-                 if not in_theme(d.start())] if src else []
-        values: Dict[str, str] = {}
-        for d in decls:
-            mode = "dark" if any(_DARK_PRELUDE.search(code[b[0]:b[1]]) for b in _enclosing(blocks, d.start())) else "light"
-            values.setdefault(mode, text[d.start(1):d.end(1)].strip())
+        src, decls, values = project_values(name, value)
         change: Optional[dict] = None
         note = ""
         if "*" in name:
@@ -1825,9 +1939,14 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         else:
             kind, token = "new-name", f"{group}.{rest}"
             if ns == "color" and rest:
-                role = _role_token(colors, rest)
-                if role:
-                    change = {"add": token, "$value": f"{{color.{role}}}"}
+                how, what = decide(rest)
+                if how == "alias":
+                    change = {"add": token, "$value": f"{{color.{what}}}"}
+                    if rest in looks:
+                        notes.append(f"line {line}: {name} becomes {{color.{what}}} (its role), whose colours differ "
+                                     f"from the app's ({_show(app.get(rest))} today, {_show(_token_colours(doc, f'color.{what}'))} "
+                                     f"in the tokens): the look changes; ask the user, or keep the app's colours as a "
+                                     f"token of its own with /plumb:update")
                 else:
                     try:
                         change = {"add": token, "$value": _colour_value(values.get("light") or value)}
@@ -1894,7 +2013,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             replace.append({"line": L.line(u.start()), "old": text[u.start():u.end()], "new": f"var({name}{u.group(1)}",
                             "why": f"{src} fed {name}, which is now the token's variable"})
         project_vars.append({"name": src, "declared": lines, "maps_to": name, "used_in": []})
-    _uses_elsewhere(root, path, project_vars)
+    _uses_elsewhere(root, path, project_vars, str(P.plumb_settings(doc).get("docs_dir") or "docs/design"))
     # a literal font stack outside the tokens (body { font-family: Arial, ... }) uses the font token instead
     for f in re.finditer(r"(?<![\w-])font-family\s*:\s*([^;{}]+)", code):
         val = text[f.start(1):f.end(1)].strip()
