@@ -18,8 +18,8 @@ Every script it runs is the plugin's own copy (`--root <the project's skill>`), 
 - when the design-system folder PLUMB.md names (`Design system:`) is missing, "design system not found" and a
   warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill);
 - "Routes not recorded — run /plumb:init to record them" when PLUMB.md has no `Routes:` value (the route checks stay
-  off: scripts never guess the app's layout), and a note while <root>/.plumb-tmp/ exists (the end-of-turn check
-  stands down during a setup).
+  off: scripts never guess the app's layout), a note for a Routes entry without a valid kind, and a note while
+  <root>/.plumb-tmp/setup-in-progress exists (the end-of-turn check stands down during a setup).
 
 Claude Code adds plain stdout to the session; GitHub Copilot CLI (COPILOT_CLI set) reads {"additionalContext": ...}.
 Kiro (--kiro on the command) reads plain stdout too, with commands written /plumb-<name>, plus a line when a newer Plumb
@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from typing import Optional, Tuple
@@ -138,6 +139,7 @@ def snapshot(proj: H.Project, session_id: str) -> None:
                f"{str(exc).splitlines()[0] if str(exc) else ''})")
 
 
+ROUTE_KINDS = ("next-app", "next-pages", "nuxt", "sveltekit", "angular", "router")  # as _plumb.ROUTE_KINDS (a test)
 ROUTES_NOT_RECORDED = ("Routes not recorded \u2014 run /plumb:init to record them (PLUMB.md `Routes:`, the app's page "
                        "roots); until then the prototype-first check and route-not-prototyped are off")
 
@@ -150,9 +152,16 @@ def setup_notes(proj: H.Project) -> list:
     routes = str(proj.keys.get("Routes", "") or "").strip()
     if not routes or routes.startswith("("):
         out.append(ROUTES_NOT_RECORDED)
-    if os.path.isdir(os.path.join(proj.root_s, H.SETUP_TMP)):
-        out.append(f"note: {H.SETUP_TMP}/ is in the project, so the end-of-turn check stands down (a Plumb setup is in "
-                   f"progress); when no setup is running, delete {H.SETUP_TMP}/ (ask the user first)")
+    else:
+        kinds = ", ".join(ROUTE_KINDS)
+        for item in [i.strip() for i in routes.split(",") if i.strip()] if routes.lower() != "none" else []:
+            m = re.match(r"^(.*?)\s*\(([^()]*)\)$", item)
+            if not m or m.group(2).strip().lower() not in ROUTE_KINDS:
+                out.append(f"note: Routes: {item} has no valid kind \u2014 use one of {kinds}; the route checks skip "
+                           f"it until PLUMB.md is corrected (/plumb:init)")
+    if H.setup_in_progress(proj.root_s):
+        out.append(f"note: {H.SETUP_MARKER} is in the project, so the end-of-turn check stands down (a Plumb setup is "
+                   f"running); when no setup is running, delete {H.SETUP_TMP}/ (ask the user first)")
     return out
 
 

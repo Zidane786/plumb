@@ -752,7 +752,7 @@ def test_next_app_router_routes(tmp_path: Path) -> None:
     assert routes(tmp_path / "next", files) == []
     assert routes(tmp_path / "next", files, "(not recorded yet)") == []
     assert routes(tmp_path / "next", files, "none") == []
-    assert routes(tmp_path / "rec", files, "app (next-app), src/app") == [
+    assert routes(tmp_path / "rec", files, "app (next-app), src/app (next-app)") == [
         ("/", "app/page.tsx", 1, "app/page.tsx"),
         ("/about", "app/(marketing)/about/page.tsx", 1, "app/(marketing)/about/page.tsx"),
         ("/blog/[slug]", "src/app/blog/[slug]/page.jsx", 1, "src/app/blog/[slug]/page.jsx"),
@@ -773,13 +773,13 @@ def test_next_pages_router_routes_only_when_recorded(tmp_path: Path) -> None:
     files = {"pages/index.tsx": "", "pages/bookings/[id].tsx": "", "pages/_app.tsx": "", "pages/_document.tsx": "",
              "pages/api/hello.ts": "", "pages/settings/index.jsx": ""}
     assert routes(tmp_path / "plain", files) == []
-    assert [r[0] for r in routes(tmp_path / "next", files, "pages")] == ["/", "/bookings/[id]", "/settings"]
+    assert [r[0] for r in routes(tmp_path / "next", files, "pages (next-pages)")] == ["/", "/bookings/[id]", "/settings"]
 
 
 def test_sveltekit_and_nuxt_file_routes(tmp_path: Path) -> None:
     files = {"src/routes/+page.svelte": "", "src/routes/(app)/settings/+page.svelte": "",
              "src/routes/+layout.svelte": "", "pages/about.vue": "", "pages/index.vue": ""}
-    assert [r[0] for r in routes(tmp_path / "nuxt", files, "src/routes, pages (nuxt)")] == ["/", "/", "/about",
+    assert [r[0] for r in routes(tmp_path / "nuxt", files, "src/routes (sveltekit), pages (nuxt)")] == ["/", "/", "/about",
                                                                                            "/settings"]
     assert [r[0] for r in routes(tmp_path / "svelte", files, "src/routes (sveltekit)")] == ["/", "/settings"]
 
@@ -789,11 +789,27 @@ def test_routes_setting_parses_paths_kinds_and_problems() -> None:
     assert parse("") == (None, []) and parse(None) == (None, [])
     assert parse("(not recorded yet: /plumb:init records them)") == (None, [])
     assert parse("none") == ([], [])
-    assert parse("./frontend/src/app/ (next-app), src\\app\\app.routes.ts, web/src/routes") == (
-        [("frontend/src/app", "next-app"), ("src/app/app.routes.ts", "router"), ("web/src/routes", "sveltekit")], [])
-    roots, problems = parse("../x/app (next-app), /abs/app, frontend/views, frontend/pages (remix)")
-    assert roots == []
-    assert len(problems) == 4 and all(p.startswith("Routes: ") for p in problems)
+    assert parse("./frontend/src/app/ (next-app), src\\app\\app.routes.ts (angular), web/src/routes (sveltekit), "
+                 "src/router/index.ts (router), site/pages (nuxt), old/pages (next-pages)") == (
+        [("frontend/src/app", "next-app"), ("src/app/app.routes.ts", "angular"), ("web/src/routes", "sveltekit"),
+         ("src/router/index.ts", "router"), ("site/pages", "nuxt"), ("old/pages", "next-pages")], [])
+    # the kind is never guessed from the folder name
+    roots, problems = parse("frontend/src/app, ../x/app (next-app), /abs/app (next-app), frontend/pages (remix), "
+                            "web/app (next-app)")
+    assert roots == [("web/app", "next-app")]
+    assert problems[0] == ("Routes: frontend/src/app has no kind \u2014 use one of next-app, next-pages, nuxt, "
+                           "sveltekit, angular, router, as frontend/src/app (<kind>)")
+    assert "not a path inside the project" in problems[1] and "not a path inside the project" in problems[2]
+    assert problems[3].startswith("Routes: frontend/pages has the unknown kind (remix)")
+
+
+def test_an_entry_without_a_kind_is_skipped_with_a_note(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "next")
+    edit(project / "PLUMB.md", "Routes: app (next-app)", "Routes: app")
+    write(project / "app/billing/page.tsx", NEW_PAGE)
+    out = audit(project)
+    assert fidelity(out, "route-not-prototyped") == []
+    assert "note: Routes: app has no kind" in out["_stderr"]
 
 
 def test_plain_vue_app_with_components_in_src_pages_has_no_route_findings(tmp_path: Path) -> None:
@@ -820,7 +836,7 @@ def test_plain_vue_app_with_components_in_src_pages_has_no_route_findings(tmp_pa
     scripts.mkdir(parents=True)
     for name in ("_plumb.py", "audit.py", "build-tokens.py", "build-prototype.py"):
         shutil.copy(SCRIPTS / name, scripts / name)
-    assert routes(tmp_path / "plain-vue", {"src/pages/HomePage.vue": ""}, "src/router/index.ts") == []
+    assert routes(tmp_path / "plain-vue", {"src/pages/HomePage.vue": ""}, "src/router/index.ts (router)") == []
     out = audit(project)
     assert where(out, "route-not-prototyped") == [], fidelity(out)
     write(project / "src/pages/Settings.vue", "<template>\n  <h1>Settings</h1>\n</template>\n")
@@ -834,7 +850,7 @@ def test_vue_router_routes(tmp_path: Path) -> None:
             "export default createRouter({\n  routes: [\n    { path: '/', name: 'home', component: HomeView },\n"
             "    { path: '/about', component: () => import('../views/AboutView.vue') },\n  ],\n});\n")
     assert routes(tmp_path, {"src/router/index.ts": text}) == []  # not recorded: no guessing
-    assert routes(tmp_path, {"src/router/index.ts": text}, "src/router/index.ts") == [
+    assert routes(tmp_path, {"src/router/index.ts": text}, "src/router/index.ts (router)") == [
         ("/", "src/router/index.ts", 6, "src/views/HomeView.vue"),
         ("/about", "src/router/index.ts", 7, "src/views/AboutView.vue"),
     ]
@@ -844,7 +860,7 @@ def test_angular_routes_nested_lazy_and_redirects(tmp_path: Path) -> None:
     project = FIXTURES / "angular"
     text = read(project / "src/app/app.routes.ts")
     found = sorted((r.route, r.file, r.line, r.source) for r in A.discover_routes(project, [("src/app/app.routes.ts", text)],
-                                                                         A.route_roots({"Routes": "src/app/*.routes.ts"})))
+                                                                         A.route_roots({"Routes": "src/app/*.routes.ts (angular)"})))
     assert found == [
         ("/", "src/app/app.routes.ts", 6, "src/app/home/home.component.ts"),
         ("/account/settings", "src/app/app.routes.ts", 12, "src/app/settings/settings.component.ts"),
@@ -863,7 +879,7 @@ def test_a_large_routes_file_is_read_in_linear_time(tmp_path: Path) -> None:
         for _ in range(3):
             start = time.perf_counter()
             found = A.discover_routes(tmp_path, [("src/app/app.routes.ts", text)],
-                                      [("src/app/app.routes.ts", "router")])
+                                      [("src/app/app.routes.ts", "angular")])
             best = min(best, time.perf_counter() - start)
         assert len(found) == n and found[-1].route == f"/page-{n - 1}" and found[-1].line == n + 3
         return best

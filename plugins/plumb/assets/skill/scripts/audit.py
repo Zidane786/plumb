@@ -121,7 +121,7 @@ screens.json it was reading. Findings sit on the screen file's <section data-scr
 Routes are read only through PLUMB.md's `Routes:` (recorded by /plumb:init; scripts never guess the app's layout):
 each entry is a folder or a router file, with its kind. next-app: <root>/**/page.tsx|jsx|ts|js ((groups) and @slots are
 not in the URL, _private folders are not routes); next-pages: <root>/** (not _app/_document/api); nuxt: <root>/**/*.vue;
-sveltekit: <root>/**/+page.svelte; router: the named file or glob (Angular Routes and Vue Router objects with a path and
+sveltekit: <root>/**/+page.svelte; angular and router: the named file or glob (Angular Routes, Vue Router objects with a path and
 a component or loadComponent; children paths join their parents'; redirects and ** are skipped; the component file comes
 from its import, relative or @/ and ~/ for the src/ folder the file is in). The full audit walks the recorded folders
 (and the audited files); with PATHS or --changed only those files. No `Routes:` (a PLUMB.md from before it, or not
@@ -2625,7 +2625,7 @@ def file_route(path: str, roots: Optional[RouteRoots]) -> Optional[str]:
     path = path.replace("\\", "/")
     for root, kind in roots or []:
         parts = _under(path, root)
-        if not parts or kind == "router":
+        if not parts or kind in P.ROUTER_KINDS:
             continue
         name, dirs = parts[-1], parts[:-1]
         stem, dot, ext = name.rpartition(".")
@@ -2642,9 +2642,9 @@ def file_route(path: str, roots: Optional[RouteRoots]) -> Optional[str]:
 
 
 def is_router_file(path: str, roots: Optional[RouteRoots]) -> bool:
-    """The file is one of the router configs PLUMB.md's `Routes:` names (a path or a glob, kind router)."""
+    """The file is one of the router configs PLUMB.md's `Routes:` names (a path or a glob, kind angular or router)."""
     path = path.replace("\\", "/")
-    return any(kind == "router" and P.glob_rx(root).match(path) for root, kind in roots or [])
+    return any(kind in P.ROUTER_KINDS and P.glob_rx(root).match(path) for root, kind in roots or [])
 
 
 def _bracket_tree(code: str, marks: List[int]) -> Tuple[Dict[int, Tuple[int, str, Optional[int]]], Dict[int, Optional[int]]]:
@@ -2786,7 +2786,7 @@ def route_files(root: Path, roots: Optional[RouteRoots]) -> List[Tuple[str, str]
     out: List[Tuple[str, str]] = []
     seen = 0
     for base, kind in roots or []:
-        if kind == "router":
+        if kind in P.ROUTER_KINDS:
             if any(c in base for c in "*?"):
                 fixed = base.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
                 start, rx = root / fixed if fixed else root, P.glob_rx(base)
@@ -3051,9 +3051,11 @@ def check_route_not_prototyped(proj: Project) -> Iterator[XHit]:
 
 
 def routes_note(proj: Project) -> Optional[str]:
-    """The note the full audit prints when PLUMB.md does not record the routes (`Routes:`) while there is a prototype
-    or Prototype sync is on: route-not-prototyped was skipped, nothing was guessed. None otherwise."""
-    if route_roots(proj.settings) is not None:
+    """The note the full audit prints when PLUMB.md does not record the routes (`Routes:`), or names an entry without
+    a valid kind, while there is a prototype or Prototype sync is on: route-not-prototyped skipped it, nothing was
+    guessed. None otherwise."""
+    roots, problems = P.parse_routes(proj.settings.get("Routes"))
+    if roots is not None and not problems:
         return None
     try:
         fid = _fidelity_of(proj)
@@ -3061,6 +3063,10 @@ def routes_note(proj: Project) -> Optional[str]:
         return None
     if not (fid.active or fid.sync_on):
         return None
+    if roots is not None:
+        return (f"note: {'; '.join(problems)}; route-not-prototyped skipped "
+                f"{'that entry' if len(problems) == 1 else 'those entries'} (correct Routes: in PLUMB.md, or run "
+                f"/plumb:init)")
     return (f"note: {P.ROUTES_NOT_RECORDED}; route-not-prototyped was skipped (Plumb never guesses where the app's "
             f"pages are)")
 

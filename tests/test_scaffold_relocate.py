@@ -387,7 +387,8 @@ def test_routes_unanswered_is_not_recorded_for_web_and_none_for_mobile(tmp_path:
     assert "ok: Routes: none" in cli(root, "--verify").stdout
 
 
-@pytest.mark.parametrize("routes", ["../app (next-app)", "frontend/views", "app (remix)", 7, "a\nb"])
+@pytest.mark.parametrize("routes", ["../app (next-app)", "frontend/views", "frontend/src/app", "app (remix)", 7,
+                                    "a\nb"])
 def test_a_bad_routes_answer_is_refused(tmp_path: Path, routes: object) -> None:
     root, r = _scaffold_with(tmp_path, {"routes": routes})
     assert r.returncode == 2 and r.stderr.startswith("error: answers.routes") and "fix: " in r.stderr

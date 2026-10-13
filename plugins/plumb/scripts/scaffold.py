@@ -550,7 +550,7 @@ def routes_value(answers: dict, platforms: List[str]) -> str:
     if problems or roots is None:
         raise ScaffoldError("answers.routes: " + ("; ".join(problems) if problems else f"{given!r} is not a value"),
                             'write each page root as "<path> (<kind>)", kinds: next-app, next-pages, nuxt, sveltekit, '
-                            'router (a router config file), comma separated; or "none"')
+                            'angular (the routes file), router (another router config file), comma separated; or "none"')
     return " ".join(given.split())
 
 
@@ -1007,12 +1007,13 @@ def check_routes(keys: dict, root: Path) -> List[Tuple[str, str]]:
     if not roots and not problems:
         out.append(("ok", "Routes: none (no page routes to check)"))
     for path, kind in roots:
-        if kind == "router" and any(c in path for c in "*?"):
+        router = kind in core.ROUTER_KINDS
+        if router and any(c in path for c in "*?"):
             rx = core.glob_rx(path)
             fixed = root / path.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
             found = fixed.is_dir() and any(rx.match(f.relative_to(root).as_posix()) for f in fixed.rglob("*") if f.is_file())
         else:
-            found = (root / path).is_file() if kind == "router" else (root / path).is_dir()
+            found = (root / path).is_file() if router else (root / path).is_dir()
         if found:
             out.append(("ok", f"Routes: {path} ({kind}) exists"))
         else:

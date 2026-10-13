@@ -54,11 +54,23 @@ platform default), a `Routes` line for a web project (detect's guess, or "not fo
 `plumb:start … plumb:end` block in it; the rest stays the project's). Never summarise it, and never ask about "the setup above" when it is not above.
 
 **Routes (`PLUMB.md` `Routes:`)** are where the app's pages are: the prototype-first check, the audit's
-`route-not-prototyped` and extract's route list read routes **only** from here. Each entry is a folder or a router
-file, relative to the repo root, with its kind: `next-app` (Next.js app router), `next-pages`, `nuxt`, `sveltekit`, or
-`router` (an Angular routes file or a Vue Router config; a glob such as `src/app/**/*.routes.ts` is fine), comma
-separated; `none` when the project has no page routes (a component library, a mobile-only app). Examples:
-`frontend/src/app (next-app)`, `src/app/app.routes.ts (router)`. Look for them (detect's `routes` is a guess from the
+`route-not-prototyped` and extract's route list read routes **only** from here. Each entry is `<path> (<kind>)`, the
+path relative to the repo root, comma separated. The kinds:
+
+| Kind | Path | Routes |
+|---|---|---|
+| `next-app` | the app router folder (`frontend/src/app`) | `**/page.tsx` (`.jsx`, `.ts`, `.js`); `(groups)` and `@slots` are not in the URL |
+| `next-pages` | the pages router folder (`pages`) | every page file, not `api/` or `_app` / `_document` |
+| `nuxt` | the pages folder (`pages`, `app/pages`) | `**/*.vue` |
+| `sveltekit` | the routes folder (`src/routes`) | `**/+page.svelte` |
+| `angular` | the routes file (`src/app/app.routes.ts`, a `RouterModule` routing module) or a glob of them | each object with a `path` and a `component` / `loadComponent` |
+| `router` | another router config file (Vue Router, React Router objects) or a glob | the same objects |
+
+`none` (the whole value) when the project has no page routes: mobile only, design only, backend only; no route checks
+run. The kind is never guessed from the folder name: an entry without one (or with another word) is a `problem:` in
+`scaffold.py --verify` ("Routes: <path> has no kind — use one of …"), the audit skips it with a `note:`, and the hooks
+fail open for it (session start names it). Examples: `frontend/src/app (next-app)`,
+`src/app/app.routes.ts (angular)`. Look for them (detect's `routes` is a guess from the
 usual places), show the value in the confirmation block, and pass the confirmed one to `scaffold.py` as the `routes`
 answer. Without it a web project's `PLUMB.md` says `Routes: (not recorded yet …)`: the hooks fail open, session start
 and `/plumb:status` say "Routes not recorded — run /plumb:init to record them", and the audit prints a note. A
@@ -69,10 +81,11 @@ and `/plumb:status` say "Routes not recorded — run /plumb:init to record them"
 
 A file a script needs only for one step (the answers JSON for `scaffold.py`, a `--check` or audit output to read
 back) goes in **`<root>/.plumb-tmp/`**: write `<root>/.plumb-tmp/.gitignore` containing `*` first (the folder stays
-out of commits; the project's own `.gitignore` is not touched), then the file. During a setup (`/plumb:create`,
-`/plumb:extract`) the folder **lives until the whole setup ends** and is deleted then: while it exists the end-of-turn
-check stands down (a setup's half-done state is expected) and session start notes it, so never leave it behind
-(details: "Scratch files" in [interview.md](interview.md)). **Never** use `/tmp`, `%TEMP%`, `$R/..` or another
+out of commits; the project's own `.gitignore` is not touched), then the file. Any skill may keep scratch files there. Only
+`/plumb:init`, `/plumb:create` and `/plumb:extract` write the marker file **`<root>/.plumb-tmp/setup-in-progress`**
+when their setup starts, and remove the whole `.plumb-tmp/` folder when it ends: while the marker exists the
+end-of-turn check stands down (a setup's half-done state is expected) and session start notes it, so never leave it
+behind. Scratch files without the marker change nothing (details: "Scratch files" in [interview.md](interview.md)). **Never** use `/tmp`, `%TEMP%`, `$R/..` or another
 session's scratch folder: they sit outside the project, so Copilot CLI asks for path access to them, and nothing
 outside `<root>` is written. Plumb's own scripts follow the same rule (their default outputs are inside the project).
 

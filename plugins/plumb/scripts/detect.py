@@ -880,7 +880,7 @@ def guess_routes(rel: str, framework: str, deps: Dict[str, str], base: Path) -> 
             add(sub, "router", folder=False)
     elif framework == "angular":
         for sub in ("src/app/app.routes.ts", "src/app/app-routing.module.ts"):
-            add(sub, "router", folder=False)
+            add(sub, "angular", folder=False)
     return out[:1] if framework == "vue" and "nuxt" not in deps else out
 
 

@@ -846,18 +846,41 @@ def test_stop_reports_a_new_route_without_a_prototype(launcher, tmp_path, proj):
 
 
 def test_stop_stands_down_while_a_setup_is_in_progress(launcher, tmp_path, proj):
-    """<root>/.plumb-tmp/ exists while create or extract runs: the half-done state is expected, so the end-of-turn
-    check is silent; once the setup deletes the folder, the changes are checked against the session's snapshot."""
+    """init, create and extract write <root>/.plumb-tmp/setup-in-progress while they run: the half-done state is
+    expected, so the end-of-turn check is silent; once the setup ends (the folder is removed), the changes are checked
+    against the session's snapshot. Other scratch files in .plumb-tmp/ never turn the check off."""
     _start(launcher, tmp_path, proj)
     write(proj / ".plumb-tmp/answers.json", "{}\n")
     write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    reason = _block(stop(launcher, tmp_path, proj))  # scratch only: the check runs
+    assert "components/widget.tsx" in reason
+    write(proj / ".plumb-tmp/setup-in-progress", "create\n")
+    write(proj / "components/panel.tsx", f"export const P = () => <p {RAW}>p</p>;\n")
     r = stop(launcher, tmp_path, proj)
     assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
-    assert ".plumb-tmp/ is in the project, so the end-of-turn check stands down" in context(
+    assert ".plumb-tmp/setup-in-progress is in the project, so the end-of-turn check stands down" in context(
         session_start(launcher, tmp_path, proj, session="sess-2"))
     shutil.rmtree(proj / ".plumb-tmp")
     reason = _block(stop(launcher, tmp_path, proj))
-    assert "components/widget.tsx" in reason
+    assert "components/panel.tsx" in reason
+
+
+def test_session_start_notes_a_routes_entry_without_a_kind(launcher, tmp_path, proj):
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace("Routes: app (next-app)", "Routes: app, web/app (next-app)"))
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "note: Routes: app has no valid kind — use one of next-app, next-pages, nuxt, sveltekit, angular, router" in text
+    assert "web/app" not in text
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))  # fails open for that entry
+
+
+def test_session_start_route_kinds_are_the_cores():
+    spec = importlib.util.spec_from_file_location("plumb_core_kinds", PLUGIN / "assets/skill/scripts/_plumb.py")
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)
+    spec = importlib.util.spec_from_file_location("plumb_session_kinds", PLUGIN / "hooks/session_start.py")
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    assert hook.ROUTE_KINDS == core.ROUTE_KINDS
 
 
 def test_stop_end_of_turn_check_off_is_silent(launcher, tmp_path, proj):

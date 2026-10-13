@@ -198,7 +198,7 @@ def test_routes_guesses_for_each_stack(tmp_path: Path) -> None:
         ("nx", {"nuxt": "3", "vue": "3"}, ["pages/index.vue"], "pages (nuxt)"),
         ("vr", {"vue": "3", "vue-router": "4"}, ["src/router/index.ts", "src/App.vue"], "src/router/index.ts (router)"),
         ("ng", {"@angular/core": "17"}, ["src/app/app.routes.ts", "src/app/app.component.ts"],
-         "src/app/app.routes.ts (router)"),
+         "src/app/app.routes.ts (angular)"),
         ("np", {"next": "14"}, ["pages/index.tsx"], "pages (next-pages)"),
         ("re", {"react": "18"}, ["src/App.tsx"], None),
     ]

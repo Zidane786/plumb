@@ -5,7 +5,7 @@ Design system: `.claude/skills/demo-design-system/`
 Role: home
 Platforms: web
 UI packages: . (Angular · CSS)
-Routes: src/app/app.routes.ts (router)
+Routes: src/app/app.routes.ts (angular)
 
 ## Prototype
 Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
