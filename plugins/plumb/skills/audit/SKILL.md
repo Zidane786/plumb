@@ -19,6 +19,14 @@ rule changes upstream). Anything that changes how a screen looks goes through th
 `--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation.
 **End-of-turn check:** if Plumb's end-of-turn check stops you after the user said not to fix now (or chose report
 only), don't fix: report and stop.
+**Scripts give evidence, not answers:** check each script result against the code (search and read any time),
+correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
+user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
+question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
+Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
+**Investigate first** (interview.md, "Investigate first"): gather every fact the code can answer before asking;
+what the code shows is a `found: … (file:line)` to confirm, never an open question.
 
 ```
  audit.py --html ─▶ visual fidelity (browser?) ─▶ agent review ─▶ --add-review ─▶ summary + offers ─▶ STOP
@@ -29,8 +37,13 @@ only), don't fix: report and stop.
 ## Step 0: context
 
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
-   skill's base directory (printed when the skill loads) + `/../..`, made absolute.
-2. Find `PLUMB.md` at the project root. Missing → offer `/plumb:init`; with no design system yet the audit can still run
+   skill's base directory (printed when the skill loads) + `/../..`, made absolute. Check that `<ROOT>/reference/scripts.md`
+   exists; if not, resolve again, never guess. Read Plumb's references only as `<ROOT>/reference/<file>`.
+2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
+   else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
+   made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
+   Scratch files: `<root>/.plumb-tmp/` only, removed when the command ends; never `/tmp` or outside `<root>`.
+   Missing → offer `/plumb:init`; with no design system yet the audit can still run
    in inconsistency-only mode on the folders the user names (ask which).
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Themes:`.
    **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is
@@ -38,7 +51,7 @@ only), don't fix: report and stop.
    the user which is right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder").
    `Role: linked` → run the home repo's `audit.py` on this repo's UI folders:
    `PY <SKILL>/scripts/audit.py <ui folders> --html <docs>/audit-YYYY-MM-DD.html`.
-4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → say once that `/plumb:upgrade` is
+4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json`: `older` → say once that `/plumb:upgrade` is
    available, then continue.
 5. The mode is the first argument: none → report only; `fix`; `improve`. Other arguments are paths to check.
 
@@ -48,7 +61,12 @@ only), don't fix: report and stop.
 summary, and writes `<docs>/audit-YYYY-MM-DD.html`. Exit 0 = no errors; **exit 1 means errors found, not a crash**
 (Claude Code shows "Error: Exit code 1", Copilot CLI "✗ Shell": read the findings, don't retry or debug the script);
 2 = bad input or nothing checked: show the `error:` and do what its `fix:` says (or ask). No tokens yet → it runs in
-inconsistency-only mode by itself.
+inconsistency-only mode by itself. **Read the findings critically before you report or fix them:** is each real, is
+the rule right here, is the fix right? A burst of one rule (hundreds of palette-colour errors right after setup)
+usually means a setup gap (a setting such as `reset_palette`, a mapping, a wrong `UI files:` pattern), not app debt:
+say so and propose fixing the gap first. A false positive that will recur → offer to add the path to `PLUMB.md`'s
+`Allowed raw values:` (after the user's OK) and suggest reporting the rule to Plumb. `PLUMB.md` has no `Routes:` line
+→ say the prototype checks cannot see the app's pages and recommend `/plumb:init` to record the route roots.
 
 ## Step 2: visual fidelity (when a browser is available)
 
@@ -119,7 +137,8 @@ screen starts with "prototype approved" and links `<docs>/prototype.html#screen-
 
 ## Mode `improve`: make the screens and the system better
 
-1. It needs a passing audit: errors left → offer `fix` first.
+1. It needs a passing audit: errors left → offer `fix` first. Investigate first (interview.md): read the screens,
+   layouts, components and `ux.md` yourself before proposing anything; ask only what the code cannot tell.
 2. Build a ranked plan from: the report's Improvements (suggestions, ranked by impact), the agent review, and a design
    pass across the whole product (hierarchy, spacing rhythm, consistency between screens, every state, dark-mode polish,
    accessibility beyond AA). Include **the design system itself** when the findings show it should change: a missing or
