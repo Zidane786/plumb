@@ -562,6 +562,66 @@ def load_plumb_core():
     return mod
 
 
+# ---------------------------------------------------------------- token names in the references
+
+MISSING_TOKEN = "`<{what}: no such token yet, add one with /plumb:update>`"
+
+
+def project_tokens(existing: Optional[Path], planned: str) -> dict:
+    """The tokens the references will sit next to: the project's tokens file when it is already there (kept as it is),
+    else the one this scaffold writes. {} when it cannot be read (every name then shows as a marked placeholder)."""
+    try:
+        text = existing.read_text(encoding="utf-8-sig") if existing is not None else planned
+        doc = json.loads(text)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def has_token(doc: dict, path: str) -> bool:
+    node: object = doc
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return isinstance(node, dict) and "$value" in node
+
+
+def token_ref(doc: dict, candidates: Tuple[str, ...], what: str) -> str:
+    """The first candidate token the project has, as `path`, else a clearly marked placeholder."""
+    for path in candidates:
+        if has_token(doc, path):
+            return f"`{path}`"
+    return MISSING_TOKEN.format(what=what)
+
+
+def group_refs(doc: dict, group: str, limit: int, what: str) -> str:
+    """The first tokens of a group (`shadow.card`, `shadow.popover`), or a marked placeholder."""
+    node = doc.get(group) if isinstance(doc.get(group), dict) else {}
+    names = [k for k, v in node.items() if not k.startswith("$") and isinstance(v, dict) and "$value" in v][:limit]
+    return ", ".join(f"`{group}.{n}`" for n in names) if names else MISSING_TOKEN.format(what=what)
+
+
+def token_names(doc: dict) -> Dict[str, str]:
+    """The token names components.md and design.md quote, taken from the project's tokens (live test 2, B15: never a
+    token the project does not have)."""
+    refs = {
+        "TOK_COLOR_PRIMARY": token_ref(doc, ("color.primary",), "the primary colour"),
+        "TOK_TYPE_LABEL": token_ref(doc, ("typography.sm", "typography.label", "typography.body"), "a label text style"),
+        "TOK_RADIUS_CONTROL": token_ref(doc, ("radius.md", "radius.sm"), "a control radius"),
+        "TOK_RADIUS_CARD": token_ref(doc, ("radius.lg", "radius.md"), "a card radius"),
+        "TOK_SHADOW_CARD": token_ref(doc, ("shadow.card", "shadow.sm", "shadow.raised"), "a card shadow"),
+        "TOK_TYPE_TITLE": token_ref(doc, ("typography.h3", "typography.h2", "typography.title"), "a page title style"),
+        "TOK_MOTION_FAST": token_ref(doc, ("motion.duration.fast",), "a short duration"),
+        "TOK_SPACING": group_refs(doc, "spacing", 2, "the spacing steps"),
+        "TOK_SHADOWS": group_refs(doc, "shadow", 4, "the elevation steps"),
+    }
+    found = [v for k, v in refs.items() if k in ("TOK_COLOR_PRIMARY", "TOK_TYPE_LABEL", "TOK_RADIUS_CONTROL",
+                                                  "TOK_MOTION_FAST") and not v.startswith("`<")]
+    refs["TOK_EXAMPLES"] = ", ".join(found) if found else "`color.<name>`, `radius.<name>`"
+    return refs
+
+
 # ---------------------------------------------------------------- rendering
 
 
@@ -617,6 +677,11 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
     skill = root / skill_rel
     src = SKILL_SRC
     plan: List[Item] = []
+    tokens_dir = skill / "assets/tokens"
+    existing = sorted(tokens_dir.glob("*.tokens.json")) if tokens_dir.is_dir() else []
+    tokens_text = render(read_source(src / "assets/tokens/tokens.json.tmpl"), values, "assets/tokens/tokens.json.tmpl",
+                         json_mode=True)
+    values.update(token_names(project_tokens(existing[0] if existing else None, tokens_text)))
 
     # [P] plugin-owned
     for script in sorted((src / "scripts").glob("*.py")):
@@ -632,10 +697,8 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
 
     y("SKILL.md.tmpl", "SKILL.md")
     y("design.md.tmpl", "design.md")
-    tokens_dir = skill / "assets/tokens"
-    existing = sorted(tokens_dir.glob("*.tokens.json")) if tokens_dir.is_dir() else []
     token_name = existing[0].name if existing else f"{slug}.tokens.json"
-    y("assets/tokens/tokens.json.tmpl", f"assets/tokens/{token_name}", json_mode=True)
+    plan.append(Item(skill / f"assets/tokens/{token_name}", tokens_text, "Y"))
     y("assets/icons/icon-map.json.tmpl", "assets/icons/icon-map.json", json_mode=True)
     plan.append(Item(skill / "assets/platforms/web/tokens.css.template",
                      read_source(src / f"assets/platforms/web/tokens.css.template.{args.styling}"), "Y"))

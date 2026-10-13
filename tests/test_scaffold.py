@@ -656,6 +656,57 @@ def test_an_existing_stylesheet_copy_gets_a_note_before_the_build(tmp_path: Path
     assert (tmp_path / "app/globals.css").read_text(encoding="utf-8").startswith('@import "tailwindcss";\nbody')
 
 
+# ---------------------------------------------------------------- token names in the references (live test 2, B15)
+
+
+TOKEN_PATH = re.compile(r"`((?:color|typography|radius|shadow|spacing|motion|font)\.[\w.-]+)`")
+
+
+def _named_tokens(root: Path) -> List[str]:
+    found = []
+    for rel in ("references/components.md", "design.md"):
+        found += TOKEN_PATH.findall((root / SKILL_REL / rel).read_text(encoding="utf-8"))
+    return found
+
+
+def _has(doc: dict, path: str) -> bool:
+    node = doc
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return isinstance(node, dict) and "$value" in node
+
+
+def test_references_name_only_tokens_the_project_has(tmp_path: Path) -> None:
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    assert run(fresh).returncode == 0
+    doc = json.loads((fresh / SKILL_REL / "assets/tokens/demo.tokens.json").read_text(encoding="utf-8"))
+    names = _named_tokens(fresh)
+    assert "shadow.card" in names and "typography.h3" in names
+    assert all(_has(doc, n) for n in names), [n for n in names if not _has(doc, n)]
+    # a project whose tokens were recorded from the app (no h3, no shadows, a radius scale of its own)
+    kept = tmp_path / "kept"
+    tokens = kept / SKILL_REL / "assets/tokens/demo.tokens.json"
+    tokens.parent.mkdir(parents=True)
+    tokens.write_text(json.dumps({
+        "color": {"$type": "color", "primary": {"$value": "#14857f"}},
+        "typography": {"$type": "typography", "body": {"$value": {"fontSize": "14px", "lineHeight": "20px"}},
+                       "h2": {"$value": {"fontSize": "20px", "lineHeight": "28px"}}},
+        "radius": {"$type": "dimension", "sm": {"$value": "4px"}},
+    }), encoding="utf-8")
+    assert run(kept).returncode == 0
+    doc = json.loads(tokens.read_text(encoding="utf-8"))
+    names = _named_tokens(kept)
+    assert all(_has(doc, n) for n in names), [n for n in names if not _has(doc, n)]
+    comps = (kept / SKILL_REL / "references/components.md").read_text(encoding="utf-8")
+    assert "Title (`typography.h2`)" in comps and "Radius `radius.sm`. Text `typography.body`." in comps
+    assert "`<a card shadow: no such token yet, add one with /plumb:update>` only when it lifts" in comps
+    design = (kept / SKILL_REL / "design.md").read_text(encoding="utf-8")
+    assert "Elevation: `<the elevation steps: no such token yet, add one with /plumb:update>`" in design
+
+
 # ---------------------------------------------------------------- the confirm gate (live test 2, B4)
 
 
