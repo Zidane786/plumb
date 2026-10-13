@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -431,6 +432,46 @@ def test_shell_removal_targets(H, command, removed, tmp_path):
     assert [str(p.relative_to(tmp_path)).replace("\\", "/") for p in found] == removed
 
 
+# Live test 2 (B12): a python heredoc whose comment has an apostrophe (next/font's) and whose body writes the screen
+# files given on its command line, then a cd and a build-prototype.py run. Refused as if it wrote build-prototype.py.
+HEREDOC_THEN_BUILD = (
+    'D="{screens}"; python3 -I - "$D/dashboard.html" "$D/api-keys.html" <<\'EOF\'\n'
+    "import sys, re\n"
+    "# --font-sans resolves at :root, where next/font's variable is undefined, so a var() fallback is used.\n"
+    "for p in sys.argv[1:]:\n"
+    "    s = open(p).read()\n"
+    "    s = s.replace(\"font-family: var(--font-sans);\", 'font-family: var(--font-sans, system-ui, sans-serif);')\n"
+    "    open(p, \"w\").write(s); print(p.rsplit(\"/\",1)[1])\n"
+    "EOF\n"
+    'cd "{root}" && python3 {skill}/scripts/build-prototype.py 2>&1 | tail -1'
+)
+
+
+def test_a_heredoc_script_then_a_plumb_build_is_allowed(launcher, tmp_path, proj):
+    command = HEREDOC_THEN_BUILD.format(screens=proj / SCREENS, root=proj, skill=SKILL_REL)
+    allowed(bash(launcher, tmp_path, proj, command))
+
+
+def test_heredoc_bodies_are_read_as_the_stage_input(H, tmp_path):
+    command = HEREDOC_THEN_BUILD.format(screens=tmp_path / "s", root=tmp_path, skill=SKILL_REL)
+    targets = [Path(t) for t in H.shell_targets(command, str(tmp_path))]
+    assert not any(t.name == "build-prototype.py" for t in targets), targets
+    # a heredoc that writes a guarded file it names is still caught, and so is a shell heredoc's own command
+    for cmd, name in (("python3 - <<EOF\nopen('app/globals.css', 'w').write('x')\nEOF", "globals.css"),
+                      ("bash <<'X'\necho x > docs/design/specimen.html\nX\necho done", "specimen.html"),
+                      ("cat > app/globals.css <<'EOF'\nbody {}\nEOF", "globals.css"),
+                      ("cat <<-EOF > docs/design/screens.html\n\t<p>it's</p>\n\tEOF", "screens.html")):
+        found = [Path(t).name for t in H.shell_targets(cmd, str(tmp_path))]
+        assert name in found, (cmd, found)
+    assert H.shell_targets("cat <<< 'x' > notes.txt", str(tmp_path)) == [str(tmp_path / "notes.txt")]
+
+
+def test_a_heredoc_writing_a_generated_file_is_refused(launcher, tmp_path, proj):
+    reason = refused(bash(launcher, tmp_path, proj, "python3 - <<'EOF'\n# it's the copy\n"
+                                                    "open('app/globals.css', 'w').write('x')\nEOF"))
+    assert " is generated" in reason
+
+
 def test_running_plumb_scripts_is_allowed(launcher, tmp_path, proj):
     allowed(bash(launcher, tmp_path, proj, f"python3 {SKILL_REL}/scripts/audit.py app"))
     allowed(bash(launcher, tmp_path, proj, f"python3 {PLUGIN / 'scripts' / 'scaffold.py'} --help"))
@@ -500,6 +541,37 @@ def test_screen_changed_after_approval_does_not_cover_a_new_route(launcher, tmp_
     assert run_script(proj, "build-prototype.py", "--approve", "billing").returncode == 0
     write(proj / SCREENS / "billing.html", BILLING_SCREEN.replace("<h1>Billing</h1>", "<h1>Invoices</h1>"))
     assert "is not approved yet" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+
+
+def test_new_route_in_a_monorepo_frontend_is_refused(launcher, tmp_path, proj):
+    """The live-test monorepo: Next.js only in frontend/ (no next.config or next dependency at the repo root, where
+    the design system is), Python in backend/. PLUMB.md's Routes: names frontend/src/app; nothing else is read."""
+    text = read(proj / "PLUMB.md").replace("Routes: app (next-app)", "Routes: frontend/src/app (next-app)")
+    write(proj / "PLUMB.md", text.replace("UI files: app/**, components/**", "UI files: frontend/src/**"))
+    write(proj / "frontend/package.json", '{"dependencies": {"next": "16.0.0"}}\n')
+    write(proj / "backend/main.py", "print('api')\n")
+    reason = refused(write_tool(launcher, tmp_path, proj, "frontend/src/app/usage-reports/page.tsx", BILLING))
+    assert "error: frontend/src/app/usage-reports/page.tsx is a new screen with no approved prototype" in reason
+    assert "fix: /plumb:prototype usage-reports" in reason
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))  # not a recorded route root
+
+
+def test_prototype_first_fails_open_when_routes_are_not_recorded(launcher, tmp_path, proj):
+    """A PLUMB.md from before Routes: (or not filled yet): no guessing from next.config or package.json; the edit is
+    allowed and session start says the routes are not recorded."""
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace("Routes: app (next-app)\n", ""))
+    write(proj / "next.config.mjs", "export default {};\n")
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "Routes not recorded \u2014 run /plumb:init to record them" in text
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace(
+        "Allowed raw values:", "Routes: (not recorded yet: /plumb:init records the app's page roots)\nAllowed raw values:"))
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+
+
+def test_session_start_is_quiet_about_routes_once_recorded(launcher, tmp_path, proj):
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "Routes not recorded" not in text and ".plumb-tmp" not in text
 
 
 def test_prototype_first_is_off_when_prototype_sync_is_off(launcher, tmp_path, proj):
@@ -771,6 +843,44 @@ def test_stop_reports_a_new_route_without_a_prototype(launcher, tmp_path, proj):
     write(proj / "app/billing/page.tsx", BILLING)
     reason = _block(stop(launcher, tmp_path, proj))
     assert "route /billing" in reason and "/plumb:prototype billing" in reason
+
+
+def test_stop_stands_down_while_a_setup_is_in_progress(launcher, tmp_path, proj):
+    """init, create and extract write <root>/.plumb-tmp/setup-in-progress while they run: the half-done state is
+    expected, so the end-of-turn check is silent; once the setup ends (the folder is removed), the changes are checked
+    against the session's snapshot. Other scratch files in .plumb-tmp/ never turn the check off."""
+    _start(launcher, tmp_path, proj)
+    write(proj / ".plumb-tmp/answers.json", "{}\n")
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    reason = _block(stop(launcher, tmp_path, proj))  # scratch only: the check runs
+    assert "components/widget.tsx" in reason
+    write(proj / ".plumb-tmp/setup-in-progress", "create\n")
+    write(proj / "components/panel.tsx", f"export const P = () => <p {RAW}>p</p>;\n")
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
+    assert ".plumb-tmp/setup-in-progress is in the project, so the end-of-turn check stands down" in context(
+        session_start(launcher, tmp_path, proj, session="sess-2"))
+    shutil.rmtree(proj / ".plumb-tmp")
+    reason = _block(stop(launcher, tmp_path, proj))
+    assert "components/panel.tsx" in reason
+
+
+def test_session_start_notes_a_routes_entry_without_a_kind(launcher, tmp_path, proj):
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace("Routes: app (next-app)", "Routes: app, web/app (next-app)"))
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "note: Routes: app has no valid kind — use one of next-app, next-pages, nuxt, sveltekit, angular, router" in text
+    assert "web/app" not in text
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))  # fails open for that entry
+
+
+def test_session_start_route_kinds_are_the_cores():
+    spec = importlib.util.spec_from_file_location("plumb_core_kinds", PLUGIN / "assets/skill/scripts/_plumb.py")
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)
+    spec = importlib.util.spec_from_file_location("plumb_session_kinds", PLUGIN / "hooks/session_start.py")
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    assert hook.ROUTE_KINDS == core.ROUTE_KINDS
 
 
 def test_stop_end_of_turn_check_off_is_silent(launcher, tmp_path, proj):

@@ -5,6 +5,7 @@ Design system: `.claude/skills/demo-design-system/`
 Role: home
 Platforms: web
 UI packages: . (Next.js · Tailwind v4)
+Routes: app (next-app)
 
 ## Prototype
 Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json

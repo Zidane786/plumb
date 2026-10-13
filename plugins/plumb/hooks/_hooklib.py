@@ -65,6 +65,16 @@ HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_SCRIPTS = os.path.join(os.path.dirname(HOOKS_DIR), "assets", "skill", "scripts")
 PLUMB_MD = "PLUMB.md"
 SNAPSHOT_DAYS = 7
+# Where Plumb's skills and scripts keep scratch files, in the project root (any skill may use it). Only init, create and
+# extract write the marker file in it, SETUP_MARKER, while their setup runs (and remove the whole folder when it ends):
+# while the marker exists the end-of-turn check stands down.
+SETUP_TMP = ".plumb-tmp"
+SETUP_MARKER = ".plumb-tmp/setup-in-progress"
+
+
+def setup_in_progress(root: str) -> bool:
+    """A Plumb setup (init, create, extract) is running: <root>/.plumb-tmp/setup-in-progress exists."""
+    return os.path.isfile(os.path.join(root, *SETUP_MARKER.split("/")))
 UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
 # Windows and macOS (APFS, HFS+ by default) file systems ignore case: TOKENS.CSS is tokens.css there.
 CASELESS = sys.platform in ("win32", "darwin")
@@ -1027,11 +1037,114 @@ def _quoted(text: str) -> List[str]:
     return [a if a or not b else b.replace('\\"', '"') for a, b in _QUOTED.findall(text)]
 
 
-def _stage_targets(stage: str) -> List[str]:
+_HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([A-Za-z_][\w.-]*))")
+_HEREDOC_MARK = re.compile(r"<<__plumb_heredoc_(\d+)__")
+_SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "pwsh", "powershell")
+
+
+def _heredocs(command: str) -> Tuple[str, List[str]]:
+    """The command with each here-document's body taken out, and the bodies. Its << operator becomes
+    <<__plumb_heredoc_N__ (N indexes the bodies), so the stage that reads it can still find its body, while the body's
+    lines (a script's comments with an apostrophe, its own ; and &&) are never read as commands of the outer shell.
+    Quotes are followed outside the bodies; <<< (a here-string) is not a here-document. A body whose end line is
+    missing runs to the end."""
+    out: List[str] = []
+    bodies: List[str] = []
+    pending: List[Tuple[int, str, bool]] = []  # (body index, end word, <<- strips leading tabs)
+    quote = ""
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = ""
+            elif ch == "\\" and quote == '"' and i + 1 < n:
+                out.append(command[i + 1])
+                i += 1
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if command.startswith("<<", i) and not command.startswith("<<<", i) and (i == 0 or command[i - 1] != "<"):
+            m = _HEREDOC_OP.match(command, i)
+            if m:
+                word = next(g for g in m.groups()[1:] if g is not None)
+                pending.append((len(bodies), word, m.group(1) == "-"))
+                out.append(f"<<__plumb_heredoc_{len(bodies)}__")
+                bodies.append("")
+                i = m.end()
+                continue
+        if ch == "\n" and pending:
+            out.append(ch)
+            i += 1
+            for index, word, strip_tabs in pending:
+                lines: List[str] = []
+                while i < n:
+                    end = command.find("\n", i)
+                    line = command[i:] if end < 0 else command[i:end]
+                    i = n if end < 0 else end + 1
+                    if (line.lstrip("\t") if strip_tabs else line) == word:
+                        break
+                    lines.append(line.lstrip("\t") if strip_tabs else line)
+                bodies[index] = "\n".join(lines)
+            pending = []
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), bodies
+
+
+def _body_stages(body: str) -> List[str]:
+    """The pipeline stages of a shell here-document's body (`bash <<EOF ... EOF`)."""
+    return [stage for part in _split(body, ("&&", "||", ";", "\n")) for stage in _split(part, ("|",))]
+
+
+def _stage_heredocs(stage: str, bodies: List[str]) -> Tuple[str, List[str]]:
+    """The stage without its here-document markers, and the bodies it reads."""
+    mine = [bodies[int(m.group(1))] for m in _HEREDOC_MARK.finditer(stage) if int(m.group(1)) < len(bodies)]
+    return _HEREDOC_MARK.sub(" ", stage), mine
+
+
+def _stage_command(stage: str) -> str:
+    words = [_unquote(w) for w in re.findall(_WORD, _NO_WRITE.sub(" ", stage))]
+    while words and (re.match(r"^[A-Za-z_]\w*=", words[0]) or words[0] in ("sudo", "command", "env", "nohup", "time")):
+        words.pop(0)
+    return _command_name(words[0]) if words else ""
+
+
+def _heredoc_targets(stage: str, docs: List[str]) -> List[str]:
+    """What the here-documents a stage reads write: a shell's body is read as commands (each stage of it); another
+    program's body (python -, node -) that writes counts every path it names and every word of the stage line."""
+    out: List[str] = []
+    shell = _stage_command(stage) in _SHELLS
+    for body in docs:
+        if shell:
+            for inner in _body_stages(body):
+                out += _stage_targets(inner)
+        elif _GENERIC.search(body):
+            out += re.findall(r"[^\s'\"`=(),;|&<>]+", _REDIR.sub(" ", _NO_WRITE.sub(" ", stage)))
+            out += re.findall(r"[^\s'\"`=(),;|&<>]+", body)
+            for outer in _quoted(body):
+                out += [outer] + _quoted(outer)
+    return out
+
+
+def _stage_targets(stage: str, bodies: Optional[List[str]] = None) -> List[str]:
     """The files one pipeline stage writes (best effort). A stage that runs a Plumb builder may write generated files
-    itself; only its redirects and tee count."""
+    itself; only its redirects and tee count. A here-document the stage reads is its input: a shell's body is read as
+    commands; any other body (a python - script) that writes counts every path in it and on the stage line."""
+    stage, docs = _stage_heredocs(stage, bodies or [])
+    targets = _heredoc_targets(stage, docs) if docs else []
     cleaned = _NO_WRITE.sub(" ", stage)
-    targets = [_unquote(m.group(1)) for m in _REDIR.finditer(cleaned)]
+    targets += [_unquote(m.group(1)) for m in _REDIR.finditer(cleaned)]
     for m in _TEE.finditer(cleaned):
         targets += [_unquote(w) for w in re.findall(_WORD, m.group(2))]
     rest = _TEE.sub(" ", _REDIR.sub(" ", cleaned))
@@ -1072,9 +1185,13 @@ _PS_REMOVERS = ("remove-item", "ri", "del", "erase", "rd")
 _MOVERS = ("mv", "move", "move-item", "mi")
 
 
-def _stage_removals(stage: str) -> List[str]:
+def _stage_removals(stage: str, bodies: Optional[List[str]] = None) -> List[str]:
     """The files or folders one pipeline stage removes or moves away (best effort): rm, rmdir, unlink, del / erase /
-    rd (cmd), Remove-Item (ri, del), git rm, and the sources of mv / move, Move-Item (mi) and git mv."""
+    rd (cmd), Remove-Item (ri, del), git rm, and the sources of mv / move, Move-Item (mi) and git mv. A shell
+    here-document's body (`bash <<EOF`) is read as commands too."""
+    stage, docs = _stage_heredocs(stage, bodies or [])
+    if docs and _stage_command(stage) in _SHELLS:
+        return [r for body in docs for inner in _body_stages(body) for r in _stage_removals(inner)]
     rest = _TEE.sub(" ", _REDIR.sub(" ", _NO_WRITE.sub(" ", stage)))
     words = [_unquote(w) for w in re.findall(_WORD, rest)]
     while words and re.match(r"^[A-Za-z_]\w*=", words[0]):  # FOO=bar cmd
@@ -1113,9 +1230,10 @@ def _stage_removals(stage: str) -> List[str]:
 _HOME_VAR = re.compile(r"^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|\$env:HOME)(?=[/\\]|$)", re.I)
 
 
-def _shell_paths(command: str, cwd: str, stage_paths: Callable[[str], List[str]]) -> List[str]:
+def _shell_paths(command: str, cwd: str, stage_paths: Callable[[str, List[str]], List[str]]) -> List[str]:
     out: List[str] = []
     base = cwd
+    command, bodies = _heredocs(command)
     for part in _split(command, ("&&", "||", ";", "\n")):
         m = _CD.match(part)
         if m:
@@ -1123,7 +1241,7 @@ def _shell_paths(command: str, cwd: str, stage_paths: Callable[[str], List[str]]
             base = os.path.normpath(os.path.join(base, target.replace("\\", "/") if os.sep == "/" else target))
             continue
         for stage in _split(part, ("|",)):
-            for t in stage_paths(stage):
+            for t in stage_paths(stage, bodies):
                 if not t or t in ("-", "/dev/null"):
                     continue
                 p = t.replace("\\", "/") if os.sep == "/" else t

@@ -355,6 +355,7 @@ def analyze(root: Path, rel: str, names: List[str], scan: Scan, ancestor_ui: boo
         item = _ui(rel, framework, styling, shadcn, ["web"], scan)
         if framework == "angular":
             item["ui_files"] = angular_ui_files(rel)  # finished in classify(), once the nested folders are known
+        item["routes"] = guess_routes(rel, framework, deps, base)
         gpath = global_css(framework, base, existing_css, others, deps, names, dir_has, file_has)
         item["global_css"] = {"path": gpath, "exists": file_has(gpath)}
         return {"ui": item}
@@ -394,14 +395,30 @@ def angular_ui_files(rel: str, suffixed: bool = True, roots: Optional[List[str]]
     return ", ".join(join(rel, r + "/**") for r in (roots or ["src"])) + " · " + " ".join(names)
 
 
-def ui_files_for(ui: List[dict]) -> Optional[str]:
-    """The PLUMB.md `UI files:` value these UI packages need, or None when scaffold.py's platform default fits: only web
-    packages other than Angular, or only mobile ones. Angular needs its own; web next to iOS or Android needs the
-    mobile folders too (the audit takes a file only when it is in a listed folder AND has a listed name)."""
+WEB_SOURCE_DIRS = ("app", "src", "components", "pages")
+
+
+def web_dirs(pkg: str, root: Optional[Path]) -> List[str]:
+    """The UI-file folder globs of a web package, relative to the repo root (the audit reads UI files from there): the
+    root package keeps the platform default (app/**, src/**, components/**); a package in a subfolder gets its own
+    source folders that exist (frontend/src/**), or the whole package (frontend/**) when none does."""
+    if pkg == ".":
+        return ["app/**", "src/**", "components/**"]
+    found = [join(pkg, d + "/**") for d in WEB_SOURCE_DIRS if root is not None and (root / pkg / d).is_dir()]
+    return found or [join(pkg, "**")]
+
+
+def ui_files_for(ui: List[dict], root: Optional[Path] = None) -> Optional[str]:
+    """The PLUMB.md `UI files:` value these UI packages need (a guess for the agent to check and the user to confirm),
+    or None when scaffold.py's platform default fits: only web packages at the repo root other than Angular, or only
+    mobile ones. Angular needs its own; a web package in a subfolder (a monorepo's frontend/) needs its folders, from
+    the repo root; web next to iOS or Android needs the mobile folders too (the audit takes a file only when it is in a
+    listed folder AND has a listed name)."""
     ui = [u for u in ui if u.get("supported", True)]  # React Native: no theme in 1.0.0, so no UI files of its own
     web = any("web" in u["platforms"] for u in ui)
     mobile = any("web" not in u["platforms"] for u in ui)
-    if not any(u.get("ui_files") for u in ui) and not (web and mobile):
+    nested_web = any("web" in u["platforms"] and u["path"] != "." for u in ui)
+    if not any(u.get("ui_files") for u in ui) and not (web and mobile) and not nested_web:
         return None
     dirs: List[str] = []
     names: List[str] = []
@@ -417,7 +434,7 @@ def ui_files_for(ui: List[dict]) -> Optional[str]:
             add(dirs, [d.strip() for d in left.split(",") if d.strip()])
             add(names, right.split())
         elif "web" in u["platforms"]:
-            add(dirs, ["app/**", "src/**", "components/**"] if u["path"] == "." else [join(u["path"], "**")])
+            add(dirs, web_dirs(u["path"], root))
             add(names, ["*.tsx", "*.jsx", "*.vue", "*.svelte", "*.css"])
         else:
             add(dirs, [join(u["path"], "**")] if u["path"] != "." else ["**"])
@@ -819,7 +836,7 @@ def detect(cwd) -> dict:
         "root": root.as_posix(), "opened": opened, "layout": layout, "monorepo": marker,
         "ui_packages": ui, "no_ui": no_ui, "children": [], "git": git_ok and in_repo, "in_repo": in_repo,
         "git_available": git_ok, "existing": read_existing(root),
-        "proposal": _proposal(name, copies, platforms, ui_files_for(ui)),
+        "proposal": _proposal(name, copies, platforms, ui_files_for(ui, root), routes_for(ui)),
         "enclosing": enclosing, "confidence": conf, "reasons": reasons,
     }
 
@@ -832,10 +849,46 @@ def _enclosing_reason(enc: dict) -> str:
 NO_GIT_REASON = "not a git repo: the folder you opened is taken as the project root (git is optional)"
 
 
-def _proposal(name: str, copies: List[str], platforms: List[str], ui_files: Optional[str] = None) -> dict:
+def routes_for(ui: List[dict]) -> Optional[str]:
+    """PLUMB.md `Routes:` as detect guesses it (a hint only: the agent checks the project and the user confirms): the
+    web packages' route guesses joined, None when there is none (no web package, or no page folder found)."""
+    found = [r for u in ui for r in (u.get("routes") or [])]
+    return ", ".join(found) if found else None
+
+
+def guess_routes(rel: str, framework: str, deps: Dict[str, str], base: Path) -> List[str]:
+    """Where this web package's routes probably are, as `Routes:` entries (repo-relative): Next.js app/ or pages/
+    (also under src/), SvelteKit src/routes, Nuxt pages/, a Vue Router or Angular routes file. A guess from the usual
+    places; the init skill looks and asks."""
+    out: List[str] = []
+
+    def add(sub: str, kind: str, folder: bool = True) -> None:
+        if (base / sub).is_dir() if folder else (base / sub).is_file():
+            out.append(join(rel, sub) + " (" + kind + ")")
+
+    if framework == "next":
+        for sub, kind in (("src/app", "next-app"), ("app", "next-app"), ("src/pages", "next-pages"),
+                          ("pages", "next-pages")):
+            add(sub, kind)
+    elif framework == "svelte" and "@sveltejs/kit" in deps:
+        add("src/routes", "sveltekit")
+    elif framework == "vue" and "nuxt" in deps:
+        add("app/pages", "nuxt")
+        add("pages", "nuxt")
+    elif framework == "vue":
+        for sub in ("src/router/index.ts", "src/router/index.js", "src/router.ts", "src/router.js"):
+            add(sub, "router", folder=False)
+    elif framework == "angular":
+        for sub in ("src/app/app.routes.ts", "src/app/app-routing.module.ts"):
+            add(sub, "angular", folder=False)
+    return out[:1] if framework == "vue" and "nuxt" not in deps else out
+
+
+def _proposal(name: str, copies: List[str], platforms: List[str], ui_files: Optional[str] = None,
+              routes: Optional[str] = None) -> dict:
     return {
         "project": name, "skill_dir": ".claude/skills/" + name + "-design-system", "plumb_md": "PLUMB.md",
-        "docs_dir": "docs/design", "copies": copies, "platforms": platforms, "ui_files": ui_files,
+        "docs_dir": "docs/design", "copies": copies, "platforms": platforms, "ui_files": ui_files, "routes": routes,
         "alternatives": [".github/skills/" + name + "-design-system", "~/.claude/skills/" + name + "-design-system"],
     }
 
@@ -919,7 +972,12 @@ def human(r: dict) -> str:
         if state:
             lines.append("  " + state)
     ui_files = p.get("ui_files") or default_ui_files(p.get("platforms") or [])
-    lines.append("  UI files   " + ui_files + "   (PLUMB.md: what the audit and the checks cover)")
+    lines.append("  UI files   " + ui_files + "   (a guess from the usual folders: check it covers the UI code; "
+                 "PLUMB.md: what the audit and the checks cover, globs from the project root)")
+    if "web" in (p.get("platforms") or []):
+        lines.append("  Routes     " + (p.get("routes") or "not found: look for the app's page folders or router files")
+                     + "   (a guess: check where the pages are; PLUMB.md: the prototype-first check and the audit "
+                     "read routes only from here)")
     for u in r["ui_packages"]:
         if not u["supported"]:
             lines.append("  not supported yet: " + u["path"] + " (" + u["note"] + ")")

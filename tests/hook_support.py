@@ -60,6 +60,7 @@ Edit check: {edit}
 End-of-turn check: {stop}
 Themes: light-and-dark          (light-and-dark | light-only: an explicit decision)
 UI files: app/**, components/** · *.tsx *.jsx *.ts *.css
+Routes: app (next-app)
 Allowed raw values: components/ui/**
 
 ## Commands
