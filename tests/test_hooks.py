@@ -1572,13 +1572,17 @@ def test_the_same_failure_is_logged_once_a_day(launcher, tmp_path, proj):
     assert [ln.split(" ", 4)[3] for ln in log_lines(tmp_path)] == ["pre_edit.py", "session_start.py"]
 
 
-def test_session_start_logs_a_crashed_audit(launcher, tmp_path, proj):
+@pytest.mark.parametrize("source, given", [
+    ("raise RuntimeError('broken')\n", "Given: audit.py --json crashed (exit 1): RuntimeError: broken"),
+    ("def broken(:\n", "Given: audit.py --json crashed (exit 1): SyntaxError"),  # no "Traceback" header
+])
+def test_session_start_logs_a_crashed_audit(launcher, tmp_path, proj, source, given):
     plugin = plugin_copy(tmp_path)
-    write(plugin / "assets/skill/scripts/audit.py", "raise RuntimeError('broken')\n")
+    write(plugin / "assets/skill/scripts/audit.py", source)
     r = session_start(launcher, tmp_path, proj, env={"CLAUDE_PLUGIN_ROOT": str(plugin)})
     assert "audit not run" in context(r)
     lines = log_lines(tmp_path)
-    assert any("Given: audit.py --json crashed (exit 1): RuntimeError: broken" in ln for ln in lines), lines
+    assert any(given in ln for ln in lines), lines
     assert all("session_start.py" in ln and "event SessionStart" in ln for ln in lines), lines
 
 

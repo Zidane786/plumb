@@ -53,6 +53,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib as H  # noqa: E402
 
 AUDIT_TIMEOUT = 2.0
+# The last stderr line of a Python crash (a SyntaxError prints no "Traceback" header); a script's own refusal is
+# "error: …" (exit 2), the project's problem, never this.
+CRASH_LINE = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Exception|Interrupt|Exit)\b")
 TOKENS_TIMEOUT = 5.0
 
 
@@ -88,8 +91,8 @@ def _finish(proc: Optional[subprocess.Popen], timeout: float, label: str = "") -
                       f"{label} finishes within {timeout:g} s", category="timeout")
         return None
     errors = err.decode("utf-8", "replace")
-    if proc.returncode not in (0, 1, 2) or "Traceback (most recent call last)" in errors:
-        tail = [ln.strip() for ln in errors.splitlines() if ln.strip()][-1:] or ["(no output)"]
+    tail = [ln.strip() for ln in errors.splitlines() if ln.strip()][-1:] or ["(no output)"]
+    if proc.returncode not in (0, 1, 2) or "Traceback (most recent call last)" in errors or CRASH_LINE.match(tail[0]):
         H.log_failure(f"{label} crashed (exit {proc.returncode}): {tail[0]}",
                       f"{label} exits 0 or 1 with its normal output")
     return proc.returncode, out.decode("utf-8", "replace")
