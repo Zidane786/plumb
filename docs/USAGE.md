@@ -742,8 +742,8 @@ A record (every field; "unknown" rather than a guess):
 ```
 
 A crash adds the exit code and the last lines of the traceback; a hook mistake adds the event, tool, path, exit code
-and its exact message. The categories: missed structure, wrong guess, false positive, missed problem, crash, confusing
-message, skill gap, docs mismatch, CLI quirk. A record holds paths, `file:line`, the repo's shape and short exact
+and its exact message. The categories: missed structure, wrong guess, false positive, missed problem, crash, timeout,
+confusing message, skill gap, docs mismatch, CLI quirk. A record holds paths, `file:line`, the repo's shape and short exact
 text: never your source code, never a secret. In Kiro the command is `/plumb-feedback`. More:
 [Plumb's own mistakes: the feedback log](#plumbs-own-mistakes-the-feedback-log).
 
@@ -1143,8 +1143,11 @@ project, never committed, never sent anywhere.
 - `hooks.md`: the hooks write their own failures here, one line each, when one fails open (a crash, a plugin script
   it cannot load, a script that timed out): the hook, the Plumb version, the CLI, the OS, the project folder's name, the
   event, tool and path, the exit code, and `Given: … · Expected: …`. The same failure is written once a day; the file
-  stops growing at 512 KB. It is private: `~/.plumb` and `feedback/` are created 0700 and `hooks.md` 0600, and nothing
-  is written through a symlink (see `SECURITY.md`). A problem with the log never blocks or fails a hook. Your
+  stops growing at 512 KB; a timeout (a slow repo) is written once per project and Plumb version. The message is
+  redacted: quoted literals become `'<redacted>'`, absolute paths outside the project keep only their base name, and
+  token-like strings and secret values become `<redacted>`. It is private: `~/.plumb` and `feedback/` are kept 0700
+  (your own folders with wider permissions are tightened, e.g. after a umask of 002) and `hooks.md` is 0600; nothing
+  is written through a symlink or into someone else's folder (see `SECURITY.md`). A problem with the log never blocks or fails a hook. Your
   project's own broken files (a tokens file that is not JSON) are not Plumb mistakes and are not logged.
 - `handled.md`: the index `/plumb:feedback` keeps when you mark a group handled (`handled in <version>`).
 
@@ -1379,10 +1382,10 @@ A teammate upgraded first. Update your plugin (`claude plugin marketplace update
 ---
 
 **The hooks never write `~/.plumb/feedback/hooks.md`, even after a crash note.**
-The log is private: if `~/.plumb` or `~/.plumb/feedback` is a symlink, someone else's, or writable by others (for
-example created with a `0775` umask), the hooks write nothing there. Make both folders yours and private
-(`chmod 700 ~/.plumb ~/.plumb/feedback` on macOS and Linux) and the next failure is logged. A full log (512 KB) is
-left alone too: move the old `hooks.md` aside.
+The log is private: if `~/.plumb` or `~/.plumb/feedback` is a symlink or someone else's folder, the hooks write
+nothing there (your own folders with wider permissions are made 0700 instead). Remove the link, or make the folders
+yours, and the next failure is logged. A full log (512 KB) is left alone too: move the old `hooks.md` aside. A
+project's own broken file (a tokens file that is not JSON) is not a Plumb mistake and is never logged.
 
 ## FAQ
 

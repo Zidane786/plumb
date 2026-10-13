@@ -487,8 +487,8 @@ keeps it.
 - **Log mode** (the agent loads it after correcting a Plumb result, or the user types `/plumb:feedback log …`): one
   record with the fields When (date, Plumb version, CLI, OS) · Project shape · Where it failed (file → function, rule
   or step) · Command (exact, with cwd) · Given (exact output) · Expected · Evidence (`file:line`, match counts) · Repro
-  (minimal repo shape) · Category (missed structure | wrong guess | false positive | missed problem | crash | confusing
-  message | skill gap | docs mismatch | CLI quirk) · Suggested fix in Plumb · Handled here; a crash adds the exit code
+  (minimal repo shape) · Category (missed structure | wrong guess | false positive | missed problem | crash | timeout
+  | confusing message | skill gap | docs mismatch | CLI quirk; `timeout` added in review, for the hooks' log) · Suggested fix in Plumb · Handled here; a crash adds the exit code
   and the traceback's last lines, a hook mistake its event, tool, path, exit code and message. Written with the
   agent's normal file-write tool: the CLI's permission mode governs; Plumb adds no question. Then one line to the user
   and back to the task.
@@ -827,10 +827,14 @@ snapshots go in the OS temp folder keyed by project and session, never in the re
 read from `PLUMB.md` on every run. **The hook log** (§3.10): a hook that fails open (a crash, a plugin script it
 cannot load, a session-start script that times out or crashes) also appends one line to
 `~/.plumb/feedback/hooks.md`, in Given / Expected form with the hook, Plumb version, CLI, OS, project folder name,
-event, tool, project-relative path and exit code; only in a project with a `PLUMB.md`, the same line once a day, at
-most 512 KB in all. It is private like the snapshot folder: `~/.plumb` and `feedback/` created 0700, `hooks.md`
-0600, nothing written when either folder is a symlink (or reparse point), someone else's or writable by others, or
-when `hooks.md` is a symlink; a `PlumbError` (the project's own broken files) is not logged; the log never fails or
+event, tool, project-relative path and exit code; only in a project with a `PLUMB.md`, the same line once a day (a
+timeout once per project and Plumb version), at most 512 KB in all. Given and Expected are redacted (`redact`: quoted
+literals over three characters → `'<redacted>'`, absolute paths outside the project → their base name, token-like
+strings and key=value secrets → `<redacted>`). It is private like the snapshot folder: `~/.plumb` and `feedback/`
+created 0700 (the user's own wider folders are tightened to 0700 through an `O_NOFOLLOW` handle, by the hooks and at
+every session start; none is created there), `hooks.md` 0600 and created with its header already in it (a temporary
+file hard-linked into place), nothing written when either folder is a symlink (or reparse point) or someone else's,
+or when `hooks.md` is a symlink; a `PlumbError` (the project's own broken files) is not logged; the log never fails or
 blocks a hook and never prints. Session start's last line is the pointer to `/plumb:feedback`. The setup marker `<root>/.plumb-tmp/setup-in-progress` is an
 unprotected soft switch: anything that can write in the project can create it, and it turns off
 only the end-of-turn check (never the edit check or the guards), for at most 6 hours from its

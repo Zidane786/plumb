@@ -34,7 +34,8 @@ changed or untracked now, plus HEAD; elsewhere every UI and screen file's modifi
 <OS temp>/plumb/<project hash>-<session id>.json, unless the session (a resume) already has one, and deletes snapshots
 older than 7 days. Never fails the session: any problem leaves out that part (at most one stderr line), exit 0. A
 crash or a timeout that failed open is also written, one line, to ~/.plumb/feedback/hooks.md (H.log_failure), for
-Plumb's developers; never into the project.
+Plumb's developers; never into the project. An existing ~/.plumb/feedback of the user's own is made 0700 again
+(H.feedback_dir(create=False): the agent's records may have created it under a wider umask); none is created.
 Standard library only.
 """
 
@@ -229,6 +230,7 @@ def main() -> int:
         lines += setup_notes(proj)
         snapshot(proj, p.session_id)
     lines.append(FEEDBACK_POINTER)
+    H.feedback_dir(create=False)  # an existing ~/.plumb/feedback of the user's own is kept private (0700); none is made
     if H.kiro_run():
         stale = kiro_stale_note(proj, p)
         if stale:

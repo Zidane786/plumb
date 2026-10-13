@@ -25,7 +25,8 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
 2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
    else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
    made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
-   **Status writes no file at all**, not even a scratch file (no `/tmp`, no `.plumb-tmp/`, nothing next to the repo).
+   **Status writes no file at all**, not even a scratch file (no `/tmp`, no `.plumb-tmp/`, nothing next to the repo);
+   it writes nothing itself: recording a Plumb mistake goes through /plumb:feedback (its own skill, outside the project).
    Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Platforms:`, `UI packages:`, `Python:` (**PY**, `python3`
    when unset), `## Checks` (`Edit check`, `End-of-turn check`, `Themes`), `Prototype sync`, the last

@@ -976,7 +976,7 @@ FEEDBACK_DESCRIPTION = ("Record a mistake in Plumb itself: a Plumb script, hook,
                         "— those are audit findings.")
 FEEDBACK_POINTER = ("when a plumb script or hook is wrong and you correct it, record the plumb mistake with "
                     "/plumb:feedback.")
-FEEDBACK_CATEGORIES = ("missed structure", "wrong guess", "false positive", "missed problem", "crash",
+FEEDBACK_CATEGORIES = ("missed structure", "wrong guess", "false positive", "missed problem", "crash", "timeout",
                        "confusing message", "skill gap", "docs mismatch", "cli quirk")
 FEEDBACK_FIELDS = ("**when:**", "**project shape:**", "**where it failed:**", "**command:**", "**given:**",
                    "**expected:**", "**evidence:**", "**repro:**", "**category:**", "**suggested fix in plumb:**",
@@ -1022,7 +1022,7 @@ def test_every_skill_points_to_plumb_feedback(path: Path) -> None:
 
 
 POINTER_FILES = (skill_files() + sorted(REFERENCE.glob("*.md")) + [
-    PLUGIN / "templates/PLUMB.md", PLUGIN / "templates/agents-row.md", PLUGIN / "hooks/session_start.py",
+    PLUGIN / "assets/skill/SKILL.md.tmpl", PLUGIN / "templates/PLUMB.md", PLUGIN / "templates/agents-row.md", PLUGIN / "hooks/session_start.py",
     PLUGIN / "hooks/_hooklib.py"])
 
 
@@ -1036,6 +1036,21 @@ def test_every_feedback_pointer_says_plumb_mistakes(path: Path) -> None:
         near = flat[max(0, m.start() - 220):m.end() + 60]
         assert "plumb mistake" in near or "plumb's own mistake" in near, \
             f"{path.relative_to(REPO)}: a /plumb:feedback pointer must say 'Plumb mistakes': ...{near}..."
+
+
+def test_the_project_skill_template_points_to_feedback() -> None:
+    # Ruling (review): everyday UI work reads the project's own design-system skill; one line, the same wording.
+    assert FEEDBACK_POINTER in _flat(PLUGIN / "assets/skill/SKILL.md.tmpl")
+    assert "/plumb:feedback" in _flat(PLUGIN / "upgrades/1.0.0.md").split("### 3.", 1)[1]
+
+
+def test_status_writes_nothing_itself_even_for_feedback() -> None:
+    flat = _flat(SKILLS / "status/SKILL.md").replace("*", "")
+    assert "recording a plumb mistake goes through /plumb:feedback" in flat
+
+
+def test_create_checklist_still_checks_who_decided() -> None:
+    assert "with who decided" in _flat(SKILLS / "create/SKILL.md")
 
 
 def test_templates_and_session_start_point_to_feedback() -> None:

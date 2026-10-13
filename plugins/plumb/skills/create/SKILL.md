@@ -72,8 +72,7 @@ it is right. **STOP: ask, wait for the answer.**
 ## 4. Platforms and stack — STOP
 
 Web, iOS (SwiftUI), Android (Compose), multi-select; the framework and styling found (`found: Tailwind v4
-(app/globals.css:1)`) recommended (interview.md B). React Native is not supported in 1.0.0: offer design only, web,
-iOS or Android, never React Native components. **STOP: ask, wait for the answer.**
+(app/globals.css:1)`) recommended; React Native → interview.md B. **STOP: ask, wait for the answer.**
 
 ## 5. Design decisions, one each — STOP after each
 
@@ -176,7 +175,8 @@ Check each line yourself; one that does not hold is not done: go back to its che
 - [ ] A direction was picked (8); the token set (9), the dry-run list (10), the stylesheet diff (11) and the mapping
       (12) were OK'd where they applied; the real scaffold ran with `--confirm` from that dry run
 - [ ] Contrast evidence: `references/dark-mode.md` holds the computed contrast block; no `contrast` error is left
-- [ ] Components written by you; their audit and `build-tokens.py --check` exit 0; `decisions.md` has every decision
+- [ ] Components written by you; their audit and `build-tokens.py --check` exit 0; `docs/design/decisions.md` has an
+      entry per decision with who decided
 - [ ] A first prototype screen exists in `docs/design/prototype/screens/`, or the user chose "later" in 16
 - [ ] `motion.reduced`, `web.theme_switch` (Tailwind: `web.reset_palette`) are in the tokens file; nothing written
       outside `<root>`, nothing installed or downloaded

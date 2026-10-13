@@ -74,8 +74,8 @@ The record (every field; write "unknown" rather than guess):
 - **Expected:** <what was right, and how you know>
 - **Evidence:** <file:line, match counts; e.g. `src/**` matched 0 files, `frontend/src/**` matches 48>
 - **Repro:** <the smallest repo shape that shows it: folders, one or two files, the command>
-- **Category:** <missed structure | wrong guess | false positive | missed problem | crash | confusing message |
-  skill gap | docs mismatch | CLI quirk>
+- **Category:** <missed structure | wrong guess | false positive | missed problem | crash | timeout |
+  confusing message | skill gap | docs mismatch | CLI quirk>
 - **Suggested fix in Plumb:** <the file and the change, in a sentence>
 - **Handled here:** <what you did in this project instead: the (corrected: …) you showed, a setting recorded>
 ```

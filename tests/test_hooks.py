@@ -1633,14 +1633,54 @@ def test_a_symlinked_hooks_md_is_never_followed(launcher, tmp_path, proj):
     assert read(victim) == "keep\n"
 
 
-@pytest.mark.skipif(not hasattr(os, "getuid"), reason="requires POSIX: permission bits")
-def test_a_feedback_folder_writable_by_others_is_never_used(launcher, tmp_path, proj):
+def _make_open_folders(tmp_path: Path, mode: int) -> Path:
+    """~/.plumb/feedback as the agent's write tool makes it under a umask of 002 (0775), or wider: the user's own."""
     folder = user_home(tmp_path) / ".plumb" / "feedback"
-    folder.mkdir(parents=True)
-    os.chmod(str(folder.parent), 0o700)
-    os.chmod(str(folder), 0o777)
+    old = os.umask(0o002)
+    try:
+        folder.mkdir(parents=True)
+    finally:
+        os.umask(old)
+    os.chmod(str(folder.parent), mode)
+    os.chmod(str(folder), mode)
+    return folder
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="requires POSIX: permission bits")
+@pytest.mark.parametrize("mode", [0o775, 0o777])
+def test_your_own_open_feedback_folder_is_made_private_then_used(launcher, tmp_path, proj, mode):
+    # Review I1: under umask 002 the agent's first record leaves 0775 folders; the hooks must still log (privately).
+    folder = _make_open_folders(tmp_path, mode)
+    assert stat_mode(folder) == mode
     allowed(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW, env=broken_audit(tmp_path)))
-    assert list(folder.iterdir()) == []
+    assert stat_mode(folder.parent) == 0o700 and stat_mode(folder) == 0o700
+    assert len(log_lines(tmp_path)) == 1 and stat_mode(hooks_log(tmp_path)) == 0o600
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="requires POSIX: permission bits")
+def test_session_start_makes_an_existing_feedback_folder_private_and_creates_none(launcher, tmp_path, proj):
+    folder = _make_open_folders(tmp_path, 0o775)
+    record = folder / "2026-10-13-detect-missed-structure-demo.md"
+    record.write_text("# detect.py — missed structure\n", encoding="utf-8")
+    context(session_start(launcher, tmp_path, proj, env={"PLUMB_AUDIT_TIMEOUT": "0"}))
+    assert stat_mode(folder.parent) == 0o700 and stat_mode(folder) == 0o700
+    assert sorted(p.name for p in folder.iterdir()) == [record.name], "tightened, nothing written"
+
+
+def test_secrets_and_paths_in_a_crash_message_never_reach_the_log(launcher, tmp_path, proj):
+    # Review I2: exception messages quote the data they choked on; hooks.md keeps the shape, not the data.
+    plugin = plugin_copy(tmp_path)
+    secret_path = "/home/alice/private/customers.csv" if os.sep == "/" else "C:\\Users\\alice\\private\\customers.csv"
+    write(plugin / "assets/skill/scripts/audit.py",
+          "raise ValueError(\"could not convert string to float: 'sk-live-SECRET1234567890abcd' in "
+          + secret_path.replace("\\", "\\\\") + " token=hunter2hunter2 ghp_0123456789abcdefghijABCDEFGHIJ012345 "
+          "AKIAABCDEFGHIJKLMNOP " + "f" * 40 + "\")\n")
+    context(session_start(launcher, tmp_path, proj, env={"CLAUDE_PLUGIN_ROOT": str(plugin)}))
+    text = read(hooks_log(tmp_path))
+    assert log_lines(tmp_path), text
+    for leak in ("SECRET", "sk-live", "alice", "private", "hunter2", "ghp_0123", "AKIAABCD", "f" * 40):
+        assert leak not in text, (leak, text)
+    assert "<redacted>" in text and "customers.csv" in text, "the shape stays: a redacted literal, a base name"
 
 
 def test_an_unusable_feedback_folder_never_blocks(launcher, tmp_path, proj):
@@ -1678,6 +1718,101 @@ def test_log_failure_in_process(H, tmp_path, monkeypatch, proj):
     path.write_text("# Plumb hook failures\n\n", encoding="utf-8")
     H.log_failure("broken tokens", "y", exc=type("PlumbError", (Exception,), {})("error: x"))
     assert read(path) == "# Plumb hook failures\n\n"
+
+
+@pytest.fixture
+def log_home(H, tmp_path, monkeypatch, proj) -> Path:
+    """An in-process log_failure set up for `proj`, writing under its own home; returns hooks.md's path."""
+    home = tmp_path / "in-process-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setitem(H._LOG_CONTEXT, "project", H.Project(proj))
+    monkeypatch.setitem(H._LOG_CONTEXT, "payload", None)
+    return home / ".plumb" / "feedback" / "hooks.md"
+
+
+def test_redact_keeps_the_shape_and_drops_the_data(H, proj):
+    root = os.path.realpath(str(proj))
+    outside = "/Users/alice/secret/notes.txt" if os.sep == "/" else "C:\\Users\\alice\\secret\\notes.txt"
+    text = (f"could not convert string to float: 'sk-live-SECRET1234567890' at {outside}, "
+            f"in {os.path.join(root, 'app', 'page.tsx')}: \"Hello, Ada Lovelace\" KeyError: 'x' "
+            "password=hunter2 api_key: abc123def Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc "
+            "ghp_0123456789abcdefghijABCDEFGHIJ012345 xoxb-123456789012-abcdefghij AKIAABCDEFGHIJKLMNOP "
+            + "a" * 48 + " " + "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0123456789== "
+            + "No such file: '" + root + "/components/x.tsx'")
+    out = H.redact(text, root)
+    assert "'components/x.tsx'" in out, "a quoted project path is kept, project-relative"
+    for leak in ("SECRET", "sk-live", "alice", "secret/", "Ada", "hunter2", "abc123def", "eyJhbG", "ghp_0123",
+                 "xoxb-1234", "AKIAABCD", "a" * 48, "QUJDREVG"):
+        assert leak not in out, (leak, out)
+    assert "'<redacted>'" in out and "notes.txt" in out, out
+    assert "app/page.tsx" in out.replace("\\", "/"), "a path inside the project stays, project-relative"
+    assert "KeyError: 'x'" in out, "a short literal (a key name) is kept"
+    assert "password=<redacted>" in out and "api_key: <redacted>" in out and "Bearer <redacted>" in out, out
+
+
+def test_timeouts_are_logged_once_per_project_and_version_crashes_once_a_day(H, log_home):
+    yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 2 * 24 * 3600))
+    today = time.strftime("%Y-%m-%d")
+    H.log_failure("audit.py --json did not finish within 2 s", "it finishes", category="timeout")
+    H.log_failure("the checks were skipped (KeyError)", "they run")
+    log_home.write_text(read(log_home).replace(f"- {today} ", f"- {yesterday} "), encoding="utf-8")
+    H.log_failure("audit.py --json did not finish within 2 s", "it finishes", category="timeout")
+    H.log_failure("the checks were skipped (KeyError)", "they run")
+    lines = [ln for ln in read(log_home).splitlines() if ln.startswith("- ")]
+    assert sum(" · timeout · " in ln for ln in lines) == 1, lines
+    assert sum(" · crash · " in ln for ln in lines) == 2, lines
+
+
+def test_the_header_is_written_once_when_another_writer_creates_the_file_first(H, log_home, monkeypatch):
+    real_link = os.link
+
+    def raced(src, dst, *a, **kw):  # another hook creates hooks.md (header and its line) just before this one
+        if not os.path.lexists(dst):
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.write(fd, (H.FEEDBACK_HEADER + "- 2026-01-01 00:00 other line\n").encode("utf-8"))
+            os.close(fd)
+        return real_link(src, dst, *a, **kw)
+
+    monkeypatch.setattr(H.os, "link", raced)
+    H.log_failure("first", "y")
+    text = read(log_home)
+    assert text.count("# Plumb hook failures") == 1 and text.startswith("# Plumb hook failures")
+    lines = [ln for ln in text.splitlines() if ln.startswith("- ")]
+    assert len(lines) == 2 and "Given: first" in lines[-1], text
+    assert not [p for p in log_home.parent.iterdir() if p.name != "hooks.md"], "no temporary file left"
+
+
+def test_two_hooks_writing_at_once_give_one_header(tmp_path, proj):
+    home = tmp_path / "race-home"
+    home.mkdir()
+    go = tmp_path / "go"
+    script = tmp_path / "writer.py"
+    script.write_text(
+        "import importlib.util, os, sys, time\n"
+        f"spec = importlib.util.spec_from_file_location('h', {str(HOOKS / '_hooklib.py')!r})\n"
+        "H = importlib.util.module_from_spec(spec); spec.loader.exec_module(H)\n"
+        f"H._LOG_CONTEXT['project'] = H.Project(H.Path({str(proj)!r}))\n"
+        f"while not os.path.exists({str(go)!r}): time.sleep(0.001)\n"
+        "H.log_failure('writer ' + sys.argv[1], 'y')\n", encoding="utf-8")
+    import subprocess as sp
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    procs = [sp.Popen([sys.executable, str(script), str(n)], env=env) for n in range(8)]
+    time.sleep(0.5)
+    go.write_text("", encoding="utf-8")
+    assert all(p.wait(timeout=60) == 0 for p in procs)
+    text = read(home / ".plumb" / "feedback" / "hooks.md")
+    assert text.startswith("# Plumb hook failures") and text.count("# Plumb hook failures") == 1, text
+    assert sorted(ln.rsplit("Given: writer ", 1)[1][0] for ln in text.splitlines() if "Given: writer " in ln) == \
+        [str(n) for n in range(8)]
+
+
+def test_the_suite_never_sees_the_real_home():
+    import conftest
+    real = conftest._REAL_HOME[0]
+    assert os.path.realpath(str(Path.home())) != os.path.realpath(real)
+    assert os.environ.get("PLAYWRIGHT_BROWSERS_PATH"), "browser tests still find the real browser cache"
 
 
 def test_log_failure_needs_a_plumb_project(H, tmp_path, monkeypatch):

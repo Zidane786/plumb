@@ -146,8 +146,9 @@ TEST.md                               hands-on test guide for any machine
   `_hooklib.py`), built from Kiro's documented formats; the live check on a real Kiro is pending.
 - **Plumb's own mistakes go to `/plumb:feedback`.** Every skill keeps the pointer next to "Scripts give evidence,
   not answers"; every pointer says "Plumb mistakes" / "Plumb's own mistakes"; the log lives in `~/.plumb/feedback/`,
-  never in a project, and the hooks' own log (`hooks.md`) stays private and can never fail or block a hook. Tests
-  that run hooks set their own `HOME`/`USERPROFILE` (`hook_env`), so they never write your real log. Read your own
+  never in a project, and the hooks' own log (`hooks.md`) stays private and redacted and can never fail or block a
+  hook. `tests/conftest.py` gives every test a throwaway `HOME`/`USERPROFILE` (keeping `PLAYWRIGHT_BROWSERS_PATH` on
+  the real browser cache) and fails the run if your real `~/.plumb` changed; `hook_env` adds a per-test home. Read your own
   log with `/plumb:feedback` before planning fixes (docs/USAGE.md, "How to read findings").
 - **Lean skills.** `SKILL.md` files stay short; details go in `reference/` and are loaded only
   when needed.

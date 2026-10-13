@@ -45,7 +45,7 @@ are skipped with one stderr line: hooks fail open. Snapshots live in a private p
 A hook that fails open (a crash, a script it cannot load, a timeout) also writes one line to the Plumb feedback log,
 ~/.plumb/feedback/hooks.md (%USERPROFILE%\\.plumb\\feedback on Windows): Plumb's own mistakes, for Plumb's developers,
 read with /plumb:feedback; never written into the project, private (0700 folders, a 0600 file, no symlink followed),
-and never able to fail or block the hook (log_failure).
+redacted (redact), and never able to fail or block the hook (log_failure).
 
 Python 3.9+, standard library only.
 """
@@ -929,24 +929,48 @@ def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
 FEEDBACK_HOOKS = "hooks.md"
 FEEDBACK_MAX_BYTES = 512 * 1024  # a bigger hooks.md is left alone: the log never grows without bound
 FEEDBACK_FIELD = 240  # characters kept of each free-text field (one line each, never a source dump)
+FEEDBACK_LINE = 1200  # characters kept of a whole line
 FEEDBACK_HEADER = ("# Plumb hook failures\n\n"
                    "Written by Plumb's hooks when one failed open (a crash or a timeout), one line each in Given / "
                    "Expected form. Plumb's own mistakes only; read them with /plumb:feedback (Kiro: /plumb-feedback).\n\n")
 
 
-def feedback_dir() -> Optional[Path]:
+def _make_private(folder: Path) -> None:
+    """Tighten a folder of ours to 0700 (POSIX): a real directory (never through a symlink: it is opened with
+    O_NOFOLLOW and changed through that handle) owned by this user. The agent's write tool may have made it 0775 under
+    a umask of 002; someone else's folder or a symlink is left alone (and then refused by _ours)."""
+    if not hasattr(os, "getuid") or not hasattr(os, "fchmod"):
+        return
+    st = os.lstat(str(folder))
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or not st.st_mode & 0o077:
+        return
+    fd = os.open(str(folder), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        if os.fstat(fd).st_uid == os.getuid():
+            os.fchmod(fd, 0o700)
+    finally:
+        os.close(fd)
+
+
+def feedback_dir(create: bool = True) -> Optional[Path]:
     """The Plumb feedback folder: ~/.plumb/feedback (%USERPROFILE%\\.plumb\\feedback on Windows), outside every project.
-    ~/.plumb and feedback/ are created 0700; None when either is a symlink (or on Windows any reparse point), someone
-    else's or writable by others (the same rules as snapshot_dir), or the home folder is missing."""
+    ~/.plumb and feedback/ are created 0700 (create=False: only an existing one is used), and made 0700 when they are
+    this user's own real folders with wider permissions (_make_private). None when either is missing (create=False), a
+    symlink (or on Windows any reparse point), someone else's or still writable by others (the same rules as
+    snapshot_dir), or the home folder is missing."""
     try:
         home = Path.home()
         if not home.is_dir():
             return None
         for folder in (home / ".plumb", home / ".plumb" / "feedback"):
-            try:
-                os.mkdir(str(folder), 0o700)
-            except FileExistsError:
-                pass
+            if create:
+                try:
+                    os.mkdir(str(folder), 0o700)
+                except FileExistsError:
+                    pass
+            elif not os.path.lexists(str(folder)):
+                return None
+            _make_private(folder)
             if not _ours(os.lstat(str(folder)), folder=True):
                 return None
         return home / ".plumb" / "feedback"
@@ -954,8 +978,41 @@ def feedback_dir() -> Optional[Path]:
         return None
 
 
-def _one_line(text: object) -> str:
-    out = " ".join(str(text).split()).replace("·", "-")
+_LITERAL = re.compile(r"""(?<![\w])(['"])(?:(?!\1)[^\n]){4,}?\1(?![\w])""")
+_ABS_POSIX = re.compile(r"""(?<![\w.~/-])/(?:[^\s'"<>|:;,()/]+/)+([^\s'"<>|:;,()/]+)""")
+_ABS_WINDOWS = re.compile(r"""(?<![\w])[A-Za-z]:[\\/](?:[^\s'"<>|:;,()\\/]+[\\/])*([^\s'"<>|:;,()\\/]+)""")
+_BEARER = re.compile(r"\bBearer\s+[^\s,;'\"]+", re.I)
+_KEY_VALUE = re.compile(r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
+                        r"client[_-]?secret|auth(?:orization)?)(\s*[=:]\s*)(?!Bearer\b)(?!<redacted>)[^\s,;'\"]+")
+_TOKENS = re.compile(r"\b(?:(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|"
+                     r"(?:AKIA|ASIA)[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*){0,2}|[0-9a-fA-F]{32,})\b")
+_LONG_RUN = re.compile(r"(?<![\w+/=-])[A-Za-z0-9+_-]{32,}={0,2}")
+
+
+def redact(text: str, root: str = "") -> str:
+    """A failure message with the data taken out and its shape kept, for hooks.md: paths inside the project become
+    project-relative (kept, quoted or not); other quoted literals longer than three characters become '<redacted>' (a short one such as a key name
+    stays); other absolute paths keep only their base name (<path>/name); token-like strings (sk-…, ghp_…, xox…-,
+    AKIA…, a JWT, long hex or base64 runs) and the values of key=value secrets (password, token, api_key, Bearer …)
+    become <redacted>."""
+    out = str(text).replace("\x00", "")
+    for base in sorted({root, os.path.realpath(root)}, key=len, reverse=True) if root else ():
+        for sep in {os.sep, "/"}:
+            out = out.replace(base + sep, "\x00")  # marks a project path: kept, even quoted
+        out = out.replace(base, "<project>")
+    out = _LITERAL.sub(lambda m: m.group(0) if m.group(0)[1:2] == "\x00" else
+                       f"{m.group(1)}<redacted>{m.group(1)}", out).replace("\x00", "")
+    out = _ABS_WINDOWS.sub(r"<path>/\1", out)
+    out = _ABS_POSIX.sub(r"<path>/\1", out)
+    out = _BEARER.sub("Bearer <redacted>", out)
+    out = _KEY_VALUE.sub(r"\1\2<redacted>", out)
+    out = _TOKENS.sub("<redacted>", out)
+    return _LONG_RUN.sub(lambda m: "<redacted>" if re.search(r"\d", m.group(0)) and re.search(r"[A-Za-z]", m.group(0))
+                         else m.group(0), out)
+
+
+def _one_line(text: object, root: str = "") -> str:
+    out = " ".join(redact(" ".join(str(text).split()), root).split()).replace("·", "-")
     return out if len(out) <= FEEDBACK_FIELD else out[:FEEDBACK_FIELD - 1] + "…"
 
 
@@ -986,13 +1043,47 @@ def _log_project() -> Optional[Path]:
         return None
 
 
+_NEW_FILE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+
+
+def _create_with(path: Path, data: bytes) -> bool:
+    """Create `path` already holding `data` (the header and the first line), atomically: a private temporary file is
+    linked into place, so no other hook ever sees hooks.md without its header. False when it exists already (another
+    hook made it first: append instead)."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
+    fd = os.open(str(tmp), _NEW_FILE, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        try:
+            os.link(str(tmp), str(path))
+            return True
+        except FileExistsError:
+            return False
+        except (OSError, AttributeError, NotImplementedError):  # no hard links here: one exclusive create instead
+            try:
+                fd2 = os.open(str(path), _NEW_FILE, 0o600)
+            except FileExistsError:
+                return False
+            with os.fdopen(fd2, "wb") as fh:
+                fh.write(data)
+            return True
+    finally:
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
+
+
 def log_failure(given: str, expected: str, category: str = "crash", exc: Optional[BaseException] = None,
                 exit_code: int = 0) -> None:
     """Append one line about a hook that failed open to ~/.plumb/feedback/hooks.md (Plumb's own mistakes, for Plumb's
-    developers; never written into the project). Only in a project with a PLUMB.md; the same line (hook, project,
-    Given) is written once a day. Never raises, never prints, never blocks: any problem (no private folder, a symlinked
-    or foreign hooks.md, a full log) leaves the log out. A PlumbError is the scripts' actionable refusal about the
-    project's own files (a broken tokens file, a snapshot that is not valid): the project's problem, never logged."""
+    developers; never written into the project). Only in a project with a PLUMB.md. Given and Expected are redacted
+    (redact) and cut to one short line. The same line (hook, project, Given) is written once a day; a timeout once per
+    project and Plumb version (a slow repo is not news every day). Never raises, never prints, never blocks: any
+    problem (no private folder, a symlinked or foreign hooks.md, a full log) leaves the log out. A PlumbError is the
+    scripts' actionable refusal about the project's own files (a broken tokens file, a snapshot that is not valid):
+    the project's problem, never logged."""
     try:
         if exc is not None and type(exc).__name__ == "PlumbError":
             return
@@ -1005,18 +1096,20 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
         payload = _LOG_CONTEXT.get("payload")
         p = payload if isinstance(payload, Payload) else None
         hook = os.path.basename(sys.argv[0] or "") or "hook"
+        real_root = os.path.realpath(str(root))
         rel = ""
         if p is not None and p.file_path:
-            inside = under(resolve(p.file_path, p.cwd or str(root)), os.path.realpath(str(root)))
+            inside = under(resolve(p.file_path, p.cwd or str(root)), real_root)
             rel = inside if inside is not None else os.path.basename(p.file_path)
         fields = [hook, category, f"Plumb {plugin_version() or 'unknown'}", _cli_name(p), sys.platform,
                   f"project {root.name}", f"event {(p.event if p else '') or SCRIPT_TRIGGERS.get(hook, '?')}",
-                  f"tool {(p.tool_name if p else '') or '-'}", f"path {rel or '-'}",
-                  f"exit {exit_code} (failed open)", f"Given: {_one_line(given)}", f"Expected: {_one_line(expected)}"]
+                  f"tool {(p.tool_name if p else '') or '-'}", f"path {_one_line(rel) or '-'}",
+                  f"exit {exit_code} (failed open)", f"Given: {_one_line(given, str(root))}",
+                  f"Expected: {_one_line(expected, str(root))}"]
         where = _failure_where(exc)
         if where:
             fields.append(f"at {where}")
-        rest = " · ".join(fields)
+        rest = " · ".join(fields)[:FEEDBACK_LINE]
         now = time.localtime()
         day = time.strftime("%Y-%m-%d", now)
         path = folder / FEEDBACK_HOOKS
@@ -1025,16 +1118,18 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
             if not _ours(st, folder=False) or st.st_size >= FEEDBACK_MAX_BYTES:
                 return
             text = read_private(path) or ""
-            if any(ln.startswith(f"- {day} ") and ln.split(" ", 3)[3:] == [rest] for ln in text.splitlines()):
-                return  # said already today
+            if any(ln.split(" ", 3)[3:] == [rest] and (category == "timeout" or ln.startswith(f"- {day} "))
+                   for ln in text.splitlines()):
+                return  # said already (today; for a timeout, on this Plumb version)
         line = f"- {day} {time.strftime('%H:%M', now)} {rest}\n"
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-        fd = os.open(str(path), flags, 0o600)
+        if not os.path.lexists(str(path)) and _create_with(path, (FEEDBACK_HEADER + line).encode("utf-8")):
+            return
+        flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(str(path), flags)
         with os.fdopen(fd, "ab") as fh:
-            st = os.fstat(fh.fileno())
-            if not _ours(st, folder=False):
+            if not _ours(os.fstat(fh.fileno()), folder=False):
                 return
-            fh.write(((FEEDBACK_HEADER if st.st_size == 0 else "") + line).encode("utf-8"))
+            fh.write(line.encode("utf-8"))
     except Exception:  # noqa: BLE001 - the log never fails a hook
         return
 

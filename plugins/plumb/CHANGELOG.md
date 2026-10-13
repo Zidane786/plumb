@@ -131,7 +131,8 @@
 - Session snapshots live in a private folder in the OS temp folder, written without following symlinks; the Windows
   launcher never runs a Python found in the project folder.
 - A hook that fails open (a crash, a plugin script it cannot load, a timeout) writes one line to
-  `~/.plumb/feedback/hooks.md`, never into the project: the folders are created 0700 and the file 0600, nothing is
-  written through a symlink or into a folder others can write, the log stops at 512 KB, and a problem with it never
-  fails or blocks the hook.
+  `~/.plumb/feedback/hooks.md`, never into the project: the folders are kept 0700 (your own wider ones are tightened)
+  and the file 0600, nothing is written through a symlink or into someone else's folder, the message is redacted
+  (quoted literals, absolute paths outside the project, token-like strings and secret values), the log stops at
+  512 KB, and a problem with it never fails or blocks the hook.
 - Nothing is installed or downloaded, and no network call is made at run time.
