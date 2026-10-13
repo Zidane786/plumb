@@ -323,7 +323,7 @@ error: line 2: arbitrary design value rounded-[18px]
 
 
     <section id="commands">
-      <div class="head"><span class="eyebrow">Commands</span><h2>Ten commands, one job each</h2></div>
+      <div class="head"><span class="eyebrow">Commands</span><h2>Eleven commands, one job each</h2></div>
       <p class="prose">The same commands work in Claude Code and GitHub Copilot CLI (in Kiro, a preview pending its live check, they are <code>/plumb-init</code>, <code>/plumb-create</code>, …). The complete guide, with an example session for each, is <code>docs/USAGE.md</code>.</p>
       <div class="issues"><table class="cmdt">
         <thead><tr><th>Command</th><th>Use it when</th><th>What it does</th></tr></thead>
@@ -338,6 +338,7 @@ error: line 2: arbitrary design value rounded-[18px]
           <tr><td><code>/plumb:update</code></td><td>The design changes</td><td>Changes tokens or components, adds a platform, regenerates everything, records the decision.</td></tr>
           <tr><td><code>/plumb:upgrade</code></td><td>Plumb has a new version</td><td>Shows what's new, updates the copied scripts, migrates without deleting your values, asks before each step.</td></tr>
           <tr><td><code>/plumb:status</code></td><td>You want a health check</td><td>Read-only: version, platforms, placement, stale files, audit counts, screens to build and to approve, checks on or off, the next step.</td></tr>
+          <tr><td><code>/plumb:feedback</code></td><td>Plumb itself got something wrong</td><td>Plumb mistakes only: the agent records each script, hook or skill result it had to correct in <code>~/.plumb/feedback/</code>, outside the project. Typed, it reports them grouped, most frequent first, and drafts issue text that is never sent. Your project's design issues stay with <code>/plumb:audit</code>.</td></tr>
         </tbody>
       </table></div>
     </section>
@@ -667,7 +668,8 @@ Prototype sync: on
       <p class="prose">One session, start to finish. Init asks whether to turn the checks on (recommended), and each can be switched off in <code>PLUMB.md</code>. The hooks run only the plugin's own scripts, never the copies in your project, and never block your work when something is missing.</p>
       <div class="tl">
         <div class="ev"><b>Session starts</b>
-<pre>Plumb: &lt;project&gt;-design-system 1.0.0 · tokens up to date · 0 audit issues · read the skill before UI changes</pre></div>
+<pre>Plumb: &lt;project&gt;-design-system 1.0.0 · tokens up to date · 0 audit issues · read the skill before UI changes
+Plumb mistakes (a Plumb script, hook or skill got it wrong) → /plumb:feedback</pre></div>
         <div class="ev block"><b>A new page with no approved prototype</b>
 <pre>error: app/reports/page.tsx is a new screen with no approved prototype
 fix: /plumb:prototype reports (design the screen, get the user's approval, then build it to match)</pre></div>
@@ -683,6 +685,7 @@ fix: text-danger (color.danger = #b42318)</pre><p class="muted">The agent is sto
         <div class="ev pass"><b>Clean</b>
 <pre>Plumb: 2 UI files checked, consistent</pre></div>
       </div>
+      <p class="prose muted">When Plumb itself gets something wrong (a script's guess the agent corrects, a hook that crashes and fails open), the agent or the hook records that Plumb mistake in <code>~/.plumb/feedback/</code> on your machine, outside the project; <code>/plumb:feedback</code> reports them for Plumb's developers.</p>
     </section>
 
     <section id="upgrade">

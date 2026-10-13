@@ -90,7 +90,7 @@ every version in between, replaces Plumb's own scripts and templates in the proj
 only (it never deletes or changes your values), runs that version's steps asking before each, records the upgrade in
 `PLUMB.md`, checks until healthy, and shows the diff for you to commit. It never runs by itself.
 
-## The ten commands
+## The eleven commands
 
 | Command | Use it when | What it does |
 |---|---|---|
@@ -104,6 +104,7 @@ only (it never deletes or changes your values), runs that version's steps asking
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform (web, then iOS and Android), improve a part, or apply the audit's system suggestions; regenerates everything, records the decision, audits. |
 | `/plumb:upgrade` | Plumb has a new version | Brings the project's copied files, tokens format and `PLUMB.md` up to the plugin's version, showing what's new first. |
 | `/plumb:status` | You want a health check | Read-only: versions, placement, stale files, audit counts, the prototype (built, to build, approvals, drift), the checks, the next step. |
+| `/plumb:feedback` | Plumb itself got something wrong | Plumb mistakes only (a script, hook, skill or doc that was wrong and had to be corrected): the agent records each one in `~/.plumb/feedback/` on your machine, outside the project. Typed, it reports them grouped by script and category, most frequent first, and drafts issue text for Plumb that is never sent. Your project's design issues stay with `/plumb:audit`. |
 
 Every command asks one question at a time with options and a recommendation, says what it will write and where before
 writing, and never installs or downloads anything. What you confirm (the setup it found, the token set, the file list,
@@ -164,8 +165,8 @@ generated CSS copy at your app's path (e.g. `app/globals.css`).
 Three hooks run in Claude Code and Copilot CLI, only in projects with a `PLUMB.md`:
 
 - **Session start:** one status line
-  (`Plumb: acme-design-system 1.0.0 · tokens up to date · 0 audit issues · read the skill before UI changes`) and a nudge
-  when the project is older than the plugin.
+  (`Plumb: acme-design-system 1.0.0 · tokens up to date · 0 audit issues · read the skill before UI changes`), a nudge
+  when the project is older than the plugin, and one pointer: Plumb mistakes → `/plumb:feedback`.
 - **Before each edit and shell write:** refuses hand edits to, or removal of, generated files and Plumb's own files; refuses a new
   page or route with no approved prototype (`fix: /plumb:prototype <screen>`); refuses an edit that **adds**
   design-system errors (a raw colour, an off-scale size…), each with the token to use. Older code never blocks you.
@@ -173,7 +174,9 @@ Three hooks run in Claude Code and Copilot CLI, only in projects with a `PLUMB.m
   prototype; new errors stop the agent once, never in a loop.
 
 The hooks run only the plugin's own scripts, never the copies inside a project (see [SECURITY.md](SECURITY.md), "Trust
-boundary"), and they fail open: a missing Python or a broken file never blocks your work. In Copilot CLI, refusals come
+boundary"), and they fail open: a missing Python or a broken file never blocks your work. When one fails open (a
+crash, a timeout) it also writes one line to `~/.plumb/feedback/hooks.md`, privately and outside the project, for
+Plumb's developers (`/plumb:feedback` reads it). In Copilot CLI, refusals come
 back as a "deny" answer with the same reason; whether the end-of-turn check can make Copilot continue depends on its
 `agentStop` support, and where it can't, the edit check is the hard guard there.
 
@@ -251,6 +254,9 @@ CI runs the suite on Ubuntu, macOS and Windows × Python 3.9 and 3.13, with Play
 runner so the browser tests run everywhere. Only platform and tool skips are allowed: their reasons start with
 `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`; any other skip fails the run. The hands-on guide for any machine, both
 CLIs and Kiro is [TEST.md](TEST.md). How to work on this repo: [AGENTS.md](AGENTS.md).
+
+What Plumb got wrong in real projects: run `/plumb:feedback` (or open `~/.plumb/feedback/`); each group goes
+repro → failing test → fix → patch release → marked handled ([USAGE.md, "How to read findings"](docs/USAGE.md#how-to-read-findings)).
 
 ## License
 

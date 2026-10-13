@@ -202,6 +202,28 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
 **Expect:** `wrote: shot.png (<browser>, 390x900, dark)` when Chrome, Edge or Chromium is installed; otherwise exit 3
 with `note: visual comparison skipped: no browser found` and a `fix:` line. Nothing is downloaded either way.
 
+### 3.7 The hooks' feedback log (Plumb's own mistakes)
+
+A hook that fails open writes one line to `~/.plumb/feedback/hooks.md`. Try it with a broken copy of the plugin and a
+stand-in home folder, so your real `~/.plumb` is never touched (macOS and Linux; on Windows use Git Bash and set
+`USERPROFILE` the same way as `HOME`):
+
+```
+cp -R <repo>/plugins/plumb ../plumb-broken && echo 'def broken(:' > ../plumb-broken/assets/skill/scripts/audit.py
+mkdir -p ../fake-home
+echo '{"hook_event_name": "SessionStart", "session_id": "t1", "cwd": "'"$PWD"'"}' | HOME="$PWD/../fake-home" CLAUDE_PLUGIN_ROOT="$PWD/../plumb-broken" sh ../plumb-broken/hooks/run.sh session_start.py
+```
+
+**Expect:** exit 0; stdout is the `Plumb: demo-design-system 1.0.0 · … · audit not run · read the skill before UI
+changes` line and, last, `Plumb mistakes (a Plumb script, hook or skill got it wrong) → /plumb:feedback`; at most one
+`plumb: …` note on stderr. `../fake-home/.plumb/feedback/hooks.md` starts `# Plumb hook failures` and holds lines like
+`- <date> <time> session_start.py · crash · Plumb 1.0.0 · claude-code · <os> · project plumb-scratch · event
+SessionStart · … · Given: cannot load the plugin's audit.py (SyntaxError: …) … · Expected: …`. `ls -ld` shows
+`drwx------` for `.plumb` and `.plumb/feedback` and `-rw-------` for `hooks.md`. Run the command again: no new line
+(the same failure is written once a day). Nothing new in the project (`git status`). Then
+`rm -rf ../fake-home/.plumb && ln -s "$PWD" ../fake-home/.plumb` and run it again: still exit 0, and nothing is
+written in the project through the link. Remove `../plumb-broken` and `../fake-home`.
+
 ---
 
 ## 4. Claude Code live (the real thing)
@@ -308,6 +330,15 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       `added … motion.reduced = "none"`, the next build prints no note, and the generated CSS is unchanged.
 - [ ] `/plumb:status` → a short read-only report ending with the next step, never "/plumb:create" or
       "/plumb:extract" in a set-up project; it writes no file (no `/tmp`, no `.plumb-tmp/`).
+- [ ] **Plumb's own mistakes:** the new session's context ends with `Plumb mistakes (a Plumb script, hook or skill got
+      it wrong) → /plumb:feedback`. In the monorepo run above, when the agent corrected a `detect.py` result
+      (`(corrected: …)`), it also said `Recorded a Plumb mistake: ~/.plumb/feedback/<date>-detect-…-<project>.md` and
+      carried on; that file has every field (When, Project shape, Where it failed, Command, Given, Expected, Evidence,
+      Repro, Category, Suggested fix in Plumb, Handled here) and no source code; nothing was written in the project.
+      `/plumb:feedback log the raw hex in app/page.tsx` → the agent writes nothing and says that is an audit finding
+      (`/plumb:audit`). `/plumb:feedback` → the groups, most frequent first, with given vs expected, then one question
+      at a time: a drafted issue is text only (no `gh` command runs), "mark handled" adds a line to
+      `~/.plumb/feedback/handled.md`, and no record is deleted.
 - [ ] Before saying done, create and extract walk their final checklist: contrast evidence in `dark-mode.md`,
       components, the decision log, a first prototype screen (or your "later"), the wire-in asked, `.plumb-tmp/` gone.
 
@@ -327,12 +358,13 @@ copilot plugin install plumb@plumb
 
 Restart Copilot, open the same kind of scratch project, and report:
 
-- [ ] Type `/plumb` → the ten commands are listed (`/plumb:init`, `/plumb:create`, …).
+- [ ] Type `/plumb` → the eleven commands are listed (`/plumb:init`, `/plumb:create`, …, `/plumb:feedback`).
 - [ ] Ask "what does the Plumb session note say?" (no tools) → it quotes the `Plumb: … read the skill before UI
       changes` line (session start reached Copilot as additional context).
 - [ ] The raw-colour edit, the hand edit to a generated file (with the edit tool and with a shell write) and the new
       page are **refused with Plumb's reason** (the `error:` and `fix:` text), not just "hook exited with code 2".
-- [ ] `/plumb:prototype` and `/plumb:status` run as in level 4.
+- [ ] `/plumb:prototype`, `/plumb:status` and `/plumb:feedback` run as in level 4 (the same `~/.plumb/feedback/`
+      folder; the session context ends with the `Plumb mistakes … → /plumb:feedback` pointer).
 - [ ] `/plumb:init` on a scratch app with UI (it routes to extract): the full placement block is inside Copilot's ask
       question; screens are mapped with `--route=/` (no "Allow path access" prompt for `/`); scratch files stay in
       `.plumb-tmp/`; the agent never runs `build-prototype.py --approve` before you said yes to that screen; the
@@ -366,7 +398,8 @@ PY <repo>/plugins/plumb/scripts/kiro.py install --project <scratch project>
 - [ ] `<scratch>/.kiro/skills/plumb-<name>/SKILL.md` exists for every command, and `<scratch>/.kiro/hooks/plumb.json`
       is written; nothing was written in your home `~/.kiro` (`--project` is that workspace only). Every hook command
       in the file runs the plugin's launcher with `--kiro`.
-- [ ] In Kiro, `/plumb-init` runs the init flow (questions one at a time).
+- [ ] In Kiro, `/plumb-init` runs the init flow (questions one at a time); `/plumb-feedback` exists and reports the
+      same `~/.plumb/feedback/` folder.
 - [ ] Session start shows the `Plumb: …` line, with commands written `/plumb-…`.
 - [ ] A raw-colour edit with Kiro's write tool, and a shell write to a generated file, are refused with Plumb's
       `error:` / `fix:` text. Record which exit code blocks and the exact hook input fields Kiro sends (the spec waits on

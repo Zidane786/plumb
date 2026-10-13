@@ -57,6 +57,7 @@ in each project (the session-start line says when). What changed: [CHANGELOG.md]
 | `/plumb:update` | The design changes | Tokens, components, a new platform, the audit's system suggestions; regenerate, record, audit |
 | `/plumb:upgrade` | Plumb has a new version | Brings the project's copied files and settings up to the plugin's version, what's new first |
 | `/plumb:status` | A health check | Read-only: versions, stale files, audit counts, prototype state, checks, the next step |
+| `/plumb:feedback` | Plumb itself got something wrong | Plumb mistakes only: the agent records each in `~/.plumb/feedback/` (outside the project); typed, it reports them grouped and drafts issue text, never sent |
 
 ## Hooks
 
@@ -65,7 +66,9 @@ edit and shell write (refuses hand edits to, or removal of, generated files and 
 prototype, and an edit that adds design-system errors); and an end-of-turn check of the files changed in the session,
 which stops the agent once when there are new errors. Switch them in `PLUMB.md` (`Edit check`, `End-of-turn check`,
 `Prototype sync`). They run only the plugin's own scripts, never the copies in a project (see SECURITY.md, "Trust
-boundary"), and fail open. In Copilot CLI, refusals arrive as a "deny" answer with the same reason; whether the
+boundary"), and fail open; a hook that fails open (a crash, a timeout) writes one line to `~/.plumb/feedback/hooks.md`
+for `/plumb:feedback` (Plumb mistakes only, never in the project). Session start also points the agent there: Plumb
+mistakes → `/plumb:feedback`. In Copilot CLI, refusals arrive as a "deny" answer with the same reason; whether the
 end-of-turn check can make Copilot continue depends on its `agentStop` support, and where it can't, the edit check is
 the hard guard there.
 
