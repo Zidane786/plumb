@@ -22,7 +22,9 @@ The search, first match wins: the PATH names google-chrome, google-chrome-stable
 microsoft-edge, microsoft-edge-stable, chrome, msedge (every OS); then on macOS the app bundles Google Chrome, Chromium and
 Microsoft Edge in /Applications and ~/Applications; on Windows chrome.exe / msedge.exe under %ProgramFiles%,
 %ProgramFiles(x86)%, %ProgramW6432% and %LOCALAPPDATA% (Google/Chrome, Microsoft/Edge, Chromium). The browser runs with a
-throwaway profile (deleted afterwards), with background networking, sync, extensions and component updates off.
+throwaway profile (deleted afterwards; inside a Plumb project, i.e. a PLUMB.md in the working folder or above, it
+lives in <project>/.plumb-tmp/ so nothing is written outside the project), with background networking, sync,
+extensions and component updates off.
 
 Exit codes: 0 written (a browser that keeps running after a complete PNG is stopped) · 1 the browser ran but wrote no
 screenshot (or hung) · 2 bad input · 3 no browser found:
@@ -244,7 +246,7 @@ def _wait(proc: "subprocess.Popen[bytes]", shot: Path, deadline: float) -> Optio
 def shoot(browser: Path, url: str, out: Path, width: int, height: int, theme: str, wait_ms: int, timeout: float) -> None:
     fix = ("open the page in a browser to check it loads (a dev server must be running for a URL), then run this again; "
            "or use the agent's browser tool")
-    tmp = Path(tempfile.mkdtemp(prefix="plumb-shot-"))
+    tmp, created = scratch_dir()
     try:
         profile, shot, log = tmp / "profile", tmp / "shot.png", tmp / "browser.log"
         args = command(browser, url, shot, profile, width, height, theme, wait_ms)
@@ -265,6 +267,36 @@ def shoot(browser: Path, url: str, out: Path, width: int, height: int, theme: st
             raise Refusal(f"cannot write {out} ({exc.strerror or exc})", "pass a writable --out path ending in .png") from None
     finally:
         remove_tree(tmp)
+        if created is not None:  # this run made <project>/.plumb-tmp/: leave nothing behind
+            try:
+                (created / ".gitignore").unlink()
+                created.rmdir()
+            except OSError:
+                pass
+
+
+SETUP_TMP = ".plumb-tmp"
+
+
+def scratch_dir(start: Optional[Path] = None) -> "tuple[Path, Optional[Path]]":
+    """(the throwaway profile's folder, the <project>/.plumb-tmp/ this run created or None). Inside a Plumb project
+    (a PLUMB.md in the working folder or above) the profile goes in <project>/.plumb-tmp/ (with a .gitignore of *),
+    so nothing is written outside the project; elsewhere in the system's temp folder."""
+    here = (start or Path.cwd()).resolve()
+    for folder in (here, *here.parents):
+        if (folder / "PLUMB.md").is_file():
+            scratch = folder / SETUP_TMP
+            created = None
+            try:
+                if not scratch.exists():
+                    scratch.mkdir()
+                    created = scratch
+                    with open(scratch / ".gitignore", "w", encoding="utf-8", newline="\n") as fh:
+                        fh.write("*\n")
+                return Path(tempfile.mkdtemp(prefix="shot-", dir=str(scratch))), created
+            except OSError:
+                break
+    return Path(tempfile.mkdtemp(prefix="plumb-shot-")), None
 
 
 def remove_tree(path: Path) -> None:

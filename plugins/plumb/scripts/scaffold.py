@@ -4,12 +4,17 @@
 Run by /plumb:create and /plumb:extract:
 
   scaffold.py --project-root P --name NAME --skill-dir D --platforms web,ios,android
-              --styling tailwind-v4|tailwind-v3|css [--answers answers.json] [--docs-dir docs/design] [--dry-run]
+              --styling tailwind-v4|tailwind-v3|css [--answers answers.json] [--docs-dir docs/design]
+              (--dry-run | --confirm TOKEN)
 
   --skill-dir   the skill folder relative to the project root, e.g. .claude/skills/<project>-design-system
                 (forward or back slashes; it must stay inside the project)
   --docs-dir    where the design pages live (default docs/design); recorded in the tokens file
-  --dry-run     print what would be written (`would write:` / `skip:`) and write nothing
+  --dry-run     print what would be written (`would write:` / `skip:`) and write nothing; the last line names the
+                confirm token for exactly this command, answers file and file list
+  --confirm T   the real run: the token the dry run printed. Without it, or when the answers, the arguments or the
+                files changed since the dry run, nothing is written (error: + ask the user: show the dry-run list and
+                get their OK). Human in the loop: the person sees and approves the list before anything is written.
 
 Ownership (spec 5.1):
   [P] plugin-owned, ALWAYS overwritten (printed `wrote:`): scripts/*.py, templates/*, assets/platforms/README.md
@@ -31,7 +36,10 @@ Ownership (spec 5.1):
       every `make <target>` PLUMB.md names exists in the Makefile (a target missing from a Makefile that includes
       other files is a note), and that the copy targets resolve (not in a `Role: linked` repo: the home owns them). Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
-      suggested --relocate command. Exit 0 when there is no problem, 1 otherwise.
+      suggested --relocate command. It also checks PLUMB.md's Routes: (each recorded path exists, each entry has a
+      kind; not recorded is a note), UI files: (matching 0 files while the project has UI code is a problem) and, in a
+      repository, that the skill folder, PLUMB.md and the docs folder are not ignored (check-ignore; a problem with
+      the fix). Exit 0 when there is no problem, 1 otherwise.
 
 Generated files ([G]) are not written here: run build-tokens.py afterwards. Nothing is installed or downloaded.
 
@@ -48,6 +56,11 @@ answers.json (every key optional; unknown keys are ignored with a note):
     "python":      "python3",                          (the command PLUMB.md and the Makefile use)
     "role":        "home" | "linked",
     "ui_packages": ". (Next.js · Tailwind v4)",        (PLUMB.md)
+    "routes":      "frontend/src/app (next-app)",       (PLUMB.md `Routes:`: the app's page roots the agent found and the
+                   user confirmed, each "<path> (<kind>)": next-app, next-pages, nuxt, sveltekit, angular (the routes
+                   file), router (another router config file or glob), comma separated, or "none"; a missing kind is
+                   refused; unanswered: not recorded (web) or none (mobile only).
+                   Scripts and hooks read routes only from here: they never guess the layout)
     "ui_files":    "app/**, components/** · *.tsx *.css",   (PLUMB.md; unanswered: detect.py's value for the chosen
                    platforms' packages (Angular: src/** · *.component.ts ... styles.css; web next to iOS/Android: the
                    mobile folders too; a chosen platform with no package keeps *.swift / *.kt), printed as a note;
@@ -59,6 +72,11 @@ answers.json (every key optional; unknown keys are ignored with a note):
                    class, either, or data-theme="dark" on <html> as next-themes sets it; default both)
     "reduced_motion": "none" | "keep-fades",           (what reduced motion keeps on the web: nothing, or the opacity
                    and colour fades; default none)
+    "reset_palette": true | false,                     ($extensions.plumb.web.reset_palette, Tailwind v4: true = Plumb's
+                   block switches off Tailwind's default palette and scales, only the tokens exist (create, a new app);
+                   false = they stay until the app is migrated, the audit suggests each move (extract, an existing
+                   app). Unanswered: false when the app's UI files already use default palette classes (a note says
+                   so), else true)
     "colors": {"light": {"primary": "#0f6b66", ...}, "dark": {"primary": "#4fb3c4", ...}},
         names: background surface sunk on-surface on-surface-muted primary on-primary outline outline-input danger
                on-danger success on-success scrim; values #rgb | #rrggbb | #rrggbbaa. Other tokens: edit the tokens file.
@@ -79,6 +97,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
@@ -103,7 +122,7 @@ ROLES = ("home", "linked")
 THEME_SWITCHES = ("both", "system", "class", "data-theme")  # $extensions.plumb.web.theme_switch
 REDUCED_MOTION = ("none", "keep-fades")  # $extensions.plumb.motion.reduced
 
-RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON"))
+RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON", "RESET_PALETTE"))
 SLOT = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 DIMENSION = re.compile(r"^\d+(?:\.\d+)?(?:px|rem|em)$")
@@ -114,7 +133,7 @@ class ScaffoldError(Exception):
     """A refusal: `error: ...` then `fix: ...` (or `ask the user: ...`)."""
 
     def __init__(self, message: str, fix: str) -> None:
-        super().__init__(f"error: {message}\nfix: {fix}")
+        super().__init__(f"error: {message}\n" + (fix if fix.startswith("ask the user:") else f"fix: {fix}"))
 
 
 def utf8_stdio() -> None:
@@ -172,7 +191,7 @@ DEFAULT_ICONS: List[Dict[str, str]] = [
 KNOWN_KEYS = frozenset((
     "name", "description", "audience", "direction", "voice", "themes", "python", "role", "ui_packages", "ui_files",
     "allowed_raw", "web_copies", "colors", "fonts", "type_scale", "spacing", "radius", "shadows", "motion", "icons",
-    "theme_switch", "reduced_motion",
+    "theme_switch", "reduced_motion", "routes", "reset_palette",
 ))
 # Answers that, when absent, are listed in design.md as neutral defaults.
 DEFAULT_NOTE_KEYS = (("description", "description"), ("audience", "audience"), ("direction", "direction"),
@@ -439,7 +458,7 @@ def detected_ui_files(root: Path, platforms: List[str]) -> Optional[str]:
     try:
         mod = load_detect()
         ui, _ = mod.classify(root)
-        value = mod.ui_files_for([u for u in ui if set(u["platforms"]) & set(platforms)])
+        value = mod.ui_files_for([u for u in ui if set(u["platforms"]) & set(platforms)], root)
     except Exception as exc:  # noqa: BLE001 - detection is a convenience: fall back to the platform default
         print(f"note: UI files: the platform default (detecting the stack failed: {exc})", file=sys.stderr)
         return None
@@ -450,16 +469,64 @@ def detected_ui_files(root: Path, platforms: List[str]) -> Optional[str]:
     return " ".join([value] + extra)
 
 
-def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: str, name: str, answers: dict,
-                    base: Dict[str, str], root: Optional[Path] = None) -> Dict[str, str]:
+def project_ui_files(platforms: List[str], answers: dict, root: Optional[Path], say: bool = False) -> str:
+    """PLUMB.md's `UI files:` value: the answer, else detect.py's value for the chosen platforms' packages (with a
+    note when say), else the platform default."""
     ui_files = answers.get("ui_files")
     if not ui_files and root is not None and "web" in platforms:
         ui_files = detected_ui_files(root, platforms)
-        if ui_files:
+        if ui_files and say:
             print(f"note: UI files from the detected stack: {ui_files} (to change it, pass ui_files in --answers)",
                   file=sys.stderr)
-    ui_files = ui_files or " · ".join(PLATFORM_UI_FILES[p] for p in platforms)
+    return ui_files or " · ".join(PLATFORM_UI_FILES[p] for p in platforms)
+
+
+def load_plugin_audit():
+    """The plugin's audit.py (its palette-class scan), or None."""
+    try:
+        spec = importlib.util.spec_from_file_location("plumb_audit_for_scaffold", SKILL_SRC / "scripts" / "audit.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["plumb_audit_for_scaffold"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod
+    except Exception:  # noqa: BLE001 - the default is a convenience
+        return None
+
+
+def resolve_reset_palette(answers: dict, styling: str, platforms: List[str], root: Path, skill_rel: str) -> bool:
+    """$extensions.plumb.web.reset_palette: the `reset_palette` answer (create on a new app: true; extract on an
+    existing app: false), else true unless the app's UI files already use Tailwind's default palette classes (Tailwind
+    v4 only): then false, so the first build does not take their colour away, with a note saying so."""
+    given = answers.get("reset_palette")
+    if given is not None:
+        if not isinstance(given, bool):
+            raise _bad("reset_palette", given, "not true or false",
+                       "write answers.reset_palette as true (only the tokens exist) or false (Tailwind's default "
+                       "palette and scales stay until the app is migrated)")
+        return given
+    if styling != "tailwind-v4" or "web" not in platforms:
+        return True
+    audit = load_plugin_audit()
+    if audit is None:
+        return True
+    settings = {"UI files": project_ui_files(platforms, answers, root), "web": {"styling": styling}}
+    try:
+        count, files, _examples = audit.palette_uses(root, root / skill_rel, None, settings)
+    except Exception:  # noqa: BLE001
+        return True
+    if not count:
+        return True
+    print(f"note: reset_palette false: the app uses {count} Tailwind default palette class{'es' if count != 1 else ''} "
+          f"in {len(files)} UI file{'s' if len(files) != 1 else ''}, so Tailwind's palette stays until they move to "
+          f"tokens (to close it now, pass \"reset_palette\": true in --answers)", file=sys.stderr)
+    return False
+
+
+def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: str, name: str, answers: dict,
+                    base: Dict[str, str], root: Optional[Path] = None) -> Dict[str, str]:
+    ui_files = project_ui_files(platforms, answers, root, say=True)
     return {
+        "ROUTES": routes_value(answers, platforms),
         "PROJECT": name, "SKILL_DIR": skill_dir + "/", "ROLE": base["ROLE"], "PLATFORMS": ", ".join(platforms),
         "UI_PACKAGES": answers.get("ui_packages") or (f". ({STYLING_LABEL[styling]})" if "web" in platforms else "."),
         "PYTHON": base["PYTHON"], "EDIT_CHECK": "on", "END_CHECK": "on", "THEMES": base["THEMES"],
@@ -468,6 +535,95 @@ def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: st
         "SCREENS_MAP": f"{docs}/prototype/screens.json", "PROTOTYPE_SYNC": "on",
         "DATE": base["DATE"], "DIRECTION": base["DIRECTION"],
     }
+
+
+ROUTES_UNRECORDED = "(not recorded yet: /plumb:init records the app's page roots)"
+
+
+def routes_value(answers: dict, platforms: List[str]) -> str:
+    """PLUMB.md's `Routes:` value: the `routes` answer (the page roots the agent found and the user confirmed, e.g.
+    "frontend/src/app (next-app)"), checked by the same parser the audit and the hooks use; unanswered: "none" without
+    a web platform, else a placeholder that reads as not recorded (scripts never guess the app's layout)."""
+    given = answers.get("routes")
+    if given is None:
+        return "none" if "web" not in platforms else ROUTES_UNRECORDED
+    if not isinstance(given, str) or not given.strip() or re.search(r"[\r\n]", given):
+        raise ScaffoldError("answers.routes must be a non-empty text on one line",
+                            'write it like "frontend/src/app (next-app)", "src/app/app.routes.ts (router)" or "none"')
+    roots, problems = load_plumb_core().parse_routes(given)
+    if problems or roots is None:
+        raise ScaffoldError("answers.routes: " + ("; ".join(problems) if problems else f"{given!r} is not a value"),
+                            'write each page root as "<path> (<kind>)", kinds: next-app, next-pages, nuxt, sveltekit, '
+                            'angular (the routes file), router (another router config file), comma separated; or "none"')
+    return " ".join(given.split())
+
+
+def load_plumb_core():
+    """The plugin's _plumb.py (the PLUMB.md parsers the audit and hooks use)."""
+    spec = importlib.util.spec_from_file_location("plumb_core_for_scaffold", SKILL_SRC / "scripts" / "_plumb.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+# ---------------------------------------------------------------- token names in the references
+
+MISSING_TOKEN = "`<{what}: no such token yet, add one with /plumb:update>`"
+
+
+def project_tokens(existing: Optional[Path], planned: str) -> dict:
+    """The tokens the references will sit next to: the project's tokens file when it is already there (kept as it is),
+    else the one this scaffold writes. {} when it cannot be read (every name then shows as a marked placeholder)."""
+    try:
+        text = existing.read_text(encoding="utf-8-sig") if existing is not None else planned
+        doc = json.loads(text)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def has_token(doc: dict, path: str) -> bool:
+    node: object = doc
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    return isinstance(node, dict) and "$value" in node
+
+
+def token_ref(doc: dict, candidates: Tuple[str, ...], what: str) -> str:
+    """The first candidate token the project has, as `path`, else a clearly marked placeholder."""
+    for path in candidates:
+        if has_token(doc, path):
+            return f"`{path}`"
+    return MISSING_TOKEN.format(what=what)
+
+
+def group_refs(doc: dict, group: str, limit: int, what: str) -> str:
+    """The first tokens of a group (`shadow.card`, `shadow.popover`), or a marked placeholder."""
+    node = doc.get(group) if isinstance(doc.get(group), dict) else {}
+    names = [k for k, v in node.items() if not k.startswith("$") and isinstance(v, dict) and "$value" in v][:limit]
+    return ", ".join(f"`{group}.{n}`" for n in names) if names else MISSING_TOKEN.format(what=what)
+
+
+def token_names(doc: dict) -> Dict[str, str]:
+    """The token names components.md and design.md quote, taken from the project's tokens (live test 2, B15: never a
+    token the project does not have)."""
+    refs = {
+        "TOK_COLOR_PRIMARY": token_ref(doc, ("color.primary",), "the primary colour"),
+        "TOK_TYPE_LABEL": token_ref(doc, ("typography.sm", "typography.label", "typography.body"), "a label text style"),
+        "TOK_RADIUS_CONTROL": token_ref(doc, ("radius.md", "radius.sm"), "a control radius"),
+        "TOK_RADIUS_CARD": token_ref(doc, ("radius.lg", "radius.md"), "a card radius"),
+        "TOK_SHADOW_CARD": token_ref(doc, ("shadow.card", "shadow.sm", "shadow.raised"), "a card shadow"),
+        "TOK_TYPE_TITLE": token_ref(doc, ("typography.h3", "typography.h2", "typography.title"), "a page title style"),
+        "TOK_MOTION_FAST": token_ref(doc, ("motion.duration.fast",), "a short duration"),
+        "TOK_SPACING": group_refs(doc, "spacing", 2, "the spacing steps"),
+        "TOK_SHADOWS": group_refs(doc, "shadow", 4, "the elevation steps"),
+    }
+    found = [v for k, v in refs.items() if k in ("TOK_COLOR_PRIMARY", "TOK_TYPE_LABEL", "TOK_RADIUS_CONTROL",
+                                                  "TOK_MOTION_FAST") and not v.startswith("`<")]
+    refs["TOK_EXAMPLES"] = ", ".join(found) if found else "`color.<name>`, `radius.<name>`"
+    return refs
 
 
 # ---------------------------------------------------------------- rendering
@@ -513,6 +669,7 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
     # py launcher only comes with python.org) and python3 elsewhere.
     python_default = "python" if os.name == "nt" else "python3"
     values["PYTHON"] = str(answers.get("python") or python_default)
+    values["RESET_PALETTE"] = json.dumps(resolve_reset_palette(answers, args.styling, platforms, root, skill_rel))
     values["DATE"] = datetime.date.today().isoformat()
     values.update({
         "NAME": name, "NAME_YAML": name.replace("\\", "\\\\").replace('"', '\\"'), "SLUG": slug,
@@ -524,6 +681,11 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
     skill = root / skill_rel
     src = SKILL_SRC
     plan: List[Item] = []
+    tokens_dir = skill / "assets/tokens"
+    existing = sorted(tokens_dir.glob("*.tokens.json")) if tokens_dir.is_dir() else []
+    tokens_text = render(read_source(src / "assets/tokens/tokens.json.tmpl"), values, "assets/tokens/tokens.json.tmpl",
+                         json_mode=True)
+    values.update(token_names(project_tokens(existing[0] if existing else None, tokens_text)))
 
     # [P] plugin-owned
     for script in sorted((src / "scripts").glob("*.py")):
@@ -539,10 +701,8 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
 
     y("SKILL.md.tmpl", "SKILL.md")
     y("design.md.tmpl", "design.md")
-    tokens_dir = skill / "assets/tokens"
-    existing = sorted(tokens_dir.glob("*.tokens.json")) if tokens_dir.is_dir() else []
     token_name = existing[0].name if existing else f"{slug}.tokens.json"
-    y("assets/tokens/tokens.json.tmpl", f"assets/tokens/{token_name}", json_mode=True)
+    plan.append(Item(skill / f"assets/tokens/{token_name}", tokens_text, "Y"))
     y("assets/icons/icon-map.json.tmpl", "assets/icons/icon-map.json", json_mode=True)
     plan.append(Item(skill / "assets/platforms/web/tokens.css.template",
                      read_source(src / f"assets/platforms/web/tokens.css.template.{args.styling}"), "Y"))
@@ -608,6 +768,78 @@ def check_blockers(root: Path, plan: List[Item]) -> None:
         if item.dest.is_dir():
             raise ScaffoldError(f"{item.dest.relative_to(root).as_posix()} is a folder where a file belongs",
                                 "move that folder away, then run the scaffold again")
+
+
+def confirm_token(root: Path, args: argparse.Namespace, skill_rel: str, docs: str, platforms: List[str],
+                  answers: dict, plan: List[Item]) -> str:
+    """The token the dry run prints and the real run must be given (--confirm): a hash of the project, the arguments,
+    the answers and the file list with what happens to each file (written, or kept), so it fits only the list the
+    person saw and approved."""
+    listing = [[item.dest.relative_to(root).as_posix(),
+                "skip" if item.owner == "Y" and item.dest.exists() else "write"] for item in plan]
+    data = {"root": root.as_posix(), "name": " ".join(args.name.split()), "skill_dir": skill_rel, "docs_dir": docs,
+            "platforms": platforms, "styling": args.styling, "answers": answers, "files": listing}
+    text = json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def check_confirm(given: Optional[str], token: str) -> None:
+    """The real run needs the dry run's token for this exact command, answers and file list."""
+    ask = ("ask the user: show them the file list from the same command with --dry-run (it writes nothing), and after "
+           "their OK run the same command without --dry-run, plus --confirm <token> exactly as the dry run printed it")
+    if not given:
+        raise ScaffoldError("the scaffold writes into the project only after the user approved the dry-run list "
+                            "(no --confirm token given)", ask)
+    if given.strip() != token:
+        raise ScaffoldError(f"--confirm {given.strip()} does not fit this command: the answers, the arguments or the "
+                            f"files changed since the dry run (or it is another run's token)", ask)
+
+
+def ignored_by_git(root: Path, skill_rel: str, docs: str) -> List[Tuple[str, str, str]]:
+    """The design-system paths git would never commit: [(shown path, the .gitignore pattern, where it is)] for the
+    skill folder, PLUMB.md and the docs folder (`git check-ignore -v`, a file inside each folder, so a folder that does
+    not exist yet is checked too). Run with the plugin's hardened git call (no project hooks, filters or pagers; git
+    found on PATH outside the project). [] outside a git repo, without git, or when nothing is ignored."""
+    audit = load_plugin_audit()
+    if audit is None:
+        return []
+    probes = {f"{skill_rel}/SKILL.md": f"{skill_rel}/", "PLUMB.md": "PLUMB.md", f"{docs}/decisions.md": f"{docs}/"}
+    try:
+        out = audit._git(root, "check-ignore", "-v", "--", *probes)
+    except Exception:  # noqa: BLE001 - the check is advice; it never stops a scaffold
+        return []
+    found: List[Tuple[str, str, str]] = []
+    for line in (out or "").splitlines():
+        info, tab, path = line.partition("\t")
+        source, _, rest = info.partition(":")
+        number, _, pattern = rest.partition(":")
+        if not tab or pattern.startswith("!") or path.strip() not in probes:
+            continue  # a negation pattern matched: the path is kept
+        found.append((probes[path.strip()], pattern, f"{source} line {number}"))
+    return found
+
+
+def unignore_hint(shown: str, pattern: str) -> str:
+    """How to un-ignore a path in .gitignore: a folder pattern above it (.claude/) becomes .claude/* plus a negation
+    for the next folder (!.claude/skills/), since git never re-includes a file whose parent folder is excluded; any
+    other pattern gets a negation line after it."""
+    path = shown.rstrip("/")
+    pat = pattern.strip().lstrip("/").rstrip("/")
+    if pat and not any(c in pat for c in "*?[") and path.startswith(pat + "/"):
+        nxt = path[len(pat) + 1:].split("/")[0]
+        return (f'in .gitignore replace the line "{pattern}" with "{pat}/*" and add "!{pat}/{nxt}/" after it')
+    return f'in .gitignore add "!{shown}" after the line "{pattern}" (or remove that line)'
+
+
+def ignore_lines(found: List[Tuple[str, str, str]], what: str) -> List[str]:
+    """`<what>: <path> is git-ignored by <pattern> ...` and the ask-the-user line, for each ignored path."""
+    out = []
+    for shown, pattern, where in found:
+        out.append(f"{what}: {shown} is git-ignored by {pattern} ({where}) \u2014 the design system would never be "
+                   f"committed, so teammates and CI would not get it")
+        out.append(f"fix: ask the user: un-ignore it ({unignore_hint(shown, pattern)}), or choose another location "
+                   f"for it")
+    return out
 
 
 def write_file(path: Path, content: str) -> None:
@@ -828,6 +1060,89 @@ def check_make_targets(text: str, root: Path) -> "Tuple[Optional[str], Optional[
                         f"target{'s' if len(missing) != 1 else ''}")
 
 
+def check_routes(keys: dict, root: Path) -> List[Tuple[str, str]]:
+    """PLUMB.md `Routes:`: each recorded page root (a folder, or a router file or glob) exists. Not recorded is a note
+    (a project set up before 1.0.0's Routes line keeps working: the route checks stay off until /plumb:init records
+    them). Returns (ok | note | problem, text) lines."""
+    core = load_plumb_core()
+    roots, problems = core.parse_routes(keys.get("Routes"))
+    out: List[Tuple[str, str]] = [("problem", p) for p in problems]
+    if roots is None:
+        out.append(("note", core.ROUTES_NOT_RECORDED + "; until then the prototype-first check and route-not-prototyped "
+                    "are off"))
+        return out
+    if not roots and not problems:
+        out.append(("ok", "Routes: none (no page routes to check)"))
+    for path, kind in roots:
+        router = kind in core.ROUTER_KINDS
+        if router and any(c in path for c in "*?"):
+            rx = core.glob_rx(path)
+            fixed = root / path.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
+            found = fixed.is_dir() and any(rx.match(f.relative_to(root).as_posix()) for f in fixed.rglob("*") if f.is_file())
+        else:
+            found = (root / path).is_file() if router else (root / path).is_dir()
+        if found:
+            out.append(("ok", f"Routes: {path} ({kind}) exists"))
+        else:
+            out.append(("problem", f"Routes: {path} ({kind}) does not exist in the project"))
+    if any(kind == "problem" for kind, _t in out):
+        out.append(("fix", "ask the user: correct Routes: in PLUMB.md to the folders (or router files) that "
+                    "hold the app's pages, each as <path> (<kind>)"))
+    return out
+
+
+UI_FILES_SCAN_MAX = 50000
+
+
+def check_ui_files(keys: dict, root: Path, skill_rel: str) -> List[Tuple[str, str]]:
+    """PLUMB.md `UI files:` must cover at least one file (globs from the project root, as the audit reads them): a
+    value that matches 0 files switches the audit and the checks off without a word. A folder glob that matches
+    nothing is a note."""
+    value = str(keys.get("UI files", "") or "").strip()
+    if not value:
+        return []
+    core = load_plumb_core()
+    left, _, right = value.partition("·")
+    items = [i.strip() for i in (left + "," + right).replace(" ", ",").split(",") if i.strip()]
+    dirs = [i for i in items if "/" in i]
+    names = [i for i in items if "/" not in i]
+    dir_rx = [(d, core.glob_rx(d)) for d in dirs]
+    name_rx = [core.glob_rx(n) for n in names]
+    used = {d: 0 for d in dirs}
+    total = seen = sources = 0
+    docs = (root / str(keys.get("docs_dir") or "docs/design")).resolve()
+    skill = (root / skill_rel).resolve() if skill_rel else None
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in core.SKIP_DIRS and not d.startswith(".git"))
+        if Path(dirpath).resolve() in (skill, docs):
+            dirnames[:] = []
+            continue
+        for fn in filenames:
+            seen += 1
+            if seen > UI_FILES_SCAN_MAX:
+                break
+            if core.source_ext(fn) is None:
+                continue
+            sources += 1
+            if name_rx and not any(rx.match(fn) for rx in name_rx):
+                continue
+            rel = (Path(dirpath) / fn).relative_to(root).as_posix()
+            hit = [d for d, rx in dir_rx if rx.match(rel)]
+            for d in hit:
+                used[d] += 1
+            if hit or not dirs:
+                total += 1
+    if total == 0 and not sources:
+        return [("note", f"PLUMB.md UI files: {value} matches no file yet (the project has no UI code yet)")]
+    if total == 0:
+        return [("problem", f"PLUMB.md UI files: {value} matches 0 files (globs are read from the project root, e.g. "
+                            f"frontend/src/** for a UI package in frontend/), so the audit and the checks see nothing"),
+                ("fix", "ask the user: correct UI files: in PLUMB.md to the folders that hold the UI code")]
+    out = [("ok", f"PLUMB.md UI files: matches {total} file{'s' if total != 1 else ''}")]
+    out += [("note", f"UI files: {d} matches 0 files") for d, n in used.items() if n == 0]
+    return out
+
+
 def verify(root: Path) -> int:
     problems = 0
 
@@ -914,6 +1229,19 @@ def verify(root: Path) -> int:
                 print(f"note: web copy {rel} is not written yet (run the tokens build)")
             else:
                 print(f"ok: web copy {rel} resolves")
+    keys = load_plumb_core().read_plumb_md(plumb_md)
+    docs_rel = str(keys.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
+    if skill_rel and not skill_rel.startswith("../"):
+        for line in ignore_lines(ignored_by_git(root, skill_rel, docs_rel), "problem"):
+            if line.startswith("problem: "):
+                problem(line[len("problem: "):])
+            else:
+                print(line)
+    for kind, text in check_routes(keys, root) + check_ui_files(keys, root, skill_rel):
+        if kind == "problem":
+            problem(text)
+        else:
+            print(f"{kind}: {text}")
     make_ok, make_note, make_problem = check_make_targets(plumb_text, root)
     if make_ok:
         print(f"ok: {make_ok}")
@@ -949,6 +1277,7 @@ def parse(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument("--answers", help="answers.json (see the module docstring)")
     p.add_argument("--docs-dir", default="docs/design")
     p.add_argument("--dry-run", action="store_true", help="print what would be written, write nothing")
+    p.add_argument("--confirm", metavar="TOKEN", help="the real run: the token the dry run printed")
     args = p.parse_args(argv)
     if args.relocate and args.verify:
         p.error("--relocate and --verify cannot be combined")
@@ -984,10 +1313,17 @@ def run(args: argparse.Namespace) -> int:
     answers = load_answers(args.answers)
     plan = build_plan(args, root, skill_rel, docs, name, slug, platforms, answers)
     check_blockers(root, plan)
+    token = confirm_token(root, args, skill_rel, docs, platforms, answers, plan)
+    if not args.dry_run:
+        check_confirm(args.confirm, token)
     wrote, kept = execute(root, plan, args.dry_run)
     copy_notes(root, answers, args.dry_run)
+    for line in ignore_lines(ignored_by_git(root, skill_rel, docs), "warning"):
+        print(line)
     if args.dry_run:
         print(f"dry run: nothing written ({wrote} would be written, {kept} kept)")
+        print(f"confirm: show the user this list; after their OK run the same command without --dry-run, plus "
+              f"--confirm {token}")
     else:
         print(f"done: {wrote} written, {kept} kept")
     return 0

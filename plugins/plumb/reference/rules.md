@@ -72,7 +72,7 @@ inventory behind `missing-token` count them at the token's value, never at Tailw
 
 | Rule | Severity | What it means | How to fix |
 |---|---|---|---|
-| `route-not-prototyped` | error (warn unless `Prototype sync: on`) | A route or page in the code that no screen in `screens.json` covers. | `/plumb:prototype <screen>`, the user approves, then `build-prototype.py --map <id> --route=<route> --files <globs>`. |
+| `route-not-prototyped` | error (warn unless `Prototype sync: on`) | A route or page in the code that no screen in `screens.json` covers. Routes are read only from `PLUMB.md`'s `Routes:` (the page folders or router files `/plumb:init` recorded); without it the rule is skipped with a `note: Routes not recorded` line. | `/plumb:prototype <screen>`, the user approves, then `build-prototype.py --map <id> --route=<route> --files <globs>`. |
 | `no-prototype` | warn | `Prototype sync: on` but there are no screen files and no `screens.json`. | `/plumb:extract` (existing app) or `/plumb:prototype`. |
 | `screen-drift` | error (warn with no baseline) | A built screen's source files changed after its approval (or sync) while its screen file did not. | Update `screens/<id>.html` to show the change, ask the user, and only after their yes `--approve <id>` (or `--synced <id>` for a small fix already built). |
 | `screen-unapproved` | error once built, warn while to-build | The screen file changed after its approval: don't build from it until it is approved again. Or the code of a never-approved screen changed. | Show the user the screen and ask; only after their yes to that screen, `build-prototype.py --approve <id>`. The finding prints this as an `ask the user:` line. |

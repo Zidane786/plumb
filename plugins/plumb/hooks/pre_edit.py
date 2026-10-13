@@ -22,7 +22,8 @@ In such a project, in this order:
    unlink, del, Remove-Item, git rm, the sources of mv / Move-Item / git mv), or a folder that holds one, is refused
    the same way; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
-   path in a router config: the audit's route discovery for the project's framework) unless a screen in screens.json
+   path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
+   start note says the routes are not recorded) unless a screen in screens.json
    covers it (same route, a source glob matching the file, or the route's slug as its id) and its current screen file
    is the approved one: `fix: /plumb:prototype <slug>`.
 3. Edit check (PLUMB.md `Edit check: on`): for a UI file (the audit's file types, inside PLUMB.md's `UI files`), the
@@ -150,8 +151,9 @@ def copy_edit_keeps_block(path: str, change: H.Change) -> bool:
     """True when this edit to a web copy leaves Plumb's block exactly as it is: the rest of the file is the project's.
     A copy with no block yet is the project's own file (the next build adds the block), unless it is a whole file an
     older build generated (its GENERATED header); so is one with broken markers (the build refuses it until they are
-    fixed by hand). A delete or move, or an edit whose result cannot be known (an old string not in the file, a patch
-    that does not apply), counts as changing the block."""
+    fixed by hand). A delete or move, or an edit whose result cannot be known (an old string not in the file), counts
+    as changing the block; an apply_patch update that does not apply is judged by its own lines
+    (unapplied_patch_keeps_block)."""
     if change.kind in ("delete", "move", "path"):
         return False
     try:
@@ -170,7 +172,40 @@ def copy_edit_keeps_block(path: str, change: H.Change) -> bool:
             #              until they are fixed, so let them be fixed by hand
         return not _generated_header(path)
     after = change.after(before)
+    if after is None and change.kind == "update":
+        return unapplied_patch_keeps_block(before, change)
     return after is not None and H.block_text(after) == block
+
+
+def unapplied_patch_keeps_block(before: str, change: H.Change) -> bool:
+    """An apply_patch update whose hunks do not apply to the copy (models often send context lines that are not in the
+    file): judged by its own lines instead of refused. It changes Plumb's block when it adds a block marker, removes a
+    line that is found only inside the block, or a hunk's context lines are found only inside the block (between the
+    markers). Anything else (context found outside, or nowhere: apply_patch cannot place it in the block either) is
+    the project's part of the file."""
+    if H.BLOCK_START in change.added() or H.BLOCK_END in change.added():
+        return False
+    lines = before.split("\n")
+    start = next(i for i, ln in enumerate(lines) if H.BLOCK_START in ln)
+    end = next(i for i, ln in enumerate(lines) if H.BLOCK_END in ln)
+
+    def where(text: str) -> List[int]:
+        want = text.strip()
+        if not re.search(r"\w", want):  # a lone "}" or ");" is everywhere: it places nothing
+            return []
+        return [i for i, ln in enumerate(lines) if ln.strip() == want]
+
+    for hunk in change.hunks:
+        removed = [ln[1:] for ln in hunk.lines if ln[0] == "-" and ln[1:].strip()]
+        context = [ln[1:] for ln in hunk.lines if ln[0] == " " and ln[1:].strip()]
+        for text in removed:
+            found = where(text)
+            if found and all(start <= i <= end for i in found):
+                return False
+        anchors = [i for text in context for i in where(text)]
+        if anchors and all(start < i < end for i in anchors):
+            return False
+    return True
 
 
 def _has_block(path: str) -> bool:
@@ -256,10 +291,13 @@ def _approved(bp, root: Path, docs: str, entry: dict) -> bool:
 
 def prototype_first(proj: H.Project, A, settings: dict, rel: str, before: Optional[str], after: str) -> Optional[str]:
     root = Path(proj.root_s)
-    routes = A.discover_routes(root, [(rel, after)])
+    roots = A.route_roots(settings)  # PLUMB.md `Routes:` only; not recorded: fail open (session start says so)
+    if not roots:
+        return None
+    routes = A.discover_routes(root, [(rel, after)], roots)
     if not routes:
         return None
-    old = {A._route_key(r.route) for r in A.discover_routes(root, [(rel, before)])} if before is not None else set()
+    old = {A._route_key(r.route) for r in A.discover_routes(root, [(rel, before)], roots)} if before is not None else set()
     routes = [r for r in routes if A._route_key(r.route) not in old]
     if not routes:
         return None

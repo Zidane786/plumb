@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -245,7 +246,8 @@ LABELS = {("next", "tailwind-v4"): "Next.js · Tailwind v4", ("angular", "css"):
 def answers(app: App) -> dict:
     return {"description": f"{app.name}: a sample app for Plumb's integration tests", "direction": "Calm",
             "web_copies": app.copies, "icons": ICONS,
-            "ui_packages": f". ({LABELS[(app.framework, app.styling)]})"}
+            "ui_packages": f". ({LABELS[(app.framework, app.styling)]})",
+            "reset_palette": True}  # closed palette: its classes are errors (unanswered it would stay open here)
 
 
 def scaffold(project: Path, app: App, found: dict, extra: Optional[dict] = None) -> subprocess.CompletedProcess:
@@ -255,10 +257,13 @@ def scaffold(project: Path, app: App, found: dict, extra: Optional[dict] = None)
     tmp = Path(tempfile.mkdtemp(prefix="plumb-answers-"))
     try:
         path = tmp / "answers.json"
-        write(path, json.dumps({**answers(app), **(extra or {})}, ensure_ascii=False))
-        r = ok(py(project, SCAFFOLD, "--project-root", str(project), "--name", app.name, "--skill-dir",
-                  proposal["skill_dir"], "--platforms", ",".join(proposal["platforms"]), "--styling", app.styling,
-                  "--answers", str(path)))
+        routes = {"routes": proposal.get("routes") or "none"}  # detect's guess, as the agent confirmed it
+        write(path, json.dumps({**answers(app), **routes, **(extra or {})}, ensure_ascii=False))
+        cmd = ["--project-root", str(project), "--name", app.name, "--skill-dir", proposal["skill_dir"],
+               "--platforms", ",".join(proposal["platforms"]), "--styling", app.styling, "--answers", str(path)]
+        dry = ok(py(project, SCAFFOLD, *cmd, "--dry-run"))
+        token = re.search(r"--confirm ([0-9a-f]{12})$", dry.stdout, re.M).group(1)  # the user's OK on the list
+        r = ok(py(project, SCAFFOLD, *cmd, "--confirm", token))
     finally:
         shutil.rmtree(str(tmp), ignore_errors=True)
     ok(skill_script(project, app, "build-tokens.py"))

@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from test_scaffold import PLUGIN, SCAFFOLD, SKILL_REL, run, tree
 
@@ -223,7 +226,8 @@ def test_verify_passes_in_a_linked_repo(tmp_path: Path) -> None:
     api.mkdir()
     linked = (PLUGIN / "templates/PLUMB.md").read_text(encoding="utf-8")
     skill = f"../proj/{SKILL_REL}/"
-    for slot, value in {"SKILL_DIR": skill, "ROLE": "linked", "PYTHON": "python3", "PROJECT": "api"}.items():
+    for slot, value in {"SKILL_DIR": skill, "ROLE": "linked", "PYTHON": "python3", "PROJECT": "api",
+                        "ROUTES": "none"}.items():
         linked = linked.replace("{{" + slot + "}}", value)
     (api / "PLUMB.md").write_text(linked, encoding="utf-8")
     r = cli(api, "--verify")
@@ -293,3 +297,122 @@ def test_check_make_targets_returns_its_lines_and_prints_nothing(tmp_path: Path,
     assert ok == "PLUMB.md's make targets exist in the Makefile" and note is None and problem is None
     assert mod.check_make_targets("no make hints here", tmp_path) == (None, None, None)
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------- a git-ignored skill folder (live test 2, B5)
+
+
+def _git_repo(root: Path, ignore: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, encoding="utf-8")
+    (root / ".gitignore").write_text(ignore, encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
+def test_a_git_ignored_skill_folder_is_reported_by_the_dry_run_the_scaffold_and_verify(tmp_path: Path) -> None:
+    """The live test's repo ignored .claude/, so the design-system skill would never have been committed."""
+    root = tmp_path / "proj"
+    _git_repo(root, "node_modules\n.claude/\n")
+    want = (f"{SKILL_REL}/ is git-ignored by .claude/ (.gitignore line 2) — the design system would never be "
+            f"committed")
+    hint = ('fix: ask the user: un-ignore it (in .gitignore replace the line ".claude/" with ".claude/*" and add '
+            '"!.claude/skills/" after it), or choose another location for it')
+    dry = run(root, "--dry-run")
+    assert dry.returncode == 0 and f"warning: {want}" in dry.stdout and hint in dry.stdout
+    real = run(root)
+    assert real.returncode == 0 and f"warning: {want}" in real.stdout
+    v = cli(root, "--verify")
+    assert v.returncode == 1 and f"problem: {want}" in v.stdout and hint in v.stdout
+    # the fix the hint names: the skill is committed, verify is quiet about it
+    (root / ".gitignore").write_text("node_modules\n.claude/*\n!.claude/skills/\n", encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "git-ignored" not in v.stdout and v.returncode == 0, v.stdout
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
+def test_an_ignored_plumb_md_or_docs_folder_is_reported_too(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    _git_repo(root, "PLUMB.md\ndocs/\n")
+    out = run(root, "--dry-run").stdout
+    assert "warning: PLUMB.md is git-ignored by PLUMB.md (.gitignore line 1)" in out
+    assert 'in .gitignore add "!PLUMB.md" after the line "PLUMB.md" (or remove that line)' in out
+    assert "warning: docs/design/ is git-ignored by docs/ (.gitignore line 2)" in out
+    assert 'replace the line "docs/" with "docs/*" and add "!docs/design/" after it' in out
+
+
+def test_outside_git_nothing_is_said_about_ignores(tmp_path: Path) -> None:
+    root = tmp_path / "plain"
+    root.mkdir()
+    (root / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+    assert "git-ignored" not in run(root, "--dry-run").stdout
+
+
+# ---------------------------------------------------------------- Routes: and UI files: (recorded, checked by --verify)
+
+
+def _scaffold_with(tmp_path: Path, answers: dict, platforms: str = "web") -> "tuple[Path, subprocess.CompletedProcess]":
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps(answers), encoding="utf-8")
+    root = tmp_path / "proj"
+    root.mkdir(exist_ok=True)
+    return root, run(root, "--answers", str(path), platforms=platforms)
+
+
+def test_routes_answer_is_written_to_plumb_md_and_verified(tmp_path: Path) -> None:
+    root, r = _scaffold_with(tmp_path, {"routes": "frontend/src/app (next-app)", "ui_files": "frontend/src/** · *.tsx"})
+    assert r.returncode == 0, r.stderr
+    text = (root / "PLUMB.md").read_text(encoding="utf-8")
+    assert "Routes: frontend/src/app (next-app)   " in text
+    v = cli(root, "--verify")
+    assert "problem: Routes: frontend/src/app (next-app) does not exist in the project" in v.stdout
+    assert "fix: ask the user: correct Routes:" in v.stdout and v.returncode == 1
+    (root / "frontend/src/app/keys").mkdir(parents=True)
+    (root / "frontend/src/app/keys/page.tsx").write_text("export default () => null;\n", encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "ok: Routes: frontend/src/app (next-app) exists" in v.stdout
+    assert "ok: PLUMB.md UI files: matches 1 file" in v.stdout
+    assert v.returncode == 0, v.stdout
+
+
+def test_routes_unanswered_is_not_recorded_for_web_and_none_for_mobile(tmp_path: Path) -> None:
+    root, r = _scaffold_with(tmp_path / "web", {})
+    assert r.returncode == 0, r.stderr
+    assert "Routes: (not recorded yet: /plumb:init records the app's page roots)" in (root / "PLUMB.md").read_text(
+        encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "note: Routes not recorded: run /plumb:init to record them" in v.stdout and v.returncode == 0, v.stdout
+    root, r = _scaffold_with(tmp_path / "ios", {}, platforms="ios")
+    assert "Routes: none   " in (root / "PLUMB.md").read_text(encoding="utf-8")
+    assert "ok: Routes: none" in cli(root, "--verify").stdout
+
+
+@pytest.mark.parametrize("routes", ["../app (next-app)", "frontend/views", "frontend/src/app", "app (remix)", 7,
+                                    "a\nb"])
+def test_a_bad_routes_answer_is_refused(tmp_path: Path, routes: object) -> None:
+    root, r = _scaffold_with(tmp_path, {"routes": routes})
+    assert r.returncode == 2 and r.stderr.startswith("error: answers.routes") and "fix: " in r.stderr
+    assert not (root / "PLUMB.md").exists()
+
+
+def test_verify_reports_ui_files_that_match_no_file(tmp_path: Path) -> None:
+    """Live test 2: `UI files: app/**, src/**, components/**` in a monorepo whose UI is in frontend/ covered 0 files,
+    which silently switched the audit and the checks off."""
+    root, r = _scaffold_with(tmp_path, {"routes": "frontend/src/app (next-app)"})
+    assert r.returncode == 0, r.stderr
+    for name in ("frontend/src/app/page.tsx", "frontend/src/components/ui/button.tsx"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("export default () => null;\n", encoding="utf-8")
+    plumb = root / "PLUMB.md"
+    text = plumb.read_text(encoding="utf-8")
+    plumb.write_text(re.sub(r"UI files: [^\n]*", "UI files: app/**, src/**, components/** · *.tsx *.css", text),
+                     encoding="utf-8")
+    v = cli(root, "--verify")
+    assert v.returncode == 1
+    assert "problem: PLUMB.md UI files: app/**, src/**, components/** · *.tsx *.css matches 0 files" in v.stdout
+    assert "fix: ask the user: correct UI files:" in v.stdout
+    plumb.write_text(re.sub(r"UI files: [^\n]*", "UI files: frontend/src/**, frontend/lib/** · *.tsx *.css", text),
+                     encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "ok: PLUMB.md UI files: matches 2 files" in v.stdout and v.returncode == 0, v.stdout
+    assert "note: UI files: frontend/lib/** matches 0 files" in v.stdout

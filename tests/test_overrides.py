@@ -296,3 +296,85 @@ def test_apply_needs_overrides(project: Path) -> None:
     r = run(project, "build-tokens.py", "--apply")
     assert r.returncode == 2
     assert r.stderr.startswith("error:") and "\nfix:" in r.stderr and "--overrides --apply" in r.stderr
+
+
+# ---------------------------------------------------------------- live test 2 (B7): roles checked against the app's colours
+
+
+def _core():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("plumb_core_for_overrides", SCRIPTS / "_plumb.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# The tokens extract records from a stock shadcn new-york globals.css: each token holds the app's own colours.
+EXTRACTED = {"background": "background", "surface": "card", "sunk": "muted", "on-surface": "foreground",
+             "on-surface-muted": "muted-foreground", "on-primary": "primary-foreground", "outline": "border",
+             "outline-input": "input", "danger": "destructive"}
+
+
+def _extracted_tokens(p: Path, extra: dict = None) -> None:
+    P = _core()
+    css = SHADCN_STOCK.read_text(encoding="utf-8")
+    light, dark = css.split(":root {", 1)[1].split("}", 1)[0], css.split(".dark {", 1)[1].split("}", 1)[0]
+
+    def val(block: str, var: str) -> str:
+        line = next(ln for ln in block.splitlines() if ln.strip().startswith(f"--{var}:"))
+        hexv, alpha = P.parse_color(line.split(":", 1)[1].strip().rstrip(";"))
+        return hexv if alpha >= 1 else hexv + f"{round(alpha * 255):02x}"
+
+    doc = json.loads(tokens_file(p).read_text(encoding="utf-8"))
+    for token, var in {**EXTRACTED, **(extra or {}), "primary": "primary"}.items():
+        doc["color"][token] = {"$value": val(light, var), "$extensions": {"plumb": {"dark": val(dark, var)}}}
+    tokens_file(p).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+
+
+def test_a_stock_shadcn_new_york_stylesheet_maps_by_role_and_colour(project: Path) -> None:
+    """popover goes to the surface (or a raised surface token), never sunk; sidebar-accent and
+    sidebar-accent-foreground follow accent and accent-foreground; a role whose token has other colours than the app
+    is still mapped by role but named in the notes (the look would change), so the skill asks."""
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _extracted_tokens(project)
+    (copy,) = plan(project)["copies"]
+    found = {o["name"][len("--color-"):]: o["token_change"]["$value"] for o in copy["overrides"]
+             if o["name"].startswith("--color-") and o["token_change"]
+             and str(o["token_change"].get("$value", "")).startswith("{")}
+    assert found == {
+        "foreground": "{color.on-surface}", "card": "{color.surface}", "card-foreground": "{color.on-surface}",
+        "popover": "{color.surface}", "popover-foreground": "{color.on-surface}",
+        "primary-foreground": "{color.on-primary}",
+        "secondary": "{color.sunk}", "secondary-foreground": "{color.on-surface}",
+        "muted": "{color.sunk}", "muted-foreground": "{color.on-surface-muted}",
+        "accent": "{color.sunk}", "accent-foreground": "{color.on-surface}",
+        "destructive": "{color.danger}", "border": "{color.outline}", "input": "{color.outline-input}",
+        "ring": "{color.primary}",
+        "sidebar": "{color.surface}", "sidebar-foreground": "{color.on-surface}",
+        "sidebar-primary": "{color.primary}", "sidebar-primary-foreground": "{color.on-primary}",
+        "sidebar-accent": "{color.sunk}", "sidebar-accent-foreground": "{color.on-surface}",
+        "sidebar-border": "{color.outline}", "sidebar-ring": "{color.primary}"}
+    looks = sorted(n.split(": --color-", 1)[1].split(" ", 1)[0] for n in copy["notes"] if "the look changes" in n)
+    assert looks == ["accent-foreground", "ring", "secondary-foreground", "sidebar", "sidebar-accent-foreground",
+                     "sidebar-primary", "sidebar-primary-foreground", "sidebar-ring"]
+    # a raised surface token with the popover's colours, and an on-sunk with accent-foreground's: they are used
+    _extracted_tokens(project, {"surface-raised": "popover", "on-sunk": "accent-foreground"})
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"]["$value"] for o in copy["overrides"] if o["token_change"]}
+    assert got["--color-popover"] == "{color.surface-raised}"
+    assert got["--color-accent-foreground"] == got["--color-sidebar-accent-foreground"] == "{color.on-sunk}"
+    assert got["--color-secondary-foreground"] == "{color.on-sunk}"
+
+
+def test_used_in_never_lists_plumbs_own_pages(project: Path) -> None:
+    (project / "components").mkdir()
+    (project / "components/chart.tsx").write_text('export const C = () => <i data-c="var(--background)" />;\n',
+                                                 encoding="utf-8")
+    (project / "docs/design/prototype/screens").mkdir(parents=True)
+    (project / "docs/design/extract.html").write_text("<style>:root { color: var(--background); }</style>\n",
+                                                      encoding="utf-8")
+    (project / "docs/design/prototype/screens/home.html").write_text('<p style="color: var(--foreground)"></p>\n',
+                                                                     encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    used = {v["name"]: v["used_in"] for v in copy["project_variables"]}
+    assert used == {"--background": ["components/chart.tsx:1"], "--foreground": []}

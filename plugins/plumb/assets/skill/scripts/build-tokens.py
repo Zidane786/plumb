@@ -299,6 +299,35 @@ def _lines(decls: List[Tuple[str, str]]) -> List[str]:
 
 THEME_SWITCHES = ("both", "system", "class", "data-theme")
 REDUCED_MOTION = ("none", "keep-fades")
+# Tailwind v4's default theme namespaces the {{@reset-palette}} directive clears (web.reset_palette true): then only the
+# tokens exist. An older template that spells the lines out loses them when reset_palette is false.
+RESET_NAMESPACES = ("color", "radius", "shadow", "text", "font", "ease")
+RESET_LINE = re.compile(r"^[ \t]*--(?:" + "|".join(RESET_NAMESPACES) + r")-\*\s*:\s*initial\s*;[ \t]*\n", re.M)
+CLOSED_COMMENT = re.compile(r"^/\* Closed scales:.*?\*/[ \t]*\n", re.M | re.S)
+
+
+def reset_palette(doc: dict) -> bool:
+    """$extensions.plumb.web.reset_palette (default true): the block clears Tailwind's default colours, radii,
+    shadows, text sizes, fonts and easings, so only the tokens exist. false keeps them (an existing app that still
+    uses them renders as before; the audit suggests moving each palette class to a token)."""
+    value = P.plumb_settings(doc)["web"].get("reset_palette", True)
+    if not isinstance(value, bool):
+        raise _err(f"$extensions.plumb.web.reset_palette is {value!r}",
+                   "set it to true (only the tokens exist: Tailwind's default palette and scales are switched off) or "
+                   "false (Tailwind's defaults stay until the app is migrated)")
+    return value
+
+
+def reset_palette_css(doc: dict) -> List[str]:
+    """The {{@reset-palette}} directive: the namespace resets when web.reset_palette is true, else a comment saying
+    Tailwind's defaults stay."""
+    if not reset_palette(doc):
+        return ["/* Open scales (web.reset_palette false): Tailwind's default colours, radii, shadows, text sizes, fonts",
+                "   and easings stay available until the app is migrated to the tokens; the audit suggests each move. */"]
+    return (["/* Closed scales (web.reset_palette true): Tailwind's default colours, radii, shadows, text sizes, fonts",
+             "   and easings do not exist here, only the tokens. Spacing stays Tailwind's multiplier from the spacing",
+             "   base token; the audit enforces the scale. */"]
+            + [f"--{ns}-*: initial;" for ns in RESET_NAMESPACES])
 
 
 def web_switches(doc: dict) -> Tuple[str, str]:
@@ -421,7 +450,10 @@ def build_css(doc: dict, template: str, header: str) -> str:
         "dark": lambda: dark_css(doc),
         "dark-variant": lambda: dark_variant_css(doc),
         "reduced-motion": lambda: reduced_motion_css(doc),
+        "reset-palette": lambda: reset_palette_css(doc),
     }
+    if not reset_palette(doc):  # an older template spells the resets out: drop them (and its "Closed scales" note)
+        template = CLOSED_COMMENT.sub("", RESET_LINE.sub("", template))
 
     def run_directive(name: str) -> List[str]:
         if name not in directives:
@@ -1595,7 +1627,8 @@ _ON_SUNK = ("on-sunk", "on-surface")
 _ROLE_NAMES = {"background": ("background", "surface"), "bg": ("background", "surface"), "page": ("background", "surface"),
                "foreground": ("on-surface", "on-background", "text"), "fg": ("on-surface", "on-background", "text"),
                "text": ("on-surface", "on-background", "text"), "card": ("surface", "background"),
-               "popover": ("surface", "background"), "sidebar": ("surface", "background"),
+               "popover": ("surface-raised", "raised", "surface", "background"),
+               "sidebar": ("surface", "background"),
                "secondary": _SUNK, "muted": _SUNK, "accent": _SUNK,
                "secondary-foreground": _ON_SUNK, "accent-foreground": _ON_SUNK,
                "muted-foreground": ("on-surface-muted", "on-sunk", "on-surface"),
@@ -1626,6 +1659,59 @@ def _role_token(colors: dict, name: str) -> Optional[str]:
             rest = name[len(prefix):]
             return rest if P.is_token(colors.get(rest)) else _role_token(colors, rest)
     return None
+
+
+COLOUR_TOLERANCE = 2  # per sRGB channel (0-255): oklch read twice may round one step apart
+
+
+def _rgba(text: object) -> Optional[Tuple[int, int, int, float]]:
+    try:
+        hexv, alpha = P.parse_color(str(text))
+    except (PlumbError, ValueError, TypeError):
+        return None
+    h = hexv.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), float(alpha)
+
+
+def _same_colour(a: Optional[tuple], b: Optional[tuple]) -> bool:
+    if a is None or b is None:
+        return False
+    return all(abs(x - y) <= COLOUR_TOLERANCE for x, y in zip(a[:3], b[:3])) and abs(a[3] - b[3]) <= 0.02
+
+
+def _token_colours(doc: dict, path: str) -> Optional[Tuple[tuple, tuple]]:
+    """(light, dark) of a colour token as (r, g, b, alpha), or None when it does not resolve to colours."""
+    try:
+        light, dark = _rgba(P.resolve(doc, path, "light")), _rgba(P.resolve(doc, path, "dark"))
+    except PlumbError:
+        return None
+    return (light, dark) if light is not None and dark is not None else None
+
+
+def _app_colours(values: Dict[str, str], value: str) -> Optional[Tuple[tuple, tuple]]:
+    """The app's (light, dark) for a variable (dark = light when the app sets it only once), or None."""
+    light = _rgba(values.get("light") or value)
+    if light is None:
+        return None
+    dark = _rgba(values["dark"]) if values.get("dark") else light
+    return (light, dark) if dark is not None else None
+
+
+def _is_text_token(name: str) -> bool:
+    """A colour token for text or icons: on-*, text*, *-ink, link (the contrast pairs' rule)."""
+    parts = name.split("-")
+    return name.startswith("on-") or name == "link" or "text" in parts or "ink" in parts
+
+
+def _show(cols: Optional[Tuple[tuple, tuple]]) -> str:
+    """light / dark as #rrggbb[aa]."""
+    if cols is None:
+        return "unknown"
+
+    def one(c: tuple) -> str:
+        return "#%02x%02x%02x" % c[:3] + ("" if c[3] >= 1 else "%02x" % round(c[3] * 255))
+
+    return one(cols[0]) if cols[0] == cols[1] else f"{one(cols[0])} / {one(cols[1])}"
 
 
 def _colour_value(text: str) -> str:
@@ -1698,16 +1784,22 @@ def _enclosing(blocks: list, pos: int) -> List[tuple]:
 USES_SHOWN = 20  # per variable
 
 
-def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict]) -> None:
+def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict], docs_rel: str = "docs/design") -> None:
     """Fill each project variable's used_in with the other UI files (file:line) that still read var(--x): the plan
-    removes it from the copy, so the skill shows these and points them at the token's variable too, after asking."""
+    removes it from the copy, so the skill shows these and points them at the token's variable too, after asking.
+    Plumb's own pages (the docs folder: extract.html, the specimen, the prototype) and the design-system skill are not
+    the app: they are never listed."""
     if not project_vars:
         return
+    docs = (root / docs_rel.replace("\\", "/").strip("/")).resolve() if docs_rel.strip("/") else None
     pattern = re.compile(r"var\(\s*(" + "|".join(re.escape(v["name"]) for v in project_vars) + r")\s*[),]")
     by_name = {v["name"]: v for v in project_vars}
     skip = copy.resolve()
     for dirpath, dirnames, filenames in os.walk(root):
         here = Path(dirpath)
+        if docs is not None and (here.resolve() == docs or docs in here.resolve().parents):
+            dirnames[:] = []
+            continue
         dirnames[:] = sorted(d for d in dirnames if d not in P.SKIP_DIRS and not (d == "skills" and here.name == ".claude"))
         for fname in sorted(filenames):
             path = here / fname
@@ -1745,6 +1837,67 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     by_hand: List[str] = []
     notes: List[str] = []  # what the plan decided for the person to know (not to decide)
     feeds: Dict[str, str] = {}  # project variable -> the token variable it fed
+    def project_values(name: str, value: str) -> Tuple[Optional[str], list, Dict[str, str]]:
+        """(the project variable it reads, its declarations outside @theme, its light and dark values)."""
+        src_m = _VAR_ONLY.fullmatch(value)
+        src = src_m.group(1) if src_m else None
+        decls = [d for d in re.finditer(r"(?<![\w-])" + re.escape(src) + r"\s*:\s*([^;{}]*);?", code)
+                 if not in_theme(d.start())] if src else []
+        values: Dict[str, str] = {}
+        for d in decls:
+            mode = "dark" if any(_DARK_PRELUDE.search(code[b[0]:b[1]]) for b in _enclosing(blocks, d.start())) else "light"
+            values.setdefault(mode, text[d.start(1):d.end(1)].strip())
+        return src, decls, values
+
+    # The app's colours, by name, so each role is checked against them (a role whose token has other colours would
+    # change the app's look) and a sidebar-<x> name follows what <x> becomes.
+    app: Dict[str, Optional[Tuple[tuple, tuple]]] = {}
+    for pos, name in P.block_overrides(text):
+        if name.startswith("--color-") and "*" not in name and name not in tokvars:
+            m = re.compile(re.escape(name) + r"\s*:\s*([^;{}]*);?").match(code, pos)
+            value = text[m.start(1):m.end(1)].strip() if m else ""
+            app[name[len("--color-"):]] = _app_colours(project_values(name, value)[2], value)
+    decided: Dict[str, Tuple[str, Optional[str]]] = {}  # rest -> ("alias", token name) | ("own", None)
+    looks: List[str] = []  # names whose role token has other colours than the app
+
+    def decide(rest: str) -> Tuple[str, Optional[str]]:
+        """How a project colour name moves into the tokens: ("alias", token) when a token has its colours (its role
+        token first: card -> surface, popover -> surface-raised or surface; then any token with the same light and
+        dark colours; a sidebar-<x> with <x>'s colours follows <x>), else ("own", why) to add the app's own values."""
+        if rest in decided:
+            return decided[rest]
+        decided[rest] = ("own", None)  # a guard against a loop
+        mine = app.get(rest)
+        out: Tuple[str, Optional[str]] = ("own", None)
+        for prefix in _ROLE_PREFIXES:
+            base = rest[len(prefix):] if rest.startswith(prefix) else ""
+            if base and (mine is None or (app.get(base) and _same_colour(mine[0], app[base][0])
+                                          and _same_colour(mine[1], app[base][1]))):
+                if base in app:
+                    kind, tok = decide(base)
+                    decided[rest] = ("alias", tok if kind == "alias" else base)
+                    if base in looks:
+                        looks.append(rest)
+                    return decided[rest]
+        role = _role_token(colors, rest)
+        role_cols = _token_colours(doc, f"color.{role}") if role else None
+        if role and (mine is None or role_cols is None or
+                     (_same_colour(mine[0], role_cols[0]) and _same_colour(mine[1], role_cols[1]))):
+            out = ("alias", role)
+        else:
+            text_like = rest.endswith("-foreground") or rest in ("foreground", "fg", "text")
+            same = [k for k in colors if mine is not None and not k.startswith("$") and P.is_token(colors.get(k))
+                    and _is_text_token(k) == text_like  # a foreground only ever becomes a text token, and back
+                    and (lambda c: c is not None and _same_colour(mine[0], c[0]) and _same_colour(mine[1], c[1]))(
+                        _token_colours(doc, f"color.{k}"))]
+            if same:  # a token already has the app's exact colours (extract recorded them): keep the look
+                out = ("alias", same[0])
+            elif role:  # the role token (create: the new design replaces the stock colours; extract: say so)
+                out = ("alias", role)
+                looks.append(rest)
+        decided[rest] = out
+        return out
+
     for pos, name in P.block_overrides(text):
         line = L.line(pos)
         if name == "@custom-variant dark":
@@ -1763,14 +1916,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         value = text[m.start(1):m.end(1)].strip() if m else ""
         ns, _, rest = name[2:].partition("-")
         group = _NS_GROUP.get(ns, ns)
-        src_m = _VAR_ONLY.fullmatch(value)
-        src = src_m.group(1) if src_m else None
-        decls = [d for d in re.finditer(r"(?<![\w-])" + re.escape(src) + r"\s*:\s*([^;{}]*);?", code)
-                 if not in_theme(d.start())] if src else []
-        values: Dict[str, str] = {}
-        for d in decls:
-            mode = "dark" if any(_DARK_PRELUDE.search(code[b[0]:b[1]]) for b in _enclosing(blocks, d.start())) else "light"
-            values.setdefault(mode, text[d.start(1):d.end(1)].strip())
+        src, decls, values = project_values(name, value)
         change: Optional[dict] = None
         note = ""
         if "*" in name:
@@ -1793,9 +1939,14 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         else:
             kind, token = "new-name", f"{group}.{rest}"
             if ns == "color" and rest:
-                role = _role_token(colors, rest)
-                if role:
-                    change = {"add": token, "$value": f"{{color.{role}}}"}
+                how, what = decide(rest)
+                if how == "alias":
+                    change = {"add": token, "$value": f"{{color.{what}}}"}
+                    if rest in looks:
+                        notes.append(f"line {line}: {name} becomes {{color.{what}}} (its role), whose colours differ "
+                                     f"from the app's ({_show(app.get(rest))} today, {_show(_token_colours(doc, f'color.{what}'))} "
+                                     f"in the tokens): the look changes; ask the user, or keep the app's colours as a "
+                                     f"token of its own with /plumb:update")
                 else:
                     try:
                         change = {"add": token, "$value": _colour_value(values.get("light") or value)}
@@ -1862,7 +2013,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             replace.append({"line": L.line(u.start()), "old": text[u.start():u.end()], "new": f"var({name}{u.group(1)}",
                             "why": f"{src} fed {name}, which is now the token's variable"})
         project_vars.append({"name": src, "declared": lines, "maps_to": name, "used_in": []})
-    _uses_elsewhere(root, path, project_vars)
+    _uses_elsewhere(root, path, project_vars, str(P.plumb_settings(doc).get("docs_dir") or "docs/design"))
     # a literal font stack outside the tokens (body { font-family: Arial, ... }) uses the font token instead
     for f in re.finditer(r"(?<![\w-])font-family\s*:\s*([^;{}]+)", code):
         val = text[f.start(1):f.end(1)].strip()
@@ -2029,7 +2180,7 @@ def migrate(doc: dict, defaults_project: str = "") -> List[str]:
             added.append(f"$extensions.plumb.{key} = {json.dumps(value)}")
     # theme_switch and motion.reduced: the defaults the build applies when they are missing, now recorded, so the
     # build's "not set" note ends with this one command (the output does not change)
-    for key, subdefaults in (("web", {"styling": "css", "copies": [], "theme_switch": "both"}),
+    for key, subdefaults in (("web", {"styling": "css", "copies": [], "theme_switch": "both", "reset_palette": True}),
                              ("motion", {"reduced": "none"}), ("contrast", {"extra_pairs": []})):
         sub = plumb.get(key)
         if sub is None:
@@ -2043,10 +2194,62 @@ def migrate(doc: dict, defaults_project: str = "") -> List[str]:
     return added
 
 
-def css_vars(doc: dict) -> str:
-    """Plain custom properties: :root (light), the md breakpoint, .dark and the prefers-color-scheme dark block."""
+_BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*\)$")
+_PAGE_STACKS = {"mono": 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                "serif": 'Georgia, "Times New Roman", serif',
+                "sans": 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'}
+
+
+def _split_top(value: str) -> List[str]:
+    """A comma list split at the top level (commas inside var(...) stay)."""
+    out, depth, cur = [], 0, []
+    for ch in value:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    out.append("".join(cur).strip())
+    return [x for x in out if x]
+
+
+def page_font_value(name: str, value: str) -> str:
+    """A font-family value for Plumb's own pages: each app font variable without a fallback (var(--font-geist-sans),
+    which next/font defines only inside the app) gets the rest of the list, or a system stack, as its fallback. Without
+    one the whole variable is invalid outside the app and the page falls back to the browser's serif."""
+    items = _split_top(value)
+    if not any(_BARE_VAR.match(i) for i in items):
+        return value
+    out = []
+    for i, item in enumerate(items):
+        m = _BARE_VAR.match(item)
+        if m:
+            rest = ", ".join(x for x in items[i + 1:] if not _BARE_VAR.match(x))
+            key = "mono" if "mono" in name or "code" in name else "serif" if "serif" in name and "sans" not in name else "sans"
+            item = f"var({m.group(1)}, {rest or _PAGE_STACKS[key]})"
+        out.append(item)
+    return ", ".join(out)
+
+
+def _is_font_var(name: str) -> bool:
+    return (name.startswith("--font-") and not name.startswith("--font-weight")) or name.endswith("--font-family")
+
+
+def page_decls(decls: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    """Declarations as Plumb's pages inline them: font families get fallbacks (page_font_value)."""
+    return [(n, page_font_value(n, v) if _is_font_var(n) else v) for n, v in decls]
+
+
+def css_vars(doc: dict, pages: bool = False) -> str:
+    """Plain custom properties: :root (light), the md breakpoint, .dark and the prefers-color-scheme dark block.
+    pages: as Plumb's own pages inline them (font variables of the app get a fallback, page_font_value)."""
 
     def rule(selector: str, decls: List[Tuple[str, str]], indent: str = "", extra: Tuple[str, ...] = ()) -> List[str]:
+        decls = page_decls(decls) if pages else decls
         lines = [f"{indent}{selector} {{"] + [f"{indent}  {n}: {v};" for n, v in decls] + [f"{indent}  {e}" for e in extra]
         return lines + [f"{indent}}}"]
 
@@ -2196,7 +2399,7 @@ TOKEN_BLOCK_END = "/* plumb:tokens:end */"
 
 def token_block(doc: dict) -> str:
     """The --css-vars export between the token-block markers: what prototype pages inline and --check compares."""
-    return f"{TOKEN_BLOCK_START}\n{css_vars(doc)}{TOKEN_BLOCK_END}"
+    return f"{TOKEN_BLOCK_START}\n{css_vars(doc, pages=True)}{TOKEN_BLOCK_END}"
 
 
 def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = False) -> str:
@@ -2206,11 +2409,11 @@ def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = Fa
     if doc is None:
         return "/* No tokens yet: Plumb's neutral page colours. */"
     roles = [f"  {n}: {v};" for n, v in page_roles(doc)]
-    tokens = token_block(doc) if markers else css_vars(doc).rstrip("\n")
+    tokens = token_block(doc) if markers else css_vars(doc, pages=True).rstrip("\n")
     lines = ["/* The project's tokens (build-tokens.py --css-vars). */", tokens,
              "/* Plumb's page roles, mapped to the project's tokens. */", ":root {", *roles, "}"]
     if scopes:
-        light, dark, md = declarations(doc, "light"), declarations(doc, "dark"), declarations(doc, "md")
+        light, dark, md = (page_decls(declarations(doc, m)) for m in ("light", "dark", "md"))
         lines += ["/* One theme pinned inside an element (light and dark side by side). */", ".pl-light {"]
         lines += [f"  {n}: {v};" for n, v in light] + roles + ["  color-scheme: light;", "}", ".pl-dark {"]
         lines += [f"  {n}: {v};" for n, v in light + dark] + roles + ["  color-scheme: dark;", "}"]
@@ -2673,6 +2876,48 @@ def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str
     return out
 
 
+def _load_audit():
+    """audit.py from this script's folder (its palette-class scan), or None."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "audit.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("plumb_audit_for_tokens", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["plumb_audit_for_tokens"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod
+    except Exception:  # noqa: BLE001 - the warning is a convenience
+        return None
+
+
+def palette_warning(doc: dict, skill_dir: Path, root: Path, tokens_file: Path) -> Optional[str]:
+    """When web.reset_palette is true (Tailwind v4, with a web copy in the app) and the app's UI files still use
+    Tailwind's default palette classes, a warning with their count: those classes lose their colour once the block
+    is in the app. None otherwise (or when the scan cannot run)."""
+    web = P.plumb_settings(doc)["web"]
+    if web.get("styling") != "tailwind-v4" or not web.get("copies") or not reset_palette(doc):
+        return None
+    audit = _load_audit()
+    if audit is None:
+        return None
+    try:
+        count, files, examples = audit.palette_uses(root, skill_dir, doc)
+    except Exception:  # noqa: BLE001
+        return None
+    if not count:
+        return None
+    shown = ", ".join(examples) + (", ..." if count > len(examples) else "")
+    return (f"warning: web.reset_palette is true, so Plumb's block switches off Tailwind's default palette (and its "
+            f"default radii, shadows, text sizes, fonts and easings); {count} palette class"
+            f"{'es' if count != 1 else ''} in {len(files)} UI file{'s' if len(files) != 1 else ''} would lose their "
+            f"colour ({shown})\n"
+            f"fix: ask the user: keep Tailwind's defaults until the app is migrated (set \"reset_palette\": false in "
+            f"$extensions.plumb.web of {rel(tokens_file, root)}, then rebuild; the audit then suggests each move), or "
+            f"move those classes to colour tokens first (audit.py lists them as palette-colour)")
+
+
 MISSING_DEFAULTS = {
     "web.theme_switch": ('"both" (dark from the system setting and from the .dark class)',
                          '"both", "system", "class" or "data-theme"'),
@@ -2720,6 +2965,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     files = outputs(doc, skill_dir, project, tokens_file, notes, firsts)
     for line in template_notes(doc, skill_dir, missing=not args.check):
         print(line, file=sys.stderr)
+    warning = palette_warning(doc, skill_dir, root, tokens_file)
+    if warning:
+        print(warning, file=sys.stderr)
     if P.find_template(skill_dir, SPECIMEN_TEMPLATE) is None:
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)

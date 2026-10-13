@@ -3,15 +3,8 @@
 
 {{@dark-variant}}
 
-/* Closed scales: Tailwind's default colours, radii, shadows, text sizes, fonts and easings do not exist here.
-   Spacing stays Tailwind's multiplier from the spacing base token; the audit enforces the scale. */
 @theme static {
-  --color-*: initial;
-  --radius-*: initial;
-  --shadow-*: initial;
-  --text-*: initial;
-  --font-*: initial;
-  --ease-*: initial;
+  {{@reset-palette}}
 
   {{@vars}}
 }

@@ -96,7 +96,8 @@ def test_patch_adding_a_new_route_is_denied_prototype_first(launcher, tmp_path, 
 
 @pytest.mark.parametrize("header", ["Update File", "Add File", "Delete File"])
 def test_patch_touching_a_generated_file_is_denied(launcher, tmp_path, proj, header):
-    body = patch(f"*** {header}: {proj / 'app/globals.css'}\n@@\n-a\n+b\n")
+    inside = next(ln for ln in read(proj / "app/globals.css").splitlines() if "color-scheme: dark;" in ln)
+    body = patch(f"*** {header}: {proj / 'app/globals.css'}\n@@\n-{inside}\n+b\n")
     reason = denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=body))
     assert reason.startswith("error: app/globals.css is generated")
 
@@ -126,6 +127,31 @@ def test_patch_to_a_web_copy_is_judged_by_plumbs_block(launcher, tmp_path, proj)
     reason = denied(pre(launcher, tmp_path, proj, "bash", COMMAND="echo 'body{}' >> app/globals.css"))
     assert "is generated only between its /* plumb:start ... */ and /* plumb:end */ lines" in reason
     assert "the rest of the file is yours" in reason and "edit tool" in reason
+
+
+def test_patch_whose_context_does_not_match_is_judged_by_where_it_lands(launcher, tmp_path, proj):
+    """Live test 2 (B14): a model's patch appending a comment at the end of the copy used context lines that are not
+    in the file; the hook could not apply it, counted it as changing the block and refused it. Now a patch that does
+    not apply is judged by its lines: allowed unless it removes a block line, adds a marker, or its context lines are
+    found only inside the block."""
+    css = proj / "app/globals.css"
+    text = read(css)
+    inside = [ln for ln in text.split(END)[0].splitlines() if "--" in ln and ":" in ln]
+    append = ("*** Update File: app/globals.css\n@@\n body {\n   margin: 0;\n }\n"
+              "+/* app-owned note: keep body styles below */\n")
+    allowed(pre(launcher, tmp_path, proj, "apply_patch", PATCH=patch(append)))
+    pure = "*** Update File: app/globals.css\n@@ .not-in-file {\n+/* app-owned note */\n"
+    allowed(pre(launcher, tmp_path, proj, "apply_patch", PATCH=patch(pure)))
+    for body in (
+        # removes a line of the block (with context that is not in the file)
+        f"*** Update File: app/globals.css\n@@\n not in the file\n-{inside[0]}\n+  --color-primary: #3b2f8f;\n",
+        # its context lines are found only inside the block
+        f"*** Update File: app/globals.css\n@@\n{' ' + inside[0]}\n{' ' + inside[1]}\n not in the file\n+  --x: 1px;\n",
+        # adds a block marker
+        "*** Update File: app/globals.css\n@@\n not in the file\n+/* plumb:end */\n",
+    ):
+        reason = denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=patch(body)))
+        assert reason.startswith("error: app/globals.css is generated from the design tokens between its /* plumb:start")
 
 
 def test_multi_file_patch_is_denied_when_any_file_is_guarded(launcher, tmp_path, proj):

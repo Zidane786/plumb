@@ -1,7 +1,7 @@
 # Components: the shared spec ({{PLATFORMS}})
 
 One spec per component, the same on every platform. Token names are paths in
-`assets/tokens/{{SLUG}}.tokens.json` (`color.primary`, `typography.sm`, `radius.md`, `motion.duration.fast` ...). How each one
+`assets/tokens/{{SLUG}}.tokens.json` ({{TOK_EXAMPLES}} ...). How each one
 is built per platform is in the platform files linked from [SKILL.md](../SKILL.md). Where each exists today:
 [inventory.md](inventory.md).
 
@@ -19,7 +19,7 @@ product's real components are decided, and keep [inventory.md](inventory.md) in 
 | Purpose | Start an action. Exactly one primary per view. |
 | Anatomy | Optional leading icon, label (verb + object, see [vocabulary.md](vocabulary.md)), spinner while loading. |
 | Variants | primary (`primary` / `on-primary`), secondary (`surface`, 1px `outline-input`), ghost (no chrome), link (`link`), destructive (`danger` / `on-danger`, confirmations only). |
-| Sizes | sm, md, lg; icon-only is square. Radius `radius.md`. Text `typography.sm`. |
+| Sizes | sm, md, lg; icon-only is square. Radius {{TOK_RADIUS_CONTROL}}. Text {{TOK_TYPE_LABEL}}. |
 | States | loading: spinner, activation blocked, focus kept. Disabled: reduced opacity, still readable. |
 | A11y | The visible text is the label; icon-only buttons need an accessible label (and a tooltip on web). |
 
@@ -44,7 +44,7 @@ product's real components are decided, and keep [inventory.md](inventory.md) in 
 | | |
 |---|---|
 | Purpose | Group related content on `surface`. |
-| Tokens | `surface`, 1px `outline`, `radius.lg`, `shadow.card` only when it lifts above the page. |
+| Tokens | `surface`, 1px `outline`, {{TOK_RADIUS_CARD}}, {{TOK_SHADOW_CARD}} only when it lifts above the page. |
 | Rules | A card that is clickable is one control with one focus ring; never nest clickable cards. |
 
 ### Badge and chip
@@ -82,7 +82,7 @@ What happened in words, what to do next, a retry. Keep the user's input. Never o
 Same layout as the content, shown after 200 ms, no flashing; the only continuous animation besides the in-button spinner.
 
 ### Page header
-Title (`typography.h3` or `h2`), optional description, primary action at the end. One per page.
+Title ({{TOK_TYPE_TITLE}}), optional description, primary action at the end. One per page.
 
 ### App shell
 Navigation, page area, optional side panel. Navigation model and responsive behaviour are in [ux.md](ux.md).
