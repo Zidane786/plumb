@@ -239,6 +239,7 @@ class Hit:
     match: str
     message: Optional[str] = None
     fix: Optional[str] = None
+    severity: Optional[str] = None  # overrides the rule's for this one hit (palette-colour while the palette is open)
 
 
 @dataclass
@@ -902,10 +903,17 @@ _PALETTE = re.compile(
 )
 
 
+def palette_open(ctx: Ctx) -> bool:
+    """$extensions.plumb.web.reset_palette is false: the block keeps Tailwind's default palette (an existing app being
+    migrated), so its classes still render and each one is a suggestion to move to a token, not an error."""
+    return ctx.web.get("reset_palette") is False
+
+
 def check_palette_colour(ctx: Ctx) -> Iterator[Hit]:
     if not ctx.tailwind:
         return
     names = ctx.scales.colour_names if ctx.scales else set()
+    open_ = palette_open(ctx)
     for m in _PALETTE.finditer(ctx.code):
         if not ctx.class_ok(m.start()):
             continue
@@ -913,7 +921,40 @@ def check_palette_colour(ctx: Ctx) -> Iterator[Hit]:
         if name in names:
             continue
         prefix = m.group(1)
-        yield Hit(m.start(), m.group(0), fix=_colour_fix(ctx, PALETTE[name], 1.0, prefix, _role_of_prefix(prefix)))
+        fix = _colour_fix(ctx, PALETTE[name], 1.0, prefix, _role_of_prefix(prefix))
+        if open_:
+            yield Hit(m.start(), m.group(0), f"Tailwind default palette colour {m.group(0)} (the palette stays open while "
+                      f"web.reset_palette is false; move it to a colour token)", fix, "suggest")
+        else:
+            yield Hit(m.start(), m.group(0), fix=fix)
+
+
+PALETTE_EXAMPLES = 5
+
+
+def palette_uses(root: Path, skill_dir: Path, doc: Optional[dict], settings: Optional[dict] = None
+                 ) -> Tuple[int, List[str], List[str]]:
+    """Tailwind default palette classes the project's UI files use (what a closed palette would leave without a
+    colour): (count, files, a few examples). Read with PLUMB.md's UI files (settings; default: the project's)."""
+    settings = make_settings(root, doc) if settings is None else settings
+    settings = {**settings, "web": {**(settings.get("web") or {}), "reset_palette": True}}
+    count, files, examples = 0, [], []
+    for path in collect_files([root], root, skill_dir, settings, False):
+        try:
+            if path.stat().st_size > MAX_BYTES:
+                continue
+            text = read_source(path)
+        except OSError:
+            continue
+        ctx = make_ctx(rel(path, root), text, doc, settings)
+        if ctx is None or not ctx.tailwind:
+            continue
+        hits = list(check_palette_colour(ctx))
+        if hits:
+            count += len(hits)
+            files.append(ctx.path)
+            examples += [h.match for h in hits if h.match not in examples][:PALETTE_EXAMPLES - len(examples)]
+    return count, files, examples
 
 
 _TW_TYPE = P.TAILWIND_TYPE
@@ -3651,7 +3692,8 @@ def file_findings(ctx: Ctx, skip: frozenset = frozenset()) -> List[Finding]:
         for hit in rule.check(ctx):
             line = ctx.line_of(hit.pos)
             out.append(Finding(
-                rule.id, rule.severity, ctx.path, line, hit.message or rule.message.format(match=hit.match),
+                rule.id, hit.severity or rule.severity, ctx.path, line,
+                hit.message or rule.message.format(match=hit.match),
                 hit.fix or rule.fix, match=hit.match, source=ctx.line_text(line),
             ))
     out.sort(key=lambda f: (f.line, _ORDER[f.rule]))

@@ -299,6 +299,35 @@ def _lines(decls: List[Tuple[str, str]]) -> List[str]:
 
 THEME_SWITCHES = ("both", "system", "class", "data-theme")
 REDUCED_MOTION = ("none", "keep-fades")
+# Tailwind v4's default theme namespaces the {{@reset-palette}} directive clears (web.reset_palette true): then only the
+# tokens exist. An older template that spells the lines out loses them when reset_palette is false.
+RESET_NAMESPACES = ("color", "radius", "shadow", "text", "font", "ease")
+RESET_LINE = re.compile(r"^[ \t]*--(?:" + "|".join(RESET_NAMESPACES) + r")-\*\s*:\s*initial\s*;[ \t]*\n", re.M)
+CLOSED_COMMENT = re.compile(r"^/\* Closed scales:.*?\*/[ \t]*\n", re.M | re.S)
+
+
+def reset_palette(doc: dict) -> bool:
+    """$extensions.plumb.web.reset_palette (default true): the block clears Tailwind's default colours, radii,
+    shadows, text sizes, fonts and easings, so only the tokens exist. false keeps them (an existing app that still
+    uses them renders as before; the audit suggests moving each palette class to a token)."""
+    value = P.plumb_settings(doc)["web"].get("reset_palette", True)
+    if not isinstance(value, bool):
+        raise _err(f"$extensions.plumb.web.reset_palette is {value!r}",
+                   "set it to true (only the tokens exist: Tailwind's default palette and scales are switched off) or "
+                   "false (Tailwind's defaults stay until the app is migrated)")
+    return value
+
+
+def reset_palette_css(doc: dict) -> List[str]:
+    """The {{@reset-palette}} directive: the namespace resets when web.reset_palette is true, else a comment saying
+    Tailwind's defaults stay."""
+    if not reset_palette(doc):
+        return ["/* Open scales (web.reset_palette false): Tailwind's default colours, radii, shadows, text sizes, fonts",
+                "   and easings stay available until the app is migrated to the tokens; the audit suggests each move. */"]
+    return (["/* Closed scales (web.reset_palette true): Tailwind's default colours, radii, shadows, text sizes, fonts",
+             "   and easings do not exist here, only the tokens. Spacing stays Tailwind's multiplier from the spacing",
+             "   base token; the audit enforces the scale. */"]
+            + [f"--{ns}-*: initial;" for ns in RESET_NAMESPACES])
 
 
 def web_switches(doc: dict) -> Tuple[str, str]:
@@ -421,7 +450,10 @@ def build_css(doc: dict, template: str, header: str) -> str:
         "dark": lambda: dark_css(doc),
         "dark-variant": lambda: dark_variant_css(doc),
         "reduced-motion": lambda: reduced_motion_css(doc),
+        "reset-palette": lambda: reset_palette_css(doc),
     }
+    if not reset_palette(doc):  # an older template spells the resets out: drop them (and its "Closed scales" note)
+        template = CLOSED_COMMENT.sub("", RESET_LINE.sub("", template))
 
     def run_directive(name: str) -> List[str]:
         if name not in directives:
@@ -2029,7 +2061,7 @@ def migrate(doc: dict, defaults_project: str = "") -> List[str]:
             added.append(f"$extensions.plumb.{key} = {json.dumps(value)}")
     # theme_switch and motion.reduced: the defaults the build applies when they are missing, now recorded, so the
     # build's "not set" note ends with this one command (the output does not change)
-    for key, subdefaults in (("web", {"styling": "css", "copies": [], "theme_switch": "both"}),
+    for key, subdefaults in (("web", {"styling": "css", "copies": [], "theme_switch": "both", "reset_palette": True}),
                              ("motion", {"reduced": "none"}), ("contrast", {"extra_pairs": []})):
         sub = plumb.get(key)
         if sub is None:
@@ -2673,6 +2705,48 @@ def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str
     return out
 
 
+def _load_audit():
+    """audit.py from this script's folder (its palette-class scan), or None."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "audit.py"
+    if not path.is_file():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("plumb_audit_for_tokens", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["plumb_audit_for_tokens"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod
+    except Exception:  # noqa: BLE001 - the warning is a convenience
+        return None
+
+
+def palette_warning(doc: dict, skill_dir: Path, root: Path, tokens_file: Path) -> Optional[str]:
+    """When web.reset_palette is true (Tailwind v4, with a web copy in the app) and the app's UI files still use
+    Tailwind's default palette classes, a warning with their count: those classes lose their colour once the block
+    is in the app. None otherwise (or when the scan cannot run)."""
+    web = P.plumb_settings(doc)["web"]
+    if web.get("styling") != "tailwind-v4" or not web.get("copies") or not reset_palette(doc):
+        return None
+    audit = _load_audit()
+    if audit is None:
+        return None
+    try:
+        count, files, examples = audit.palette_uses(root, skill_dir, doc)
+    except Exception:  # noqa: BLE001
+        return None
+    if not count:
+        return None
+    shown = ", ".join(examples) + (", ..." if count > len(examples) else "")
+    return (f"warning: web.reset_palette is true, so Plumb's block switches off Tailwind's default palette (and its "
+            f"default radii, shadows, text sizes, fonts and easings); {count} palette class"
+            f"{'es' if count != 1 else ''} in {len(files)} UI file{'s' if len(files) != 1 else ''} would lose their "
+            f"colour ({shown})\n"
+            f"fix: ask the user: keep Tailwind's defaults until the app is migrated (set \"reset_palette\": false in "
+            f"$extensions.plumb.web of {rel(tokens_file, root)}, then rebuild; the audit then suggests each move), or "
+            f"move those classes to colour tokens first (audit.py lists them as palette-colour)")
+
+
 MISSING_DEFAULTS = {
     "web.theme_switch": ('"both" (dark from the system setting and from the .dark class)',
                          '"both", "system", "class" or "data-theme"'),
@@ -2720,6 +2794,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     files = outputs(doc, skill_dir, project, tokens_file, notes, firsts)
     for line in template_notes(doc, skill_dir, missing=not args.check):
         print(line, file=sys.stderr)
+    warning = palette_warning(doc, skill_dir, root, tokens_file)
+    if warning:
+        print(warning, file=sys.stderr)
     if P.find_template(skill_dir, SPECIMEN_TEMPLATE) is None:
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)

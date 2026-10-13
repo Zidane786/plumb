@@ -245,7 +245,8 @@ LABELS = {("next", "tailwind-v4"): "Next.js · Tailwind v4", ("angular", "css"):
 def answers(app: App) -> dict:
     return {"description": f"{app.name}: a sample app for Plumb's integration tests", "direction": "Calm",
             "web_copies": app.copies, "icons": ICONS,
-            "ui_packages": f". ({LABELS[(app.framework, app.styling)]})"}
+            "ui_packages": f". ({LABELS[(app.framework, app.styling)]})",
+            "reset_palette": True}  # closed palette: its classes are errors (unanswered it would stay open here)
 
 
 def scaffold(project: Path, app: App, found: dict, extra: Optional[dict] = None) -> subprocess.CompletedProcess:

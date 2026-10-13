@@ -63,6 +63,11 @@ answers.json (every key optional; unknown keys are ignored with a note):
                    class, either, or data-theme="dark" on <html> as next-themes sets it; default both)
     "reduced_motion": "none" | "keep-fades",           (what reduced motion keeps on the web: nothing, or the opacity
                    and colour fades; default none)
+    "reset_palette": true | false,                     ($extensions.plumb.web.reset_palette, Tailwind v4: true = Plumb's
+                   block switches off Tailwind's default palette and scales, only the tokens exist (create, a new app);
+                   false = they stay until the app is migrated, the audit suggests each move (extract, an existing
+                   app). Unanswered: false when the app's UI files already use default palette classes (a note says
+                   so), else true)
     "colors": {"light": {"primary": "#0f6b66", ...}, "dark": {"primary": "#4fb3c4", ...}},
         names: background surface sunk on-surface on-surface-muted primary on-primary outline outline-input danger
                on-danger success on-success scrim; values #rgb | #rrggbb | #rrggbbaa. Other tokens: edit the tokens file.
@@ -107,7 +112,7 @@ ROLES = ("home", "linked")
 THEME_SWITCHES = ("both", "system", "class", "data-theme")  # $extensions.plumb.web.theme_switch
 REDUCED_MOTION = ("none", "keep-fades")  # $extensions.plumb.motion.reduced
 
-RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON"))
+RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON", "RESET_PALETTE"))
 SLOT = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 DIMENSION = re.compile(r"^\d+(?:\.\d+)?(?:px|rem|em)$")
@@ -454,15 +459,62 @@ def detected_ui_files(root: Path, platforms: List[str]) -> Optional[str]:
     return " ".join([value] + extra)
 
 
-def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: str, name: str, answers: dict,
-                    base: Dict[str, str], root: Optional[Path] = None) -> Dict[str, str]:
+def project_ui_files(platforms: List[str], answers: dict, root: Optional[Path], say: bool = False) -> str:
+    """PLUMB.md's `UI files:` value: the answer, else detect.py's value for the chosen platforms' packages (with a
+    note when say), else the platform default."""
     ui_files = answers.get("ui_files")
     if not ui_files and root is not None and "web" in platforms:
         ui_files = detected_ui_files(root, platforms)
-        if ui_files:
+        if ui_files and say:
             print(f"note: UI files from the detected stack: {ui_files} (to change it, pass ui_files in --answers)",
                   file=sys.stderr)
-    ui_files = ui_files or " · ".join(PLATFORM_UI_FILES[p] for p in platforms)
+    return ui_files or " · ".join(PLATFORM_UI_FILES[p] for p in platforms)
+
+
+def load_plugin_audit():
+    """The plugin's audit.py (its palette-class scan), or None."""
+    try:
+        spec = importlib.util.spec_from_file_location("plumb_audit_for_scaffold", SKILL_SRC / "scripts" / "audit.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["plumb_audit_for_scaffold"] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod
+    except Exception:  # noqa: BLE001 - the default is a convenience
+        return None
+
+
+def resolve_reset_palette(answers: dict, styling: str, platforms: List[str], root: Path, skill_rel: str) -> bool:
+    """$extensions.plumb.web.reset_palette: the `reset_palette` answer (create on a new app: true; extract on an
+    existing app: false), else true unless the app's UI files already use Tailwind's default palette classes (Tailwind
+    v4 only): then false, so the first build does not take their colour away, with a note saying so."""
+    given = answers.get("reset_palette")
+    if given is not None:
+        if not isinstance(given, bool):
+            raise _bad("reset_palette", given, "not true or false",
+                       "write answers.reset_palette as true (only the tokens exist) or false (Tailwind's default "
+                       "palette and scales stay until the app is migrated)")
+        return given
+    if styling != "tailwind-v4" or "web" not in platforms:
+        return True
+    audit = load_plugin_audit()
+    if audit is None:
+        return True
+    settings = {"UI files": project_ui_files(platforms, answers, root), "web": {"styling": styling}}
+    try:
+        count, files, _examples = audit.palette_uses(root, root / skill_rel, None, settings)
+    except Exception:  # noqa: BLE001
+        return True
+    if not count:
+        return True
+    print(f"note: reset_palette false: the app uses {count} Tailwind default palette class{'es' if count != 1 else ''} "
+          f"in {len(files)} UI file{'s' if len(files) != 1 else ''}, so Tailwind's palette stays until they move to "
+          f"tokens (to close it now, pass \"reset_palette\": true in --answers)", file=sys.stderr)
+    return False
+
+
+def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: str, name: str, answers: dict,
+                    base: Dict[str, str], root: Optional[Path] = None) -> Dict[str, str]:
+    ui_files = project_ui_files(platforms, answers, root, say=True)
     return {
         "ROUTES": routes_value(answers, platforms),
         "PROJECT": name, "SKILL_DIR": skill_dir + "/", "ROLE": base["ROLE"], "PLATFORMS": ", ".join(platforms),
@@ -547,6 +599,7 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
     # py launcher only comes with python.org) and python3 elsewhere.
     python_default = "python" if os.name == "nt" else "python3"
     values["PYTHON"] = str(answers.get("python") or python_default)
+    values["RESET_PALETTE"] = json.dumps(resolve_reset_palette(answers, args.styling, platforms, root, skill_rel))
     values["DATE"] = datetime.date.today().isoformat()
     values.update({
         "NAME": name, "NAME_YAML": name.replace("\\", "\\\\").replace('"', '\\"'), "SLUG": slug,
