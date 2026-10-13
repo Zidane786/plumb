@@ -2340,6 +2340,31 @@ _GROUP_LABEL = {"color": "colour", "typography": "type", "radius": "radius", "sp
                 "motion": "motion", "font": "font"}
 
 
+_DOC_TOKEN_GROUPS = ("color", "typography", "font", "radius", "shadow", "spacing", "motion", "label", "size",
+                     "opacity", "z")
+_DOC_TOKEN_REF = re.compile(r"`((?:" + "|".join(_DOC_TOKEN_GROUPS) + r")\.[A-Za-z0-9_][A-Za-z0-9_.-]*)`")
+
+
+def check_unknown_token_reference(proj: Project) -> Iterator[XHit]:
+    """components.md and design.md name tokens (`shadow.card`): each must still exist after the tokens changed (a
+    token renamed or removed after the scaffold wrote these files leaves agents building from a name that is gone).
+    A group (`motion.easing`) counts when a token sits under it; placeholders (`color.<name>`) are skipped."""
+    if proj.doc is None:
+        return
+    taken = {str(path) for path, _t, _ty in P.iter_tokens(proj.doc)}
+    for path in (proj.skill_dir / "references" / "components.md", proj.skill_dir / "design.md"):
+        try:
+            text = normalise_text(read_source(path))
+        except (OSError, PlumbError):
+            continue
+        for n, line in enumerate(text.split("\n"), 1):
+            for m in _DOC_TOKEN_REF.finditer(line):
+                ref = m.group(1).rstrip(".")
+                if ref in taken or any(t.startswith(ref + ".") for t in taken):
+                    continue
+                yield XHit(rel(path, proj.root), n, ref)
+
+
 def check_unused_token(proj: Project) -> Iterator[XHit]:
     if proj.doc is None or proj.explicit or len(proj.ctxs) < UNUSED_MIN_FILES or proj.fresh:
         return  # partial scans, early projects and a just-created system use few tokens yet: not worth a suggestion
@@ -3623,6 +3648,9 @@ RULES: List[Rule] = [
          "add a token with /plumb:update", weight=3,
          why="A raw value repeated across files drifts the moment one copy changes; a token keeps every use in step "
              "and lets dark mode and a rebrand reach it."),
+    Rule("unknown-token-reference", "warn", ALL, "cross", check_unknown_token_reference,
+         "{match} is not a token in this project",
+         "name a token the project has (build-tokens.py --css-vars lists them), or add it with /plumb:update"),
     Rule("unused-token", "suggest", ALL, "cross", check_unused_token, "{match} is unused",
          "remove it with /plumb:update, or use it", weight=1,
          why="A token nothing uses still has to be named, documented and kept in contrast; removing it (or using it) "

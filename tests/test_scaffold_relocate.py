@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 import pytest
 
@@ -302,14 +303,37 @@ def test_check_make_targets_returns_its_lines_and_prints_nothing(tmp_path: Path,
 # ---------------------------------------------------------------- a git-ignored skill folder (live test 2, B5)
 
 
-def _git_repo(root: Path, ignore: str) -> None:
+@pytest.fixture
+def hermetic_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """No global or system git config from the machine running the tests (a global excludes file that ignores .claude
+    would change every result). Returns the empty global config file a test may fill."""
+    home = tmp_path / "home"
+    home.mkdir()
+    config = home / "gitconfig"
+    config.write_text("", encoding="utf-8")
+    for key, value in (("HOME", str(home)), ("USERPROFILE", str(home)), ("XDG_CONFIG_HOME", str(home / "xdg")),
+                       ("GIT_CONFIG_GLOBAL", str(config)), ("GIT_CONFIG_NOSYSTEM", "1"),
+                       ("GIT_CEILING_DIRECTORIES", str(tmp_path))):
+        monkeypatch.setenv(key, value)
+    return config
+
+
+def _git_repo(root: Path, ignore: Optional[str]) -> None:
     root.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, encoding="utf-8")
-    (root / ".gitignore").write_text(ignore, encoding="utf-8")
+    if ignore is not None:
+        (root / ".gitignore").write_text(ignore, encoding="utf-8")
+
+
+def _skill_ignored(root: Path) -> bool:
+    r = subprocess.run(["git", "check-ignore", "-q", "--", f"{SKILL_REL}/SKILL.md"], cwd=str(root),
+                       capture_output=True, encoding="utf-8")
+    return r.returncode == 0
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
-def test_a_git_ignored_skill_folder_is_reported_by_the_dry_run_the_scaffold_and_verify(tmp_path: Path) -> None:
+def test_a_git_ignored_skill_folder_is_reported_by_the_dry_run_the_scaffold_and_verify(tmp_path: Path,
+                                                                                       hermetic_git: Path) -> None:
     """The live test's repo ignored .claude/, so the design-system skill would never have been committed."""
     root = tmp_path / "proj"
     _git_repo(root, "node_modules\n.claude/\n")
@@ -330,7 +354,7 @@ def test_a_git_ignored_skill_folder_is_reported_by_the_dry_run_the_scaffold_and_
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
-def test_an_ignored_plumb_md_or_docs_folder_is_reported_too(tmp_path: Path) -> None:
+def test_an_ignored_plumb_md_or_docs_folder_is_reported_too(tmp_path: Path, hermetic_git: Path) -> None:
     root = tmp_path / "proj"
     _git_repo(root, "PLUMB.md\ndocs/\n")
     out = run(root, "--dry-run").stdout
@@ -340,11 +364,97 @@ def test_an_ignored_plumb_md_or_docs_folder_is_reported_too(tmp_path: Path) -> N
     assert 'replace the line "docs/" with "docs/*" and add "!docs/design/" after it' in out
 
 
-def test_outside_git_nothing_is_said_about_ignores(tmp_path: Path) -> None:
+def test_outside_git_nothing_is_said_about_ignores(tmp_path: Path, hermetic_git: Path) -> None:
     root = tmp_path / "plain"
     root.mkdir()
     (root / ".gitignore").write_text(".claude/\n", encoding="utf-8")
     assert "git-ignored" not in run(root, "--dry-run").stdout
+
+
+def _apply(root: Path, fix, source_file: Path, use_override: bool = False) -> None:
+    """Make exactly the edit the fix describes: replace its line with its lines, or add its lines after it; or, for a
+    global excludes file, add the override lines to the repo's .gitignore."""
+    if use_override:
+        path = root / ".gitignore"
+        old = path.read_text(encoding="utf-8") if path.exists() else ""
+        path.write_text(old + "".join(f"{line}\n" for line in fix.override), encoding="utf-8")
+        return
+    lines = source_file.read_text(encoding="utf-8").splitlines()
+    out: List[str] = []
+    for line in lines:
+        if line == fix.pattern:
+            out += fix.lines if fix.replace else [line, *fix.lines]
+        else:
+            out.append(line)
+    source_file.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
+# (name, .gitignore, .git/info/exclude, global excludes, the words of the fix)
+IGNORE_CASES = [
+    ("gitignore-dir", ".claude/\n", None, None,
+     'in .gitignore replace the line ".claude/" with ".claude/*" and add "!.claude/skills/" after it'),
+    ("gitignore-starstar", ".claude/**\n", None, None,
+     'in .gitignore add "!.claude/skills/" and "!.claude/skills/**" after the line ".claude/**"'),
+    ("gitignore-star", ".claude/*\n", None, None, 'in .gitignore add "!.claude/skills/" after the line ".claude/*"'),
+    ("info-exclude", None, ".claude/\n", None,
+     'in .git/info/exclude replace the line ".claude/" with ".claude/*" and add "!.claude/skills/" after it'),
+    ("global", None, None, ".claude\n", "in your global git excludes file"),
+]
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
+@pytest.mark.parametrize("name,gitignore,exclude,global_,words", IGNORE_CASES, ids=[c[0] for c in IGNORE_CASES])
+def test_the_unignore_fix_names_the_real_source_and_works(tmp_path: Path, hermetic_git: Path, name: str,
+                                                         gitignore: Optional[str], exclude: Optional[str],
+                                                         global_: Optional[str], words: str) -> None:
+    """Review I1: the fix must work for where the pattern really is (a .gitignore, .git/info/exclude or the global
+    excludes file) and for the pattern's shape (.claude/, .claude/*, .claude/**): applied as printed, git keeps the
+    skill and --verify is quiet."""
+    root = tmp_path / "proj"
+    _git_repo(root, gitignore)
+    source = root / ".gitignore"
+    if exclude is not None:
+        source = root / ".git" / "info" / "exclude"
+        source.write_text(exclude, encoding="utf-8")
+    if global_ is not None:
+        source = tmp_path / "global-ignore"
+        source.write_text(global_, encoding="utf-8")
+        hermetic_git.write_text(f"[core]\n\texcludesFile = {source.as_posix()}\n", encoding="utf-8")
+    assert run(root).returncode == 0
+    assert _skill_ignored(root)
+    v = cli(root, "--verify")
+    assert v.returncode == 1 and words in v.stdout, v.stdout
+    if global_ is not None:
+        assert source.as_posix() in v.stdout and "line 1" in v.stdout
+        assert "replace the line" not in v.stdout.split("in your global git excludes file", 1)[0]
+        assert ('or keep that file and add "!.claude/", ".claude/*" and "!.claude/skills/" to this repo\'s .gitignore'
+                in v.stdout)
+    mod = load_scaffold()
+    found = mod.ignored_by_git(root, SKILL_REL, "docs/design")
+    skill = [f for f in found if f.shown == f"{SKILL_REL}/"]
+    assert len(skill) == 1
+    fix = mod.unignore_fix(skill[0].shown, skill[0].pattern, skill[0].source)
+    _apply(root, fix, source)
+    assert not _skill_ignored(root), f"{name}: the fix did not un-ignore the skill"
+    if global_ is not None:  # the other way: leave the global file alone and override it in the repo
+        source.write_text(global_, encoding="utf-8")
+        assert _skill_ignored(root)
+        _apply(root, fix, source, use_override=True)
+        assert not _skill_ignored(root), f"{name}: the repo override did not un-ignore the skill"
+    v = cli(root, "--verify")
+    assert "git-ignored" not in v.stdout, v.stdout
+
+
+@pytest.mark.parametrize("line,want", [
+    (".gitignore:2:.claude/\t.claude/skills/x/SKILL.md", (".gitignore", "2", ".claude/", ".claude/skills/x/SKILL.md")),
+    ("C:/Users/me/.config/git/ignore:1:.claude\t.claude/skills/x/SKILL.md",
+     ("C:/Users/me/.config/git/ignore", "1", ".claude", ".claude/skills/x/SKILL.md")),
+    (".gitignore:3:a:b\tx", (".gitignore", "3", "a:b", "x")),
+    ('.gitignore:1:*.md\t"PLUMB.md"', (".gitignore", "1", "*.md", "PLUMB.md")),
+    ("no tab here", None),
+])
+def test_check_ignore_lines_parse_on_every_platform(line: str, want) -> None:
+    assert load_scaffold().parse_check_ignore(line) == want
 
 
 # ---------------------------------------------------------------- Routes: and UI files: (recorded, checked by --verify)

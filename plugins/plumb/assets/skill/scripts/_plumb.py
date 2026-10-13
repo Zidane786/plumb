@@ -538,7 +538,8 @@ def nearest_token(doc: dict, kind: str, value: str) -> Optional[Tuple[str, float
 
 
 _KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
-_NOTE = re.compile(r"\s{2,}\([^)]*\)\s*$")
+# A trailing '   (note)' after two or more spaces is a comment, unless it is a route kind (`Routes: app  (next-app)`).
+_NOTE = re.compile(r"\s{2,}\((?!\s*(?:next-app|next-pages|nuxt|sveltekit|angular|router)\s*\))[^)]*\)\s*$")
 
 
 def read_plumb_md(path: Path) -> dict:
@@ -588,6 +589,21 @@ _ROUTE_ENTRY = re.compile(r"^(.*?)(?:\s*\(([^()]*)\))?$")
 ROUTES_NOT_RECORDED = "Routes not recorded: run /plumb:init to record them (PLUMB.md `Routes:`)"
 
 
+def _split_entries(text: str) -> List[str]:
+    """Split at the commas between entries, never inside a brace glob ({routes,router}) or a (kind)."""
+    out, depth, start = [], 0, 0
+    for i, ch in enumerate(text):
+        if ch in "{(":
+            depth += 1
+        elif ch in "})":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            out.append(text[start:i])
+            start = i + 1
+    out.append(text[start:])
+    return out
+
+
 def parse_routes(value: object) -> Tuple[Optional[List[Tuple[str, str]]], List[str]]:
     """PLUMB.md's `Routes:` value as ([(path, kind), ...], problems). (None, []) when it is missing, empty or still a
     placeholder in parentheses (not recorded: callers fail open and say so); ([], []) for `none`. Paths are
@@ -601,7 +617,7 @@ def parse_routes(value: object) -> Tuple[Optional[List[Tuple[str, str]]], List[s
     out: List[Tuple[str, str]] = []
     problems: List[str] = []
     kinds = ", ".join(ROUTE_KINDS)
-    for item in [i.strip() for i in text.split(",") if i.strip()]:
+    for item in [i.strip() for i in _split_entries(text) if i.strip()]:
         m = _ROUTE_ENTRY.match(item)
         path = (m.group(1) if m else item).strip().strip("`").replace("\\", "/")
         kind = (m.group(2) or "").strip().lower() if m else ""

@@ -276,7 +276,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Ask the agent to edit the generated CSS copy (e.g. `app/globals.css`) by hand, and then with
       `sed -i` → both **refused** (`… is generated from the design tokens; a hand edit is lost on the next build`).
       Then ask it to delete that file (`rm`, or `Remove-Item` on Windows) and to `mv` it away → both **refused** the
-      same way.
+      same way. The same through `bash -c "rm app/globals.css"` → **refused**.
+- [ ] Create `.plumb-tmp/setup-in-progress` and set its time 7 hours back (`touch -t`): a new session says
+      `a setup marker from … is stale — finish /plumb:init or remove .plumb-tmp/`, and the end-of-turn check runs
+      again.
 - [ ] Ask the agent to create a new page (`app/reports/page.tsx`) → **refused**:
       `error: app/reports/page.tsx is a new screen with no approved prototype` / `fix: /plumb:prototype reports …`.
 - [ ] `/plumb:prototype reports` → 2–3 variants, `proposals/reports/index.html` side by side, both views each; you pick

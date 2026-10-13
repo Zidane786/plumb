@@ -89,13 +89,15 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
    gets recorded"), checked on disk; never leave the kind to be guessed. Check the copy path and the allowed raw path
    exist. They go into `PLUMB.md` (`UI files:`, `Routes:`); scripts and hooks only read what is recorded.
 5. **Git-ignored?** Run `git -C "<root>" check-ignore -v <skill dir>/SKILL.md` (and read what detect, `--verify` or
-   a dry run's `warning:` say). Ignored (e.g. `.gitignore:14` has `.claude/`) → the design system would never be committed. Never proceed
-   silently: ask, with the ignoring line (`file:line`) inside the question: (a) Un-ignore the skill folder
-   (Recommended): replace `.claude/` with `.claude/*` and add `!.claude/skills/` (`.claude/**` needs
-   `!.claude/skills/**`; git cannot re-include a folder whose parent folder is ignored), the exact lines shown
+   a dry run's `warning:` say; their `fix:` names the file the pattern is in and the exact lines). Ignored → the
+   design system would never be committed. Never proceed silently: ask, with the source and line (`.gitignore:14`,
+   `.git/info/exclude:1` or the global excludes file) inside the question: (a) Un-ignore the skill folder
+   (Recommended), in the file the pattern is in: `.claude/` → `.claude/*` + `!.claude/skills/`; `.claude/**` → add
+   `!.claude/skills/` and `!.claude/skills/**`; `.claude/*` → add `!.claude/skills/` (git cannot re-include a folder
+   whose parent folder is ignored). A global excludes file applies to every repo: offer instead `!.claude/`,
+   `.claude/*`, `!.claude/skills/` in this repo's `.gitignore` (it wins over that file and `.git/info/exclude`)
    (b) Another location (e.g. `.github/skills/<project>-design-system/`). **STOP: ask, wait for the answer.** Run the
-   check again after the `.gitignore` edit or a move, and show its result: a line from a global excludes file or
-   `.git/info/exclude` is not fixed by `.gitignore`; say so and ask again.
+   check again after the edit or a move and show its result; still ignored → say by which file and line, ask again.
 6. **The placement question — the whole block inside it, even at high confidence.** detect.py's text block **verbatim**,
    every line, is the question text (or the recommended option's preview), in a code block. **Never summarise it**,
    never put only part of it in the question, never ask about "the setup above". Mark lines you changed

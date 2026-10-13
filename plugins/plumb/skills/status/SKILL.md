@@ -48,8 +48,10 @@ status). `audit.py`: **exit 1 means errors found, not a crash** (Claude Code sho
 "✗ Shell"); report the counts, never as a failure of status. Read each output directly; when the audit's output is too
 long for your tool, read its last lines (the summary counts) and the rule names; **never save output to a file** to
 read it later. Check what the scripts say against the files before you report it (a burst of one rule usually means a
-setup gap: say so). `<root>/.plumb-tmp/setup-in-progress` exists → a setup stopped midway and the end-of-turn check
-is off while it does: report it ("resume with `/plumb:init`, or delete `.plumb-tmp/`").
+setup gap: say so). `<root>/.plumb-tmp/setup-in-progress` exists → a setup is running or stopped midway; the
+end-of-turn check is off while the marker is under 6 hours old: report it ("resume with `/plumb:init`, or delete
+`.plumb-tmp/`"). Older than 6 hours → "a setup marker from <time> is stale — finish /plumb:init or remove .plumb-tmp/"
+(the end-of-turn check runs again).
 
 - `Role: linked` → check that the `Design system:` path exists (a missing path is the first thing to report, with
   "the home repo is not where PLUMB.md says: clone it there or correct the path"); the audit and generator commands are

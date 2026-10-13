@@ -162,6 +162,21 @@ def test_inside_a_plumb_project_the_profile_stays_in_the_project(tmp_path: Path,
     assert sorted(p.name for p in (project / ".plumb-tmp").iterdir()) == ["answers.json"]
 
 
+def test_run_from_elsewhere_the_profile_follows_the_out_path(tmp_path: Path, stub) -> None:
+    """Review M5: run from a folder outside the project, the --out path (inside it) still finds its PLUMB.md."""
+    project = tmp_path / "proj"
+    (project / "docs/design").mkdir(parents=True)
+    (project / "PLUMB.md").write_text("Project: demo\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    src = page(project)
+    r = run(stub, str(src), "--out", str(project / "docs/design/shots/home.png"), cwd=elsewhere)
+    assert r.returncode == 0, r.stdout + r.stderr
+    (args,) = calls(stub)
+    assert project.resolve() / ".plumb-tmp" in Path(flag(args, "--user-data-dir")).resolve().parents
+    assert not (project / ".plumb-tmp").exists() and list(elsewhere.iterdir()) == []
+
+
 def test_dark_theme_width_and_height(tmp_path: Path, stub) -> None:
     src = page(tmp_path)
     out = tmp_path / "dark.png"

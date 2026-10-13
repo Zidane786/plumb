@@ -780,7 +780,10 @@ removes the plugin folder's path prompts): the user's choice, documented in `cop
 input → exit 0 with at most one stderr line); non-UI edits exit in about 50 ms and UI edits stay
 under 1 s (a test measures it); at most 10 issues per refusal, each `error: line N: …` + `fix: …`;
 snapshots go in the OS temp folder keyed by project and session, never in the repo; switches are
-read from `PLUMB.md` on every run.
+read from `PLUMB.md` on every run. The setup marker `<root>/.plumb-tmp/setup-in-progress` is an
+unprotected soft switch: anything that can write in the project can create it, and it turns off
+only the end-of-turn check (never the edit check or the guards), for at most 6 hours from its
+modification time; after that it is stale and session start says so.
 
 ## 9. `PLUMB.md`
 

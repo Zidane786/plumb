@@ -351,8 +351,10 @@ written). Write `<root>/.plumb-tmp/.gitignore` containing `*` first when the fol
 
 **The setup marker.** A setup in progress is the marker file **`<root>/.plumb-tmp/setup-in-progress`**, and only init,
 create and extract write it: right after the placement OK (one line in it: the command and the date). The end-of-turn
-check stands down while the marker exists, so it does not stop a half-built setup; init's resume check and status's
-half-setup report look for the marker file, never for the folder. **When setup ends** (the final checklist), remove
+check stands down while the marker exists and is under 6 hours old, so it does not stop a half-built setup (an older
+marker is stale: the check runs again and session start and status say "a setup marker from <time> is stale — finish
+/plumb:init or remove .plumb-tmp/"); init's resume check and status's half-setup report look for the marker file,
+never for the folder. **When setup ends** (the final checklist), remove
 the whole `.plumb-tmp/` folder, last. Every other command may use `.plumb-tmp/` for scratch, never writes the marker,
 and must clean up their own files when it ends (and the folder, when it created it).
 

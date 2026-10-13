@@ -159,10 +159,13 @@ each UI-file pattern matches a file). Change it later with `/plumb:update` (or `
 for every script's output (the inventory, the overrides mapping, contrast fixes, audit findings): **scripts give
 evidence, not answers**, and the agent verifies it before showing it to you.
 
-**A git-ignored skill folder.** If your `.gitignore` ignores the place the skill would go (a common `.claude/` line),
-the design system would never be committed. Init shows the `.gitignore` line and asks: un-ignore the skill folder
-(recommended: `.claude/*` and `!.claude/skills/`, since git can't re-include a folder whose parent is ignored) or put
-the system somewhere else. It never goes on silently.
+**A git-ignored skill folder.** If git ignores the place the skill would go (a common `.claude/` line in
+`.gitignore`, `.git/info/exclude` or your global excludes file), the design system would never be committed. Init
+shows the file and line that ignore it and asks: un-ignore the skill folder in that file (recommended; git can't
+re-include a folder whose parent is ignored, so `.claude/` becomes `.claude/*` + `!.claude/skills/`, and `.claude/**`
+gets `!.claude/skills/` + `!.claude/skills/**`; for a global excludes file, which applies to every repo, adding
+`!.claude/`, `.claude/*` and `!.claude/skills/` to this repo's `.gitignore` also works) or put the system somewhere
+else. It checks again after the change and never goes on silently.
 
 Say OK, or correct anything: the folder, the skill's name or place, the UI packages, the copy path, the UI files (which
 files the audit and the checks treat as UI) or the docs folder. What you confirm is
@@ -1184,7 +1187,8 @@ Claude Code. Answer "show it" (or choose "change something"), and the agent asks
 
 **The end-of-turn check never stops the agent.**
 Check for a leftover `.plumb-tmp/setup-in-progress` file in the project: the check stands down while it exists (it
-marks a setup in progress). `/plumb:init` treats it as a half-finished setup and offers to resume; if you don't need
+marks a setup in progress), for at most 6 hours; after that session start says the marker is stale and the check runs
+again. `/plumb:init` treats it as a half-finished setup and offers to resume; if you don't need
 it, delete the `.plumb-tmp/` folder.
 
 **The prototype-first check never refuses a new page, or the audit never reports `route-not-prototyped`.**

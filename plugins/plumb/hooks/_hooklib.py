@@ -72,9 +72,32 @@ SETUP_TMP = ".plumb-tmp"
 SETUP_MARKER = ".plumb-tmp/setup-in-progress"
 
 
+SETUP_MARKER_HOURS = 6  # an older marker is a setup that never finished: the end-of-turn check runs again
+
+
+def setup_marker_time(root: str) -> Optional[float]:
+    """When <root>/.plumb-tmp/setup-in-progress was last written (its modification time), or None without one."""
+    try:
+        path = os.path.join(root, *SETUP_MARKER.split("/"))
+        return os.path.getmtime(path) if os.path.isfile(path) else None
+    except OSError:
+        return None
+
+
+def setup_marker_stale(root: str) -> Optional[float]:
+    """The marker's time when it is older than SETUP_MARKER_HOURS (a setup left behind), else None."""
+    when = setup_marker_time(root)
+    if when is None or time.time() - when <= SETUP_MARKER_HOURS * 3600:
+        return None
+    return when
+
+
 def setup_in_progress(root: str) -> bool:
-    """A Plumb setup (init, create, extract) is running: <root>/.plumb-tmp/setup-in-progress exists."""
-    return os.path.isfile(os.path.join(root, *SETUP_MARKER.split("/")))
+    """A Plumb setup (init, create, extract) is running: <root>/.plumb-tmp/setup-in-progress exists and was written in
+    the last SETUP_MARKER_HOURS hours. Anyone who can write in the project can create it, so it only turns off the
+    soft end-of-turn check; the edit check and the guards never look at it."""
+    when = setup_marker_time(root)
+    return when is not None and time.time() - when <= SETUP_MARKER_HOURS * 3600
 UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
 # Windows and macOS (APFS, HFS+ by default) file systems ignore case: TOKENS.CSS is tokens.css there.
 CASELESS = sys.platform in ("win32", "darwin")
@@ -523,7 +546,8 @@ def kiro_own_file(path: str) -> Optional[str]:
 
 
 _KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
-_NOTE = re.compile(r"\s{2,}\([^)]*\)\s*$")
+# A trailing '   (note)' is a comment, unless it is a route kind (`Routes: app  (next-app)`), as in _plumb.
+_NOTE = re.compile(r"\s{2,}\((?!\s*(?:next-app|next-pages|nuxt|sveltekit|angular|router)\s*\))[^)]*\)\s*$")
 _VERSION = re.compile(r"<!--\s*plumb\s+v(\d+(?:\.\d+)*)", re.I)
 _PLACEHOLDER = re.compile(r"\{\{[A-Z_]+\}\}")
 _ON = re.compile(r"^\s*(?:on|yes|true)\b", re.I)
@@ -1052,6 +1076,7 @@ def _heredocs(command: str) -> Tuple[str, List[str]]:
     bodies: List[str] = []
     pending: List[Tuple[int, str, bool]] = []  # (body index, end word, <<- strips leading tabs)
     quote = ""
+    arith = 0  # inside $(( … )) or (( … )): << is a shift there, never a here-document
     i, n = 0, len(command)
     while i < n:
         ch = command[i]
@@ -1073,7 +1098,19 @@ def _heredocs(command: str) -> Tuple[str, List[str]]:
             out.append(command[i:i + 2])
             i += 2
             continue
-        if command.startswith("<<", i) and not command.startswith("<<<", i) and (i == 0 or command[i - 1] != "<"):
+        if command.startswith("$((", i) or command.startswith("((", i):
+            step = 3 if ch == "$" else 2
+            arith += 1
+            out.append(command[i:i + step])
+            i += step
+            continue
+        if arith and command.startswith("))", i):
+            arith -= 1
+            out.append("))")
+            i += 2
+            continue
+        if (not arith and command.startswith("<<", i) and not command.startswith("<<<", i)
+                and (i == 0 or command[i - 1] != "<")):
             m = _HEREDOC_OP.match(command, i)
             if m:
                 word = next(g for g in m.groups()[1:] if g is not None)
@@ -1111,6 +1148,45 @@ def _stage_heredocs(stage: str, bodies: List[str]) -> Tuple[str, List[str]]:
     """The stage without its here-document markers, and the bodies it reads."""
     mine = [bodies[int(m.group(1))] for m in _HEREDOC_MARK.finditer(stage) if int(m.group(1)) < len(bodies)]
     return _HEREDOC_MARK.sub(" ", stage), mine
+
+
+_PS_SHELLS = ("pwsh", "powershell")
+
+
+def _shell_c_script(stage: str) -> Optional[str]:
+    """The script a shell stage runs from its command line: `bash -c "…"`, `sh -ec '…'`, `zsh -lc …`, `pwsh -c …`,
+    `powershell [-NoProfile] -Command …` (the rest of the line). None for any other stage."""
+    words = re.findall(_WORD, _NO_WRITE.sub(" ", stage))
+    i = 0
+    while i < len(words) and (re.match(r"^[A-Za-z_]\w*=", words[i]) or words[i] in ("sudo", "command", "env",
+                                                                                     "nohup", "time")):
+        i += 1
+    if i >= len(words):
+        return None
+    name = _command_name(_unquote(words[i]))
+    if name not in _SHELLS:
+        return None
+    args = words[i + 1:]
+    for j, word in enumerate(args):
+        flag = _unquote(word).lower()
+        if name in _PS_SHELLS:
+            if flag.startswith("-") and len(flag) >= 2 and "-command".startswith(flag):
+                rest = [_unquote(w) for w in args[j + 1:]]
+                return " ".join(rest) if rest else None
+            if not flag.startswith("-"):
+                return None
+            continue
+        if re.match(r"^-[a-z]*c[a-z]*$", flag):
+            return _unquote(args[j + 1]) if j + 1 < len(args) else None
+        if not flag.startswith("-") and not flag.startswith("+"):
+            return None  # a script file: its contents are not on the line
+    return None
+
+
+def _script_stages(script: str) -> Tuple[List[str], List[str]]:
+    """A -c script's pipeline stages and its here-document bodies."""
+    script, bodies = _heredocs(script)
+    return [stage for part in _split(script, ("&&", "||", ";", "\n")) for stage in _split(part, ("|",))], bodies
 
 
 def _stage_command(stage: str) -> str:
@@ -1177,6 +1253,11 @@ def _stage_targets(stage: str, bodies: Optional[List[str]] = None) -> List[str]:
         targets += re.findall(r"[^\s'\"`=(),;|&<>]+", rest)  # by its words and by every quoted string (spaces kept),
         for outer in _quoted(stage):  # also one level down (python -c "open('/a b/x.css', 'w')")
             targets += [outer] + _quoted(outer)
+    script = _shell_c_script(stage)
+    if script is not None:  # bash -c "…": the script's own commands
+        inner, inner_bodies = _script_stages(script)
+        for st in inner:
+            targets += _stage_targets(st, inner_bodies)
     return targets
 
 
@@ -1192,6 +1273,10 @@ def _stage_removals(stage: str, bodies: Optional[List[str]] = None) -> List[str]
     stage, docs = _stage_heredocs(stage, bodies or [])
     if docs and _stage_command(stage) in _SHELLS:
         return [r for body in docs for inner in _body_stages(body) for r in _stage_removals(inner)]
+    script = _shell_c_script(stage)
+    if script is not None:  # bash -c "…", pwsh -c …: the script's own commands
+        inner, inner_bodies = _script_stages(script)
+        return [r for st in inner for r in _stage_removals(st, inner_bodies)]
     rest = _TEE.sub(" ", _REDIR.sub(" ", _NO_WRITE.sub(" ", stage)))
     words = [_unquote(w) for w in re.findall(_WORD, rest)]
     while words and re.match(r"^[A-Za-z_]\w*=", words[0]):  # FOO=bar cmd

@@ -106,7 +106,7 @@ import subprocess
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SKILL_SRC = PLUGIN_ROOT / "assets" / "skill"
@@ -795,11 +795,104 @@ def check_confirm(given: Optional[str], token: str) -> None:
                             f"files changed since the dry run (or it is another run's token)", ask)
 
 
-def ignored_by_git(root: Path, skill_rel: str, docs: str) -> List[Tuple[str, str, str]]:
-    """The design-system paths git would never commit: [(shown path, the .gitignore pattern, where it is)] for the
-    skill folder, PLUMB.md and the docs folder (`git check-ignore -v`, a file inside each folder, so a folder that does
-    not exist yet is checked too). Run with the plugin's hardened git call (no project hooks, filters or pagers; git
-    found on PATH outside the project). [] outside a git repo, without git, or when nothing is ignored."""
+_CHECK_IGNORE = re.compile(r"^(?P<source>.*?):(?P<line>\d+):(?P<pattern>.*)$")
+
+
+def parse_check_ignore(line: str) -> Optional[Tuple[str, str, str, str]]:
+    """One `git check-ignore -v` line, `<source>:<line>:<pattern>\\t<path>`, as (source, line, pattern, path); None
+    when it is not one. Split on the first tab; the source may hold a drive colon (`C:/Users/…/ignore` on Windows) and
+    the pattern may hold colons, so the line number is the first `:<digits>:` after the source. A quoted path (git
+    quotes unusual names) loses its quotes."""
+    info, tab, path = line.partition("\t")
+    m = _CHECK_IGNORE.match(info)
+    if not tab or not m:
+        return None
+    path = path.strip()
+    if len(path) >= 2 and path[0] == path[-1] == '"':
+        path = path[1:-1]
+    return m.group("source"), m.group("line"), m.group("pattern"), path
+
+
+class Ignored(NamedTuple):
+    shown: str    # the design-system path as shown (a folder ends in /)
+    pattern: str  # the pattern that ignores it
+    source: str   # where that pattern is: a .gitignore, .git/info/exclude, or the global excludes file
+    line: str
+
+
+class Unignore(NamedTuple):
+    pattern: str
+    replace: bool          # True: the pattern's line is replaced by `lines`; False: `lines` go right after it
+    lines: List[str]
+    override: List[str]    # lines for the repo's own .gitignore that win over a pattern in another file
+
+
+def _source_kind(source: str) -> str:
+    src = source.replace("\\", "/")
+    if src == ".git/info/exclude" or src.endswith("/.git/info/exclude"):
+        return "exclude"
+    if not re.match(r"^(?:[A-Za-z]:)?/", src) and (src == ".gitignore" or src.endswith("/.gitignore")):
+        return "gitignore"
+    return "global"
+
+
+def unignore_fix(shown: str, pattern: str, source: str) -> Unignore:
+    """The edit that makes git keep `shown`, for the pattern's shape. git never looks inside an excluded folder, so a
+    folder pattern above the path (.claude/) becomes .claude/* plus a negation for the next folder; .claude/** needs
+    the next folder and everything in it negated; .claude/* needs only the next folder. Anything else gets a negation
+    of the path itself. `override`: the same result from the repo's own .gitignore, which wins over .git/info/exclude
+    and the global excludes file (re-include the folder, ignore its contents, keep the next folder)."""
+    path = shown.rstrip("/")
+    pat = pattern.strip().lstrip("/").rstrip("/")
+
+    def under(base: str) -> Optional[str]:
+        if base and not any(c in base for c in "*?[") and path.startswith(base + "/"):
+            return path[len(base) + 1:].split("/")[0]
+        return None
+
+    if pat.endswith("/**") and under(pat[:-3]):
+        base = pat[:-3]
+        nxt = under(base)
+        lines = [f"!{base}/{nxt}/", f"!{base}/{nxt}/**"]
+        return Unignore(pattern, False, lines, lines)
+    if pat.endswith("/*") and under(pat[:-2]):
+        base = pat[:-2]
+        lines = [f"!{base}/{under(base)}/"]
+        return Unignore(pattern, False, lines, lines)
+    nxt = under(pat)
+    if nxt:
+        return Unignore(pattern, True, [f"{pat}/*", f"!{pat}/{nxt}/"], [f"!{pat}/", f"{pat}/*", f"!{pat}/{nxt}/"])
+    return Unignore(pattern, False, [f"!{shown}"], [f"!{shown}"])
+
+
+def _quoted(lines: List[str]) -> str:
+    q = [f'"{line}"' for line in lines]
+    return q[0] if len(q) == 1 else ", ".join(q[:-1]) + " and " + q[-1]
+
+
+def unignore_hint(item: Ignored) -> str:
+    """The exact edit, in the file the pattern is really in (check-ignore -v names it)."""
+    fix = unignore_fix(item.shown, item.pattern, item.source)
+    kind = _source_kind(item.source)
+    where = {"gitignore": f"in {item.source}", "exclude": "in .git/info/exclude",
+             "global": f"in your global git excludes file {item.source} (line {item.line}; it applies to every repo)"}[kind]
+    if fix.replace:
+        text = f'{where} replace the line "{item.pattern}" with "{fix.lines[0]}" and add {_quoted(fix.lines[1:])} after it'
+    else:
+        text = f'{where} add {_quoted(fix.lines)} after the line "{item.pattern}"'
+        if fix.lines == [f"!{item.shown}"]:
+            text += " (or remove that line)"
+    if kind == "global":
+        text += f", or keep that file and add {_quoted(fix.override)} to this repo's .gitignore"
+    return text
+
+
+def ignored_by_git(root: Path, skill_rel: str, docs: str) -> List[Ignored]:
+    """The design-system paths git would never commit, for the skill folder, PLUMB.md and the docs folder
+    (`git check-ignore -v`, a file inside each folder, so a folder that does not exist yet is checked too), with the
+    pattern and the file it is in (a .gitignore, .git/info/exclude or the global excludes file). Run with the plugin's
+    hardened git call (no project hooks, filters or pagers; git found on PATH outside the project). [] outside a git
+    repo, without git, or when nothing is ignored."""
     audit = load_plugin_audit()
     if audit is None:
         return []
@@ -808,37 +901,25 @@ def ignored_by_git(root: Path, skill_rel: str, docs: str) -> List[Tuple[str, str
         out = audit._git(root, "check-ignore", "-v", "--", *probes)
     except Exception:  # noqa: BLE001 - the check is advice; it never stops a scaffold
         return []
-    found: List[Tuple[str, str, str]] = []
-    for line in (out or "").splitlines():
-        info, tab, path = line.partition("\t")
-        source, _, rest = info.partition(":")
-        number, _, pattern = rest.partition(":")
-        if not tab or pattern.startswith("!") or path.strip() not in probes:
+    found: List[Ignored] = []
+    for raw_line in (out or "").splitlines():
+        parsed = parse_check_ignore(raw_line)
+        if parsed is None:
+            continue
+        source, number, pattern, path = parsed
+        if pattern.startswith("!") or path not in probes:
             continue  # a negation pattern matched: the path is kept
-        found.append((probes[path.strip()], pattern, f"{source} line {number}"))
+        found.append(Ignored(probes[path], pattern, source, number))
     return found
 
 
-def unignore_hint(shown: str, pattern: str) -> str:
-    """How to un-ignore a path in .gitignore: a folder pattern above it (.claude/) becomes .claude/* plus a negation
-    for the next folder (!.claude/skills/), since git never re-includes a file whose parent folder is excluded; any
-    other pattern gets a negation line after it."""
-    path = shown.rstrip("/")
-    pat = pattern.strip().lstrip("/").rstrip("/")
-    if pat and not any(c in pat for c in "*?[") and path.startswith(pat + "/"):
-        nxt = path[len(pat) + 1:].split("/")[0]
-        return (f'in .gitignore replace the line "{pattern}" with "{pat}/*" and add "!{pat}/{nxt}/" after it')
-    return f'in .gitignore add "!{shown}" after the line "{pattern}" (or remove that line)'
-
-
-def ignore_lines(found: List[Tuple[str, str, str]], what: str) -> List[str]:
+def ignore_lines(found: List[Ignored], what: str) -> List[str]:
     """`<what>: <path> is git-ignored by <pattern> ...` and the ask-the-user line, for each ignored path."""
     out = []
-    for shown, pattern, where in found:
-        out.append(f"{what}: {shown} is git-ignored by {pattern} ({where}) \u2014 the design system would never be "
-                   f"committed, so teammates and CI would not get it")
-        out.append(f"fix: ask the user: un-ignore it ({unignore_hint(shown, pattern)}), or choose another location "
-                   f"for it")
+    for item in found:
+        out.append(f"{what}: {item.shown} is git-ignored by {item.pattern} ({item.source} line {item.line}) \u2014 the "
+                   f"design system would never be committed, so teammates and CI would not get it")
+        out.append(f"fix: ask the user: un-ignore it ({unignore_hint(item)}), or choose another location for it")
     return out
 
 

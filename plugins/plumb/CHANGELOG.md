@@ -94,8 +94,13 @@
   or the docs folder is git-ignored and ask how to fix it (un-ignore with `.claude/*` + `!.claude/skills/`, or another
   place).
 - **Setup in progress is marked**: `.plumb-tmp/setup-in-progress` lives from the placement OK to the end of setup
-  (the end-of-turn check stands down meanwhile; init offers to resume a stopped setup); every temporary file stays in
-  `<project>/.plumb-tmp/`, never in `/tmp` or next to the repo.
+  (the end-of-turn check stands down meanwhile, for at most 6 hours; init offers to resume a stopped setup); every
+  temporary file stays in `<project>/.plumb-tmp/`, never in `/tmp` or next to the repo.
+- **The guard reads more shell**: `bash -c "…"`, `sh -c`, `zsh -c`, `pwsh -c` and `powershell -Command` scripts are
+  checked like any other command, here-documents are read as their command's input, and an arithmetic `$((a<<b))` is
+  never mistaken for one.
+- **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
+  no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
   only) copies the skills (`/plumb-init`, …) and the hook files into Kiro after you confirm (`--yes` skips the
   question); `uninstall` removes only what it wrote. Built from Kiro's documented formats; the live check on a real
