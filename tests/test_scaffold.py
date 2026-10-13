@@ -42,11 +42,32 @@ IOS = ["references/mobile/ios/ios.md", "references/mobile/ios/components.md"]
 ANDROID = ["references/mobile/android/android.md", "references/mobile/android/components.md"]
 
 
-def run(root: Path, *extra: str, platforms: str = "web", name: str = "Demo", skill: str = SKILL_REL,
+def raw(root: Path, *extra: str, platforms: str = "web", name: str = "Demo", skill: str = SKILL_REL,
         styling: str = "tailwind-v4") -> "subprocess.CompletedProcess[str]":
+    """scaffold.py exactly as given (no confirm token added)."""
     cmd = [sys.executable, str(SCAFFOLD), "--project-root", str(root), "--name", name, "--skill-dir", skill,
            "--platforms", platforms, "--styling", styling, *extra]
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+
+CONFIRM_LINE = re.compile(r"^confirm: .* plus --confirm ([0-9a-f]{12})$", re.M)
+
+
+def token_of(dry: "subprocess.CompletedProcess[str]") -> Optional[str]:
+    m = CONFIRM_LINE.search(dry.stdout)
+    return m.group(1) if m else None
+
+
+def run(root: Path, *extra: str, **kw) -> "subprocess.CompletedProcess[str]":
+    """scaffold.py as the skills run it: a real run is the dry run's command plus the token the dry run printed (the
+    user's OK on the list is taken as given here). A dry run, or a dry run that fails, is returned as is."""
+    if "--dry-run" in extra or "--confirm" in extra:
+        return raw(root, *extra, **kw)
+    dry = raw(root, *extra, "--dry-run", **kw)
+    token = token_of(dry)
+    if dry.returncode != 0 or token is None:
+        return dry
+    return raw(root, *extra, "--confirm", token, **kw)
 
 
 def tree(root: Path) -> List[str]:
@@ -633,3 +654,43 @@ def test_an_existing_stylesheet_copy_gets_a_note_before_the_build(tmp_path: Path
     assert r.returncode == 0
     assert "note: app/globals.css already exists with your own CSS" in r.stdout and "would add Plumb's block" in r.stdout
     assert (tmp_path / "app/globals.css").read_text(encoding="utf-8").startswith('@import "tailwindcss";\nbody')
+
+
+# ---------------------------------------------------------------- the confirm gate (live test 2, B4)
+
+
+def test_a_real_run_without_the_dry_runs_token_writes_nothing(tmp_path: Path) -> None:
+    r = raw(tmp_path)
+    assert r.returncode == 2 and tree(tmp_path) == []
+    assert r.stderr.startswith("error: the scaffold writes into the project only after the user approved the dry-run list")
+    assert "\nask the user: show them the file list from the same command with --dry-run" in r.stderr
+    assert "plus --confirm <token> exactly as the dry run printed it" in r.stderr
+    assert not re.search(r"[0-9a-f]{12}", r.stderr)  # the refusal never hands out the token
+
+
+def test_the_dry_run_prints_a_token_that_fits_only_that_list(tmp_path: Path) -> None:
+    answers = tmp_path / "answers.json"
+    answers.write_text(json.dumps({"direction": "Calm"}), encoding="utf-8")
+    root = tmp_path / "proj"
+    root.mkdir()
+    dry = raw(root, "--answers", str(answers), "--dry-run")
+    token = token_of(dry)
+    assert dry.returncode == 0 and token and tree(root) == []
+    assert dry.stdout.rstrip().endswith(f"after their OK run the same command without --dry-run, plus --confirm {token}")
+    assert token_of(raw(root, "--answers", str(answers), "--dry-run")) == token  # the same list: the same token
+    # another answer, another argument, another project, or a file that appeared since: the token no longer fits
+    answers.write_text(json.dumps({"direction": "Bold"}), encoding="utf-8")
+    r = raw(root, "--answers", str(answers), "--confirm", token)
+    assert r.returncode == 2 and f"error: --confirm {token} does not fit this command" in r.stderr
+    assert "ask the user: " in r.stderr and tree(root) == []
+    answers.write_text(json.dumps({"direction": "Calm"}), encoding="utf-8")
+    assert raw(root, "--answers", str(answers), "--confirm", token, platforms="web,ios").returncode == 2
+    other = tmp_path / "other"
+    other.mkdir()
+    assert raw(other, "--answers", str(answers), "--confirm", token).returncode == 2
+    (root / "PLUMB.md").write_text("mine\n", encoding="utf-8")
+    assert raw(root, "--answers", str(answers), "--confirm", token).returncode == 2
+    (root / "PLUMB.md").unlink()
+    r = raw(root, "--answers", str(answers), "--confirm", token)
+    assert r.returncode == 0, r.stderr
+    assert "wrote: PLUMB.md" in r.stdout

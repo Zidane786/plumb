@@ -100,18 +100,19 @@ Exit codes: 0 ok · 1 stale (`--check`) · 2 bad input (a screen file with no `d
 
 ## scaffold.py (plugin): lay the skill into a project, move it, verify it
 
-`python3 "<ROOT>/scripts/scaffold.py" --project-root P --name NAME --skill-dir D --platforms web,ios,android --styling tailwind-v4|tailwind-v3|css [--answers answers.json] [--docs-dir docs/design] [--dry-run]`
+`python3 "<ROOT>/scripts/scaffold.py" --project-root P --name NAME --skill-dir D --platforms web,ios,android --styling tailwind-v4|tailwind-v3|css [--answers answers.json] [--docs-dir docs/design] (--dry-run | --confirm TOKEN)`
 
 | Flag | Does |
 |---|---|
 | `--project-root P` | The project root (required in every mode). |
 | `--name`, `--skill-dir`, `--platforms`, `--styling` | Required to lay the skill: product name (shown in the docs; any words), skill folder relative to the root (`.claude/skills/<project>-design-system`), platforms, web styling. |
 | (project id) | The tokens file `<id>.tokens.json`, `$extensions.plumb.project` and the theme names use one id: the skill folder's name without `-design-system` (the placement detect.py proposed and the user confirmed), else detect.py's rule: the root `package.json` name (no `@scope/`), else the folder name, lower case with hyphens. `--name "Front Desk"` with package `frontdesk` gives `frontdesk` everywhere. |
-| `--answers answers.json` | The interview answers (colours, type scale, spacing, radius, motion, icons, PLUMB.md values, `theme_switch` both/system/class/data-theme, `reduced_motion` none/keep-fades…); see the script's docstring. Without a `ui_files` answer, `PLUMB.md`'s `UI files:` comes from the project's stack (detect.py's scan: Angular gets its component files) or else the platform default ([placement.md](placement.md)). A `web_copies` path that already exists with the project's own CSS prints a `note:` that the tokens build adds Plumb's block to it and keeps the rest. |
+| `--answers answers.json` | The interview answers (colours, type scale, spacing, radius, motion, icons, PLUMB.md values, `theme_switch` both/system/class/data-theme, `reduced_motion` none/keep-fades, `reset_palette` true/false, `routes`…); see the script's docstring. `routes` is `PLUMB.md`'s `Routes:` (the page folders or router files you found and the user confirmed, e.g. `frontend/src/app (next-app)`, or `none`); unanswered, a web project's `Routes:` reads as not recorded and the route checks stay off. `reset_palette` is `$extensions.plumb.web.reset_palette` (create on a new app: `true`; extract on an existing app: `false`); unanswered, `false` when the app's UI files already use Tailwind's default palette classes (a `note:` says so), else `true`. Without a `ui_files` answer, `PLUMB.md`'s `UI files:` comes from the project's stack (detect.py's scan: Angular gets its component files) or else the platform default ([placement.md](placement.md)). A `web_copies` path that already exists with the project's own CSS prints a `note:` that the tokens build adds Plumb's block to it and keeps the rest. |
 | `--docs-dir` | Where the design pages live (default `docs/design`). |
-| `--dry-run` | Prints `would write:` / `skip:` and writes nothing. |
+| `--dry-run` | Prints `would write:` / `skip:` and writes nothing. Its last line is `confirm: … plus --confirm <token>`: the token fits exactly this command, answers file and file list. Use it when: always first; show the person the list. |
+| `--confirm TOKEN` | The real run, after the person's OK on the dry-run list: the same command without `--dry-run`, plus `--confirm <token>` exactly as the dry run printed it. Without it nothing is written (`error:` + `ask the user:` show the dry-run list); a token from another list (the answers, arguments or files changed since) is refused the same way: run the dry run again and show the new list. |
 | `--relocate FROM TO` | Moves the skill folder and updates every reference (PLUMB.md, the AGENTS.md/CLAUDE.md row, Makefile), then runs the moved `build-tokens.py --check` (regenerating once when only the header paths changed). |
-| `--verify` | Checks that PLUMB.md's skill path exists and that the AGENTS/CLAUDE row, the Makefile and the copy targets point at it, and that every `make` target PLUMB.md names (`(make tokens)`, `(make tokens-check)`, `(make design-audit)`) exists in the Makefile: no Makefile, or a missing target, is a `problem:` whose `fix:` is the plugin's `templates/Makefile.snippet` (or taking the `(make …)` note out of PLUMB.md). Prints `ok:` / `problem:` / `note:` and the `--relocate` command when the skill sits elsewhere. Exit 1 on any problem. |
+| `--verify` | Checks that PLUMB.md's skill path exists and that the AGENTS/CLAUDE row, the Makefile and the copy targets point at it, and that every `make` target PLUMB.md names (`(make tokens)`, `(make tokens-check)`, `(make design-audit)`) exists in the Makefile: no Makefile, or a missing target, is a `problem:` whose `fix:` is the plugin's `templates/Makefile.snippet` (or taking the `(make …)` note out of PLUMB.md). It checks `Routes:` (each recorded folder or router file exists; not recorded is a `note:`) and `UI files:` (a value that matches 0 files while the project has UI code is a `problem:`; a folder glob that matches nothing is a `note:`). Prints `ok:` / `problem:` / `note:` and the `--relocate` command when the skill sits elsewhere. Exit 1 on any problem. |
 
 **Ownership.** `[P]` files (`scripts/*.py`, `templates/*`, `assets/platforms/README.md`) are always overwritten
 (`wrote:`); `[Y]` files are written only when absent (`skip: … (yours, kept)`). That is why `/plumb:upgrade` re-runs the
@@ -123,7 +124,8 @@ problems) · 2 bad input.
 `python3 "<ROOT>/scripts/detect.py" --cwd PATH [--json]`: where the project and its UI live (git root, monorepo
 packages, frameworks, styling, UI file counts, the `UI files:` value the stack needs (`ui_files`: Angular's component
 files; `null` when the platform default fits), an existing `PLUMB.md`). Read-only; a first guess that `/plumb:init`
-always shows the user to confirm. The proposed `project` id and skill folder (`<id>-design-system`) come from the same
+always shows the user to confirm. It also proposes `routes` (a guess at `PLUMB.md`'s `Routes:`), and for a UI
+package in a subfolder repo-relative UI files (`frontend/src/**`); the block labels both as guesses. The proposed `project` id and skill folder (`<id>-design-system`) come from the same
 rule scaffold.py uses (package.json name, else the folder name). Every field: [placement.md](placement.md).
 
 ## version.py (plugin): project vs plugin version

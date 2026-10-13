@@ -4,12 +4,17 @@
 Run by /plumb:create and /plumb:extract:
 
   scaffold.py --project-root P --name NAME --skill-dir D --platforms web,ios,android
-              --styling tailwind-v4|tailwind-v3|css [--answers answers.json] [--docs-dir docs/design] [--dry-run]
+              --styling tailwind-v4|tailwind-v3|css [--answers answers.json] [--docs-dir docs/design]
+              (--dry-run | --confirm TOKEN)
 
   --skill-dir   the skill folder relative to the project root, e.g. .claude/skills/<project>-design-system
                 (forward or back slashes; it must stay inside the project)
   --docs-dir    where the design pages live (default docs/design); recorded in the tokens file
-  --dry-run     print what would be written (`would write:` / `skip:`) and write nothing
+  --dry-run     print what would be written (`would write:` / `skip:`) and write nothing; the last line names the
+                confirm token for exactly this command, answers file and file list
+  --confirm T   the real run: the token the dry run printed. Without it, or when the answers, the arguments or the
+                files changed since the dry run, nothing is written (error: + ask the user: show the dry-run list and
+                get their OK). Human in the loop: the person sees and approves the list before anything is written.
 
 Ownership (spec 5.1):
   [P] plugin-owned, ALWAYS overwritten (printed `wrote:`): scripts/*.py, templates/*, assets/platforms/README.md
@@ -88,6 +93,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import importlib.util
 import json
 import os
@@ -123,7 +129,7 @@ class ScaffoldError(Exception):
     """A refusal: `error: ...` then `fix: ...` (or `ask the user: ...`)."""
 
     def __init__(self, message: str, fix: str) -> None:
-        super().__init__(f"error: {message}\nfix: {fix}")
+        super().__init__(f"error: {message}\n" + (fix if fix.startswith("ask the user:") else f"fix: {fix}"))
 
 
 def utf8_stdio() -> None:
@@ -697,6 +703,31 @@ def check_blockers(root: Path, plan: List[Item]) -> None:
                                 "move that folder away, then run the scaffold again")
 
 
+def confirm_token(root: Path, args: argparse.Namespace, skill_rel: str, docs: str, platforms: List[str],
+                  answers: dict, plan: List[Item]) -> str:
+    """The token the dry run prints and the real run must be given (--confirm): a hash of the project, the arguments,
+    the answers and the file list with what happens to each file (written, or kept), so it fits only the list the
+    person saw and approved."""
+    listing = [[item.dest.relative_to(root).as_posix(),
+                "skip" if item.owner == "Y" and item.dest.exists() else "write"] for item in plan]
+    data = {"root": root.as_posix(), "name": " ".join(args.name.split()), "skill_dir": skill_rel, "docs_dir": docs,
+            "platforms": platforms, "styling": args.styling, "answers": answers, "files": listing}
+    text = json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def check_confirm(given: Optional[str], token: str) -> None:
+    """The real run needs the dry run's token for this exact command, answers and file list."""
+    ask = ("ask the user: show them the file list from the same command with --dry-run (it writes nothing), and after "
+           "their OK run the same command without --dry-run, plus --confirm <token> exactly as the dry run printed it")
+    if not given:
+        raise ScaffoldError("the scaffold writes into the project only after the user approved the dry-run list "
+                            "(no --confirm token given)", ask)
+    if given.strip() != token:
+        raise ScaffoldError(f"--confirm {given.strip()} does not fit this command: the answers, the arguments or the "
+                            f"files changed since the dry run (or it is another run's token)", ask)
+
+
 def write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -1124,6 +1155,7 @@ def parse(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument("--answers", help="answers.json (see the module docstring)")
     p.add_argument("--docs-dir", default="docs/design")
     p.add_argument("--dry-run", action="store_true", help="print what would be written, write nothing")
+    p.add_argument("--confirm", metavar="TOKEN", help="the real run: the token the dry run printed")
     args = p.parse_args(argv)
     if args.relocate and args.verify:
         p.error("--relocate and --verify cannot be combined")
@@ -1159,10 +1191,15 @@ def run(args: argparse.Namespace) -> int:
     answers = load_answers(args.answers)
     plan = build_plan(args, root, skill_rel, docs, name, slug, platforms, answers)
     check_blockers(root, plan)
+    token = confirm_token(root, args, skill_rel, docs, platforms, answers, plan)
+    if not args.dry_run:
+        check_confirm(args.confirm, token)
     wrote, kept = execute(root, plan, args.dry_run)
     copy_notes(root, answers, args.dry_run)
     if args.dry_run:
         print(f"dry run: nothing written ({wrote} would be written, {kept} kept)")
+        print(f"confirm: show the user this list; after their OK run the same command without --dry-run, plus "
+              f"--confirm {token}")
     else:
         print(f"done: {wrote} written, {kept} kept")
     return 0

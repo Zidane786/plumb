@@ -155,9 +155,10 @@ def scaffold(root: Path, answers: dict) -> "subprocess.CompletedProcess[str]":
                           "--dry-run"], capture_output=True, text=True, encoding="utf-8")
     assert dry.returncode == 0, dry.stderr
     token = [ln.split("--confirm ", 1)[1].split()[0] for ln in dry.stdout.splitlines() if "--confirm " in ln]
+    assert len(token) == 1, dry.stdout
     return subprocess.run([sys.executable, str(SCAFFOLD), "--project-root", str(root), "--name", "Demo", "--skill-dir",
-                           SKILL_REL, "--platforms", "web", "--styling", "tailwind-v4", "--answers", str(path)]
-                          + (["--confirm", token[0]] if token else []),
+                           SKILL_REL, "--platforms", "web", "--styling", "tailwind-v4", "--answers", str(path),
+                           "--confirm", token[0]],
                           capture_output=True, text=True, encoding="utf-8")
 
 

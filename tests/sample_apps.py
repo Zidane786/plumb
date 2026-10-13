@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -258,9 +259,11 @@ def scaffold(project: Path, app: App, found: dict, extra: Optional[dict] = None)
         path = tmp / "answers.json"
         routes = {"routes": proposal.get("routes") or "none"}  # detect's guess, as the agent confirmed it
         write(path, json.dumps({**answers(app), **routes, **(extra or {})}, ensure_ascii=False))
-        r = ok(py(project, SCAFFOLD, "--project-root", str(project), "--name", app.name, "--skill-dir",
-                  proposal["skill_dir"], "--platforms", ",".join(proposal["platforms"]), "--styling", app.styling,
-                  "--answers", str(path)))
+        cmd = ["--project-root", str(project), "--name", app.name, "--skill-dir", proposal["skill_dir"],
+               "--platforms", ",".join(proposal["platforms"]), "--styling", app.styling, "--answers", str(path)]
+        dry = ok(py(project, SCAFFOLD, *cmd, "--dry-run"))
+        token = re.search(r"--confirm ([0-9a-f]{12})$", dry.stdout, re.M).group(1)  # the user's OK on the list
+        r = ok(py(project, SCAFFOLD, *cmd, "--confirm", token))
     finally:
         shutil.rmtree(str(tmp), ignore_errors=True)
     ok(skill_script(project, app, "build-tokens.py"))
