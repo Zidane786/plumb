@@ -15,8 +15,22 @@ Fill `<ROOT>/templates/agents-row.md` (`{{SKILL_DIR}}` = the skill dir with a tr
 (Recommended when it exists) · CLAUDE.md · both · skip.
 
 - Add the row to the file's "read before you work" table.
-- No such table: add a `## Read before you work` section with the header `| When | Read | Rule |` and the row.
-- Neither file exists: offer to create `<root>/AGENTS.md` with that section (and a `CLAUDE.md` holding `@AGENTS.md`).
+- No such table: add a `## Read before you work` section with the header `| When | Read | Rule |`, its separator
+  line and the row.
+- Neither file exists: offer to create `<root>/AGENTS.md` (and a `CLAUDE.md` holding `@AGENTS.md`). A new file is a
+  whole file, never a bare row:
+
+  ```
+  # AGENTS.md — <project name>
+
+  ## Read before you work
+
+  | When | Read | Rule |
+  |---|---|---|
+  <the filled row from agents-row.md>
+  ```
+
+- Show the exact lines (or the whole new file) inside the question, then write them only on yes.
 - `scaffold.py --verify` looks for this row (it names `/plumb:prototype`), so keep the template's wording.
 
 ## Makefile targets

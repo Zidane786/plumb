@@ -4,6 +4,7 @@ shadcn globals.css), listed with the token each maps onto, and moved into the to
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -364,6 +365,32 @@ def test_a_stock_shadcn_new_york_stylesheet_maps_by_role_and_colour(project: Pat
     assert got["--color-popover"] == "{color.surface-raised}"
     assert got["--color-accent-foreground"] == got["--color-sidebar-accent-foreground"] == "{color.on-sunk}"
     assert got["--color-secondary-foreground"] == "{color.on-sunk}"
+
+
+def test_a_value_match_never_crosses_roles(project: Path) -> None:
+    """Review M3: a background colour is never aliased to a border token just because their colours match (the live
+    app's sidebar-accent shared #d8e2ff / #ffffff0f with the outline token)."""
+    css = SHADCN_STOCK.read_text(encoding="utf-8")
+    css = re.sub(r"(--sidebar-accent:)[^;]*;", r"\1 #d8e2ff;", css, count=1)  # :root
+    head, _, tail = css.partition(".dark {")
+    tail = re.sub(r"(--sidebar-accent:)[^;]*;", r"\1 #ffffff0f;", tail, count=1)
+    (project / "app/globals.css").write_text(head + ".dark {" + tail, encoding="utf-8")
+    _extracted_tokens(project)
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    doc["color"]["outline"] = {"$value": "#d8e2ff", "$extensions": {"plumb": {"dark": "#ffffff0f"}}}
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"] for o in copy["overrides"] if o["token_change"]}
+    value = got["--color-sidebar-accent"]["$value"]
+    assert value != "{color.outline}", got["--color-sidebar-accent"]
+    assert value == "{color.sunk}"  # its role, named as a look change for the user to decide
+    assert any("--color-sidebar-accent becomes" in n and "the look changes" in n for n in copy["notes"])
+    # the same colours on a token of its own family are still found
+    doc["color"]["surface-accent"] = {"$value": "#d8e2ff", "$extensions": {"plumb": {"dark": "#ffffff0f"}}}
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"] for o in copy["overrides"] if o["token_change"]}
+    assert got["--color-sidebar-accent"]["$value"] == "{color.surface-accent}"
 
 
 def test_used_in_never_lists_plumbs_own_pages(project: Path) -> None:

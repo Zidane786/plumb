@@ -246,7 +246,7 @@ def _wait(proc: "subprocess.Popen[bytes]", shot: Path, deadline: float) -> Optio
 def shoot(browser: Path, url: str, out: Path, width: int, height: int, theme: str, wait_ms: int, timeout: float) -> None:
     fix = ("open the page in a browser to check it loads (a dev server must be running for a URL), then run this again; "
            "or use the agent's browser tool")
-    tmp, created = scratch_dir()
+    tmp, created = scratch_dir(out=out)
     try:
         profile, shot, log = tmp / "profile", tmp / "shot.png", tmp / "browser.log"
         args = command(browser, url, shot, profile, width, height, theme, wait_ms)
@@ -278,13 +278,26 @@ def shoot(browser: Path, url: str, out: Path, width: int, height: int, theme: st
 SETUP_TMP = ".plumb-tmp"
 
 
-def scratch_dir(start: Optional[Path] = None) -> "tuple[Path, Optional[Path]]":
-    """(the throwaway profile's folder, the <project>/.plumb-tmp/ this run created or None). Inside a Plumb project
-    (a PLUMB.md in the working folder or above) the profile goes in <project>/.plumb-tmp/ (with a .gitignore of *),
-    so nothing is written outside the project; elsewhere in the system's temp folder."""
-    here = (start or Path.cwd()).resolve()
+def _plumb_project(start: Path) -> Optional[Path]:
+    """The nearest folder at or above `start` that holds a PLUMB.md, or None."""
+    here = start.resolve()
     for folder in (here, *here.parents):
         if (folder / "PLUMB.md").is_file():
+            return folder
+    return None
+
+
+def scratch_dir(start: Optional[Path] = None, out: Optional[Path] = None) -> "tuple[Path, Optional[Path]]":
+    """(the throwaway profile's folder, the <project>/.plumb-tmp/ this run created or None). Inside a Plumb project
+    (a PLUMB.md in the working folder or above, or above the --out path, when the shot is run from elsewhere) the
+    profile goes in <project>/.plumb-tmp/ (with a .gitignore of *), so nothing is written outside the project;
+    elsewhere in the system's temp folder."""
+    starts = [start or Path.cwd()]
+    if out is not None:
+        starts.append(Path(out).absolute().parent)
+    for begin in starts:
+        folder = _plumb_project(begin)
+        if folder is not None:
             scratch = folder / SETUP_TMP
             created = None
             try:

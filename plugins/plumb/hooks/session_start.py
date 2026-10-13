@@ -18,7 +18,8 @@ Every script it runs is the plugin's own copy (`--root <the project's skill>`), 
 - when the design-system folder PLUMB.md names (`Design system:`) is missing, "design system not found" and a
   warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill);
 - "Routes not recorded — run /plumb:init to record them" when PLUMB.md has no `Routes:` value (the route checks stay
-  off: scripts never guess the app's layout), a note for a Routes entry without a valid kind, and a note while
+  off: scripts never guess the app's layout) and a note for each entry _plumb.parse_routes cannot use, only where a
+  route check would run (Prototype sync on, a web platform; never for `Routes: none`), and a note while
   <root>/.plumb-tmp/setup-in-progress exists (the end-of-turn check stands down during a setup).
 
 Claude Code adds plain stdout to the session; GitHub Copilot CLI (COPILOT_CLI set) reads {"additionalContext": ...}.
@@ -38,6 +39,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import subprocess
 import sys
 from typing import Optional, Tuple
@@ -144,22 +146,34 @@ ROUTES_NOT_RECORDED = ("Routes not recorded \u2014 run /plumb:init to record the
                        "roots); until then the prototype-first check and route-not-prototyped are off")
 
 
+def route_checks_run(proj: H.Project) -> bool:
+    """A route check could run here: Prototype sync is on and the project has a web platform (or names none). A
+    mobile-only project, or one with Prototype sync off, is never told about Routes."""
+    if not H._ON.match(str(proj.keys.get("Prototype sync", "") or "")):
+        return False
+    platforms = [p.strip().lower() for p in re.split(r"[,\s]+", str(proj.keys.get("Platforms", "") or "")) if p.strip()]
+    return not platforms or "web" in platforms
+
+
 def setup_notes(proj: H.Project) -> list:
-    """Lines for a project whose setup is not finished: PLUMB.md has no `Routes:` (Plumb never guesses the app's
-    layout, so the route checks are off), or <root>/.plumb-tmp/ is still there (setup in progress, or left behind:
-    the end-of-turn check stands down while it exists)."""
+    """Lines for a project whose setup is not finished: PLUMB.md has no `Routes:`, or names an entry the shared parser
+    (_plumb.parse_routes) cannot use (Plumb never guesses the app's layout, so the route checks skip it) \u2014 only where a
+    route check would run (route_checks_run) \u2014, or the setup marker <root>/.plumb-tmp/setup-in-progress is there (a
+    setup in progress, or one left behind: the end-of-turn check stands down while it exists)."""
     out = []
-    routes = str(proj.keys.get("Routes", "") or "").strip()
-    if not routes or routes.startswith("("):
-        out.append(ROUTES_NOT_RECORDED)
-    else:
-        kinds = ", ".join(ROUTE_KINDS)
-        for item in [i.strip() for i in routes.split(",") if i.strip()] if routes.lower() != "none" else []:
-            m = re.match(r"^(.*?)\s*\(([^()]*)\)$", item)
-            if not m or m.group(2).strip().lower() not in ROUTE_KINDS:
-                out.append(f"note: Routes: {item} has no valid kind \u2014 use one of {kinds}; the route checks skip "
-                           f"it until PLUMB.md is corrected (/plumb:init)")
-    if H.setup_in_progress(proj.root_s):
+    core = H.load_script("_plumb.py", "_plumb") if route_checks_run(proj) else None
+    if core is not None:
+        roots, problems = core.parse_routes(proj.keys.get("Routes"))
+        if roots is None:
+            out.append(ROUTES_NOT_RECORDED)
+        for problem in problems:
+            out.append(f"note: {problem}; the route checks skip it until PLUMB.md is corrected (/plumb:init)")
+    stale = H.setup_marker_stale(proj.root_s)
+    if stale is not None:
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(stale))
+        out.append(f"note: a setup marker from {when} is stale \u2014 finish /plumb:init or remove {H.SETUP_TMP}/ (ask "
+                   f"the user first); the end-of-turn check runs again")
+    elif H.setup_in_progress(proj.root_s):
         out.append(f"note: {H.SETUP_MARKER} is in the project, so the end-of-turn check stands down (a Plumb setup is "
                    f"running); when no setup is running, delete {H.SETUP_TMP}/ (ask the user first)")
     return out

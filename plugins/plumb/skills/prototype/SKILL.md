@@ -21,6 +21,12 @@ screen, ask, wait; never chain it after another command. `audit.py`: **exit 1 me
 (your tool may show it as a failed command). **End-of-turn check:** if it stops you after the user said not to fix
 now, report and stop. Copilot CLI asks for every command: join a step's script calls with `&&` in one shell call (Windows PowerShell 5.1 has no `&&`: join with `;` there, or
 run the steps one by one).
+**Scripts give evidence, not answers:** check each script result against the code (search and read any time),
+correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
+user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
+question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
+Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
 
 ```
  brief ─▶ 2–3 variants (screen files ─▶ --proposal builds both views) ─▶ user picks ─▶ write to main + default tour
@@ -30,18 +36,26 @@ run the steps one by one).
 ## Step 0: context
 
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
-   skill's base directory (printed when the skill loads) + `/../..`, made absolute.
-2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
+   skill's base directory (printed when the skill loads) + `/../..`, made absolute. Check that `<ROOT>/reference/scripts.md`
+   exists; if not, resolve again, never guess. Read Plumb's references only as `<ROOT>/reference/<file>`.
+2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
+   else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
+   made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
+   Scratch files: `<root>/.plumb-tmp/` only (its `.gitignore` first); clean up your own files when the command
+   ends; never write `setup-in-progress` (the setup marker); never `/tmp` or outside `<root>`.
+   Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), `Themes:`, `Platforms:`.
    **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is
    where the scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask
    the user which is right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder").
    `Role: linked` → the prototype lives in the home repo named by `Design system:`; say so and work there
    only if the user agrees.
-4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json`: `older` → say once "Plumb <plugin> is
+4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json`: `older` → say once "Plumb <plugin> is
    available for this project (on <project>): run `/plumb:upgrade` when ready." and continue; never run it yourself.
 5. No tokens file yet in `SKILL/assets/tokens/` → the design system comes first: offer `/plumb:create` or
    `/plumb:extract` and stop.
+6. `PLUMB.md` has no `Routes:` line → say once that the prototype-first check and `route-not-prototyped` cannot see
+   the app's pages until `/plumb:init` records the route roots (`<path> (<kind>)`), then continue.
 
 ## Step 1: brief
 

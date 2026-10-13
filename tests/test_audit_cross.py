@@ -44,7 +44,7 @@ BT = _load("plumb_build_tokens", "build-tokens.py")
 CROSS_IDS = {"near-duplicate-colour", "near-duplicate-size", "outlier-value", "duplicate-component", "contrast",
              "missing-dark-value", "focus-state", "hover-only", "touch-target", "reduced-motion", "generated-drift",
              "missing-token", "unused-token", "duplicate-tokens", "consolidate-components", "contrast-headroom",
-             "consistency"}
+             "consistency", "unknown-token-reference"}
 ERROR_IDS = {"contrast", "generated-drift", "missing-dark-value"}
 SUGGEST_IDS = {"missing-token", "unused-token", "duplicate-tokens", "consolidate-components", "contrast-headroom",
                "consistency"}

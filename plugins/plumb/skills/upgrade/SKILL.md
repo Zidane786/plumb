@@ -17,6 +17,12 @@ yes to, and the tokens file only by additive migration (no value is ever deleted
 components are never touched. **Nothing is written without the user's OK.** Never commit, push or delete data.
 Never install or download anything yourself (update the plugin included): print the commands for the user to run, then ask the user and wait.
 Questions go **one at a time** through the question tool, options with the recommendation first marked "(Recommended)"; keep every value the project already set.
+**Scripts give evidence, not answers:** check each script result against the code (search and read any time),
+correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
+user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
+question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
+Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
 
 ```
  versions ─▶ What's new (every version in between) ─▶ ask ─▶ refresh [P] (scaffold.py) ─▶ --migrate ─▶ regenerate [G]
@@ -27,14 +33,20 @@ Questions go **one at a time** through the question tool, options with the recom
 ## Step 0: versions
 
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
-   skill's base directory (printed when the skill loads) + `/../..`, made absolute.
-2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
+   skill's base directory (printed when the skill loads) + `/../..`, made absolute. Check that `<ROOT>/reference/scripts.md`
+   exists; if not, resolve again, never guess. Read Plumb's references only as `<ROOT>/reference/<file>`.
+2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
+   else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
+   made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
+   Scratch files: `<root>/.plumb-tmp/` only (its `.gitignore` first); clean up your own files when the command
+   ends; never write `setup-in-progress` (the setup marker); never `/tmp` or outside `<root>`.
+   Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Platforms:`.
    **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is where the
    scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask the user which is
    right, then fix the other one after their OK (`<ROOT>/reference/scripts.md`, "The docs folder"). Settle this before
    step 2: the agreed folder is what `scaffold.py --docs-dir` gets.
-4. `PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>" --json` → **OLD** (`project`), **NEW** (`plugin`),
+4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json` → **OLD** (`project`), **NEW** (`plugin`),
    `between`:
    - `same` → "Already on Plumb <NEW>." Still run step 5's checks; if `scaffold.py --verify` or a `--check` reports a
      problem, offer to fix it. Otherwise stop.
@@ -63,13 +75,19 @@ Questions go **one at a time** through the question tool, options with the recom
    `# Plumb: the design system for <name>`), `--skill-dir` (SKILL), `--platforms` (the tokens file's
    `$extensions.plumb.platforms`, else `PLUMB.md`'s `Platforms:`), `--styling` (`$extensions.plumb.web.styling`, `css`
    when the project has no web platform), `--docs-dir` (**docs**, the folder agreed in step 0).
-2. `PY "<ROOT>/scripts/scaffold.py" --project-root . --name "<name>" --skill-dir <SKILL> --platforms <list> --styling
-   <styling> --docs-dir <docs> --dry-run`. It lists `would write:` for Plumb's files (`scripts/*.py`, `templates/*`,
-   `assets/platforms/README.md`) and for any file new in this version, and `skip: … (yours, kept)` for every file of
-   yours. Show the list; anything of the project's that would be written other than a new file → stop and ask.
-3. Ask "Replace Plumb's files as listed?"; on yes, run the same command without `--dry-run`.
+2. `PY "<ROOT>/scripts/scaffold.py" --project-root "<root>" --name "<name>" --skill-dir <SKILL> --platforms <list>
+   --styling <styling> --docs-dir <docs> --dry-run`. It lists `would write:` for Plumb's files (`scripts/*.py`,
+   `templates/*`, `assets/platforms/README.md`) and for any file new in this version, `skip: … (yours, kept)` for every
+   file of yours, and ends with a `confirm:` line naming `--confirm <token>`. Check the list (anything of the project's
+   that would be written other than a new file → stop and ask; a `warning: … git-ignored` line → ask as `/plumb:init`
+   step 1.5 does).
+3. Ask "Replace Plumb's files as listed?" with the **full** list inside the question. **STOP: ask, wait for the
+   answer.** On yes, in a new shell call: the same command without `--dry-run`, plus `--confirm <token>` exactly as the
+   dry run printed it (a stale token is refused: run the dry run again and ask again).
 4. `PY SKILL/scripts/build-tokens.py --migrate` (adds new settings to the tokens file; never removes or changes a
-   value), then `PY SKILL/scripts/build-tokens.py` (every theme, copy, the specimen and the prototype and proposal token
+   value; with Tailwind it records `web.reset_palette: true`: when the app's UI files use Tailwind's palette classes,
+   say how many inside a question and offer keep, `false`, recommended, as interview.md "Tailwind's default palette"
+   says, before the build), then `PY SKILL/scripts/build-tokens.py` (every theme, copy, the specimen and the prototype and proposal token
    blocks), then, when the project has screen files, `PY SKILL/scripts/build-prototype.py`. Exit 2 → show the `error:`
    and its `fix:`; never hand-edit a generated file or Plumb's scripts to make it pass.
 5. **Rolling back** (only if something failed and the user agrees): restore Plumb's own files only, one path at a
@@ -101,6 +119,9 @@ Ask before anything that changes meaning or touches files the project owns (`.gi
 - [ ] Replace the first line with `<!-- plumb v<NEW> · written by /plumb:init, safe to edit values -->`.
 - [ ] Compare with `<ROOT>/templates/PLUMB.md`: add any section or setting line it has that `PLUMB.md` lacks (fill it
       the way `/plumb:init` would, asking for anything unknown; the version steps say how). Change no existing value.
+      A missing `Routes:` line (or `UI files:` patterns that match no file): investigate the app's page roots, count
+      what they match, and offer the line (`<path> (<kind>)` from the framework found, or `none`; interview.md "What
+      gets recorded") with that evidence inside the question; the user may change them here.
 - [ ] `## Plumb updates`: add one dated line, e.g.
       `- 2026-11-02 upgraded Plumb 1.0.0 → 1.1.0: <the main new things from What's new>`.
 
@@ -109,8 +130,8 @@ Ask before anything that changes meaning or touches files the project owns (`.gi
 Run, report what each finds, fix it with the user's OK, and repeat until clean:
 
 ```bash
-PY "<ROOT>/scripts/version.py" --project . --plugin "<ROOT>"      # expect: up to date
-PY "<ROOT>/scripts/scaffold.py" --verify --project-root .
+PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>"      # expect: up to date
+PY "<ROOT>/scripts/scaffold.py" --verify --project-root "<root>"
 PY SKILL/scripts/build-tokens.py --check
 PY SKILL/scripts/build-prototype.py --check                       # when the project has screen files
 PY SKILL/scripts/audit.py

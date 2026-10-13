@@ -538,7 +538,8 @@ def nearest_token(doc: dict, kind: str, value: str) -> Optional[Tuple[str, float
 
 
 _KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
-_NOTE = re.compile(r"\s{2,}\([^)]*\)\s*$")
+# A trailing '   (note)' after two or more spaces is a comment, unless it is a route kind (`Routes: app  (next-app)`).
+_NOTE = re.compile(r"\s{2,}\((?!\s*(?:next-app|next-pages|nuxt|sveltekit|angular|router)\s*\))[^)]*\)\s*$")
 
 
 def read_plumb_md(path: Path) -> dict:
@@ -588,6 +589,11 @@ _ROUTE_ENTRY = re.compile(r"^(.*?)(?:\s*\(([^()]*)\))?$")
 ROUTES_NOT_RECORDED = "Routes not recorded: run /plumb:init to record them (PLUMB.md `Routes:`)"
 
 
+def _split_entries(text: str) -> List[str]:
+    """Split at the commas between entries, never inside a brace glob ({routes,router}) or a (kind)."""
+    return _split_outside(text, ",")
+
+
 def parse_routes(value: object) -> Tuple[Optional[List[Tuple[str, str]]], List[str]]:
     """PLUMB.md's `Routes:` value as ([(path, kind), ...], problems). (None, []) when it is missing, empty or still a
     placeholder in parentheses (not recorded: callers fail open and say so); ([], []) for `none`. Paths are
@@ -601,7 +607,7 @@ def parse_routes(value: object) -> Tuple[Optional[List[Tuple[str, str]]], List[s
     out: List[Tuple[str, str]] = []
     problems: List[str] = []
     kinds = ", ".join(ROUTE_KINDS)
-    for item in [i.strip() for i in text.split(",") if i.strip()]:
+    for item in [i.strip() for i in _split_entries(text) if i.strip()]:
         m = _ROUTE_ENTRY.match(item)
         path = (m.group(1) if m else item).strip().strip("`").replace("\\", "/")
         kind = (m.group(2) or "").strip().lower() if m else ""
@@ -669,12 +675,12 @@ def source_ext(name: str) -> Optional[str]:
     return ext if ext in SOURCE_EXT else None
 
 
-@functools.lru_cache(maxsize=512)
-def glob_rx(glob: str) -> "re.Pattern[str]":
-    """A path glob (** any folders, * within one folder, ? one character; no wildcard = the path and below) as a regex."""
-    g = glob.strip().strip("`").replace("\\", "/")
-    if g.startswith("./"):
-        g = g[2:]
+GLOB_CHARS = "*?{"
+_BACKSLASH = chr(92)
+
+
+def _glob_body(g: str) -> str:
+    """The regex for a glob's text: ** any folders, * within one folder, ? one character, {a,b} either one."""
     out, i = [], 0
     while i < len(g):
         if g.startswith("**/", i):
@@ -689,13 +695,74 @@ def glob_rx(glob: str) -> "re.Pattern[str]":
         elif g[i] == "?":
             out.append("[^/]")
             i += 1
+        elif g[i] == "{" and _brace_end(g, i) > i:
+            end = _brace_end(g, i)
+            parts = _split_outside(g[i + 1:end], ",")
+            out.append("(?:" + "|".join(_glob_body(part) for part in parts) + ")")
+            i = end + 1
         else:
             out.append(re.escape(g[i]))
             i += 1
-    body = "".join(out)
-    if "*" not in g and "?" not in g:
+    return "".join(out)
+
+
+def _brace_end(g: str, start: int) -> int:
+    """The index of the } that closes the { at start (nested braces count), or -1."""
+    depth = 0
+    for j in range(start, len(g)):
+        if g[j] == "{":
+            depth += 1
+        elif g[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+    return -1
+
+
+def _split_outside(text: str, seps: str) -> List[str]:
+    """Split at any of seps outside {...} and (...)."""
+    out, depth, start = [], 0, 0
+    for i, ch in enumerate(text):
+        if ch in "{(":
+            depth += 1
+        elif ch in "})":
+            depth = max(0, depth - 1)
+        elif ch in seps and depth == 0:
+            out.append(text[start:i])
+            start = i + 1
+    out.append(text[start:])
+    return out
+
+
+def split_globs(value: object) -> List[str]:
+    """A list of globs as PLUMB.md writes them (`a/**, b/** · *.tsx *.{css,scss}`): split at commas and white space,
+    never inside {...}; the `·` and `-` separators are left out."""
+    seps = ", " + chr(9) + chr(10) + chr(13)
+    return [g for g in _split_outside(str(value or ""), seps) if g and g not in ("·", "-")]
+
+
+def glob_base(glob: str) -> str:
+    """The folders before a glob's first wildcard (`frontend/src` for `frontend/src/**/*.{a,b}.ts`), '' for none."""
+    parts = glob.replace(_BACKSLASH, "/").split("/")
+    base: List[str] = []
+    for part in parts[:-1]:
+        if any(c in part for c in GLOB_CHARS + "["):
+            break
+        base.append(part)
+    return "/".join(base)
+
+
+@functools.lru_cache(maxsize=512)
+def glob_rx(glob: str) -> "re.Pattern[str]":
+    """A path glob (** any folders, * within one folder, ? one character, {a,b} either; no wildcard = the path and
+    below) as a regex."""
+    g = glob.strip().strip("`").replace(_BACKSLASH, "/")
+    if g.startswith("./"):
+        g = g[2:]
+    body = _glob_body(g)
+    if not any(c in g for c in GLOB_CHARS):
         body = body.rstrip("/") + "(?:/.*)?"
-    return re.compile(body + r"\Z")
+    return re.compile(body + _BACKSLASH + "Z")
 
 
 def path_matches(path: str, globs) -> bool:

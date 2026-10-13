@@ -93,9 +93,14 @@ Make a scratch project and lay a design system into it with the same script `/pl
 mkdir plumb-scratch && cd plumb-scratch && git init
 PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill-dir .claude/skills/demo-design-system --platforms web,ios,android --styling css --dry-run
 PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill-dir .claude/skills/demo-design-system --platforms web,ios,android --styling css
+PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill-dir .claude/skills/demo-design-system --platforms web,ios,android --styling css --confirm <token>
 ```
 
-**Expected:** the dry run lists `would write:` lines and writes nothing; the real run ends `done: 38 written, 0 kept`.
+**Expected:** the dry run lists `would write:` lines, writes nothing and ends with
+`confirm: show the user this list; after their OK run the same command without --dry-run, plus --confirm <token>`
+(12 hex characters). The second command (no token) is refused with
+`error: the scaffold writes into the project only after the user approved the dry-run list` and writes nothing. The
+third, with the token the dry run printed, ends `done: 38 written, 0 kept`.
 `PLUMB.md` exists and starts with `<!-- plumb v1.0.0 · written by /plumb:init, safe to edit values -->`.
 
 Below, `SKILL` is `.claude/skills/demo-design-system`.
@@ -211,18 +216,42 @@ claude --plugin-dir <repo>/plugins/plumb
 
 Try, in order, and report what happens. Use tmux (or a second terminal) if you want pane captures as evidence.
 
-- [ ] `/plumb:init` → the **whole** "Plumb found … I'll create … OK, or change something?" block printed in the chat
-      (project, layout, UI, the skill dir, `PLUMB.md`, `docs/design/`, the generated copy with its `exists:` line when
-      the stylesheet already exists, the UI files), never a one-line summary or "the setup above" with nothing above;
-      nothing written before you say OK; then "existing or new?" with the detected one marked (Recommended).
+- [ ] `/plumb:init` → the **whole** "Plumb found … I'll create … OK, or change something?" block is **inside the
+      question** (its text, or the recommended option's preview), not only printed before it: project, layout, UI,
+      the skill dir, `PLUMB.md`, `docs/design/`, the generated copy with its `exists:` line when the stylesheet already
+      exists, the UI files with how many files they match, the routes; never a one-line summary or "the setup above".
+      The same for the "Right?" summary, the token set, the dry-run list and the stylesheet diff later on. Nothing is
+      written before you say OK; then "existing or new?" with the detected one marked (Recommended).
+- [ ] **Monorepo** (UI in `frontend/`, the repo root holding `frontend/` and `backend/`): the UI files are
+      `frontend/…` patterns (a root `src/**` that matches nothing is shown `(corrected: …)` with the file counts), the
+      routes line names `frontend/src/app (next-app)` (the page folder with its kind; `none` in a mobile-only or
+      design-only project), and both land in `PLUMB.md` (`UI files:`, `Routes:`). `scaffold.py --verify` ends
+      `verify: ok`.
+- [ ] **Git-ignored skill folder:** in a repo whose `.gitignore` has `.claude/`, init shows that line inside a question
+      and offers to un-ignore the skill folder (`.claude/*` + `!.claude/skills/`, recommended) or another location;
+      it never goes on silently, and after the change it runs `git check-ignore` again and shows the result.
+- [ ] In a stock shadcn app with no next-themes (`@custom-variant dark (&:is(.dark *))` in `globals.css`), the theme
+      switch recommends **class** and cites that line.
 - [ ] Choose **create**. The product questions come before any design question; every question has options with one
       marked (Recommended) and a reason; it asks before writing `docs/design/directions.html`; the directions page
       opens from disk and shows 2–3 distinct directions in light and dark.
-- [ ] Dark mode asks how the app switches themes (system · class · both · data-theme, both recommended) and reduced motion asks keep
-      fades or none; both land in the tokens file (`$extensions.plumb.web.theme_switch`,
-      `$extensions.plumb.motion.reduced`).
-- [ ] It shows the full token set (light and dark) and the `scaffold.py --dry-run` file list, and writes only after you
-      say OK. The answers JSON goes in `<project>/.plumb-tmp/` (never `/tmp`) and the folder is gone after the scaffold.
+- [ ] Dark mode asks how the app switches themes as its own question (system · class · both · data-theme; both
+      recommended in a new app; in an app with next-themes `attribute="class"`, **class** recommended with the
+      `file:line` inside the question) and reduced motion asks keep fades or none; both land in the tokens file
+      (`$extensions.plumb.web.theme_switch`, `$extensions.plumb.motion.reduced`). The UX patterns are seven questions
+      (or it names the ones it skips and why). With Tailwind it asks about the palette reset (reset recommended for a
+      new app; keep recommended, with the count of palette classes, in an existing one; the question says the reset
+      covers all six namespaces and that with keep the audit still flags off-scale defaults like `text-lg`):
+      `web.reset_palette` in the tokens file. Keep → `bg-emerald-500` still renders after the first build.
+- [ ] In an app whose `globals.css` has shadcn variables, the overrides question lists each mapping, and any "the look
+      changes; ask the user" note sits on its own line with the app's value and the token's.
+- [ ] It asks you to pick a direction, then shows the full token set (light and dark) and the `scaffold.py --dry-run`
+      file list, each inside a question, and writes only after you say OK; the real scaffold runs with the
+      `--confirm <token>` the dry run printed, in its own shell call. Scratch files go in `<project>/.plumb-tmp/`
+      (never `/tmp` or next to the repo); the marker `.plumb-tmp/setup-in-progress` exists until the end of setup (the
+      end-of-turn check doesn't fire meanwhile) and the folder is gone when init finishes. Stop the session midway and
+      run `/plumb:init` again: it offers to resume. A long stylesheet diff comes as a summary and its first ~40 lines,
+      with the full diff in `.plumb-tmp/` to open.
       Before the first build it says what changes in your existing stylesheet (e.g. `app/globals.css`: only a marked
       `plumb:start … plumb:end` block is Plumb's) and asks. The audit on the components it writes exits 0;
       `docs/design/specimen.html` exists.
@@ -247,7 +276,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Ask the agent to edit the generated CSS copy (e.g. `app/globals.css`) by hand, and then with
       `sed -i` → both **refused** (`… is generated from the design tokens; a hand edit is lost on the next build`).
       Then ask it to delete that file (`rm`, or `Remove-Item` on Windows) and to `mv` it away → both **refused** the
-      same way.
+      same way. The same through `bash -c "rm app/globals.css"` → **refused**.
+- [ ] Create `.plumb-tmp/setup-in-progress` and set its time 7 hours back (`touch -t`): a new session says
+      `a setup marker from … is stale — finish /plumb:init or remove .plumb-tmp/`, and the end-of-turn check runs
+      again.
 - [ ] Ask the agent to create a new page (`app/reports/page.tsx`) → **refused**:
       `error: app/reports/page.tsx is a new screen with no approved prototype` / `fix: /plumb:prototype reports …`.
 - [ ] `/plumb:prototype reports` → 2–3 variants, `proposals/reports/index.html` side by side, both views each; you pick
@@ -274,7 +306,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Remove `theme_switch` and `motion` from the tokens file's `$extensions.plumb` and build: two `note:` lines say
       the defaults apply and name `build-tokens.py --migrate`. Run it → it prints `added … theme_switch = "both"` and
       `added … motion.reduced = "none"`, the next build prints no note, and the generated CSS is unchanged.
-- [ ] `/plumb:status` → a short read-only report ending with the next step.
+- [ ] `/plumb:status` → a short read-only report ending with the next step, never "/plumb:create" or
+      "/plumb:extract" in a set-up project; it writes no file (no `/tmp`, no `.plumb-tmp/`).
+- [ ] Before saying done, create and extract walk their final checklist: contrast evidence in `dark-mode.md`,
+      components, the decision log, a first prototype screen (or your "later"), the wire-in asked, `.plumb-tmp/` gone.
 
 **tmux / SSH:** repeat one refusal and `/plumb:status` inside tmux, and over SSH if you can; open the pages on the
 machine that holds the files.
@@ -298,11 +333,17 @@ Restart Copilot, open the same kind of scratch project, and report:
 - [ ] The raw-colour edit, the hand edit to a generated file (with the edit tool and with a shell write) and the new
       page are **refused with Plumb's reason** (the `error:` and `fix:` text), not just "hook exited with code 2".
 - [ ] `/plumb:prototype` and `/plumb:status` run as in level 4.
-- [ ] `/plumb:init` on a scratch app with UI (it routes to extract): the full placement block is printed; screens are
-      mapped with `--route=/` (no "Allow path access" prompt for `/`); the answers JSON stays in `.plumb-tmp/`; the
-      agent never runs `build-prototype.py --approve` before you said yes to that screen; the wire-in asks the
-      `AGENTS.md` row and the Makefile even when neither file exists. A `✗ skill(plumb:init) Skill not found` line
-      at the start is expected and harmless. Count the permission prompts (Copilot ignores `allowed-tools`).
+- [ ] `/plumb:init` on a scratch app with UI (it routes to extract): the full placement block is inside Copilot's ask
+      question; screens are mapped with `--route=/` (no "Allow path access" prompt for `/`); scratch files stay in
+      `.plumb-tmp/`; the agent never runs `build-prototype.py --approve` before you said yes to that screen; the
+      wire-in asks the `AGENTS.md` row and the Makefile even when neither file exists (a new `AGENTS.md` has a title,
+      the `## Read before you work` heading, the table header and the row). A `✗ skill(plumb:init) Skill not found`
+      line at the start is expected and harmless. Count the permission prompts (Copilot ignores `allowed-tools`):
+      about 10–15 script runs plus one per file written is expected.
+- [ ] `/plumb:init` choosing **create** in Copilot: every checkpoint is its own question and Copilot waits for each
+      (the direction pick, the token set, the dry-run list, the stylesheet diff, each contrast fix, the components, the
+      prototypes); it never runs the real scaffold or the first build before your answer, even when you approve the
+      command's permission prompt. It ends with the final checklist and no `.plumb-tmp/` left.
 - [ ] End-of-turn: change a UI file with a raw colour while the edit check is off (`Edit check: off` in `PLUMB.md`):
       Copilot continues (its `agentStop` honours the block). Then repeat after telling the agent "don't fix it now":
       it reports what the check found and stops.

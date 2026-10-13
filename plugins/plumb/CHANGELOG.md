@@ -75,6 +75,33 @@
   guard on generated and Plumb's own files are always on in a project with a `PLUMB.md`.
 - **Screenshots without installing anything**: `screenshot.py` uses a Chrome, Edge or Chromium already on the machine,
   headless; with none, the visual part is skipped with a note and every other check still runs.
+- **You confirm what you can see, at every checkpoint**: what you are asked to confirm (the setup Plumb found, the
+  "Right?" summary, the token set, the file list, a stylesheet diff, a mapping) is inside the question itself, never
+  only above it. Create and extract are numbered checkpoints that each stop and wait for your answer, and end with a
+  checklist (contrast evidence, components, decisions, a first prototype screen) before they say done. The real
+  scaffold runs only with the `--confirm <token>` its dry run printed after you approved that list (also in
+  `/plumb:update` and `/plumb:upgrade`).
+- **Scripts give evidence, not answers**: the agent investigates your project first (configs, routes, theme provider,
+  Tailwind dark config, asset catalogs, theme objects, i18n files) and checks every script result against the code,
+  marking what it corrected; only what the code can't tell is asked.
+- **Your layout is recorded, not guessed**: `PLUMB.md` `UI files:` and `Routes:` (`<path> (<kind>)`: next-app,
+  next-pages, nuxt, sveltekit, angular, router; or `none`) come from that investigation and your OK, so monorepos
+  (`frontend/src/app`) get prototype-first and `route-not-prototyped`; `scaffold.py --verify` checks both. Patterns
+  may use `{a,b}` (`src/**/*.{routes,router}.ts`).
+- **An existing app keeps Tailwind's built-in scales**: `$extensions.plumb.web.reset_palette` (`reset_palette` in the
+  answers) is asked; a new app resets all six namespaces so only tokens exist, an app that already uses classes like
+  `bg-emerald-500` keeps them working (the audit suggests moving them onto tokens).
+- **A git-ignored design system is caught**: the dry run, `--verify` and init say when the skill folder, `PLUMB.md`
+  or the docs folder is git-ignored and ask how to fix it (un-ignore with `.claude/*` + `!.claude/skills/`, or another
+  place).
+- **Setup in progress is marked**: `.plumb-tmp/setup-in-progress` lives from the placement OK to the end of setup
+  (the end-of-turn check stands down meanwhile, for at most 6 hours; init offers to resume a stopped setup); every
+  temporary file stays in `<project>/.plumb-tmp/`, never in `/tmp` or next to the repo.
+- **The guard reads more shell**: `bash -c "…"`, `sh -c`, `zsh -c`, `pwsh -c` and `powershell -Command` scripts are
+  checked like any other command, here-documents are read as their command's input, and an arithmetic `$((a<<b))` is
+  never mistaken for one.
+- **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
+  no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
   only) copies the skills (`/plumb-init`, …) and the hook files into Kiro after you confirm (`--yes` skips the
   question); `uninstall` removes only what it wrote. Built from Kiro's documented formats; the live check on a real

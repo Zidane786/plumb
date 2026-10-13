@@ -67,6 +67,7 @@ inventory behind `missing-token` count them at the token's value, never at Tailw
 | `hover-only` | warn | An action revealed only on hover (keyboard and touch users never see it). | Reveal it on focus too (`group-focus-within:`), or always show it. |
 | `touch-target` | warn | A tap target under 44 px (web, without a `pointer-coarse:` size), 44 pt (SwiftUI) or 48 dp (Compose). | Make it at least 44px / 44pt / 48dp on touch. |
 | `reduced-motion` | warn | Animation with no `prefers-reduced-motion` handling anywhere. | Add a reduced-motion block (see the skill's `references/motion.md`). |
+| `unknown-token-reference` | warn | The skill's `references/components.md` or `design.md` names a token (`` `shadow.card` ``) the tokens file does not have (renamed or removed after these files were written). A group with tokens under it (`motion.easing`) and placeholders (`color.<name>`) are fine. | Name a token the project has (`build-tokens.py --css-vars` lists them), or add it with `/plumb:update`. |
 
 ### Prototype fidelity (full audit, when the project has a prototype)
 

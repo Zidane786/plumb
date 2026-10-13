@@ -466,6 +466,43 @@ def test_heredoc_bodies_are_read_as_the_stage_input(H, tmp_path):
     assert H.shell_targets("cat <<< 'x' > notes.txt", str(tmp_path)) == [str(tmp_path / "notes.txt")]
 
 
+def test_an_arithmetic_shift_is_not_a_heredoc(H, tmp_path, launcher, proj):
+    """Review M1: `$((a<<b))` must not read the next lines as a here-document body (they would escape the guard)."""
+    for cmd in ("echo $((a<<b))\nrm app/globals.css", "x=$(( a << b )); rm app/globals.css",
+                "(( n = a<<b ))\nrm app/globals.css"):
+        removed = [Path(t).name for t in H.shell_removals(cmd, str(tmp_path))]
+        assert "globals.css" in removed, (cmd, removed)
+    reason = refused(bash(launcher, tmp_path, proj, "echo $((a<<b))\nrm app/globals.css"))
+    assert " is generated" in reason
+    # a real here-document right after arithmetic is still one
+    found = [Path(t).name for t in H.shell_targets("echo $((1<<2)); bash <<X\necho x > app/globals.css\nX",
+                                                   str(tmp_path))]
+    assert "globals.css" in found
+
+
+@pytest.mark.parametrize("cmd", [
+    'bash -c "rm app/globals.css"',
+    "sh -c 'rm -f app/globals.css'",
+    'zsh -lc "echo x > app/globals.css"',
+    "bash -ec 'cd . && mv app/globals.css /tmp/x'",
+    'pwsh -c "Remove-Item app/globals.css"',
+    'powershell -NoProfile -Command "Set-Content app/globals.css x"',
+    'powershell -Command Remove-Item app/globals.css',
+])
+def test_a_shell_c_script_is_read_as_commands(H, tmp_path, cmd, launcher, proj):
+    """Review M9: `bash -c "…"` (and sh, zsh, pwsh -c, powershell -Command) runs its script: its writes and removals
+    count like any other."""
+    found = [Path(t).name for t in H.shell_targets(cmd, str(tmp_path)) + H.shell_removals(cmd, str(tmp_path))]
+    assert "globals.css" in found, (cmd, found)
+    reason = refused(bash(launcher, tmp_path, proj, cmd))
+    assert " is generated" in reason or "Plumb" in reason
+
+
+def test_a_shell_c_script_that_only_reads_is_allowed(H, tmp_path):
+    assert H.shell_targets('bash -c "cat app/globals.css | wc -l"', str(tmp_path)) == []
+    assert H.shell_removals("sh -c 'ls app'", str(tmp_path)) == []
+
+
 def test_a_heredoc_writing_a_generated_file_is_refused(launcher, tmp_path, proj):
     reason = refused(bash(launcher, tmp_path, proj, "python3 - <<'EOF'\n# it's the copy\n"
                                                     "open('app/globals.css', 'w').write('x')\nEOF"))
@@ -694,28 +731,36 @@ def test_broken_tokens_file_fails_open(launcher, tmp_path, proj):
 # ---------------------------------------------------------------- timing (measured through the launcher)
 
 
-def _best(fn, limit: float, n: int = 12) -> float:
-    """The fastest of at least 5 runs, and up to n while none is under the limit: a loaded machine (other test
-    processes, CI neighbours) slows single runs down, while the hook's own cost shows in the fastest one."""
-    best = float("inf")
+def _best_hook(launcher, proj, tmp_path, script: str, stdin: str, check, limit: float, n: int = 12) -> float:
+    """The fastest of at least 5 timed runs of the hook (up to n while none is under the limit). Only the hook's own
+    process is timed: the payload and the environment are built once, before; one untimed warm-up run fills the disk
+    cache and the .pyc files; each result is checked after its timing. A loaded machine (other test processes, CI
+    neighbours) slows single runs down, while the hook's own cost shows in the fastest one."""
+    env = hook_env(tmp_path)
+    check(run_hook(launcher, script, stdin, proj, env))  # warm-up, not timed
+    times = []
     for i in range(n):
         t = time.perf_counter()
-        fn()
-        best = min(best, time.perf_counter() - t)
-        if i >= 4 and best < limit:
+        r = run_hook(launcher, script, stdin, proj, env)
+        times.append(time.perf_counter() - t)
+        check(r)
+        if len(times) >= 5 and min(times) < limit:
             break
-    return best
+    assert len(times) >= 5
+    return min(times)
 
 
 def test_non_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 0.6 if CI or launcher == "powershell" else 0.15
-    took = _best(lambda: allowed(edit(launcher, tmp_path, proj, "README.md", "Notes.", "More notes.")), limit)
+    stdin = payload("claude", "edit", CWD=str(proj), FILE=str(proj / "README.md"), OLD="Notes.", NEW="More notes.")
+    took = _best_hook(launcher, proj, tmp_path, "pre_edit.py", stdin, allowed, limit)
     assert took < limit, f"non-UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
 def test_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 3.0 if CI or launcher == "powershell" else 1.0
-    took = _best(lambda: refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW)), limit)
+    stdin = payload("claude", "edit", CWD=str(proj), FILE=str(proj / "app/page.tsx"), OLD=H1, NEW=H1_RAW)
+    took = _best_hook(launcher, proj, tmp_path, "pre_edit.py", stdin, refused, limit)
     assert took < limit, f"UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
@@ -865,12 +910,69 @@ def test_stop_stands_down_while_a_setup_is_in_progress(launcher, tmp_path, proj)
     assert "components/panel.tsx" in reason
 
 
+def test_a_setup_marker_older_than_six_hours_is_stale(launcher, tmp_path, proj):
+    """Review M8: a marker left by a setup that never finished must not keep the end-of-turn check off for good."""
+    _start(launcher, tmp_path, proj)
+    marker = proj / ".plumb-tmp/setup-in-progress"
+    write(marker, "create\n")
+    old = time.time() - 7 * 3600
+    os.utime(marker, (old, old))
+    write(proj / "components/panel.tsx", f"export const P = () => <p {RAW}>p</p>;\n")
+    reason = _block(stop(launcher, tmp_path, proj))  # stale: the check runs again
+    assert "components/panel.tsx" in reason
+    text = context(session_start(launcher, tmp_path, proj, session="sess-3"))
+    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(old))
+    assert (f"a setup marker from {stamp} is stale — finish /plumb:init or remove .plumb-tmp/" in text), text
+    assert "stands down" not in text
+
+
+def test_a_rewritten_setup_marker_is_fresh_again(launcher, tmp_path, proj):
+    """Re-review N2: init, create and extract rewrite the marker at every checkpoint (and on resume), so a long setup
+    keeps the stand-down; only an abandoned one goes stale."""
+    _start(launcher, tmp_path, proj)
+    marker = proj / ".plumb-tmp/setup-in-progress"
+    write(marker, "create 2026-10-13\n")
+    old = time.time() - 7 * 3600
+    os.utime(marker, (old, old))
+    write(proj / "components/panel.tsx", f"export const P = () => <p {RAW}>p</p>;\n")
+    _block(stop(launcher, tmp_path, proj))  # stale
+    write(marker, "create 2026-10-13 checkpoint 9\n")  # the next checkpoint rewrites it
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
+    assert "stands down" in context(session_start(launcher, tmp_path, proj, session="sess-4"))
+
+
 def test_session_start_notes_a_routes_entry_without_a_kind(launcher, tmp_path, proj):
     write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace("Routes: app (next-app)", "Routes: app, web/app (next-app)"))
     text = context(session_start(launcher, tmp_path, proj))
-    assert "note: Routes: app has no valid kind — use one of next-app, next-pages, nuxt, sveltekit, angular, router" in text
+    assert ("note: Routes: app has no kind — use one of next-app, next-pages, nuxt, sveltekit, angular, router"
+            in text)  # the shared parser's own words (_plumb.parse_routes)
     assert "web/app" not in text
     allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))  # fails open for that entry
+
+
+@pytest.mark.parametrize("edits", [
+    [("Routes: app (next-app)", "Routes: none")],
+    [("Routes: app (next-app)\n", ""), ("Platforms: web, ios, android", "Platforms: ios, android")],
+    [("Routes: app (next-app)\n", ""), ("Prototype sync: on", "Prototype sync: off")],
+], ids=["routes-none", "mobile-only", "sync-off"])
+def test_session_start_does_not_nag_where_no_route_check_runs(launcher, tmp_path, proj, edits):
+    """Review M2: `Routes: none`, a mobile-only project and Prototype sync off run no route check, so no nagging."""
+    text = read(proj / "PLUMB.md")
+    for old, new in edits:
+        assert old in text
+        text = text.replace(old, new)
+    write(proj / "PLUMB.md", text)
+    out = context(session_start(launcher, tmp_path, proj))
+    assert "Routes not recorded" not in out and "Routes:" not in out, out
+
+
+def test_session_start_reads_a_kind_after_wide_spacing_and_brace_globs(launcher, tmp_path, proj):
+    """Review M4: two spaces before the kind keep it; a brace glob's comma does not split the entry."""
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace(
+        "Routes: app (next-app)", "Routes: app  (next-app), src/**/*.{routes,router}.ts (router)"))
+    out = context(session_start(launcher, tmp_path, proj))
+    assert "Routes" not in out, out
 
 
 def test_session_start_route_kinds_are_the_cores():
@@ -881,6 +983,24 @@ def test_session_start_route_kinds_are_the_cores():
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     assert hook.ROUTE_KINDS == core.ROUTE_KINDS
+
+
+def test_parse_routes_keeps_brace_globs_and_a_kind_after_any_spacing(tmp_path, H):
+    spec = importlib.util.spec_from_file_location("plumb_core_m4", PLUGIN / "assets/skill/scripts/_plumb.py")
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)
+    assert core.parse_routes("src/**/*.{routes,router}.ts (router)") == ([("src/**/*.{routes,router}.ts", "router")], [])
+    rx = core.glob_rx("src/**/*.{routes,router}.ts")  # re-review N1: braces match, as in a shell
+    assert rx.match("src/router/a.routes.ts") and rx.match("src/b.router.ts") and not rx.match("src/a.ts")
+    assert core.glob_rx("*.{tsx,css}").match("x.css") and core.glob_rx("{app,pages}/**").match("pages/a/b.tsx")
+    assert core.split_globs("frontend/src/**, src/{a,b}/** · *.{tsx,css} *.ts") == [
+        "frontend/src/**", "src/{a,b}/**", "*.{tsx,css}", "*.ts"]
+    assert core.parse_routes("app\t(next-app),  pages   (nuxt)") == ([("app", "next-app"), ("pages", "nuxt")], [])
+    write(tmp_path / "PLUMB.md", "Routes: app  (next-app)\nThemes: light-and-dark          (a note)\n")
+    keys = core.read_plumb_md(tmp_path / "PLUMB.md")
+    assert keys["Routes"] == "app  (next-app)" and keys["Themes"] == "light-and-dark"
+    hook_keys = H.plumb_md_keys(read(tmp_path / "PLUMB.md"))
+    assert hook_keys["Routes"] == "app  (next-app)" and hook_keys["Themes"] == "light-and-dark"
 
 
 def test_stop_end_of_turn_check_off_is_silent(launcher, tmp_path, proj):

@@ -1703,6 +1703,20 @@ def _is_text_token(name: str) -> bool:
     return name.startswith("on-") or name == "link" or "text" in parts or "ink" in parts
 
 
+_LINE_PARTS = ("outline", "border", "ring", "divider", "stroke", "input")
+
+
+def _colour_family(name: str) -> str:
+    """What a colour is for, so a value match never crosses roles: "text" (text and icons: on-*, *-foreground, text,
+    ink, link), "line" (borders, outlines, rings, dividers, input borders) or "fill" (backgrounds and surfaces)."""
+    parts = name.split("-")
+    if _is_text_token(name) or name.endswith("-foreground") or name in ("foreground", "fg"):
+        return "text"
+    if any(p in parts for p in _LINE_PARTS):
+        return "line"
+    return "fill"
+
+
 def _show(cols: Optional[Tuple[tuple, tuple]]) -> str:
     """light / dark as #rrggbb[aa]."""
     if cols is None:
@@ -1885,9 +1899,9 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                      (_same_colour(mine[0], role_cols[0]) and _same_colour(mine[1], role_cols[1]))):
             out = ("alias", role)
         else:
-            text_like = rest.endswith("-foreground") or rest in ("foreground", "fg", "text")
+            family = "text" if rest in ("text",) else _colour_family(rest)
             same = [k for k in colors if mine is not None and not k.startswith("$") and P.is_token(colors.get(k))
-                    and _is_text_token(k) == text_like  # a foreground only ever becomes a text token, and back
+                    and _colour_family(k) == family  # never across roles: a background never becomes a border
                     and (lambda c: c is not None and _same_colour(mine[0], c[0]) and _same_colour(mine[1], c[1]))(
                         _token_colours(doc, f"color.{k}"))]
             if same:  # a token already has the app's exact colours (extract recorded them): keep the look

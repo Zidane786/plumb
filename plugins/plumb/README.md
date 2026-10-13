@@ -26,7 +26,9 @@ project:
 ```
 
 **GitHub Copilot CLI:** `copilot plugin marketplace add Zidane786/plumb`, then `copilot plugin install plumb@plumb`,
-then `/restart`. The commands are the same.
+then `/restart`. The commands are the same. Copilot asks permission for each script run and file write (a full setup:
+about 10–15 script prompts plus one per file); a permission prompt is never your answer to a Plumb question. To cut
+the prompts, see the "Permission prompts" notes in `reference/copilot.md` (`--add-dir`, `--allow-tool`: your call).
 
 **Kiro (preview, live check pending):** `python3 <plumb>/scripts/kiro.py install` (your home folder) or
 `… install --project <folder>` (that workspace only) copies the skills (`/plumb-init`, …) and the hook files, asking

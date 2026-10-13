@@ -14,6 +14,12 @@ different audience, a story across several flows, a hands-on lesson. The format,
 written without the user's OK:** say what you will write and where, and ask; write only on a yes.
 Never install or download anything; ask the user and wait. Tours play in light and dark. Never edit `tours/*.html` or `prototype.html`:
 `build-prototype.py` writes them.
+**Scripts give evidence, not answers:** check each script result against the code (search and read any time),
+correct or add to it (marked `(corrected: <why>)` / `(added: <why>)`) and show that inside the question before the
+user decides; a script that is wrong in a way that will recur → say so and suggest the fix to Plumb
+([interview.md](../../reference/interview.md), "Scripts give evidence, not answers"). **What the user confirms goes inside the
+question** (its text, or the recommended option's preview when the tool has one), never only in a message before it:
+Claude Code can hide that text; Copilot CLI's ask tool takes it in the question text.
 
 **Pages.** Tour pages use Plumb's own walkthrough player (built by `build-prototype.py`). If you write any other HTML
 for a tour (a screen hook it needs, a standalone intro page the user asked for), follow Effective HTML's
@@ -31,8 +37,14 @@ system wins.
 ## Step 0: context
 
 1. `ROOT` = `${CLAUDE_PLUGIN_ROOT}` (filled in by Claude Code or Copilot CLI). If it still reads literally, use this
-   skill's base directory (printed when the skill loads) + `/../..`, made absolute.
-2. Find `PLUMB.md` at the project root. Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
+   skill's base directory (printed when the skill loads) + `/../..`, made absolute. Check that `<ROOT>/reference/scripts.md`
+   exists; if not, resolve again, never guess. Read Plumb's references only as `<ROOT>/reference/<file>`.
+2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
+   else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
+   made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
+   Scratch files: `<root>/.plumb-tmp/` only (its `.gitignore` first); clean up your own files when the command
+   ends; never write `setup-in-progress` (the setup marker); never `/tmp` or outside `<root>`.
+   Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset).
    **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is
    where the scripts write. If `PLUMB.md`'s `## Prototype` `Main:` path sits in another folder, say so and ask
