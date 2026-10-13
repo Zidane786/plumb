@@ -131,8 +131,10 @@ names that the Makefile lacks.
 token set and the file list and ran the scaffold unasked): create and extract are numbered
 checkpoints, each ending "STOP: ask, wait for the answer"; a tool's permission prompt never
 counts as the user's OK. The real scaffold needs `--confirm <token>`, printed only by the dry run
-the user approved. Tailwind projects record `$extensions.plumb.web.reset_palette` (answers key
-`reset_palette`): create on a new app recommends the reset (only the tokens' colours exist);
+the user approved (in create, extract, update and upgrade alike). Tailwind projects record
+`$extensions.plumb.web.reset_palette` (answers key `reset_palette`; the reset covers all six
+namespaces, and with `false` the audit still flags off-scale defaults such as `text-lg`): create
+on a new app recommends the reset (only the tokens' values exist);
 extract, or create on an app that already uses Tailwind's palette classes, recommends keeping
 them, with the count, and the audit suggests moving them onto tokens. The theme-switch
 recommendation follows one ordered rule (next-themes `attribute="class"` → `class`), with the

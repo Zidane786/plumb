@@ -54,6 +54,8 @@ Claude Code can hide that text; Copilot CLI's ask tool takes it in the question 
    available for this project (on <project>): run `/plumb:upgrade` when ready." and continue; never run it yourself.
 5. No tokens file yet in `SKILL/assets/tokens/` → the design system comes first: offer `/plumb:create` or
    `/plumb:extract` and stop.
+6. `PLUMB.md` has no `Routes:` line → say once that the prototype-first check and `route-not-prototyped` cannot see
+   the app's pages until `/plumb:init` records the route roots (`<path> (<kind>)`), then continue.
 
 ## Step 1: brief
 

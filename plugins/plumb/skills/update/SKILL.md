@@ -94,9 +94,11 @@ recommendation. Apply what the user approves (step 2).
   partial upgrade) and stop until the user has run it; only if the user explicitly declines, continue and say plainly in
   the dry-run review that Plumb's files will also be refreshed to the plugin's version. Ask which platforms; show and
   ask for the tokens file's `$extensions.plumb.platforms` change; run `PY "<ROOT>/scripts/scaffold.py" --project-root "<root>"
-  --name "<name>" --skill-dir <SKILL> --platforms <all platforms> --styling <styling> --docs-dir <docs> --dry-run`, show
-  the new files (`would write:`; your files show `skip: … (yours, kept)`), ask, then run it without `--dry-run`: it adds
-  that platform's references and never overwrites yours. Ask before updating `PLUMB.md`'s `Platforms:` line. Then fill
+  --name "<name>" --skill-dir <SKILL> --platforms <all platforms> --styling <styling> --docs-dir <docs> --dry-run`, put
+  the full list inside the question (`would write:`; your files show `skip: … (yours, kept)`), **STOP: ask, wait for the
+  answer**, then, in a new shell call, the same command without `--dry-run` plus `--confirm <token>` exactly as the
+  dry run printed it: it adds that platform's references and never overwrites yours. Ask before updating `PLUMB.md`'s
+  `Platforms:` line (and `Routes:`: `none` for a mobile-only app, or as interview.md "What gets recorded"). Then fill
   the new references from `design.md` and `components.md` and write the platform's starter components, each shown and
   asked first.
 - **Improve a part** (motion, dark mode, density…): read its reference (`motion.md`, `dark-mode.md`, …), propose the

@@ -103,8 +103,9 @@ Always ask these, one at a time, recommending what the app already does so extra
   `keep-fades`; one that turns every animation off → `none`; none yet → `keep-fades`. Keep fades in plain CSS → say in
   one line: add the class `motion-fade` to each element whose own transition is only a fade.
 - **8. Tailwind's default palette** (`reset_palette`, Tailwind only): recommend keep (`false`) and explain inside the
-  question, with the count of palette classes the app uses: a reset makes each colourless at the first build; the
-  audit suggests moving them onto tokens; `/plumb:update` can switch the reset on later.
+  question, with the count of palette classes the app uses: a reset (all six namespaces: colours, radii, shadows, text
+  sizes, fonts, easings) makes each colourless at the first build; keep leaves them working, the audit suggests moving
+  them onto tokens and still flags off-scale defaults like `text-lg`; `/plumb:update` can switch the reset on later.
 
 They become `$extensions.plumb.web.theme_switch`, `$extensions.plumb.motion.reduced` and
 `$extensions.plumb.web.reset_palette` (answers keys, step 11). **STOP after each: ask, wait for the answer.**
@@ -118,11 +119,12 @@ wait for the answer.**
 
 Follow `/plumb:create` checkpoints 9–14 (`ROOT/skills/create/SKILL.md`), the content inside each question; the
 confirmed groups are the answers; **no directions step**. **STOP at each: ask, wait for the answer.**
-- **10. The full token set.** **11. The file list:** the dry run's full list; the real scaffold only with
-  `--confirm <token>` from that dry run, in a new shell call.
+- **10. The full token set.** **11. The file list:** the dry run's full list (a `git-ignored` warning → ask as init
+  step 1.5); the real scaffold only with `--confirm <token>` from that dry run, in a new shell call.
 - **12. The existing stylesheet** (e.g. `app/globals.css`: Plumb owns only its marked block), when it applies.
 - **13. The app's own theme variables** (`build-tokens.py --overrides`: the inventoried values are tokens now, so they
-  move into them): the verified mapping; errors left after `--apply` are the app's own (step 19, `/plumb:audit fix`).
+  move into them): the verified mapping, each "the look changes" note on its own line with both values; errors left
+  after `--apply` are the app's own (step 19, `/plumb:audit fix`).
 - **14. Each contrast fix.** **15. Components:** they exist: map them to `references/components.md` and
   `inventory.md`; propose only the missing starters; change existing ones only with the user's OK. `audit.py
   "<root>/<folder of each component you wrote>"` exits 0; the rest of the app is step 19.

@@ -286,16 +286,23 @@ Put the evidence **inside the question**: "How does the app switch themes? found
 ## Tailwind's default palette (`reset_palette`)
 
 Only for Tailwind styling (v4 or v3); plain CSS skips it. Plumb's generated block can switch off Tailwind's built-in
-colours (`bg-emerald-500`, `text-white`, `bg-black/50`) so only the tokens' colours exist: the tokens setting
-`$extensions.plumb.web.reset_palette`, answers key `reset_palette`.
+scales so only the tokens' values exist: the tokens setting `$extensions.plumb.web.reset_palette`, answers key
+`reset_palette`. The reset covers **all six namespaces**, not only colours: colours (`bg-emerald-500`, `text-white`,
+`bg-black/50`), radii (`rounded-xl`), shadows (`shadow-md`), text sizes (`text-lg`), fonts (`font-serif`) and easings
+(`ease-in-out`). `false` keeps all six open.
 
 - **Create, no UI code yet:** reset (`true`, Recommended): new screens use only tokens from the start. Ask only when
   Tailwind is the styling; otherwise record nothing.
 - **Create on an existing app, or extract:** count the app's uses of Tailwind palette classes (evidence: the count and
-  a few `file:line`). Recommend **keep** (`false`): resetting would make every one of those classes colourless the
-  moment the first build runs. The audit lists them as suggestions to move onto tokens over time; switch the reset on
-  later with `/plumb:update` once they are gone.
+  a few `file:line`). Recommend **keep** (`false`): resetting would make every one of those classes colourless (and
+  the other default classes lose their value) the moment the first build runs. The audit lists palette colours as
+  suggestions to move onto tokens over time; switch the reset on later with `/plumb:update` once they are gone.
+- Say what to expect with `false`: the default classes keep working, but the audit still reports the default sizes
+  that are not on the project's scales (`text-lg`, `rounded-xl`) as off-scale errors, as before; those are the app's
+  own findings for `/plumb:audit fix`, not a setup gap.
 - Put the count and the consequence inside the question, and say it again in the stylesheet-diff checkpoint.
+- Older projects: `build-tokens.py --migrate` records `reset_palette: true` (what their block already did); `/plumb:upgrade`
+  offers keep (`false`) when the app uses palette classes.
 
 ## D. Directions
 
@@ -320,8 +327,11 @@ from which) · change something. The page stays as the record and is linked from
 After the user's OK to the full token set, write the confirmed answers as JSON to `<root>/.plumb-tmp/answers.json`
 (the folder holds a `.gitignore` with `*`; it lives until setup ends: "Scratch files" below) and run `scaffold.py
 --answers` with `--dry-run`. Put its full file list inside the question; on yes run the same command without
-`--dry-run` and with `--confirm <token>`, the token the dry run printed. A changed answer means a new dry run and a new
-question. Keys (all optional; see `scaffold.py`'s docstring for the exact names): `description`, `audience`,
+`--dry-run` and with `--confirm <token>`, the token the dry run printed on its last line (`confirm: show the user this
+list; after their OK run the same command without --dry-run, plus --confirm <12-hex token>`). The token covers the
+answers and the file list, so a changed answer, or a file written in between, makes it stale: the real run refuses
+it; run the dry run again and ask again. A `warning: … git-ignored` line in the dry run is asked as init step 1.5.
+Keys (all optional; see `scaffold.py`'s docstring for the exact names): `description`, `audience`,
 `direction`, `voice`, `themes`, `python`, `role`, `ui_packages`, `ui_files`, `routes`, `allowed_raw`, `web_copies`,
 `colors` (`light`/`dark` for background, surface, sunk, on-surface, on-surface-muted, primary, on-primary, outline,
 outline-input, danger, on-danger, success, on-success, scrim), `fonts` (`sans`, `mono`), `type_scale`
@@ -363,7 +373,10 @@ and must clean up their own files when it ends (and the folder, when it created 
   verify each mapping (above), and show inside the question each variable, the token it maps onto (`kind` token: the
   token wins; new-name: a token is added, e.g. `color.foreground` = `{color.on-surface}`; a font the app loads goes
   first in its font token), the project's values light and dark, the lines that go, its `notes`, each `by_hand` item
-  and your corrections. Ask once: move them into the tokens (Recommended: the app's utilities keep working and the
+  and your corrections. A note that says **"the look changes; ask the user"** (a variable keeps its role token because
+  no token has the app's exact colours) goes inside the question on its own line, with both values (the app's today,
+  the token's): offer keep the role token (the look changes as shown) · add a token with the app's colours (asked,
+  through the token set) · map it to another token you name. Ask once: move them into the tokens (Recommended: the app's utilities keep working and the
   audit can pass) · leave them for now (the audit fails until then). Only on yes: apply your corrections to the tokens
   file, then `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`. Files in each
   `project_variables` entry's `used_in` still read a removed variable: show them and, asked first, point them at the

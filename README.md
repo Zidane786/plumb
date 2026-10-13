@@ -110,8 +110,10 @@ writing, and never installs or downloads anything. What you confirm (the setup i
 a diff) is inside the question itself, with the evidence from your code; create and extract stop at each checkpoint
 until you answer. Plumb's scripts give evidence, not answers: the agent investigates your project, checks every script
 result against the code and marks what it corrected, and what you confirm (UI files, route folders) is recorded in
-`PLUMB.md` for the scripts and hooks to read. The heavy flows (init, create, extract, update, upgrade) run only when
-you type them.
+`PLUMB.md` for the scripts and hooks to read. Files are written into your project only after you approve the dry
+run's list (the scaffold needs the token that dry run printed), and an existing Tailwind app keeps its built-in classes
+working unless you choose otherwise. The heavy flows (init, create, extract, update, upgrade) run only when you type
+them.
 
 ## How it flows
 

@@ -88,8 +88,8 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
    `<path> (<kind>)` from the framework you found (`frontend/src/app (next-app)`; kinds and `none`: interview.md "What
    gets recorded"), checked on disk; never leave the kind to be guessed. Check the copy path and the allowed raw path
    exist. They go into `PLUMB.md` (`UI files:`, `Routes:`); scripts and hooks only read what is recorded.
-5. **Git-ignored?** Run `git -C "<root>" check-ignore -v <skill dir>/SKILL.md` (and read what detect or `--verify`
-   say). Ignored (e.g. `.gitignore:14` has `.claude/`) → the design system would never be committed. Never proceed
+5. **Git-ignored?** Run `git -C "<root>" check-ignore -v <skill dir>/SKILL.md` (and read what detect, `--verify` or
+   a dry run's `warning:` say). Ignored (e.g. `.gitignore:14` has `.claude/`) → the design system would never be committed. Never proceed
    silently: ask, with the ignoring line (`file:line`) inside the question: (a) Un-ignore the skill folder
    (Recommended): replace `.claude/` with `.claude/*` and add `!.claude/skills/` (`.claude/**` needs
    `!.claude/skills/**`; git cannot re-include a folder whose parent folder is ignored), the exact lines shown

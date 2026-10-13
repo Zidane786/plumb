@@ -61,7 +61,9 @@ is off while it does: report it ("resume with `/plumb:init`, or delete `.plumb-t
   `screen-unapproved`, `route-not-prototyped`, `synced-from-code`, `screen-not-built`) by screen; inconsistency-only
   mode means there are no tokens yet.
 - `PLUMB.md` has no `Routes:` line → the prototype-first check and `route-not-prototyped` cannot see the app's pages:
-  report it with "run `/plumb:init` to record the route roots".
+  report it with "run `/plumb:init` to record the route roots". A `--verify` problem that the skill folder, `PLUMB.md`
+  or the docs folder is git-ignored → report it first (teammates would get nothing) with "`/plumb:init` asks how to fix
+  it".
 - Checks: the edit check, the end-of-turn check and prototype sync are each on or off as `PLUMB.md` says (its
   `## Checks` and `## Prototype` lines); report those switches, nothing else.
 - A script that exits 2 → report its `error:` and `fix:` lines as a health problem; never fix it here.

@@ -93,9 +93,14 @@ Make a scratch project and lay a design system into it with the same script `/pl
 mkdir plumb-scratch && cd plumb-scratch && git init
 PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill-dir .claude/skills/demo-design-system --platforms web,ios,android --styling css --dry-run
 PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill-dir .claude/skills/demo-design-system --platforms web,ios,android --styling css
+PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill-dir .claude/skills/demo-design-system --platforms web,ios,android --styling css --confirm <token>
 ```
 
-**Expected:** the dry run lists `would write:` lines and writes nothing; the real run ends `done: 38 written, 0 kept`.
+**Expected:** the dry run lists `would write:` lines, writes nothing and ends with
+`confirm: show the user this list; after their OK run the same command without --dry-run, plus --confirm <token>`
+(12 hex characters). The second command (no token) is refused with
+`error: the scaffold writes into the project only after the user approved the dry-run list` and writes nothing. The
+third, with the token the dry run printed, ends `done: 38 written, 0 kept`.
 `PLUMB.md` exists and starts with `<!-- plumb v1.0.0 · written by /plumb:init, safe to edit values -->`.
 
 Below, `SKILL` is `.claude/skills/demo-design-system`.
@@ -235,8 +240,11 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       `file:line` inside the question) and reduced motion asks keep fades or none; both land in the tokens file
       (`$extensions.plumb.web.theme_switch`, `$extensions.plumb.motion.reduced`). The UX patterns are seven questions
       (or it names the ones it skips and why). With Tailwind it asks about the palette reset (reset recommended for a
-      new app; keep recommended, with the count of palette classes, in an existing one): `web.reset_palette` in the
-      tokens file.
+      new app; keep recommended, with the count of palette classes, in an existing one; the question says the reset
+      covers all six namespaces and that with keep the audit still flags off-scale defaults like `text-lg`):
+      `web.reset_palette` in the tokens file. Keep → `bg-emerald-500` still renders after the first build.
+- [ ] In an app whose `globals.css` has shadcn variables, the overrides question lists each mapping, and any "the look
+      changes; ask the user" note sits on its own line with the app's value and the token's.
 - [ ] It asks you to pick a direction, then shows the full token set (light and dark) and the `scaffold.py --dry-run`
       file list, each inside a question, and writes only after you say OK; the real scaffold runs with the
       `--confirm <token>` the dry run printed, in its own shell call. Scratch files go in `<project>/.plumb-tmp/`

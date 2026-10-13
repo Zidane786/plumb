@@ -199,6 +199,9 @@ USER_DOCS = READMES + [USAGE, REPO / "TEST.md", WHAT_YOU_GET]
 NEAR_THE_TOP = 30  # lines
 # Messages the docs quote (troubleshooting, hooks): each must still be printed by the code, word for word.
 QUOTED = {
+    "the scaffold writes into the project only after the user approved the dry-run list": "scripts/scaffold.py",
+    "does not fit this command": "scripts/scaffold.py",
+    "run /plumb:init to record them": "hooks/session_start.py",
     "with no approved prototype": "hooks/pre_edit.py",
     "is generated from the design tokens; a hand edit is lost on the next build": "hooks/pre_edit.py",
     "is Plumb's file; upgrades replace it": "hooks/pre_edit.py",
@@ -280,6 +283,11 @@ def test_quoted_messages_are_real() -> None:
 # TEST.md's expected output (level 3) next to the code that prints it: (what TEST.md says, the script, the code text).
 TEST_EXPECTS = [
     ("done: 38 written, 0 kept", "scripts/scaffold.py", 'f"done: {wrote} written, {kept} kept"'),
+    ("confirm: show the user this list; after their OK run the same command without --dry-run, plus --confirm",
+     "scripts/scaffold.py", 'confirm: show the user this list; after their OK run the same command without --dry-run, '
+                            'plus "'),
+    ("error: the scaffold writes into the project only after the user approved the dry-run list", "scripts/scaffold.py",
+     "the scaffold writes into the project only after the user approved the dry-run list"),
     ("ok: 5 generated files are up to date", "assets/skill/scripts/build-tokens.py",
      'f"ok: {len(files)} generated files are up to date"'),
     ("`stale: …`", "assets/skill/scripts/build-tokens.py", 'f"stale: {rel(path, root)}{note}"'),
@@ -783,11 +791,12 @@ def test_routes_are_recorded_with_their_kind() -> None:
 
 def test_route_examples_parse() -> None:
     import importlib.util
-    core = None
     spec = importlib.util.spec_from_file_location("_plumb_routes", PLUGIN / "assets/skill/scripts/_plumb.py")
-    if spec and spec.loader:
-        core = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(core)  # type: ignore[union-attr]
+    assert spec and spec.loader
+    core = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(core)  # type: ignore[union-attr]
+    assert set(core.ROUTE_KINDS) == set(ROUTE_KINDS), "the skills name exactly the engine's route kinds"
+    assert core.parse_routes("none") == ([], [])
     found = 0
     for path in (REFERENCE / "interview.md", SKILLS / "init/SKILL.md", SKILLS / "extract/SKILL.md", USAGE):
         for m in ROUTE_EXAMPLE.finditer(path.read_text(encoding="utf-8")):
@@ -796,10 +805,8 @@ def test_route_examples_parse() -> None:
                 continue  # another parenthesised note, not a route
             found += 1
             assert not entry.startswith("/") and ".." not in entry.split("/"), f"{path.name}: {m.group(0)}"
-            parse = getattr(core, "parse_routes", None)
-            if parse is not None and kind in getattr(core, "ROUTE_KINDS", ()):  # the engine's own parser, once merged
-                roots, problems = parse(f"{entry} ({kind})")
-                assert roots and not problems, f"{path.name}: {m.group(0)} does not parse: {problems}"
+            roots, problems = core.parse_routes(f"{entry} ({kind})")  # the engine's own parser
+            assert roots == [(entry, kind)] and not problems, f"{path.name}: {m.group(0)} does not parse: {problems}"
     assert found >= 6, "examples of `<path> (<kind>)` in interview.md, init, extract and USAGE"
 
 
@@ -825,8 +832,6 @@ PLUGIN_SCRIPTS = {
     "screenshot.py": "scripts/screenshot.py", "build-tokens.py": "assets/skill/scripts/build-tokens.py",
     "audit.py": "assets/skill/scripts/audit.py", "build-prototype.py": "assets/skill/scripts/build-prototype.py",
 }
-# Flags the engine branch adds; until it merges they may be missing from --help. Remove each once it is there.
-PENDING_ENGINE_FLAGS = {"scaffold.py": {"--confirm"}}
 _HELP: Dict[str, str] = {}
 
 
@@ -863,7 +868,7 @@ def _script_flags(text: str) -> List[tuple]:
 def test_every_script_flag_a_skill_names_exists(path: Path) -> None:
     missing = []
     for script, flag in _script_flags(path.read_text(encoding="utf-8")):
-        if flag in _script_help(script) or flag in PENDING_ENGINE_FLAGS.get(script, set()):
+        if flag in _script_help(script):
             continue
         missing.append(f"{script} {flag}")
     assert not missing, f"{path.relative_to(REPO)} names flags the scripts don't have: {sorted(set(missing))}"
@@ -896,3 +901,51 @@ def test_long_diffs_are_summarised_with_the_full_diff_on_disk() -> None:
     flat = _flat(REFERENCE / "interview.md")
     for phrase in ("the first ~40 lines", "+/- counts", "`<root>/.plumb-tmp/", "never summarise a list of files or values"):
         assert phrase in flat, f"interview.md: {phrase!r}"
+
+
+# ---------------------------------------------------------------- aligned with the engine (confirm gate, routes, palette)
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if re.search(r"scaffold\.py\"? --project-root", _body(p))],
+                         ids=lambda p: p.parent.name)
+def test_every_real_scaffold_run_goes_through_the_confirm_gate(path: Path) -> None:
+    # update and upgrade run scaffold for real too: dry run, the list inside the question, then --confirm.
+    flat = _flat(path).replace("*", "")
+    assert "--dry-run" in flat and "--confirm <token>" in flat, path.parent.name
+    assert "exactly as the dry run printed it" in flat and "in a new shell call" in flat, path.parent.name
+    assert "inside the question" in flat, path.parent.name
+
+
+def test_the_dry_runs_confirm_line_is_quoted_as_the_engine_prints_it() -> None:
+    scaffold = (PLUGIN / "scripts/scaffold.py").read_text(encoding="utf-8")
+    assert "after their OK run the same command without --dry-run, plus" in scaffold
+    flat = _flat(REFERENCE / "interview.md")
+    assert "after their ok run the same command without --dry-run, plus --confirm <12-hex token>" in flat
+
+
+def test_palette_reset_explains_all_six_namespaces_and_what_the_audit_still_reports() -> None:
+    interview = _flat(REFERENCE / "interview.md").replace("*", "")
+    for phrase in ("all six namespaces", "`text-lg`", "off-scale", "`false` keeps all six open"):
+        assert phrase in interview, f"interview.md: {phrase!r}"
+    for name in ("create", "extract"):
+        flat = _flat(SKILLS / name / "SKILL.md")
+        assert "six" in flat and "`text-lg`" in flat, f"{name}: say what reset_palette false keeps and what the audit flags"
+
+
+def test_overrides_look_change_notes_are_inside_the_question() -> None:
+    assert "the look changes; ask the user" in (PLUGIN / "assets/skill/scripts/build-tokens.py").read_text(
+        encoding="utf-8") or "the look changes; ask the user" in (
+        PLUGIN / "assets/skill/scripts/_plumb.py").read_text(encoding="utf-8")
+    assert "the look changes; ask the user" in _flat(REFERENCE / "interview.md").replace("*", "")
+    for name in ("create", "extract"):
+        assert "\"the look changes\" note on its own line" in _flat(SKILLS / name / "SKILL.md"), name
+
+
+def test_release_notes_cover_the_live_2_changes() -> None:
+    changelog = (PLUGIN / "CHANGELOG.md").read_text(encoding="utf-8").split("\n## ", 2)[1]
+    flat = " ".join(changelog.split()).lower()
+    for phrase in ("--confirm", "routes:", "reset_palette", "setup-in-progress", "inside the question",
+                   "git-ignored"):
+        assert phrase in flat, f"CHANGELOG 1.0.0: {phrase!r}"
+    upgrade = _flat(PLUGIN / "upgrades/1.0.0.md")
+    assert "routes:" in upgrade and "/plumb:init" in upgrade, "older projects: record Routes with /plumb:init"

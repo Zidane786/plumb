@@ -384,9 +384,11 @@ plumb Done. Commit these files, start a new session here so the hooks load. UI w
   is recommended and the question shows the `file:line` it found), accessibility target (WCAG 2.2 AA by default),
   vocabulary and voice, and the UX patterns as seven questions (navigation, page anatomy, forms, feedback,
   empty/loading/error states, destructive actions, onboarding; any it skips, it names and says why). With Tailwind it
-  also asks whether to switch off Tailwind's built-in colours so only the tokens' colours exist (recommended for a new
-  app; for an app that already uses classes like `bg-emerald-500`, keeping them is recommended, since a reset would
-  leave them colourless). The reduced-motion, theme-switch and palette answers are recorded in the tokens file
+  also asks whether to switch off Tailwind's built-in scales so only the tokens exist (all six: colours, radii,
+  shadows, text sizes, fonts, easings; recommended for a new app; for an app that already uses classes like
+  `bg-emerald-500`, keeping them is recommended, since a reset would leave them colourless). Keeping them keeps the
+  default classes working, and the audit still reports defaults that aren't on your scales (`text-lg`, `rounded-xl`) as
+  off-scale, as before. The reduced-motion, theme-switch and palette answers are recorded in the tokens file
   (`$extensions.plumb.motion.reduced`, `$extensions.plumb.web.theme_switch`, `$extensions.plumb.web.reset_palette`)
   and the generated CSS follows them.
 - **D. Directions:** 2–3 distinct, finished-looking directions on one page, each with a real screen of your product in
@@ -439,9 +441,11 @@ plumb Audit on components/ui: 0 errors. Specimen: docs/design/specimen.html. Pro
 **What it asks:** which folders hold the UI (and what to leave out); each token group from the before/after page
 (accept, rename, merge, split, leave out; after three groups you may accept the rest at once); the product and UX
 questions the code can't answer; how the app switches themes, reduced motion and (with Tailwind) whether to keep
-Tailwind's built-in colours (keeping them is recommended: the audit then suggests moving those classes onto tokens over
-time); then the same checkpoints as create (token set, files, your existing stylesheet, your stylesheet's own theme
-variables with the mapping the agent checked, contrast fixes, components); which routes to prototype; and, once
+Tailwind's built-in scales (keeping them is recommended: the audit then suggests moving those colour classes onto
+tokens over time, and still reports off-scale defaults such as `text-lg`); then the same checkpoints as create (token
+set, files, your existing stylesheet, your stylesheet's own theme variables with the mapping the agent checked, where
+any variable whose colours no token matches is shown with "the look changes" and both values, contrast fixes,
+components); which routes to prototype; and, once
 you've looked, whether to approve each screen (a screen synced from code is never approved without your yes).
 
 **What it changes:** the same files as create, plus `docs/design/extract.html` (the before/after page) and one screen
@@ -614,7 +618,8 @@ the specimen, the prototype pages and the token block of every old proposal (so 
 the decision, runs the audit and shows the diff.
 
 **Adding a platform** needs the project to be on the plugin's version: if it is older, update asks you to run
-`/plumb:upgrade` first. It then adds that platform's themes, references and starter components, each shown and asked.
+`/plumb:upgrade` first. It then adds that platform's themes, references and starter components, each shown and asked;
+the scaffold runs for real only with the `--confirm` token from the dry run you approved.
 
 ```
 you   /plumb:update add iOS
@@ -632,7 +637,8 @@ plumb build-tokens.py wrote assets/platforms/mobile/ios/AcmeTheme.swift … Cont
 
 **What it does, in order:** compares `PLUMB.md`'s version with the plugin's; shows **What's new** for every version in
 between and asks before changing anything; replaces Plumb's own files in the project (the scripts and templates; it
-shows the list first); migrates the tokens file by **adding** new settings only (it never deletes or changes a value;
+shows the dry run's list inside the question and runs it only with the `--confirm` token that dry run printed);
+migrates the tokens file by **adding** new settings only (it never deletes or changes a value;
 a tokens file without the theme-switch and reduced-motion settings gets the defaults the build already used, `both`
 and `none`, so the build's "not set" note stops; `build-tokens.py --migrate` does the same on its own);
 regenerates every generated file; runs each version's upgrade steps in order, asking before each ("Keep as is" is the
@@ -1183,8 +1189,14 @@ it, delete the `.plumb-tmp/` folder.
 
 **The prototype-first check never refuses a new page, or the audit never reports `route-not-prototyped`.**
 `PLUMB.md` has no `Routes:` line, or its `UI files:` patterns match nothing (a monorepo package such as `frontend/`
-needs `frontend/src/**`, not `src/**`). Run `/plumb:init` (or `/plumb:update`) to record them; `scaffold.py --verify`
-reports both.
+needs `frontend/src/**`, not `src/**`). The session-start line then says `Routes not recorded — run /plumb:init to
+record them`; a project set up on an early 1.0.0 build has no `Routes:` line yet. Run `/plumb:init` (or
+`/plumb:update`) to record them, as `<path> (<kind>)`; `scaffold.py --verify` reports both.
+
+**`error: the scaffold writes into the project only after the user approved the dry-run list`** (or
+**`--confirm … does not fit this command`**)
+The real scaffold needs the token its dry run printed, and the token goes stale when an answer, an argument or a file
+changes in between. The agent runs the dry run again, shows you the list, and uses the new token after your OK.
 
 **`Plumb: … · design system not found · read the skill before UI changes`**
 `PLUMB.md` names a design-system folder that isn't there. In a linked repo, clone or pull the home repository to that

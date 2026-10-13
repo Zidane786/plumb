@@ -79,10 +79,10 @@ iOS or Android, never React Native components. **STOP: ask, wait for the answer.
 C1–C16 from interview.md C, **one question each**, the recommendation and why; colours as hex with their dark value.
 C11: motion, then reduced motion as its own question. C13: dark mode, then how the app switches as its own question
 (`both` · `system` · `class` · `data-theme`), recommended only from interview.md "Theme switch" (first matching row;
-the evidence `file:line` inside the question). Tailwind: the default palette (interview.md): no UI code yet → reset
-(Recommended); an app already using palette classes → keep; record `reset_palette`. C16 is **seven** questions: ask
-all seven, or say which you skip and why. Keep fades in plain CSS → name `motion-fade` in one line. **STOP after each
-question: ask, wait for the answer.**
+the evidence `file:line` inside the question). Tailwind: the default scales (interview.md; all six namespaces): no UI
+code yet → reset (Recommended); an app already using palette classes → keep (`false`: the audit still flags off-scale
+defaults like `text-lg`); record `reset_palette`. C16 is **seven** questions: ask all seven, or say which you skip and
+why. Keep fades in plain CSS → `motion-fade` in one line. **STOP after each question: ask, wait for the answer.**
 
 ## 6. Every decision — STOP
 
@@ -115,10 +115,10 @@ Write the answers (interview.md "The answers file": the confirmed `ui_packages`,
 `web_copies`, `python`, `role`, and `theme_switch` / `reduced_motion` / `reset_palette`) to
 `<root>/.plumb-tmp/answers.json`, then `python3 "<ROOT>/scripts/scaffold.py" --project-root "<root>" --name "<Name>"
 --skill-dir <skill dir> --platforms <list> --styling <mode> --answers "<root>/.plumb-tmp/answers.json" --docs-dir
-docs/design --dry-run`. Check the list (only the agreed paths), then its **full** output inside the question: "Write
-these files?" (a) Write them (Recommended) (b) Change something. **STOP: ask, wait for the answer.** Only on yes, in a
-new shell call: the same command without `--dry-run`, plus `--confirm <token>` exactly as the dry run printed it.
-Never run the real scaffold without a dry run the user OK'd; a changed answer → a new dry run, a new question.
+docs/design --dry-run`. Check the list (only the agreed paths; a `git-ignored` warning → ask as init step 1.5), then
+its **full** output inside the question: "Write these files?" (a) Write them (Recommended) (b) Change something.
+**STOP: ask, wait for the answer.** Only on yes, in a new shell call: the same command without `--dry-run`, plus
+`--confirm <token>` exactly as the dry run printed it. Never run the real scaffold without a dry run the user OK'd.
 
 ## 11. Fill in, then the existing stylesheet — STOP
 
@@ -133,10 +133,10 @@ only on yes: `python3 "<root>/<skill dir>/scripts/build-tokens.py" && python3 "<
 ## 12. The project's own theme variables — STOP
 
 When the findings include `block-override`: run `build-tokens.py --overrides`, verify each mapping, put the table
-(corrections marked) inside the question (interview.md "E. Generate, in detail"): move them into the tokens
-(Recommended) · leave them for now. **STOP: ask, wait for the answer.** Only on yes:
-`build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`; the `used_in` files change only when
-asked. What the audit still reports is the app's own code: say so, offer `/plumb:audit fix`.
+(corrections marked; each "the look changes" note on its own line with both values) inside the question (interview.md
+"E. Generate, in detail"): move them into the tokens (Recommended) · leave them for now. **STOP: ask, wait for the
+answer.** Only on yes: `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`; `used_in` files
+change only when asked. What the audit still reports is the app's own code: say so, offer `/plumb:audit fix`.
 
 ## 13. Each contrast fix — STOP per fix
 
