@@ -728,6 +728,53 @@ def check_confirm(given: Optional[str], token: str) -> None:
                             f"files changed since the dry run (or it is another run's token)", ask)
 
 
+def ignored_by_git(root: Path, skill_rel: str, docs: str) -> List[Tuple[str, str, str]]:
+    """The design-system paths git would never commit: [(shown path, the .gitignore pattern, where it is)] for the
+    skill folder, PLUMB.md and the docs folder (`git check-ignore -v`, a file inside each folder, so a folder that does
+    not exist yet is checked too). Run with the plugin's hardened git call (no project hooks, filters or pagers; git
+    found on PATH outside the project). [] outside a git repo, without git, or when nothing is ignored."""
+    audit = load_plugin_audit()
+    if audit is None:
+        return []
+    probes = {f"{skill_rel}/SKILL.md": f"{skill_rel}/", "PLUMB.md": "PLUMB.md", f"{docs}/decisions.md": f"{docs}/"}
+    try:
+        out = audit._git(root, "check-ignore", "-v", "--", *probes)
+    except Exception:  # noqa: BLE001 - the check is advice; it never stops a scaffold
+        return []
+    found: List[Tuple[str, str, str]] = []
+    for line in (out or "").splitlines():
+        info, tab, path = line.partition("\t")
+        source, _, rest = info.partition(":")
+        number, _, pattern = rest.partition(":")
+        if not tab or pattern.startswith("!") or path.strip() not in probes:
+            continue  # a negation pattern matched: the path is kept
+        found.append((probes[path.strip()], pattern, f"{source} line {number}"))
+    return found
+
+
+def unignore_hint(shown: str, pattern: str) -> str:
+    """How to un-ignore a path in .gitignore: a folder pattern above it (.claude/) becomes .claude/* plus a negation
+    for the next folder (!.claude/skills/), since git never re-includes a file whose parent folder is excluded; any
+    other pattern gets a negation line after it."""
+    path = shown.rstrip("/")
+    pat = pattern.strip().lstrip("/").rstrip("/")
+    if pat and not any(c in pat for c in "*?[") and path.startswith(pat + "/"):
+        nxt = path[len(pat) + 1:].split("/")[0]
+        return (f'in .gitignore replace the line "{pattern}" with "{pat}/*" and add "!{pat}/{nxt}/" after it')
+    return f'in .gitignore add "!{shown}" after the line "{pattern}" (or remove that line)'
+
+
+def ignore_lines(found: List[Tuple[str, str, str]], what: str) -> List[str]:
+    """`<what>: <path> is git-ignored by <pattern> ...` and the ask-the-user line, for each ignored path."""
+    out = []
+    for shown, pattern, where in found:
+        out.append(f"{what}: {shown} is git-ignored by {pattern} ({where}) \u2014 the design system would never be "
+                   f"committed, so teammates and CI would not get it")
+        out.append(f"fix: ask the user: un-ignore it ({unignore_hint(shown, pattern)}), or choose another location "
+                   f"for it")
+    return out
+
+
 def write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -1115,6 +1162,13 @@ def verify(root: Path) -> int:
             else:
                 print(f"ok: web copy {rel} resolves")
     keys = load_plumb_core().read_plumb_md(plumb_md)
+    docs_rel = str(keys.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
+    if skill_rel and not skill_rel.startswith("../"):
+        for line in ignore_lines(ignored_by_git(root, skill_rel, docs_rel), "problem"):
+            if line.startswith("problem: "):
+                problem(line[len("problem: "):])
+            else:
+                print(line)
     for kind, text in check_routes(keys, root) + check_ui_files(keys, root, skill_rel):
         if kind == "problem":
             problem(text)
@@ -1196,6 +1250,8 @@ def run(args: argparse.Namespace) -> int:
         check_confirm(args.confirm, token)
     wrote, kept = execute(root, plan, args.dry_run)
     copy_notes(root, answers, args.dry_run)
+    for line in ignore_lines(ignored_by_git(root, skill_rel, docs), "warning"):
+        print(line)
     if args.dry_run:
         print(f"dry run: nothing written ({wrote} would be written, {kept} kept)")
         print(f"confirm: show the user this list; after their OK run the same command without --dry-run, plus "

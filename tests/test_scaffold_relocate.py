@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -296,6 +297,54 @@ def test_check_make_targets_returns_its_lines_and_prints_nothing(tmp_path: Path,
     assert ok == "PLUMB.md's make targets exist in the Makefile" and note is None and problem is None
     assert mod.check_make_targets("no make hints here", tmp_path) == (None, None, None)
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------- a git-ignored skill folder (live test 2, B5)
+
+
+def _git_repo(root: Path, ignore: str) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True, encoding="utf-8")
+    (root / ".gitignore").write_text(ignore, encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
+def test_a_git_ignored_skill_folder_is_reported_by_the_dry_run_the_scaffold_and_verify(tmp_path: Path) -> None:
+    """The live test's repo ignored .claude/, so the design-system skill would never have been committed."""
+    root = tmp_path / "proj"
+    _git_repo(root, "node_modules\n.claude/\n")
+    want = (f"{SKILL_REL}/ is git-ignored by .claude/ (.gitignore line 2) — the design system would never be "
+            f"committed")
+    hint = ('fix: ask the user: un-ignore it (in .gitignore replace the line ".claude/" with ".claude/*" and add '
+            '"!.claude/skills/" after it), or choose another location for it')
+    dry = run(root, "--dry-run")
+    assert dry.returncode == 0 and f"warning: {want}" in dry.stdout and hint in dry.stdout
+    real = run(root)
+    assert real.returncode == 0 and f"warning: {want}" in real.stdout
+    v = cli(root, "--verify")
+    assert v.returncode == 1 and f"problem: {want}" in v.stdout and hint in v.stdout
+    # the fix the hint names: the skill is committed, verify is quiet about it
+    (root / ".gitignore").write_text("node_modules\n.claude/*\n!.claude/skills/\n", encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "git-ignored" not in v.stdout and v.returncode == 0, v.stdout
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="requires git")
+def test_an_ignored_plumb_md_or_docs_folder_is_reported_too(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    _git_repo(root, "PLUMB.md\ndocs/\n")
+    out = run(root, "--dry-run").stdout
+    assert "warning: PLUMB.md is git-ignored by PLUMB.md (.gitignore line 1)" in out
+    assert 'in .gitignore add "!PLUMB.md" after the line "PLUMB.md" (or remove that line)' in out
+    assert "warning: docs/design/ is git-ignored by docs/ (.gitignore line 2)" in out
+    assert 'replace the line "docs/" with "docs/*" and add "!docs/design/" after it' in out
+
+
+def test_outside_git_nothing_is_said_about_ignores(tmp_path: Path) -> None:
+    root = tmp_path / "plain"
+    root.mkdir()
+    (root / ".gitignore").write_text(".claude/\n", encoding="utf-8")
+    assert "git-ignored" not in run(root, "--dry-run").stdout
 
 
 # ---------------------------------------------------------------- Routes: and UI files: (recorded, checked by --verify)
