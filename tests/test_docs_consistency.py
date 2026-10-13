@@ -589,14 +589,16 @@ def test_create_and_extract_checkpoints_stop_and_wait(name: str) -> None:
         assert heads, f"{name}: no checkpoint section {number}"
         head = heads[0]
         assert "STOP" in head, f"{name} {head!r}: the heading says STOP"
-        body = " ".join(sections[head].split())
-        assert re.search(r"STOP(?: after each(?: question)?)?: ask,? wait for the answer", body) or \
-            re.search(r"— STOP", body), f"{name} {head!r}: end with 'STOP: ask, wait for the answer'"
+        body = " ".join(sections[head].split()).replace("*", "")
+        # the section itself says it, in full: no heading-only or bullet-only "— STOP"
+        assert re.search(r"STOP(?: after each(?: question)?| per \w+| at each)?: ask, wait for the answer\.", body), \
+            f"{name} {head!r}: the section must say 'STOP: ask, wait for the answer.'"
     flat = _flat(path)
     for phrase in ("never skip one", "a permission prompt from your tool", "is never the user's ok",
                    "final checklist — walk it before you say done", "contrast evidence", "decisions.md",
                    "a first prototype screen" if name == "create" else "every confirmed route has a screen file",
-                   ".plumb-tmp/` is removed, last"):
+                   "every checkpoint that applied", "not applicable: say which and why",
+                   "remove the whole `<root>/.plumb-tmp/`"):
         assert phrase in flat, f"{name}: {phrase!r}"
 
 
@@ -627,14 +629,31 @@ def test_scratch_files_only_in_plumb_tmp(path: Path) -> None:
         assert ".plumb-tmp/" in flat, path.parent.name
 
 
-def test_scratch_folder_lifecycle_is_documented() -> None:
+MARKER = ".plumb-tmp/setup-in-progress"
+SETUP_SKILLS = ("init", "create", "extract")
+
+
+def test_scratch_folder_and_setup_marker_are_documented() -> None:
+    # Ruling I1: the end-of-turn stand-down keys on the marker FILE only; other skills may use .plumb-tmp/ for scratch.
     flat = _flat(REFERENCE / "interview.md").replace("*", "")
-    for phrase in ("## scratch files", "end-of-turn check stands down while it exists",
-                   "remove it as the last step of setup", "never `/tmp`"):
+    for phrase in ("## scratch files", MARKER, "only init, create and extract write it",
+                   "the end-of-turn check stands down while the marker exists", "remove the whole `.plumb-tmp/`",
+                   "clean up their own files", "never `/tmp`"):
         assert phrase in flat, f"interview.md: {phrase!r}"
     for name in ("create", "extract"):
-        assert "create `<root>/.plumb-tmp/`" in _flat(SKILLS / name / "SKILL.md"), name
-    assert ".plumb-tmp/` exists" in _flat(SKILLS / "init/SKILL.md"), "init: a leftover .plumb-tmp/ is a half setup"
+        assert f"`<root>/{MARKER}`" in _flat(SKILLS / name / "SKILL.md"), f"{name}: writes the marker at the start"
+    init = _flat(SKILLS / "init/SKILL.md")
+    assert f"`<root>/{MARKER}` exists" in init, "init: the resume check keys on the marker file"
+    status = _flat(SKILLS / "status/SKILL.md")
+    assert f"`<root>/{MARKER}` exists" in status, "status: the half-setup report keys on the marker file"
+    assert ".plumb-tmp/` exists" not in status and ".plumb-tmp/` exists" not in init.replace(f"{MARKER}` exists", "")
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if p.parent.name not in SETUP_SKILLS + ("status",)],
+                         ids=lambda p: p.parent.name)
+def test_other_skills_never_write_the_setup_marker(path: Path) -> None:
+    flat = _flat(path)
+    assert "never write `setup-in-progress`" in flat and "clean up your own files" in flat, path.parent.name
 
 
 @pytest.mark.parametrize("path", skill_files(), ids=lambda p: p.parent.name)
@@ -743,3 +762,137 @@ def test_user_docs_and_spec_state_the_live_2_rules() -> None:
     test_md = _flat(REPO / "TEST.md")
     for phrase in ("inside the question", "--confirm <token>", "git-ignored", "routes:", "final checklist"):
         assert phrase in test_md, f"TEST.md: {phrase!r}"
+
+
+# ---------------------------------------------------------------- review fixes (live-2 skills review)
+
+# PLUMB.md `Routes:` is `<path> (<kind>)`, comma-separated, or `none` (the engine's _plumb.parse_routes).
+ROUTE_KINDS = ("next-app", "next-pages", "nuxt", "sveltekit", "router", "angular")
+ROUTE_EXAMPLE = re.compile(r"`([A-Za-z0-9_.][^`(]*?) \(([a-z-]+)\)`")
+
+
+def test_routes_are_recorded_with_their_kind() -> None:
+    interview = _flat(REFERENCE / "interview.md").replace("*", "")
+    for kind in ROUTE_KINDS:
+        assert f"({kind})" in interview, f"interview.md: no example of the {kind} kind"
+    for phrase in ("`<path> (<kind>)`", "`none`", "never leave the kind to be guessed"):
+        assert phrase in interview, f"interview.md: {phrase!r}"
+    for name in ("init", "extract"):
+        assert "(<kind>)" in _flat(SKILLS / name / "SKILL.md"), f"{name}: record each route root with its kind"
+
+
+def test_route_examples_parse() -> None:
+    import importlib.util
+    core = None
+    spec = importlib.util.spec_from_file_location("_plumb_routes", PLUGIN / "assets/skill/scripts/_plumb.py")
+    if spec and spec.loader:
+        core = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(core)  # type: ignore[union-attr]
+    found = 0
+    for path in (REFERENCE / "interview.md", SKILLS / "init/SKILL.md", SKILLS / "extract/SKILL.md", USAGE):
+        for m in ROUTE_EXAMPLE.finditer(path.read_text(encoding="utf-8")):
+            entry, kind = m.group(1).strip(), m.group(2)
+            if kind not in ROUTE_KINDS:
+                continue  # another parenthesised note, not a route
+            found += 1
+            assert not entry.startswith("/") and ".." not in entry.split("/"), f"{path.name}: {m.group(0)}"
+            parse = getattr(core, "parse_routes", None)
+            if parse is not None and kind in getattr(core, "ROUTE_KINDS", ()):  # the engine's own parser, once merged
+                roots, problems = parse(f"{entry} ({kind})")
+                assert roots and not problems, f"{path.name}: {m.group(0)} does not parse: {problems}"
+    assert found >= 6, "examples of `<path> (<kind>)` in interview.md, init, extract and USAGE"
+
+
+def test_investigate_first_covers_every_stack() -> None:
+    section = (REFERENCE / "interview.md").read_text(encoding="utf-8").split("## Investigate first", 1)[1]
+    flat = " ".join(section.split("\n## ", 1)[0].split()).lower()
+    for phrase in (".xcassets", "colorset", "uiappfonts", "values-night/", "themes.xml", "theme.kt", "res/font",
+                   "angular.json", "@angular/material", "@custom-variant dark", "darkmode", "createtheme", "chakra",
+                   "styled-components", "storybook", "i18n"):
+        assert phrase in flat, f"interview.md Investigate first: {phrase!r}"
+
+
+def test_theme_switch_rule_reads_tailwind_dark_config_and_unsupported_attributes() -> None:
+    interview = (REFERENCE / "interview.md").read_text(encoding="utf-8")
+    rule = " ".join(interview.split("## Theme switch: what to recommend", 1)[1].split("\n## ", 1)[0].split()).lower()
+    assert re.search(r"@custom-variant dark[^|]*\.dark[^|]*\| `class` \|", rule), "v4 @custom-variant on .dark → class"
+    assert re.search(r"darkmode: 'media'[^|]*\| `system` \|", rule), "v3 darkMode: 'media' → system"
+    assert "recommend switching the app's attribute to `class`" in rule, "an unsupported next-themes attribute (M7)"
+
+
+PLUGIN_SCRIPTS = {
+    "detect.py": "scripts/detect.py", "scaffold.py": "scripts/scaffold.py", "version.py": "scripts/version.py",
+    "screenshot.py": "scripts/screenshot.py", "build-tokens.py": "assets/skill/scripts/build-tokens.py",
+    "audit.py": "assets/skill/scripts/audit.py", "build-prototype.py": "assets/skill/scripts/build-prototype.py",
+}
+# Flags the engine branch adds; until it merges they may be missing from --help. Remove each once it is there.
+PENDING_ENGINE_FLAGS = {"scaffold.py": {"--confirm"}}
+_HELP: Dict[str, str] = {}
+
+
+def _script_help(name: str) -> str:
+    if name not in _HELP:
+        import subprocess
+        import sys
+        r = subprocess.run([sys.executable, str(PLUGIN / PLUGIN_SCRIPTS[name]), "--help"], capture_output=True,
+                           text=True, encoding="utf-8", timeout=60)
+        _HELP[name] = r.stdout + r.stderr
+    return _HELP[name]
+
+
+def _script_flags(text: str) -> List[tuple]:
+    """(script, flag) for each `--flag` written after a script's name in a code span or fenced line."""
+    fenced = re.findall(r"^```[a-z]*\n(.*?)^```", text, re.M | re.S)
+    prose = re.sub(r"^```.*?^```", "", text, flags=re.M | re.S)
+    spans = [" ".join(s.split()) for s in re.findall(r"`([^`]+)`", prose)]  # an inline command may wrap a line
+    commands = [c for s in spans for c in re.split(r"&&|;|\|\|", s)]
+    commands += [c for block in fenced for line in block.splitlines() for c in re.split(r"&&|;|\|\||─▶", line)]
+    out = []
+    names = "|".join(re.escape(n) for n in PLUGIN_SCRIPTS)
+    for command in commands:
+        found = list(re.finditer(rf"(?<![\w-])({names})\b", command))
+        if not found:
+            continue
+        last = found[-1]  # flags belong to the last script named before them
+        for flag in re.findall(r"(?<![\w-])(--[a-z][a-z-]*)", command[last.end():]):
+            out.append((last.group(1), flag))
+    return out
+
+
+@pytest.mark.parametrize("path", doc_files(), ids=lambda p: p.relative_to(PLUGIN).as_posix())
+def test_every_script_flag_a_skill_names_exists(path: Path) -> None:
+    missing = []
+    for script, flag in _script_flags(path.read_text(encoding="utf-8")):
+        if flag in _script_help(script) or flag in PENDING_ENGINE_FLAGS.get(script, set()):
+            continue
+        missing.append(f"{script} {flag}")
+    assert not missing, f"{path.relative_to(REPO)} names flags the scripts don't have: {sorted(set(missing))}"
+
+
+def test_flag_check_sees_the_flags() -> None:
+    found = _script_flags((SKILLS / "create/SKILL.md").read_text(encoding="utf-8"))
+    assert ("scaffold.py", "--dry-run") in found and ("build-tokens.py", "--overrides") in found
+
+
+@pytest.mark.parametrize("path", skill_files(), ids=lambda p: p.parent.name)
+def test_skills_stay_within_the_line_budget(path: Path) -> None:
+    lines = len(path.read_text(encoding="utf-8").splitlines())
+    assert lines <= MAX_SKILL_LINES, f"{path.parent.name}: {lines} lines (max {MAX_SKILL_LINES})"
+    if path.parent.name in SETUP_SKILLS:  # headroom for the longest flows
+        assert lines <= 185, f"{path.parent.name}: {lines} lines; keep it at 185 or fewer, detail in reference/"
+
+
+def test_init_rechecks_git_ignore_and_lists_its_rules() -> None:
+    text = (SKILLS / "init/SKILL.md").read_text(encoding="utf-8")
+    flat = _flat(SKILLS / "init/SKILL.md")
+    for phrase in ("run `git -c \"<root>\" check-ignore -v", "again after", "`.git/info/exclude`",
+                   "`!.claude/skills/**`"):
+        assert phrase in flat, f"init: {phrase!r}"
+    rules = text.split("**Rules.**", 1)[1].split("\n\n", 1)[0]
+    assert len(re.findall(r"^- ", rules, re.M)) >= 6, "init's rules are a short list, not one paragraph"
+
+
+def test_long_diffs_are_summarised_with_the_full_diff_on_disk() -> None:
+    flat = _flat(REFERENCE / "interview.md")
+    for phrase in ("the first ~40 lines", "+/- counts", "`<root>/.plumb-tmp/", "never summarise a list of files or values"):
+        assert phrase in flat, f"interview.md: {phrase!r}"

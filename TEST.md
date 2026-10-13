@@ -219,11 +219,14 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       written before you say OK; then "existing or new?" with the detected one marked (Recommended).
 - [ ] **Monorepo** (UI in `frontend/`, the repo root holding `frontend/` and `backend/`): the UI files are
       `frontend/…` patterns (a root `src/**` that matches nothing is shown `(corrected: …)` with the file counts), the
-      routes line names `frontend/src/app` (or the app's page folder), and both land in `PLUMB.md` (`UI files:`,
-      `Routes:`). `scaffold.py --verify` ends `verify: ok`.
+      routes line names `frontend/src/app (next-app)` (the page folder with its kind; `none` in a mobile-only or
+      design-only project), and both land in `PLUMB.md` (`UI files:`, `Routes:`). `scaffold.py --verify` ends
+      `verify: ok`.
 - [ ] **Git-ignored skill folder:** in a repo whose `.gitignore` has `.claude/`, init shows that line inside a question
       and offers to un-ignore the skill folder (`.claude/*` + `!.claude/skills/`, recommended) or another location;
-      it never goes on silently.
+      it never goes on silently, and after the change it runs `git check-ignore` again and shows the result.
+- [ ] In a stock shadcn app with no next-themes (`@custom-variant dark (&:is(.dark *))` in `globals.css`), the theme
+      switch recommends **class** and cites that line.
 - [ ] Choose **create**. The product questions come before any design question; every question has options with one
       marked (Recommended) and a reason; it asks before writing `docs/design/directions.html`; the directions page
       opens from disk and shows 2–3 distinct directions in light and dark.
@@ -237,8 +240,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] It asks you to pick a direction, then shows the full token set (light and dark) and the `scaffold.py --dry-run`
       file list, each inside a question, and writes only after you say OK; the real scaffold runs with the
       `--confirm <token>` the dry run printed, in its own shell call. Scratch files go in `<project>/.plumb-tmp/`
-      (never `/tmp` or next to the repo); the folder exists until the end of setup (the end-of-turn check doesn't fire
-      meanwhile) and is gone when init finishes.
+      (never `/tmp` or next to the repo); the marker `.plumb-tmp/setup-in-progress` exists until the end of setup (the
+      end-of-turn check doesn't fire meanwhile) and the folder is gone when init finishes. Stop the session midway and
+      run `/plumb:init` again: it offers to resume. A long stylesheet diff comes as a summary and its first ~40 lines,
+      with the full diff in `.plumb-tmp/` to open.
       Before the first build it says what changes in your existing stylesheet (e.g. `app/globals.css`: only a marked
       `plumb:start … plumb:end` block is Plumb's) and asks. The audit on the components it writes exits 0;
       `docs/design/specimen.html` exists.

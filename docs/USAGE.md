@@ -130,9 +130,14 @@ I'll create:
   generated copy → apps/web/app/globals.css
     apps/web/app/globals.css exists: Plumb adds and owns only a marked plumb:start … plumb:end block; the rest stays yours
   UI files   apps/web/app/**, apps/web/components/** · *.tsx *.jsx *.css   (142 files match; what the audit and the checks cover)
-  routes     apps/web/app   (18 pages)
+  routes     apps/web/app (next-app)   (18 pages)
 OK, or change something?
 ```
+
+Each route folder is recorded with its kind, the framework the agent found: `apps/web/app (next-app)`, `src/pages
+(next-pages)`, `pages (nuxt)`, `src/routes (sveltekit)`, `src/app (angular)`, a router file such as
+`src/router/index.ts (router)`, or `none` for a mobile-only, backend-only or design-only project. Plumb never guesses
+the kind from a folder name.
 
 **What you confirm is inside the question.** The whole block is the question itself (or the recommended option's
 preview), never only text printed before it: Claude Code can hide a message written just before a question, so Plumb
@@ -182,8 +187,10 @@ When it finishes, **commit the files** and **start a new session** in the projec
 - **Scripts give evidence, not answers.** The agent checks every script result against your code and marks what it
   corrected or added before you decide.
 - **Temporary files stay in your project**, in `.plumb-tmp/` (ignored by version control), never in `/tmp` or next to
-  the repo. During create or extract it exists until the setup ends (the end-of-turn check stands down meanwhile) and
-  is removed last; `/plumb:init` treats a leftover one as a half-finished setup and offers to resume.
+  the repo. Create and extract also put a marker file there, `.plumb-tmp/setup-in-progress`, from the placement OK
+  to the end of setup (the end-of-turn check stands down while it exists), then remove the whole folder last;
+  `/plumb:init` treats a leftover marker as a half-finished setup and offers to resume. Other commands may keep
+  scratch files there and clean up their own; they never write the marker.
 - **Nothing is installed or downloaded.** If something seems missing (a package, a font, a browser), Plumb says what
   and why, asks you, and waits for your decision. It never decides on your behalf.
 - **Heavy flows run only when you type them:** `/plumb:init`, `/plumb:create`, `/plumb:extract`, `/plumb:update` and
@@ -664,8 +671,8 @@ move). It reports: project and plugin versions; the system's path, home or linke
 tours, whether the pages are stale); the checks on or off; whether the Effective HTML skills are available or Plumb's
 built-in quality bar is in use; uncommitted design files; and the one most useful next step. In a set-up project the
 next step is never "create" or "extract" (it's an approval, a screen to build, `/plumb:prototype`, `/plumb:audit fix`
-or `improve`, `/plumb:update` or `/plumb:upgrade`); a missing `Routes:` line or a leftover `.plumb-tmp/` points you to
-`/plumb:init`. Status writes no file, not even a temporary one.
+or `improve`, `/plumb:update` or `/plumb:upgrade`); a missing `Routes:` line or a leftover
+`.plumb-tmp/setup-in-progress` marker points you to `/plumb:init`. Status writes no file, not even a temporary one.
 
 ```
 you   /plumb:status
@@ -1170,8 +1177,9 @@ Plumb's skills put what you confirm inside the question itself; text printed jus
 Claude Code. Answer "show it" (or choose "change something"), and the agent asks again with the content inside.
 
 **The end-of-turn check never stops the agent.**
-Check for a leftover `.plumb-tmp/` folder in the project: the check stands down while it exists (it marks a setup in
-progress). `/plumb:init` treats it as a half-finished setup and offers to resume; if you don't need it, delete it.
+Check for a leftover `.plumb-tmp/setup-in-progress` file in the project: the check stands down while it exists (it
+marks a setup in progress). `/plumb:init` treats it as a half-finished setup and offers to resume; if you don't need
+it, delete the `.plumb-tmp/` folder.
 
 **The prototype-first check never refuses a new page, or the audit never reports `route-not-prototyped`.**
 `PLUMB.md` has no `Routes:` line, or its `UI files:` patterns match nothing (a monorepo package such as `frontend/`

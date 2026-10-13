@@ -40,7 +40,8 @@ what the code shows is a `found: … (file:line)` to confirm, never an open ques
 2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
    else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
    made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
-   Scratch files: `<root>/.plumb-tmp/` only, removed when the command ends; never `/tmp` or outside `<root>`.
+   Scratch files: `<root>/.plumb-tmp/` only (its `.gitignore` first); clean up your own files when the command
+   ends; never write `setup-in-progress` (the setup marker); never `/tmp` or outside `<root>`.
    Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Python:` (**PY**, `python3` when unset), `Themes:`.
    **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is

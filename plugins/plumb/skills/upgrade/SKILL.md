@@ -38,7 +38,8 @@ Claude Code can hide that text; Copilot CLI's ask tool takes it in the question 
 2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
    else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
    made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
-   Scratch files: `<root>/.plumb-tmp/` only, removed when the command ends; never `/tmp` or outside `<root>`.
+   Scratch files: `<root>/.plumb-tmp/` only (its `.gitignore` first); clean up your own files when the command
+   ends; never write `setup-in-progress` (the setup marker); never `/tmp` or outside `<root>`.
    Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Platforms:`.
    **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which is where the
@@ -113,7 +114,8 @@ Ask before anything that changes meaning or touches files the project owns (`.gi
 - [ ] Compare with `<ROOT>/templates/PLUMB.md`: add any section or setting line it has that `PLUMB.md` lacks (fill it
       the way `/plumb:init` would, asking for anything unknown; the version steps say how). Change no existing value.
       A missing `Routes:` line (or `UI files:` patterns that match no file): investigate the app's page roots, count
-      what they match, and offer the line with that evidence inside the question; the user may change them here.
+      what they match, and offer the line (`<path> (<kind>)` from the framework found, or `none`; interview.md "What
+      gets recorded") with that evidence inside the question; the user may change them here.
 - [ ] `## Plumb updates`: add one dated line, e.g.
       `- 2026-11-02 upgraded Plumb 1.0.0 → 1.1.0: <the main new things from What's new>`.
 

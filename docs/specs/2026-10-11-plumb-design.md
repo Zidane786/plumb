@@ -98,8 +98,9 @@ reads files only under them; scratch files go only in `<root>/.plumb-tmp/` (stat
 Re-running init in a set-up project shows status and offers `/plumb:upgrade` when the plugin is
 newer. It never overwrites an existing design system. A skill path the repo's `.gitignore`
 ignores is never accepted silently: init shows the ignoring line and asks (un-ignore the skill
-folder with `.claude/*` + `!.claude/skills/`, recommended, or another location). A leftover
-`<root>/.plumb-tmp/` marks a half-finished setup: init offers to resume. A new `AGENTS.md` is a
+folder with `.claude/*` + `!.claude/skills/`, recommended, or another location), and the check
+runs again after the change. A leftover marker `<root>/.plumb-tmp/setup-in-progress` marks a
+half-finished setup: init offers to resume. A new `AGENTS.md` is a
 whole file (title, `## Read before you work`, the table header, the row).
 
 ### 3.2 `/plumb:create`
@@ -135,11 +136,19 @@ the user approved. Tailwind projects record `$extensions.plumb.web.reset_palette
 extract, or create on an app that already uses Tailwind's palette classes, recommends keeping
 them, with the count, and the audit suggests moving them onto tokens. The theme-switch
 recommendation follows one ordered rule (next-themes `attribute="class"` → `class`), with the
-evidence `file:line` in the question. The UX patterns are seven questions. `<root>/.plumb-tmp/`
-lives from the placement OK to the end of setup (the end-of-turn check stands down while it
-exists) and is removed last. Before saying done, the agent walks a final checklist: every
-checkpoint asked, contrast evidence, components, the decision log, a first prototype screen (or
-the user's "later"), the wire-in, `.plumb-tmp/` removed.
+evidence `file:line` in the question; Tailwind's own dark config (v4 `@custom-variant dark`, v3
+`darkMode`) counts as evidence, and an attribute Plumb doesn't follow leads to recommending a
+switch to `class`. The UX patterns are seven questions. **Setup in progress is the marker file
+`<root>/.plumb-tmp/setup-in-progress`**: only init, create and extract write it, from the
+placement OK to the end of setup; the end-of-turn check stands down while it exists, and init's
+resume check and status read it; setup ends by removing the whole `.plumb-tmp/`. Other commands
+may keep scratch files in `.plumb-tmp/` and clean up their own, never writing the marker. A long
+diff in a question is a summary plus the first ~40 lines, with the full diff in `.plumb-tmp/`.
+`PLUMB.md` `Routes:` is `<path> (<kind>)` (`next-app`, `next-pages`, `nuxt`, `sveltekit`,
+`router`, `angular`) or `none`; the kind comes from the investigation, never from a folder name.
+Before saying done, the agent walks a final checklist: every checkpoint that applied asked (any
+that did not: which and why), contrast evidence, components, the decision log, a first prototype
+screen (or the user's "later"), the wire-in, `.plumb-tmp/` removed.
 
 **A. The product first** (questions grouped up to four at a time, each with suggestions drawn from
 the brief, README, `AGENTS.md`/`CLAUDE.md`, `SLATE.md` and any prototype or brand files found):

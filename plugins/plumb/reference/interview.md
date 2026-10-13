@@ -48,13 +48,25 @@ code cannot tell becomes a question. Right after `detect.py` (or, in audit impro
 - **Stack:** framework and version (`package.json`, `next.config.*`, `vite.config.*`, `angular.json`, `*.xcodeproj`,
   `build.gradle*`), styling (Tailwind v3 or v4, `tailwind.config.*`, `postcss.config.*`), shadcn (`components.json`),
   the global stylesheet(s) and what they already define (`@theme`, `:root` variables, `.dark` blocks).
-- **Screens:** the routes or pages that exist on disk (for Next.js `app/**/page.*`, `pages/**`; others in the extract
-  skill, step 16), layouts, navigation (sidebar, tabs), component folders (`components/ui/`, `patterns/`).
+  - **Tailwind dark mode in config:** v4 `@custom-variant dark (&:is(.dark *))` in the CSS (every stock shadcn
+    `globals.css` has it), v3 `darkMode: 'class' | 'media' | ['selector', '…']` in `tailwind.config.*`.
+  - **Angular:** `angular.json` `styles` (the global stylesheet), an Angular Material theme
+    (`@use '@angular/material'`, `mat.define-theme`), `*.routes.ts`.
+  - **CSS-in-JS theme objects:** MUI `createTheme`, Chakra `extendTheme`, styled-components or Emotion
+    `ThemeProvider` themes: their palette, type and spacing are the app's values.
+  - **SwiftUI:** asset catalogs (`*.xcassets/*.colorset` with their dark "appearances"), `Color`/`Theme` files, fonts
+    in `Info.plist` `UIAppFonts` and the font files they name.
+  - **Compose:** `res/values/colors.xml` and `res/values-night/`, `themes.xml`, a `Theme.kt` / `MaterialTheme`
+    (`lightColorScheme` / `darkColorScheme`), `Type.kt`, fonts in `res/font`.
+- **Screens:** the routes or pages that exist on disk (where each stack keeps them: "What gets recorded" below),
+  layouts, navigation (sidebar, tabs), component folders (`components/ui/`, `patterns/`), Storybook stories
+  (`*.stories.*`: the components and variants in use).
 - **Look and behaviour:** theme provider and how it switches (next-themes and its `attribute`, a `.dark` toggle,
   `prefers-color-scheme`), `prefers-reduced-motion` rules, font setup (`next/font`, `@font-face`, font files), the icon
   library in use, existing tokens or design docs (`docs/`, `design/`, a brand guide, a prototype).
-- **Conventions:** `README*`, `AGENTS.md`/`CLAUDE.md`, `SLATE.md`, contributing notes: words the product uses, rules
-  the team already follows.
+- **Conventions:** `README*`, `AGENTS.md`/`CLAUDE.md`, `SLATE.md`, contributing notes, i18n message files
+  (`messages/*.json`, `locales/`, `*.po`, `Localizable.strings`, `strings.xml`): the words the product already uses
+  (vocabulary, C15), rules the team already follows.
 
 Fill an **evidence table** as you go and keep it for the questions that follow:
 
@@ -62,7 +74,7 @@ Fill an **evidence table** as you go and keep it for the questions that follow:
 |---|---|---|---|
 | UI package | `frontend/` (Next.js 16, Tailwind v4, shadcn) | `frontend/package.json:12`, `frontend/components.json:1` | high |
 | UI files | `frontend/src/** · *.tsx *.css` (corrected: detect's `app/**` matched 0 of 113) | glob count: 113 files | high |
-| Routes | `frontend/src/app` (21 pages) | `frontend/src/app/**/page.tsx` on disk | high |
+| Routes | `frontend/src/app (next-app)`: 21 pages | `frontend/src/app/**/page.tsx` on disk | high |
 | Theme switch | next-themes `attribute="class"` → `class` | `frontend/src/components/providers.tsx:9` | high |
 | Skill path git-ignored | `.claude/` is ignored | `.gitignore:14` | high |
 | Brand accent | not found in the code | — | asking |
@@ -78,11 +90,47 @@ Fill an **evidence table** as you go and keep it for the questions that follow:
 confirmed. Init, create and extract fill these from the investigation (never from detect alone), show each with its
 evidence and matched-file count inside the placement question, and write them to `PLUMB.md` (scaffold answers keys in
 brackets): `UI packages:` (`ui_packages`), `UI files:` (`ui_files`: patterns from the repo root, each matching at least
-one file, e.g. `frontend/src/** · *.tsx *.css`), `Routes:` (`routes`: the app's page roots relative to the repo root,
-one or more, e.g. `frontend/src/app`), `Allowed raw values:` (`allowed_raw`), the copy paths (`web_copies`) and the
-tokens settings. `scaffold.py --verify` checks them (each route root exists; each UI-file pattern matches a file).
-Changing them later: `/plumb:update` (or `/plumb:init` again); a project with no `Routes:` recorded is told to run
-`/plumb:init` by status and audit.
+one file, e.g. `frontend/src/** · *.tsx *.css`), `Routes:` (`routes`, below), `Allowed raw values:` (`allowed_raw`),
+the copy paths (`web_copies`) and the tokens settings. `scaffold.py --verify` checks them (each route root exists;
+each UI-file pattern matches a file). Changing them later: `/plumb:update` (or `/plumb:init` again); a project with no
+`Routes:` recorded is told to run `/plumb:init` by status and audit.
+
+**`Routes:` is `<path> (<kind>)`**, the app's page roots relative to the repo root, comma-separated when there are
+several, or `none`. Record the kind from the evidence (the framework you found); **never leave the kind to be
+guessed**: a bare path is guessed from its folder name, so a Nuxt `pages/` would read as Next.js pages and an Angular
+`src/app` as the Next.js app router, and route discovery would silently find nothing.
+
+| Stack | Where the pages are (each one checked on disk) | `Routes:` value |
+|---|---|---|
+| Next.js, app router | `app/**/page.*` (route groups `(x)` and `@slots` are not in the URL; `_folders` are private) | `frontend/src/app (next-app)` |
+| Next.js, pages router | `pages/**` (not `_app`, `_document`, `api/`) | `src/pages (next-pages)` |
+| Nuxt | `pages/**/*.vue` | `pages (nuxt)` |
+| SvelteKit | `src/routes/**/+page.svelte` | `src/routes (sveltekit)` |
+| Angular | `*.routes.ts` / `*routing.module.ts` | `src/app (angular)` |
+| Vue Router, React Router, another router file | `router/index.*`, `createBrowserRouter` / `<Route path>` | `src/router/index.ts (router)` |
+| iOS or Android only, design only, backend only; plain HTML pages, SwiftUI `NavigationStack` / `TabView`, Compose `NavHost`, React Native navigators | (screens still found for the prototype) | `none` (say the route checks stay off for them) |
+
+## Layout cases
+
+Init asks each of these as its own question (inside it: the evidence), then runs detect again with `--cwd <folder>`
+when the folder changes:
+
+- **Parent folder** (`layout: parent`): list `children` and ask which project; write nothing in the parent. Tell the
+  user to open their next sessions in that folder (the hooks look for `PLUMB.md` from where a session opens).
+- **New, empty folder** (`layout: new`): "This folder is empty: start a new project here?" (a) Yes, create the design
+  system here (Recommended) (b) No, it is somewhere else: ask for the path. On (a) the route is create. No git is
+  fine; offer `git init` once.
+- **Backend only:** "Where will the UI live?" (a) The frontend is in another repo (Recommended) (b) It will live here
+  (c) Design only for now. On (a) ask for its path and set Plumb up there (that path becomes `<root>`). Then ask
+  separately: "Also write a linked `PLUMB.md` (and the AGENTS/CLAUDE row) in this backend repo, pointing at the
+  frontend's design system?" (a) Yes (Recommended) (b) No; write it only on yes (the one write outside `<root>`). Tell
+  the user to open the frontend repo for UI work. On (c): design only (`routes: none`).
+- **React Native** (`framework: react-native`): React Native themes are not supported in Plumb 1.0.0 (a 1.1.0
+  candidate). Offer only: (a) design only for now (Recommended) (b) web, when the repo has a web part (c) native iOS
+  (SwiftUI) / Android (Compose) themes for native apps. Never write React Native components.
+- **Inside a bigger project** (`enclosing` is set: outside git, a folder above has monorepo markers or a `PLUMB.md`):
+  "Is the project `<enclosing.root>` (this folder is one of its packages)?" (a) Yes, use the enclosing folder
+  (Recommended) (b) No, this folder is the project.
 
 ## Nothing is written without the user's OK
 
@@ -118,8 +166,11 @@ screen's approval.
   `AskUserQuestion` options take a `preview`). **Never only in a message before the question:** Claude Code can hide
   text written right before a question, so the user would be asked about something they cannot see. Never ask about
   "the setup above" or "the list above". Copilot CLI's ask tool takes it in the question text. Without a question tool:
-  one message holding the content and the lettered options, then wait. Long content stays whole (every file of the
-  dry run); never summarise what the user is confirming.
+  one message holding the content and the lettered options, then wait. **Never summarise a list of files or values**
+  the user is confirming (every file of the dry run, every token). **A long diff** (more than about 60 lines, e.g. a
+  whole `globals.css`) is the one exception: write the full diff to `<root>/.plumb-tmp/<copy name>.diff` with your
+  write tool and put inside the question a summary (each file with its +/- counts, what each changed hunk does) and
+  the first ~40 lines, plus that path for the user to open before answering.
 - **STOP: ask, wait for the answer.** A checkpoint is a question and nothing else in that turn: no write and no command
   before the answer, never two checkpoints in one question, never a checkpoint's action in the same shell call as the
   next one. A permission prompt from the tool (Copilot CLI asks before commands) is not the user's OK to a checkpoint.
@@ -219,9 +270,12 @@ recommend `both` when a row above it matches.
 | next-themes `<ThemeProvider attribute="class">` (with or without `enableSystem`: next-themes follows the system setting by setting the class itself) | `class` |
 | next-themes `attribute="data-theme"`, or no `attribute` (next-themes' default) | `data-theme` |
 | next-themes with an array (`["class", "data-theme"]`): `class` when it holds "class", else `data-theme` | as said |
-| next-themes with another attribute (`data-mode`): Plumb follows only a class or `data-theme`, so say so | `both` |
+| next-themes with another attribute (`data-mode`): Plumb follows only a class or `data-theme`, so recommend switching the app's attribute to `class` (a one-line change in the provider, asked; Tailwind's `dark:` follows it), explain, and still ask (options: `class` with that change · `data-theme` with that change · `both`, leaving the app as it is) | `class` |
 | other code that toggles a `.dark` class on `<html>` | `class` |
 | other code that sets a `data-theme` attribute | `data-theme` |
+| Tailwind v4 `@custom-variant dark (&:is(.dark *))` (on `.dark`; stock shadcn), or v3 `darkMode: 'class'` / `['selector', '.dark']` | `class` |
+| Tailwind v4 `@custom-variant dark` on `[data-theme=dark]`, or v3 `darkMode: ['selector', '[data-theme="dark"]']` | `data-theme` |
+| Tailwind v3 `darkMode: 'media'` (or no `darkMode`: v3's default), with no `.dark` toggle | `system` |
 | only `@media (prefers-color-scheme: dark)` | `system` |
 | a `.dark` class and the media rule | `both` |
 | no dark mode in the code (a new app) | `both` |
@@ -280,13 +334,17 @@ right after scaffolding, before the first build (see `tokens-format.md`).
 
 ## Scratch files
 
-Every temporary file (the answers JSON, a saved `--check` diff, an inventory or overrides JSON you keep to read again)
-goes in **`<root>/.plumb-tmp/`**, nowhere else: never `/tmp`, `%TEMP%`, a folder next to the repo or another
-session's scratch folder (they sit outside the project, so Copilot CLI asks for path access, and nothing outside
-`<root>` is written). Write `<root>/.plumb-tmp/.gitignore` containing `*` first. During create or extract the folder
-exists from the placement OK to the end of setup: Plumb's end-of-turn check stands down while it exists, so it does not
-stop a half-built setup. **Remove it as the last step of setup** (the final checklist), and after any other command
-that made it, when that command ends: a forgotten folder keeps the end-of-turn check off.
+Every temporary file (the answers JSON, a saved diff, an inventory or overrides JSON you keep to read again) goes in
+**`<root>/.plumb-tmp/`**, nowhere else: never `/tmp`, `%TEMP%`, a folder next to the repo or another session's
+scratch folder (they sit outside the project, so Copilot CLI asks for path access, and nothing outside `<root>` is
+written). Write `<root>/.plumb-tmp/.gitignore` containing `*` first when the folder is new.
+
+**The setup marker.** A setup in progress is the marker file **`<root>/.plumb-tmp/setup-in-progress`**, and only init,
+create and extract write it: right after the placement OK (one line in it: the command and the date). The end-of-turn
+check stands down while the marker exists, so it does not stop a half-built setup; init's resume check and status's
+half-setup report look for the marker file, never for the folder. **When setup ends** (the final checklist), remove
+the whole `.plumb-tmp/` folder, last. Every other command may use `.plumb-tmp/` for scratch, never writes the marker,
+and must clean up their own files when it ends (and the folder, when it created it).
 
 ## E. Generate, in detail
 

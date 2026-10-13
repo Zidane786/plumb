@@ -40,7 +40,8 @@ Claude Code can hide that text; Copilot CLI's ask tool takes it in the question 
 2. **Project root `<root>`:** the absolute path of the folder holding `PLUMB.md` (the folder the session opened in,
    else the nearest folder above it). Every path below is `<root>/…`; **SKILL** (step 3) is `<root>/<Design system:>`,
    made absolute; read the project's references as `SKILL/references/<file>`, never from a path you remember.
-   Scratch files: `<root>/.plumb-tmp/` only, removed when the command ends; never `/tmp` or outside `<root>`.
+   Scratch files: `<root>/.plumb-tmp/` only (its `.gitignore` first); clean up your own files when the command
+   ends; never write `setup-in-progress` (the setup marker); never `/tmp` or outside `<root>`.
    Missing → "This project isn't set up for Plumb yet — run `/plumb:init`." Stop.
 3. From `PLUMB.md`: `Design system:` (**SKILL**), `Role:`, `Python:` (**PY**, `python3` when unset), `Platforms:`,
    `Themes:`. **docs** (the docs folder): the tokens file's `$extensions.plumb.docs_dir`, default `docs/design`, which
@@ -57,7 +58,8 @@ Claude Code can hide that text; Copilot CLI's ask tool takes it in the question 
 From the argument, or ask (one question): change or add tokens · a component or variant · add a platform · improve a
 part (motion, dark mode, type, density, …) · **apply the latest audit's system suggestions** (recommend it when an audit
 from the last weeks has any) · where Plumb looks (`PLUMB.md`'s `UI files:`, `Routes:`, `Allowed raw values:`; count
-the files each pattern matches and check each route root exists, evidence inside the question) · a tokens setting
+the files each pattern matches; each route root exists, recorded as `<path> (<kind>)` from the framework found
+([interview.md](../../reference/interview.md) "What gets recorded"); evidence inside the question) · a tokens setting
 (`web.theme_switch`, `motion.reduced`, `web.reset_palette`: turn the palette reset on once the app no longer uses
 Tailwind's default colour classes).
 
