@@ -65,9 +65,16 @@ HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_SCRIPTS = os.path.join(os.path.dirname(HOOKS_DIR), "assets", "skill", "scripts")
 PLUMB_MD = "PLUMB.md"
 SNAPSHOT_DAYS = 7
-# Where a Plumb setup (create, extract, init) and the scripts keep their temporary files, in the project root. While it
-# exists a setup is in progress, so the end-of-turn check stands down (the skills delete it when they finish).
+# Where Plumb's skills and scripts keep scratch files, in the project root (any skill may use it). Only init, create and
+# extract write the marker file in it, SETUP_MARKER, while their setup runs (and remove the whole folder when it ends):
+# while the marker exists the end-of-turn check stands down.
 SETUP_TMP = ".plumb-tmp"
+SETUP_MARKER = ".plumb-tmp/setup-in-progress"
+
+
+def setup_in_progress(root: str) -> bool:
+    """A Plumb setup (init, create, extract) is running: <root>/.plumb-tmp/setup-in-progress exists."""
+    return os.path.isfile(os.path.join(root, *SETUP_MARKER.split("/")))
 UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
 # Windows and macOS (APFS, HFS+ by default) file systems ignore case: TOKENS.CSS is tokens.css there.
 CASELESS = sys.platform in ("win32", "darwin")
