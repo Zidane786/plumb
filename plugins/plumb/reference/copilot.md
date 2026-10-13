@@ -27,7 +27,10 @@ check says when).
 - **Skills location:** Copilot CLI loads skills from `.claude/skills`, `.github/skills`, `~/.copilot/skills` and
   `~/.agents/skills`, so the project's design-system skill in `.claude/skills/<project>-design-system/` works in both.
 - **Questions:** both tools have a question tool; ask one question at a time with options and the recommendation first.
-  If it is not available, ask in plain text with numbered options and wait for the answer.
+  What the user confirms (a block, summary, list, diff or mapping) goes in the question text itself, in full, in both
+  tools (Claude Code can also take it as an option's preview); never only in a message before the question.
+  Each checkpoint is a STOP: ask, then wait; no command or write before the answer. If there is no question tool, ask
+  in plain text with numbered options, the content in the same message, and wait for the answer.
 - **Hooks:** the same three hooks run in both (session start, edit check before edits and shell writes, end-of-turn
   check). In Copilot CLI edits arrive as `apply_patch` text, input uses `toolName`/`toolArgs`, a refusal is a
   `{"permissionDecision": "deny", …}` answer on stdout (Copilot hides exit-2 stderr), and session start returns
@@ -40,21 +43,40 @@ check says when).
 ## Permission prompts
 
 Copilot CLI ignores the `allowed-tools` line in a skill's frontmatter (Claude Code honours it), so every script run
-asks for permission: about 30 prompts in one extract, plus "Allow path access" when the plugin folder sits outside
-the project. The skills keep the count down:
+asks for permission, and so does every file the agent writes with its edit tool (Copilot's default "manual" mode
+auto-approves only reads). A permission prompt is never the user's answer to a Plumb checkpoint: the checkpoint
+question comes first, then the command. The skills keep the count down:
 
-- **One shell call per step.** Where a step runs several scripts, join them with `&&` in one shell call (e.g. the
-  build and the audit, or every `--map` of a step); `;` when each must run even after a failure (status checks).
-  Windows PowerShell 5.1 has no `&&`: use `;` and read each output.
-- **Temporary files stay in the project:** `<root>/.plumb-tmp/` (git-ignored by its own `.gitignore`, deleted after
-  the step), never `/tmp` ("Temporary files" in [placement.md](placement.md)).
+- **One shell call per checkpoint.** Where a checkpoint runs several scripts, join them with `&&` in one shell call
+  (e.g. the build and the audit, the dry run's checks, every `--map` of a step); `;` when each must run even after a
+  failure (status runs all its checks in one call: one prompt). Windows PowerShell 5.1 has no `&&`: use `;` and read
+  each output. Never join a checkpoint's action with the next checkpoint's (the dry run and the real scaffold are
+  always two calls, with the user's OK between them).
+- **Scratch files stay in the project:** `<root>/.plumb-tmp/` (git-ignored by its own `.gitignore`), never `/tmp`, a
+  folder next to the repo or another session's folder, so no "Allow path access" prompt for them ("Scratch files" in
+  [interview.md](interview.md)). Status writes no file at all.
+- **Paths from the resolved roots:** every skill resolves the plugin root and `<root>` first and reads files only
+  under them, so Copilot never asks for a path outside the project because of a guessed path.
 - **Routes as one argument:** `--route=/`, never a separate `/` after `--route`; Copilot reads a bare `/` as a path
   and offers to allow access to it (and "remember for this session" would grant the whole disk).
 
-The user may choose fewer prompts; the agent never changes Copilot's permissions. They can answer "Yes, and remember
-… for this session", or start Copilot with `--allow-tool 'shell(python3)'` (every `python3` command runs without
-asking, not only Plumb's: their call) and `--add-dir <plugin folder>` (e.g.
-`~/.copilot/installed-plugins/plumb/plumb`).
+**What to expect** (manual mode, batched as above): `/plumb:init` with create or extract asks for about 10–15 script
+runs (detect, the dry run, the real scaffold, the stylesheet check, build + audit, the overrides, each contrast
+rebuild, the component audit, the screens' map, `--verify`), plus one prompt per file the agent writes with its edit
+tool (the directions or extract page, the skill's documents, components, screen files, `PLUMB.md`, `AGENTS.md`,
+`Makefile`: often 15–25), plus one "Allow path access" for the plugin folder when it sits outside the project.
+`/plumb:status` asks once; `/plumb:audit` two or three times.
+
+**Fewer prompts: the user's choice.** The agent never changes Copilot's permissions and never suggests broader ones
+than these. Copilot has no setting that pre-allows only Plumb's scripts: its `shell(…)` permission matches the
+command's name (`python3`), not the script. What the user can do:
+
+- answer "Yes, and remember … for this session" to a prompt (per command or path, this session only);
+- start Copilot with `--add-dir <plugin folder>` (e.g. `~/.copilot/installed-plugins/plumb/plumb`): no "Allow path
+  access" for the plugin's scripts and references;
+- start Copilot with `--allow-tool 'shell(python3)'` (or `shell(python)`, `shell(py)` on Windows): every command of
+  that name runs without asking, not only Plumb's: their call. File writes still ask
+  (`--allow-tool 'write'` would allow every write: not recommended for a setup that should be reviewed).
 
 ## Other live-test notes
 
