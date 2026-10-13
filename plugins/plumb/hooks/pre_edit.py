@@ -151,8 +151,9 @@ def copy_edit_keeps_block(path: str, change: H.Change) -> bool:
     """True when this edit to a web copy leaves Plumb's block exactly as it is: the rest of the file is the project's.
     A copy with no block yet is the project's own file (the next build adds the block), unless it is a whole file an
     older build generated (its GENERATED header); so is one with broken markers (the build refuses it until they are
-    fixed by hand). A delete or move, or an edit whose result cannot be known (an old string not in the file, a patch
-    that does not apply), counts as changing the block."""
+    fixed by hand). A delete or move, or an edit whose result cannot be known (an old string not in the file), counts
+    as changing the block; an apply_patch update that does not apply is judged by its own lines
+    (unapplied_patch_keeps_block)."""
     if change.kind in ("delete", "move", "path"):
         return False
     try:
@@ -171,7 +172,40 @@ def copy_edit_keeps_block(path: str, change: H.Change) -> bool:
             #              until they are fixed, so let them be fixed by hand
         return not _generated_header(path)
     after = change.after(before)
+    if after is None and change.kind == "update":
+        return unapplied_patch_keeps_block(before, change)
     return after is not None and H.block_text(after) == block
+
+
+def unapplied_patch_keeps_block(before: str, change: H.Change) -> bool:
+    """An apply_patch update whose hunks do not apply to the copy (models often send context lines that are not in the
+    file): judged by its own lines instead of refused. It changes Plumb's block when it adds a block marker, removes a
+    line that is found only inside the block, or a hunk's context lines are found only inside the block (between the
+    markers). Anything else (context found outside, or nowhere: apply_patch cannot place it in the block either) is
+    the project's part of the file."""
+    if H.BLOCK_START in change.added() or H.BLOCK_END in change.added():
+        return False
+    lines = before.split("\n")
+    start = next(i for i, ln in enumerate(lines) if H.BLOCK_START in ln)
+    end = next(i for i, ln in enumerate(lines) if H.BLOCK_END in ln)
+
+    def where(text: str) -> List[int]:
+        want = text.strip()
+        if not re.search(r"\w", want):  # a lone "}" or ");" is everywhere: it places nothing
+            return []
+        return [i for i, ln in enumerate(lines) if ln.strip() == want]
+
+    for hunk in change.hunks:
+        removed = [ln[1:] for ln in hunk.lines if ln[0] == "-" and ln[1:].strip()]
+        context = [ln[1:] for ln in hunk.lines if ln[0] == " " and ln[1:].strip()]
+        for text in removed:
+            found = where(text)
+            if found and all(start <= i <= end for i in found):
+                return False
+        anchors = [i for text in context for i in where(text)]
+        if anchors and all(start < i < end for i in anchors):
+            return False
+    return True
 
 
 def _has_block(path: str) -> bool:
