@@ -113,8 +113,9 @@ Open a session **in your project folder** and run:
 /plumb:init
 ```
 
-Plumb looks at the folder (it never assumes the folder you opened is the project), then shows what it found and what
-it will create, and waits:
+Plumb looks at the folder (it never assumes the folder you opened is the project), goes through the project itself
+(manifests, routes, layouts, theme provider, global CSS, `components.json`, fonts, icons, `.gitignore`, existing design
+docs), then asks you to confirm what it found and what it will create:
 
 ```
 Plumb found:
@@ -128,18 +129,35 @@ I'll create:
   docs/design/                         in ~/Projects/acme   (directions or extract page, decision log, prototype, reports)
   generated copy → apps/web/app/globals.css
     apps/web/app/globals.css exists: Plumb adds and owns only a marked plumb:start … plumb:end block; the rest stays yours
-  UI files   apps/web/app/**, apps/web/components/** · *.tsx *.jsx *.css   (what the audit and the checks cover)
+  UI files   apps/web/app/**, apps/web/components/** · *.tsx *.jsx *.css   (142 files match; what the audit and the checks cover)
+  routes     apps/web/app   (18 pages)
 OK, or change something?
 ```
 
-The agent prints this whole block in the chat before it asks. If it ever asks "OK?" without the block above, ask it
-to show the block first.
+**What you confirm is inside the question.** The whole block is the question itself (or the recommended option's
+preview), never only text printed before it: Claude Code can hide a message written just before a question, so Plumb
+never relies on one. The same goes for every later checkpoint: the summary, the token set, the file list, a diff, a
+mapping. If a question ever asks you to confirm something you can't see, answer "show it" first.
 
 **Detection is a first guess. Plumb shows it, and you confirm.** Plumb's detection only looks for well-known marker
 files (package manifests, monorepo configs, stylesheets, Xcode and Gradle projects), and no script knows every layout.
-When the result is uncertain, empty or odd, the agent also looks through the folders itself (manifests, global
-stylesheets, routes, screens) and corrects the picture. Either way it always shows you the block above, even when it
-is sure, and nothing it found is used until you confirm it.
+So the agent always investigates too and **checks what the script said**: it counts the files each UI-file pattern
+really matches, checks that each route folder exists, and corrects what is wrong, marking it `(corrected: <why>)` with
+the evidence (`file:line`, file counts). Facts the code answers are shown as `found: … (file:line)` for you to OK;
+only what the code can't tell (who it's for, the feel, your brand) is asked as a question. It always shows you the
+block above, even when it is sure, and nothing it found is used until you confirm it.
+
+**Plumb's scripts read what you confirmed; they don't guess your layout.** What you confirm (the UI packages, the UI
+files, the route folders, the copies, the allowed raw paths) is recorded in `PLUMB.md` (`UI files:`, `Routes:`, …),
+and the audit and the hooks read only that. `scaffold.py --verify` checks it still holds (each route folder exists,
+each UI-file pattern matches a file). Change it later with `/plumb:update` (or `/plumb:init` again). The same holds
+for every script's output (the inventory, the overrides mapping, contrast fixes, audit findings): **scripts give
+evidence, not answers**, and the agent verifies it before showing it to you.
+
+**A git-ignored skill folder.** If your `.gitignore` ignores the place the skill would go (a common `.claude/` line),
+the design system would never be committed. Init shows the `.gitignore` line and asks: un-ignore the skill folder
+(recommended: `.claude/*` and `!.claude/skills/`, since git can't re-include a folder whose parent is ignored) or put
+the system somewhere else. It never goes on silently.
 
 Say OK, or correct anything: the folder, the skill's name or place, the UI packages, the copy path, the UI files (which
 files the audit and the checks treat as UI) or the docs folder. What you confirm is
@@ -157,7 +175,15 @@ When it finishes, **commit the files** and **start a new session** in the projec
 
 - **One question at a time**, through the tool's question picker, with options and the recommended one first, marked
   "(Recommended)", and a reason.
-- **Nothing is written without your OK.** Every command says what it will write and where, and waits.
+- **Nothing is written without your OK.** Every command says what it will write and where, and waits. Create and
+  extract are numbered checkpoints; each one stops and waits for your answer, and a permission prompt from your tool
+  (Copilot CLI asks before commands) never counts as that answer.
+- **What you confirm is inside the question**, in full (not printed above it), with the evidence for each suggestion.
+- **Scripts give evidence, not answers.** The agent checks every script result against your code and marks what it
+  corrected or added before you decide.
+- **Temporary files stay in your project**, in `.plumb-tmp/` (ignored by version control), never in `/tmp` or next to
+  the repo. During create or extract it exists until the setup ends (the end-of-turn check stands down meanwhile) and
+  is removed last; `/plumb:init` treats a leftover one as a half-finished setup and offers to resume.
 - **Nothing is installed or downloaded.** If something seems missing (a package, a font, a browser), Plumb says what
   and why, asks you, and waits for your decision. It never decides on your behalf.
 - **Heavy flows run only when you type them:** `/plumb:init`, `/plumb:create`, `/plumb:extract`, `/plumb:update` and
@@ -346,14 +372,20 @@ plumb Done. Commit these files, start a new session here so the hooks load. UI w
   v4, Tailwind v3, plain CSS; shadcn when present), for you to confirm.
 - **C. Design decisions, one at a time**, each recommended from what you said: personality, density, accent, neutrals,
   semantic colours, label colours, type, spacing, radius, elevation, motion and reduced motion (keep fades, or no
-  animation at all), icons, dark mode (and how your app switches: the system setting, a `.dark` class, or both),
-  accessibility target (WCAG 2.2 AA by default), vocabulary and voice, and the UX patterns (navigation, page anatomy,
-  forms, feedback, empty/loading/error states, destructive actions, onboarding). The reduced-motion and theme-switch
-  answers are recorded in the tokens file (`$extensions.plumb.motion.reduced`, `$extensions.plumb.web.theme_switch`)
+  animation at all), icons, dark mode (and, as its own question, how your app switches: the system setting, a `.dark`
+  class, both, or a `data-theme` attribute; when your code already uses next-themes with `attribute="class"`, `class`
+  is recommended and the question shows the `file:line` it found), accessibility target (WCAG 2.2 AA by default),
+  vocabulary and voice, and the UX patterns as seven questions (navigation, page anatomy, forms, feedback,
+  empty/loading/error states, destructive actions, onboarding; any it skips, it names and says why). With Tailwind it
+  also asks whether to switch off Tailwind's built-in colours so only the tokens' colours exist (recommended for a new
+  app; for an app that already uses classes like `bg-emerald-500`, keeping them is recommended, since a reset would
+  leave them colourless). The reduced-motion, theme-switch and palette answers are recorded in the tokens file
+  (`$extensions.plumb.motion.reduced`, `$extensions.plumb.web.theme_switch`, `$extensions.plumb.web.reset_palette`)
   and the generated CSS follows them.
 - **D. Directions:** 2–3 distinct, finished-looking directions on one page, each with a real screen of your product in
   light and dark. Pick one, combine parts, or change something.
-- **E. Generate**, with a checkpoint at each step: the full token set; the list of files; what changes in a
+- **E. Generate**, with a checkpoint at each step: the full token set; the list of files (the real scaffold runs only
+  with the `--confirm` token printed by the dry run you approved); what changes in a
   stylesheet you already have (e.g. `app/globals.css`: Plumb adds a marked `plumb:start … plumb:end` block and owns
   only that; the rest stays yours); when that stylesheet sets its own theme variables (a stock create-next-app sets
   `--color-background`, `--color-foreground`, `--font-sans` and `--font-mono` in an `@theme inline` block, which would
@@ -369,7 +401,9 @@ CSS copy in your app, the starter components (in your app, e.g. `components/ui/`
 there is no app), and `docs/design/` (directions, specimen, decision log, prototype).
 
 **Done when** the audit on the components exits 0, `build-tokens.py --check` exits 0, and `docs/design/specimen.html`
-shows every token and component in light and dark.
+shows every token and component in light and dark. Before it says done, the agent walks a final checklist: every
+checkpoint asked, the contrast evidence in `dark-mode.md`, the components, the decision log, a first prototype screen
+(or your "later"), the wire-in, and `.plumb-tmp/` removed.
 
 ```
 you   /plumb:create
@@ -397,9 +431,11 @@ plumb Audit on components/ui: 0 errors. Specimen: docs/design/specimen.html. Pro
 
 **What it asks:** which folders hold the UI (and what to leave out); each token group from the before/after page
 (accept, rename, merge, split, leave out; after three groups you may accept the rest at once); the product and UX
-questions the code can't answer; then the same checkpoints as create (token set, files, your existing stylesheet,
-contrast fixes, components); which routes to prototype; and, once you've looked, whether to approve each screen (a
-screen synced from code is never approved without your yes).
+questions the code can't answer; how the app switches themes, reduced motion and (with Tailwind) whether to keep
+Tailwind's built-in colours (keeping them is recommended: the audit then suggests moving those classes onto tokens over
+time); then the same checkpoints as create (token set, files, your existing stylesheet, your stylesheet's own theme
+variables with the mapping the agent checked, contrast fixes, components); which routes to prototype; and, once
+you've looked, whether to approve each screen (a screen synced from code is never approved without your yes).
 
 **What it changes:** the same files as create, plus `docs/design/extract.html` (the before/after page) and one screen
 file per route in `docs/design/prototype/screens/`. Existing components are mapped into the specs; your app code
@@ -626,7 +662,10 @@ move). It reports: project and plugin versions; the system's path, home or linke
 `PLUMB.md` and the real location agree; stale generated files; audit errors, warnings and suggestions; the prototype
 (screens built and to build, approvals pending, screens synced from code to confirm, drift, routes not prototyped,
 tours, whether the pages are stale); the checks on or off; whether the Effective HTML skills are available or Plumb's
-built-in quality bar is in use; uncommitted design files; and the one most useful next step.
+built-in quality bar is in use; uncommitted design files; and the one most useful next step. In a set-up project the
+next step is never "create" or "extract" (it's an approval, a screen to build, `/plumb:prototype`, `/plumb:audit fix`
+or `improve`, `/plumb:update` or `/plumb:upgrade`); a missing `Routes:` line or a leftover `.plumb-tmp/` points you to
+`/plumb:init`. Status writes no file, not even a temporary one.
 
 ```
 you   /plumb:status
@@ -1000,10 +1039,13 @@ the plugin.
   skills tell the agent to report and stop when you had said not to fix now. On Windows, Copilot runs each hook's
   PowerShell command (through `hooks/run.cmd`).
 - **Copilot CLI asks before every script.** It ignores the skills' pre-approved commands (`allowed-tools`), so expect
-  a permission prompt per script run; the skills run each step's scripts in one shell call and keep temporary files
-  inside the project (`.plumb-tmp/`, ignored by version control, removed after). To cut the prompts, answer "remember
-  for this session", or start Copilot with `--allow-tool 'shell(python3)'` (every `python3` command, not only
-  Plumb's: your call). Details: `plugins/plumb/reference/copilot.md`.
+  a permission prompt per script run and per file the agent writes: for a whole `/plumb:init` with create or extract,
+  about 10–15 script prompts (the skills run each checkpoint's scripts in one shell call) plus one per file written
+  (often 15–25); `/plumb:status` asks once. Temporary files stay inside the project (`.plumb-tmp/`, ignored by version
+  control). A permission prompt is never your answer to a Plumb checkpoint: the question comes first. To cut the
+  prompts, answer "remember for this session", start Copilot with `--add-dir <plugin folder>` (no path prompts for
+  the plugin's scripts), or with `--allow-tool 'shell(python3)'` (every `python3` command, not only Plumb's: your call;
+  Copilot has no setting that pre-allows only Plumb's scripts). Details: `plugins/plumb/reference/copilot.md`.
 - **Kiro:** the same three scripts, each run with `--kiro` from `.kiro/hooks/plumb.json`: session start prints the
   status line; the edit check runs on Kiro's `write` and `shell` tools and refuses with exit 2 and the `error:` and
   `fix:` (or `ask the user:`) lines; the end-of-turn check answers `{"decision": "block", "reason": …}`. Kiro's docs
@@ -1122,6 +1164,19 @@ The messages below are what Plumb really prints. Every `error:` line comes with 
 The hooks look for `PLUMB.md` from the folder the session opened in, upwards. Open the session in the project folder
 (not a parent folder), and start a new session after `/plumb:init` so the hooks load. In Claude Code, check the plugin
 is enabled (`/plugin`); in Copilot CLI, restart after installing.
+
+**The agent asks me to confirm a block, list or summary I can't see.**
+Plumb's skills put what you confirm inside the question itself; text printed just before a question can be hidden in
+Claude Code. Answer "show it" (or choose "change something"), and the agent asks again with the content inside.
+
+**The end-of-turn check never stops the agent.**
+Check for a leftover `.plumb-tmp/` folder in the project: the check stands down while it exists (it marks a setup in
+progress). `/plumb:init` treats it as a half-finished setup and offers to resume; if you don't need it, delete it.
+
+**The prototype-first check never refuses a new page, or the audit never reports `route-not-prototyped`.**
+`PLUMB.md` has no `Routes:` line, or its `UI files:` patterns match nothing (a monorepo package such as `frontend/`
+needs `frontend/src/**`, not `src/**`). Run `/plumb:init` (or `/plumb:update`) to record them; `scaffold.py --verify`
+reports both.
 
 **`Plumb: … · design system not found · read the skill before UI changes`**
 `PLUMB.md` names a design-system folder that isn't there. In a linked repo, clone or pull the home repository to that

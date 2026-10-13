@@ -60,12 +60,28 @@ project can run.
 | `/plumb:ux` | After building a screen or flow | UX review against the project's UX rules and its prototype; HTML report; offers Slate tickets. |
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, improve a part; regenerate; record; audit. |
 | `/plumb:upgrade` | The plugin has a new version | Brings the project's copied files, tokens format and `PLUMB.md` up to the plugin's version. |
-| `/plumb:status` | Health | Version, platforms, stale files, audit counts, hooks on/off, linked repos. |
+| `/plumb:status` | Health | Version, platforms, stale files, audit counts, hooks on/off, linked repos. Writes no file; in a set-up project never suggests create or extract. |
 
 Every skill asks one question at a time through the question tool, with options and a
 recommendation first, and never writes into a project without saying where. Skills that run a
 heavy flow (create, extract, upgrade, update) only run when the user typed them; other skills may
 *offer* them.
+
+**What the user confirms is inside the question** (live test 2): the "Plumb found" block, the
+"Right?" summary, decisions, the token set, the dry-run file list, a diff or a mapping is the
+question text (or the recommended option's preview), never only a message before it, because
+Claude Code can hide text printed right before a question; Copilot CLI's ask tool takes it in
+the question text. **Scripts give evidence, not answers:** no script output is golden; the agent
+checks every result against the code, corrects or adds to it (marked `(corrected: <why>)` /
+`(added: <why>)`) and shows that inside the question; a script wrong in a way that will recur is
+reported upstream (an audit false positive may go on `PLUMB.md`'s `Allowed raw values:` after the
+user's OK). **Investigate first:** before asking, the agent gathers every fact the code can answer
+into an evidence table (fact, value, `file:line`, confidence); facts are shown as `found: …` to
+confirm, and only what the code cannot tell is asked. **Scripts read what the user confirmed;
+they don't guess the layout:** the UI files and the route roots (`PLUMB.md` `UI files:` and
+`Routes:`) come from the investigation, are confirmed with matched-file counts, and are what the
+audit and the hooks read. Every skill resolves the plugin root and the project root first and
+reads files only under them; scratch files go only in `<root>/.plumb-tmp/` (status writes none).
 
 ### 3.1 `/plumb:init`
 
@@ -80,7 +96,11 @@ heavy flow (create, extract, upgrade, update) only run when the user typed them;
 ```
 
 Re-running init in a set-up project shows status and offers `/plumb:upgrade` when the plugin is
-newer. It never overwrites an existing design system.
+newer. It never overwrites an existing design system. A skill path the repo's `.gitignore`
+ignores is never accepted silently: init shows the ignoring line and asks (un-ignore the skill
+folder with `.claude/*` + `!.claude/skills/`, recommended, or another location). A leftover
+`<root>/.plumb-tmp/` marks a half-finished setup: init offers to resume. A new `AGENTS.md` is a
+whole file (title, `## Read before you work`, the table header, the row).
 
 ### 3.2 `/plumb:create`
 
@@ -105,6 +125,21 @@ applies to extract (each token group, the screens to prototype, the files to wri
 wire-in steps. `PLUMB.md` names the direct commands; the `(make …)` hints are added only when the
 user says yes to the Makefile targets, and `scaffold.py --verify` reports a make target `PLUMB.md`
 names that the Makefile lacks.
+
+**Checkpoints that stop and wait** (live test 2, where an agent skipped the direction pick, the
+token set and the file list and ran the scaffold unasked): create and extract are numbered
+checkpoints, each ending "STOP: ask, wait for the answer"; a tool's permission prompt never
+counts as the user's OK. The real scaffold needs `--confirm <token>`, printed only by the dry run
+the user approved. Tailwind projects record `$extensions.plumb.web.reset_palette` (answers key
+`reset_palette`): create on a new app recommends the reset (only the tokens' colours exist);
+extract, or create on an app that already uses Tailwind's palette classes, recommends keeping
+them, with the count, and the audit suggests moving them onto tokens. The theme-switch
+recommendation follows one ordered rule (next-themes `attribute="class"` → `class`), with the
+evidence `file:line` in the question. The UX patterns are seven questions. `<root>/.plumb-tmp/`
+lives from the placement OK to the end of setup (the end-of-turn check stands down while it
+exists) and is removed last. Before saying done, the agent walks a final checklist: every
+checkpoint asked, contrast evidence, components, the decision log, a first prototype screen (or
+the user's "later"), the wire-in, `.plumb-tmp/` removed.
 
 **A. The product first** (questions grouped up to four at a time, each with suggestions drawn from
 the brief, README, `AGENTS.md`/`CLAUDE.md`, `SLATE.md` and any prototype or brand files found):
@@ -720,11 +755,15 @@ fails, only added lines are checked); camelCase `toolName`/`toolArgs` input; no
 `Stop` hook reaches Copilot's `agentStop` and makes it continue (live run, 2026-10-12): the block
 arrives as a new prompt, so it can override an earlier "don't fix now"; the skills say to report
 and stop then. Copilot ignores a skill's `allowed-tools`, so every script run asks: the skills run
-a step's scripts in one shell call, keep temporary files in `<root>/.plumb-tmp/` (ignored through
-its own `.gitignore`, removed after the step) instead of the OS temp folder, and pass routes as
+a checkpoint's scripts in one shell call, keep temporary files in `<root>/.plumb-tmp/` (ignored
+through its own `.gitignore`, removed at the end of setup or of the command) instead of the OS
+temp folder, and pass routes as
 `--route=<route>` (a bare `/` reads as a path). Copilot's skill tool lists only skills the model
 may start, so the user-only skills say they are already loaded (else Copilot prints a harmless
-`Skill not found`).
+`Skill not found`). Even batched, a full init with create or extract asks for about 10–15
+script runs plus one per file the agent writes; Copilot has no setting that pre-allows only
+Plumb's scripts (`--allow-tool 'shell(python3)'` allows every `python3` command, `--add-dir`
+removes the plugin folder's path prompts): the user's choice, documented in `copilot.md`.
 
 **Safety:** hooks fail open (no Python, no `PLUMB.md`, a missing or broken `audit.py`, unreadable
 input → exit 0 with at most one stderr line); non-UI edits exit in about 50 ms and UI edits stay

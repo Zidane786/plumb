@@ -727,3 +727,19 @@ def test_copilot_prompts_are_documented_honestly() -> None:
     for phrase in ("what to expect", "one shell call per checkpoint", "--add-dir", "--allow-tool 'shell(python3)'",
                    "no setting that pre-allows only plumb's scripts", "never the user's answer to a plumb checkpoint"):
         assert phrase in flat, f"copilot.md: {phrase!r}"
+
+
+def test_user_docs_and_spec_state_the_live_2_rules() -> None:
+    usage = _flat(USAGE).replace("*", "")
+    for phrase in ("plumb's scripts read what you confirmed; they don't guess your layout", "inside the question",
+                   "scripts give evidence, not answers", "routes:", ".plumb-tmp/", "!.claude/skills/",
+                   "never \"create\" or \"extract\""):
+        assert phrase in usage, f"USAGE.md: {phrase!r}"
+    spec = _flat(SPEC).replace("*", "")
+    for phrase in ("what the user confirms is inside the question", "scripts give evidence, not answers",
+                   "investigate first", "--confirm <token>", "reset_palette", "stop: ask, wait for the answer",
+                   "final checklist"):
+        assert phrase in spec, f"spec: {phrase!r}"
+    test_md = _flat(REPO / "TEST.md")
+    for phrase in ("inside the question", "--confirm <token>", "git-ignored", "routes:", "final checklist"):
+        assert phrase in test_md, f"TEST.md: {phrase!r}"

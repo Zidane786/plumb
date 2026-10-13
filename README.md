@@ -106,8 +106,12 @@ only (it never deletes or changes your values), runs that version's steps asking
 | `/plumb:status` | You want a health check | Read-only: versions, placement, stale files, audit counts, the prototype (built, to build, approvals, drift), the checks, the next step. |
 
 Every command asks one question at a time with options and a recommendation, says what it will write and where before
-writing, and never installs or downloads anything. The heavy flows (init, create, extract, update, upgrade) run only
-when you type them.
+writing, and never installs or downloads anything. What you confirm (the setup it found, the token set, the file list,
+a diff) is inside the question itself, with the evidence from your code; create and extract stop at each checkpoint
+until you answer. Plumb's scripts give evidence, not answers: the agent investigates your project, checks every script
+result against the code and marks what it corrected, and what you confirm (UI files, route folders) is recorded in
+`PLUMB.md` for the scripts and hooks to read. The heavy flows (init, create, extract, update, upgrade) run only when
+you type them.
 
 ## How it flows
 
