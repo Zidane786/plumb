@@ -67,11 +67,14 @@ and `/plumb:status` say "Routes not recorded — run /plumb:init to record them"
 
 ## Temporary files
 
-A file a script needs only for one step (the answers JSON for `scaffold.py`) goes in **`<root>/.plumb-tmp/`**: write
-`<root>/.plumb-tmp/.gitignore` containing `*` first (git ignores the folder; the project's own `.gitignore` is not
-touched), then `<root>/.plumb-tmp/answers.json`. Delete the whole `.plumb-tmp/` folder right after the step that used
-it (the real scaffold run). **Never** use `/tmp`, `%TEMP%` or another session's scratch folder: they sit
-outside the project, so Copilot CLI asks for path access to them, and nothing outside `<root>` is written.
+A file a script needs only for one step (the answers JSON for `scaffold.py`, a `--check` or audit output to read
+back) goes in **`<root>/.plumb-tmp/`**: write `<root>/.plumb-tmp/.gitignore` containing `*` first (the folder stays
+out of commits; the project's own `.gitignore` is not touched), then the file. During a setup (`/plumb:create`,
+`/plumb:extract`) the folder **lives until the whole setup ends** and is deleted then: while it exists the end-of-turn
+check stands down (a setup's half-done state is expected) and session start notes it, so never leave it behind
+(details: "Scratch files" in [interview.md](interview.md)). **Never** use `/tmp`, `%TEMP%`, `$R/..` or another
+session's scratch folder: they sit outside the project, so Copilot CLI asks for path access to them, and nothing
+outside `<root>` is written. Plumb's own scripts follow the same rule (their default outputs are inside the project).
 
 ## detect.py fields
 

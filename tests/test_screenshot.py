@@ -143,6 +143,25 @@ def test_file_screenshot_light_by_default(tmp_path: Path, stub) -> None:
     assert not Path(flag(args, "--user-data-dir")).exists()  # removed afterwards
 
 
+def test_inside_a_plumb_project_the_profile_stays_in_the_project(tmp_path: Path, stub) -> None:
+    """Live test 2 (B10): nothing is written outside the project. With a PLUMB.md in the working folder or above, the
+    throwaway profile lives in <project>/.plumb-tmp/, which this run removes again when it made it."""
+    project = tmp_path / "proj"
+    (project / "app").mkdir(parents=True)
+    (project / "PLUMB.md").write_text("Project: demo\n", encoding="utf-8")
+    src = page(project)
+    r = run(stub, str(src), "--out", str(project / "shot.png"), cwd=project / "app")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (args,) = calls(stub)
+    profile = Path(flag(args, "--user-data-dir"))
+    assert project.resolve() / ".plumb-tmp" in profile.resolve().parents
+    assert not (project / ".plumb-tmp").exists()
+    (project / ".plumb-tmp").mkdir()  # a setup's folder is kept, only the profile goes
+    (project / ".plumb-tmp" / "answers.json").write_text("{}", encoding="utf-8")
+    assert run(stub, str(src), "--out", str(project / "shot.png"), cwd=project).returncode == 0
+    assert sorted(p.name for p in (project / ".plumb-tmp").iterdir()) == ["answers.json"]
+
+
 def test_dark_theme_width_and_height(tmp_path: Path, stub) -> None:
     src = page(tmp_path)
     out = tmp_path / "dark.png"

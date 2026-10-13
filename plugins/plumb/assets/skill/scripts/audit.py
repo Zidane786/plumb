@@ -4900,7 +4900,7 @@ def run_snapshot(out: Path, root: Path, skill_dir: Path, settings: dict) -> int:
             fh.write(json.dumps(snap, ensure_ascii=False) + "\n")
     except OSError as exc:
         print(f"error: cannot write the snapshot {out} ({exc.strerror or exc})\n"
-              f"fix: pass a path in a folder you can write to, e.g. --snapshot /tmp/plumb-snapshot.json", file=sys.stderr)
+              f"fix: pass a path in a folder you can write to, e.g. --snapshot .plumb-tmp/plumb-snapshot.json (inside the project)", file=sys.stderr)
         return 2
     count = len(snap.get("files") or snap.get("mtimes") or {})
     print(f"snapshot: {out} ({snap['mode']} mode, {_plural(count, 'file')} recorded)")

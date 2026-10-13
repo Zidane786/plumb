@@ -13,6 +13,12 @@ the plugin root (`${CLAUDE_PLUGIN_ROOT}`, or the skill's base directory + `/../.
 `python` on Windows). Below it is written `python3`. Run from the project root. Commands never need a shell feature
 (no pipes, no `cd … &&`).
 
+**Where output goes.** Nothing is written outside the project. Every default output path is inside it (the audit
+report and the pages in the docs folder, the generated files in the skill and the copies); a file you need only for
+one step (an answers file, a `--snapshot`, saved `--json` or `--check` output to read back) goes in
+`<root>/.plumb-tmp/` (with a `.gitignore` of `*`; "Temporary files" in [placement.md](placement.md)), never `/tmp`,
+`%TEMP%` or a folder above the project.
+
 **Errors.** Every script prints `error: <what>` then `fix: <exact command>` (or `ask the user: …`) and never a
 traceback. Bad input exits 2. Do what the `fix:` line says, or ask the user when it says so; never guess.
 
@@ -161,7 +167,7 @@ Exit codes: 0 · 2 bad input (no `PLUMB.md`, no version line, a damaged `plugin.
 It finds Chrome, Edge or Chromium already on the machine: the PATH names `google-chrome`, `chromium`,
 `chromium-browser`, `microsoft-edge` (and `-stable`, `chrome`, `msedge`); macOS app bundles in `/Applications` and
 `~/Applications`; Windows `chrome.exe` / `msedge.exe` under Program Files and LocalAppData. It runs it headless with a
-throwaway profile and background networking off. **It never installs or downloads a browser.** Exit codes: 0 written ·
+throwaway profile (inside a Plumb project in `<project>/.plumb-tmp/`, removed afterwards) and background networking off. **It never installs or downloads a browser.** Exit codes: 0 written ·
 1 the browser ran but wrote no screenshot (or hung) · 2 bad input · 3 no browser:
 `note: visual comparison skipped: no browser found` + `fix:`; skip the visual part, say so in the report, and run every
 other check. A `#fragment` that scrolls to an anchor can come out blank in headless Chrome and Edge; the prototype's
