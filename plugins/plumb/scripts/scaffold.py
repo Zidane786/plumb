@@ -36,7 +36,10 @@ Ownership (spec 5.1):
       every `make <target>` PLUMB.md names exists in the Makefile (a target missing from a Makefile that includes
       other files is a note), and that the copy targets resolve (not in a `Role: linked` repo: the home owns them). Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
-      suggested --relocate command. Exit 0 when there is no problem, 1 otherwise.
+      suggested --relocate command. It also checks PLUMB.md's Routes: (each recorded path exists, each entry has a
+      kind; not recorded is a note), UI files: (matching 0 files while the project has UI code is a problem) and, in a
+      repository, that the skill folder, PLUMB.md and the docs folder are not ignored (check-ignore; a problem with
+      the fix). Exit 0 when there is no problem, 1 otherwise.
 
 Generated files ([G]) are not written here: run build-tokens.py afterwards. Nothing is installed or downloaded.
 
@@ -54,8 +57,9 @@ answers.json (every key optional; unknown keys are ignored with a note):
     "role":        "home" | "linked",
     "ui_packages": ". (Next.js · Tailwind v4)",        (PLUMB.md)
     "routes":      "frontend/src/app (next-app)",       (PLUMB.md `Routes:`: the app's page roots the agent found and the
-                   user confirmed, each "<path> (<kind>)": next-app, next-pages, nuxt, sveltekit, router (a router config
-                   file or glob), comma separated, or "none"; unanswered: not recorded (web) or none (mobile only).
+                   user confirmed, each "<path> (<kind>)": next-app, next-pages, nuxt, sveltekit, angular (the routes
+                   file), router (another router config file or glob), comma separated, or "none"; a missing kind is
+                   refused; unanswered: not recorded (web) or none (mobile only).
                    Scripts and hooks read routes only from here: they never guess the layout)
     "ui_files":    "app/**, components/** · *.tsx *.css",   (PLUMB.md; unanswered: detect.py's value for the chosen
                    platforms' packages (Angular: src/** · *.component.ts ... styles.css; web next to iOS/Android: the
