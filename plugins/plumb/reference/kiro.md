@@ -37,7 +37,8 @@ session start prints one line: the checks are off, run `kiro.py install` again.
 
 - **Commands** are `/plumb-init`, `/plumb-create`, … (Kiro skill names cannot hold `:`); the hooks write them that way
   in every refusal and nudge. The copies name the plugin folder as `ROOT`, link the plugin's `reference/`, and keep
-  only Agent Skills front matter (`name`, `description`).
+  only Agent Skills front matter (`name`, `description`). Plumb's own mistakes go to `/plumb-feedback` (the same
+  `~/.plumb/feedback/` log as in the other CLIs).
 - **Steering:** Kiro reads `AGENTS.md`, so Plumb's "read before you work" row applies; `/plumb-init` can also write
   `.kiro/steering/plumb.md` ([wire-in.md](wire-in.md)). The project's design-system skill stays in one place.
 - **Hooks:** the same three scripts, each command run with `--kiro` (the hook answers in Kiro's dialect).

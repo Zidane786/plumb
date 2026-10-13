@@ -28,8 +28,9 @@ These instructions are already loaded: don't load this skill again with a skill 
   when the tool has one (Claude Code's `AskUserQuestion`). Never only in a message before the question (Claude Code can
   hide it), never "the list above"; Copilot CLI's ask tool: in the question text ([interview.md](../../reference/interview.md), "How to ask").
 - **Scripts give evidence, not answers:** check every script result against the code, correct or add to it (marked
-  `(corrected: <why>)` / `(added: <why>)`), show that inside the question. **Investigate first:** gather every fact
-  the code can answer before asking (interview.md); only what the code cannot tell is a question.
+  `(corrected: <why>)` / `(added: <why>)`), show that inside the question. When a Plumb script or hook is wrong and
+  you correct it, record the Plumb mistake with /plumb:feedback. **Investigate first:** gather every fact the code can
+  answer before asking (interview.md); only what the code cannot tell is a question.
 - **One at a time** (part A may group up to four), the recommendation first marked "(Recommended)" and **why**. Light
   **and** dark by default. **Never install or download anything**; if something seems needed, **ask the user and wait**.
 - Pre-approved commands: the `allowed-tools` above; anything else asks first. Copilot CLI asks for every command: run a
@@ -175,8 +176,7 @@ Check each line yourself; one that does not hold is not done: go back to its che
 - [ ] A direction was picked (8); the token set (9), the dry-run list (10), the stylesheet diff (11) and the mapping
       (12) were OK'd where they applied; the real scaffold ran with `--confirm` from that dry run
 - [ ] Contrast evidence: `references/dark-mode.md` holds the computed contrast block; no `contrast` error is left
-- [ ] Components written by you; their audit and `build-tokens.py --check` exit 0; `docs/design/decisions.md` has an
-      entry per decision with who decided
+- [ ] Components written by you; their audit and `build-tokens.py --check` exit 0; `decisions.md` has every decision
 - [ ] A first prototype screen exists in `docs/design/prototype/screens/`, or the user chose "later" in 16
 - [ ] `motion.reduced`, `web.theme_switch` (Tailwind: `web.reset_palette`) are in the tokens file; nothing written
       outside `<root>`, nothing installed or downloaded

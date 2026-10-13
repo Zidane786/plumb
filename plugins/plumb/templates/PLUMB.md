@@ -7,6 +7,7 @@ Platforms: {{PLATFORMS}}
 UI packages: {{UI_PACKAGES}}
 Python: `{{PYTHON}}`
 No downloads: nothing is installed or downloaded; if something is missing, ask the user and wait for their decision.
+Plumb's own mistakes (a script, hook or skill got it wrong): /plumb:feedback. The project's design issues: /plumb:audit.
 
 ## Checks
 Edit check: {{EDIT_CHECK}}

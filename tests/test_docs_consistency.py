@@ -26,7 +26,8 @@ SKILLS = PLUGIN / "skills"
 REFERENCE = PLUGIN / "reference"
 
 # The spec's command table (section 3): every command 1.0.0 ships.
-COMMANDS = {"init", "create", "extract", "prototype", "tour", "audit", "ux", "update", "upgrade", "status"}
+COMMANDS = {"init", "create", "extract", "prototype", "tour", "audit", "ux", "update", "upgrade", "status",
+            "feedback"}
 # Heavy flows run only when the user typed them (spec section 3).
 USER_ONLY = {"init", "create", "extract", "update", "upgrade"}
 # Internal project names that must never appear in product text. Add more without committing them: set
@@ -45,8 +46,9 @@ INTERNAL_NAMES = _internal_names()
 TEXT_SUFFIXES = {".md", ".py", ".json", ".html", ".css", ".js", ".tmpl", ".snippet", ".sh", ".cmd", ".txt", ".toml",
                  ".yml", ".yaml", ".swift", ".kt", ".tailwind-v3", ".tailwind-v4"}
 MAX_SKILL_LINES = 200
-# Skills that write into a project keep the user in the loop (owner requirement).
-CONFIRM_FIRST = COMMANDS - {"status"}
+# Skills that write into a project keep the user in the loop (owner requirement). Feedback never writes into the
+# project: its log lives in ~/.plumb/feedback/ (test_feedback_* below).
+CONFIRM_FIRST = COMMANDS - {"status", "feedback"}
 # Read-only skills that ask nothing.
 NO_QUESTIONS = {"status"}
 ROOT_PATH = re.compile(r"<?ROOT>?/([A-Za-z0-9_./-]*)")
@@ -964,3 +966,97 @@ def test_init_rechecks_with_check_ignore_q() -> None:
     # Re-review N3: after the fix, `-v` still prints a matching `!` line (kept); `-q` exit 1 is the clear answer.
     flat = _flat(SKILLS / "init/SKILL.md")
     assert "check-ignore -q" in flat and "exit 1" in flat and "a `!` line means kept" in flat
+
+
+# ---------------------------------------------------------------- /plumb:feedback (Plumb's own mistakes)
+
+FEEDBACK = SKILLS / "feedback/SKILL.md"
+FEEDBACK_DESCRIPTION = ("Record a mistake in Plumb itself: a Plumb script, hook, skill, template or doc that gave a wrong, "
+                        "incomplete or confusing result you had to correct. Not for the project's own design issues "
+                        "— those are audit findings.")
+FEEDBACK_POINTER = ("when a plumb script or hook is wrong and you correct it, record the plumb mistake with "
+                    "/plumb:feedback.")
+FEEDBACK_CATEGORIES = ("missed structure", "wrong guess", "false positive", "missed problem", "crash",
+                       "confusing message", "skill gap", "docs mismatch", "cli quirk")
+FEEDBACK_FIELDS = ("**when:**", "**project shape:**", "**where it failed:**", "**command:**", "**given:**",
+                   "**expected:**", "**evidence:**", "**repro:**", "**category:**", "**suggested fix in plumb:**",
+                   "**handled here:**", "**exit code:**", "**traceback (last lines):**", "**hook:**")
+
+
+def test_feedback_is_model_invocable_and_says_when_to_use_it() -> None:
+    meta = frontmatter(FEEDBACK)
+    assert "disable-model-invocation" not in meta, "the agent records Plumb mistakes itself: model-invocable"
+    assert meta["description"].strip('"').startswith(FEEDBACK_DESCRIPTION)
+
+
+def test_feedback_starts_with_plumb_mistakes_only_and_the_test() -> None:
+    body = _body(FEEDBACK)
+    first = [ln for ln in body.splitlines() if ln.strip() and not ln.startswith("#")][0]
+    assert first.startswith("**Plumb mistakes only.** The test: **would fixing this mean changing Plumb, not the "
+                            "project?**"), first
+    head = " ".join(body.split("## Step 0", 1)[0].split()).lower()
+    for phrase in ("`/plumb:audit`", "the decision log", "its own tracker", "detect.py", "frontend/src/**",
+                   "not feedback (audit):", "#123456", "never a source dump", "never a secret"):
+        assert phrase in head, f"feedback, before step 0: {phrase!r}"
+
+
+def test_feedback_log_format_and_place() -> None:
+    flat = _flat(FEEDBACK).replace("\\", "/")
+    for phrase in ("~/.plumb/feedback/", "%userprofile%/.plumb/feedback/", "never written into the project",
+                   "yyyy-mm-dd-<script>-<category>-<project>.md", "plumb adds no question", "hooks.md", "handled.md",
+                   "nothing leaves the machine", "never sent", "one at a time", "most frequent first",
+                   "given vs expected", "draft a github issue", "mark a group handled", "filter by project, script or date",
+                   "handled in <version>", "a minimal repro", "a failing test", "a patch release", "/plumb-feedback"):
+        assert phrase in flat, f"feedback: {phrase!r}"
+    for category in FEEDBACK_CATEGORIES:
+        assert category in flat, f"feedback: category {category!r}"
+    for field in FEEDBACK_FIELDS:
+        assert field in flat, f"feedback: record field {field!r}"
+
+
+@pytest.mark.parametrize("path", [p for p in skill_files() if p.parent.name != "feedback"], ids=lambda p: p.parent.name)
+def test_every_skill_points_to_plumb_feedback(path: Path) -> None:
+    flat = _flat(path).replace("*", "")
+    assert FEEDBACK_POINTER in flat, f"{path.parent.name}: the /plumb:feedback pointer next to 'scripts give evidence'"
+    assert flat.index("scripts give evidence, not answers") < flat.index(FEEDBACK_POINTER)
+
+
+POINTER_FILES = (skill_files() + sorted(REFERENCE.glob("*.md")) + [
+    PLUGIN / "templates/PLUMB.md", PLUGIN / "templates/agents-row.md", PLUGIN / "hooks/session_start.py",
+    PLUGIN / "hooks/_hooklib.py"])
+
+
+@pytest.mark.parametrize("path", POINTER_FILES, ids=lambda p: p.relative_to(PLUGIN).as_posix())
+def test_every_feedback_pointer_says_plumb_mistakes(path: Path) -> None:
+    # Owner: every pointer says "Plumb mistakes" / "Plumb's own mistakes", so no one logs the project's issues there.
+    if path == FEEDBACK:
+        return
+    flat = _flat(path)
+    for m in re.finditer(r"/plumb[:-]feedback", flat):
+        near = flat[max(0, m.start() - 220):m.end() + 60]
+        assert "plumb mistake" in near or "plumb's own mistake" in near, \
+            f"{path.relative_to(REPO)}: a /plumb:feedback pointer must say 'Plumb mistakes': ...{near}..."
+
+
+def test_templates_and_session_start_point_to_feedback() -> None:
+    row = (PLUGIN / "templates/agents-row.md").read_text(encoding="utf-8")
+    assert row.rstrip().endswith("· Plumb's own mistakes → /plumb:feedback |")
+    plumb_md = (PLUGIN / "templates/PLUMB.md").read_text(encoding="utf-8")
+    assert ("Plumb's own mistakes (a script, hook or skill got it wrong): /plumb:feedback. The project's design issues: "
+            "/plumb:audit.\n") in plumb_md
+    hook = (PLUGIN / "hooks/session_start.py").read_text(encoding="utf-8")
+    m = re.search(r'^FEEDBACK_POINTER = "([^"]+)"$', hook, re.M)
+    assert m and m.group(1).startswith("Plumb mistakes") and "/plumb:feedback" in m.group(1)
+    assert len(m.group(1)) <= 90, "one short line"
+
+
+def test_user_docs_cover_feedback() -> None:
+    usage = _flat(USAGE).replace("\\", "/")
+    for phrase in ("how to read findings", "~/.plumb/feedback/", "%userprofile%/.plumb/feedback/", "hooks.md",
+                   "plumb mistakes only", "would fixing this mean changing plumb, not the project?",
+                   "a minimal repro", "a failing test", "patch release", "mark the group handled", "never sent"):
+        assert phrase in usage, f"USAGE.md: {phrase!r}"
+    spec = _flat(SPEC)
+    assert "/plumb:feedback" in spec and "~/.plumb/feedback/" in spec and "hooks.md" in spec
+    for path in (REPO / "TEST.md", PLUGIN / "CHANGELOG.md", REPO / "SECURITY.md"):
+        assert "~/.plumb/feedback/" in _flat(path), path.name
