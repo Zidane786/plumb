@@ -260,10 +260,45 @@ def test_dynamic_route_is_quoted_in_the_fix(tmp_path: Path) -> None:
 
 def test_no_prototype_sync_line_means_warn(tmp_path: Path) -> None:
     project = make_project(tmp_path, "next")
-    write(project / "PLUMB.md", "Project: demo\n")
+    write(project / "PLUMB.md", "Project: demo\nRoutes: app (next-app)\n")
     write(project / "app/billing/page.tsx", NEW_PAGE)
     out = audit(project)
     assert [f["severity"] for f in fidelity(out, "route-not-prototyped")] == ["warn"]
+
+
+def test_routes_not_recorded_skips_route_not_prototyped_with_a_note(tmp_path: Path) -> None:
+    """Scripts never guess the app's layout: with no `Routes:` in PLUMB.md (a project set up before it existed) the
+    rule is skipped and the audit says why, instead of reading next.config.* or package.json."""
+    project = make_project(tmp_path, "next")
+    edit(project / "PLUMB.md", "Routes: app (next-app)\n", "")
+    write(project / "app/billing/page.tsx", NEW_PAGE)
+    out = audit(project)
+    assert fidelity(out, "route-not-prototyped") == []
+    assert "note: Routes not recorded: run /plumb:init to record them" in out["_stderr"]
+    edit(project / "PLUMB.md", "Platforms: web\n", "Platforms: web\nRoutes: app (next-app)\n")
+    out = audit(project)
+    assert where(out, "route-not-prototyped") == [("app/billing/page.tsx", 1)]
+    assert "Routes not recorded" not in out["_stderr"]
+
+
+def test_monorepo_frontend_page_is_not_prototyped(tmp_path: Path) -> None:
+    """The live-test monorepo: the design system at the repo root, Next.js only in frontend/ (its own package.json and
+    next.config), Python in backend/. The recorded root finds the new page; UI files are repo-relative."""
+    project = make_project(tmp_path, "next")
+    for name in list((project / "app").rglob("*")) + [project / "next.config.mjs"]:
+        if name.is_file():
+            dest = project / "frontend/src" / name.relative_to(project) if name.suffix != ".mjs" else project / "frontend" / name.name
+            write(dest, read(name))
+            name.unlink()
+    shutil.rmtree(project / "app")
+    write(project / "backend/main.py", "print('api')\n")
+    write(project / "frontend/package.json", '{"dependencies": {"next": "16.0.0"}}\n')
+    for p in (project / "docs/design/prototype/screens.json",):
+        write(p, read(p).replace('"app/', '"frontend/src/app/'))
+    edit(project / "PLUMB.md", "Routes: app (next-app)\n", "Routes: frontend/src/app (next-app)\n")
+    write(project / "frontend/src/app/usage-reports/page.tsx", NEW_PAGE)
+    out = audit(project)
+    assert where(out, "route-not-prototyped") == [("frontend/src/app/usage-reports/page.tsx", 1)]
 
 
 @pytest.mark.parametrize("sync,severity", [("on", "error"), ("off", "warn")])
@@ -698,14 +733,12 @@ def test_paths_limit_routes_to_the_audited_files_but_screens_are_all_checked(tmp
 # ---------------------------------------------------------------- route discovery (pure)
 
 
-def routes(tmp_path: Path, files: dict, next_project: bool = False, nuxt_project: bool = False) -> list:
-    if next_project:
-        write(tmp_path / "next.config.js", "module.exports = {};\n")
-    if nuxt_project:
-        write(tmp_path / "package.json", '{"dependencies": {"nuxt": "^3.0.0"}}\n')
+def routes(tmp_path: Path, files: dict, recorded: str = "") -> list:
+    """The routes discover_routes finds in files, reading only PLUMB.md's `Routes:` value (recorded)."""
     for name, text in files.items():
         write(tmp_path / name, text)
-    found = A.discover_routes(tmp_path, [(name, text) for name, text in files.items()])
+    roots = A.route_roots({"Routes": recorded})
+    found = A.discover_routes(tmp_path, [(name, text) for name, text in files.items()], roots)
     return sorted((r.route, r.file, r.line, r.source) for r in found)
 
 
@@ -715,8 +748,11 @@ def test_next_app_router_routes(tmp_path: Path) -> None:
         "src/app/blog/[slug]/page.jsx": "", "app/_private/secret/page.tsx": "", "app/@modal/login/page.tsx": "",
         "app/api/route.ts": "", "app/settings/loading.tsx": "",
     }
-    assert routes(tmp_path / "plain", files) == []
-    assert routes(tmp_path / "next", files, next_project=True) == [
+    write(tmp_path / "next/next.config.js", "module.exports = {};\n")  # a Next project, but nothing recorded
+    assert routes(tmp_path / "next", files) == []
+    assert routes(tmp_path / "next", files, "(not recorded yet)") == []
+    assert routes(tmp_path / "next", files, "none") == []
+    assert routes(tmp_path / "rec", files, "app (next-app), src/app") == [
         ("/", "app/page.tsx", 1, "app/page.tsx"),
         ("/about", "app/(marketing)/about/page.tsx", 1, "app/(marketing)/about/page.tsx"),
         ("/blog/[slug]", "src/app/blog/[slug]/page.jsx", 1, "src/app/blog/[slug]/page.jsx"),
@@ -724,24 +760,46 @@ def test_next_app_router_routes(tmp_path: Path) -> None:
     ]
 
 
-def test_next_pages_router_routes_only_in_a_next_project(tmp_path: Path) -> None:
+def test_monorepo_frontend_routes_come_from_the_recorded_root(tmp_path: Path) -> None:
+    """A monorepo: Next.js in frontend/ (no next.config or next dependency at the repo root), Python in backend/."""
+    files = {"frontend/src/app/page.tsx": "", "frontend/src/app/usage-reports/page.tsx": "",
+             "frontend/src/app/(dash)/keys/[id]/page.tsx": "", "backend/app/page.py": "", "app/page.tsx": ""}
+    assert routes(tmp_path, files) == []
+    assert [r[0] for r in routes(tmp_path, files, "frontend/src/app (next-app)")] == [
+        "/", "/keys/[id]", "/usage-reports"]
+
+
+def test_next_pages_router_routes_only_when_recorded(tmp_path: Path) -> None:
     files = {"pages/index.tsx": "", "pages/bookings/[id].tsx": "", "pages/_app.tsx": "", "pages/_document.tsx": "",
              "pages/api/hello.ts": "", "pages/settings/index.jsx": ""}
     assert routes(tmp_path / "plain", files) == []
-    assert [r[0] for r in routes(tmp_path / "next", files, next_project=True)] == ["/", "/bookings/[id]", "/settings"]
+    assert [r[0] for r in routes(tmp_path / "next", files, "pages")] == ["/", "/bookings/[id]", "/settings"]
 
 
 def test_sveltekit_and_nuxt_file_routes(tmp_path: Path) -> None:
     files = {"src/routes/+page.svelte": "", "src/routes/(app)/settings/+page.svelte": "",
              "src/routes/+layout.svelte": "", "pages/about.vue": "", "pages/index.vue": ""}
-    assert [r[0] for r in routes(tmp_path / "nuxt", files, nuxt_project=True)] == ["/", "/", "/about", "/settings"]
-    assert [r[0] for r in routes(tmp_path / "plain", files)] == ["/", "/settings"]  # pages/*.vue: Nuxt only
+    assert [r[0] for r in routes(tmp_path / "nuxt", files, "src/routes, pages (nuxt)")] == ["/", "/", "/about",
+                                                                                           "/settings"]
+    assert [r[0] for r in routes(tmp_path / "svelte", files, "src/routes (sveltekit)")] == ["/", "/settings"]
+
+
+def test_routes_setting_parses_paths_kinds_and_problems() -> None:
+    parse = A.P.parse_routes
+    assert parse("") == (None, []) and parse(None) == (None, [])
+    assert parse("(not recorded yet: /plumb:init records them)") == (None, [])
+    assert parse("none") == ([], [])
+    assert parse("./frontend/src/app/ (next-app), src\\app\\app.routes.ts, web/src/routes") == (
+        [("frontend/src/app", "next-app"), ("src/app/app.routes.ts", "router"), ("web/src/routes", "sveltekit")], [])
+    roots, problems = parse("../x/app (next-app), /abs/app, frontend/views, frontend/pages (remix)")
+    assert roots == []
+    assert len(problems) == 4 and all(p.startswith("Routes: ") for p in problems)
 
 
 def test_plain_vue_app_with_components_in_src_pages_has_no_route_findings(tmp_path: Path) -> None:
     """A Vue + vue-router app keeps page components in src/pages/; only the router config declares routes."""
     project = tmp_path / "Vue Café"
-    write(project / "PLUMB.md", "Project: vue\n\n## Prototype\nPrototype sync: on\n")
+    write(project / "PLUMB.md", "Project: vue\nRoutes: src/router/index.ts (router)\n\n## Prototype\nPrototype sync: on\n")
     write(project / "package.json", '{"dependencies": {"vue": "^3.4.0", "vue-router": "^4.3.0"}}\n')
     write(project / "src/pages/HomePage.vue", "<template>\n  <h1>Home</h1>\n</template>\n")
     write(project / "src/pages/AboutPage.vue", "<template>\n  <h1>About</h1>\n</template>\n")
@@ -762,7 +820,7 @@ def test_plain_vue_app_with_components_in_src_pages_has_no_route_findings(tmp_pa
     scripts.mkdir(parents=True)
     for name in ("_plumb.py", "audit.py", "build-tokens.py", "build-prototype.py"):
         shutil.copy(SCRIPTS / name, scripts / name)
-    assert routes(tmp_path / "plain-vue", {"src/pages/HomePage.vue": ""}) == []
+    assert routes(tmp_path / "plain-vue", {"src/pages/HomePage.vue": ""}, "src/router/index.ts") == []
     out = audit(project)
     assert where(out, "route-not-prototyped") == [], fidelity(out)
     write(project / "src/pages/Settings.vue", "<template>\n  <h1>Settings</h1>\n</template>\n")
@@ -775,7 +833,8 @@ def test_vue_router_routes(tmp_path: Path) -> None:
     text = ("import { createRouter } from 'vue-router';\nimport HomeView from '../views/HomeView.vue';\n\n"
             "export default createRouter({\n  routes: [\n    { path: '/', name: 'home', component: HomeView },\n"
             "    { path: '/about', component: () => import('../views/AboutView.vue') },\n  ],\n});\n")
-    assert routes(tmp_path, {"src/router/index.ts": text}) == [
+    assert routes(tmp_path, {"src/router/index.ts": text}) == []  # not recorded: no guessing
+    assert routes(tmp_path, {"src/router/index.ts": text}, "src/router/index.ts") == [
         ("/", "src/router/index.ts", 6, "src/views/HomeView.vue"),
         ("/about", "src/router/index.ts", 7, "src/views/AboutView.vue"),
     ]
@@ -784,7 +843,8 @@ def test_vue_router_routes(tmp_path: Path) -> None:
 def test_angular_routes_nested_lazy_and_redirects(tmp_path: Path) -> None:
     project = FIXTURES / "angular"
     text = read(project / "src/app/app.routes.ts")
-    found = sorted((r.route, r.file, r.line, r.source) for r in A.discover_routes(project, [("src/app/app.routes.ts", text)]))
+    found = sorted((r.route, r.file, r.line, r.source) for r in A.discover_routes(project, [("src/app/app.routes.ts", text)],
+                                                                         A.route_roots({"Routes": "src/app/*.routes.ts"})))
     assert found == [
         ("/", "src/app/app.routes.ts", 6, "src/app/home/home.component.ts"),
         ("/account/settings", "src/app/app.routes.ts", 12, "src/app/settings/settings.component.ts"),
@@ -802,7 +862,8 @@ def test_a_large_routes_file_is_read_in_linear_time(tmp_path: Path) -> None:
         best = float("inf")
         for _ in range(3):
             start = time.perf_counter()
-            found = A.discover_routes(tmp_path, [("src/app/app.routes.ts", text)])
+            found = A.discover_routes(tmp_path, [("src/app/app.routes.ts", text)],
+                                      [("src/app/app.routes.ts", "router")])
             best = min(best, time.perf_counter() - start)
         assert len(found) == n and found[-1].route == f"/page-{n - 1}" and found[-1].line == n + 3
         return best

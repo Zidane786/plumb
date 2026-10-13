@@ -503,6 +503,37 @@ def test_screen_changed_after_approval_does_not_cover_a_new_route(launcher, tmp_
     assert "is not approved yet" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
 
 
+def test_new_route_in_a_monorepo_frontend_is_refused(launcher, tmp_path, proj):
+    """The live-test monorepo: Next.js only in frontend/ (no next.config or next dependency at the repo root, where
+    the design system is), Python in backend/. PLUMB.md's Routes: names frontend/src/app; nothing else is read."""
+    text = read(proj / "PLUMB.md").replace("Routes: app (next-app)", "Routes: frontend/src/app (next-app)")
+    write(proj / "PLUMB.md", text.replace("UI files: app/**, components/**", "UI files: frontend/src/**"))
+    write(proj / "frontend/package.json", '{"dependencies": {"next": "16.0.0"}}\n')
+    write(proj / "backend/main.py", "print('api')\n")
+    reason = refused(write_tool(launcher, tmp_path, proj, "frontend/src/app/usage-reports/page.tsx", BILLING))
+    assert "error: frontend/src/app/usage-reports/page.tsx is a new screen with no approved prototype" in reason
+    assert "fix: /plumb:prototype usage-reports" in reason
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))  # not a recorded route root
+
+
+def test_prototype_first_fails_open_when_routes_are_not_recorded(launcher, tmp_path, proj):
+    """A PLUMB.md from before Routes: (or not filled yet): no guessing from next.config or package.json; the edit is
+    allowed and session start says the routes are not recorded."""
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace("Routes: app (next-app)\n", ""))
+    write(proj / "next.config.mjs", "export default {};\n")
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "Routes not recorded \u2014 run /plumb:init to record them" in text
+    write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace(
+        "Allowed raw values:", "Routes: (not recorded yet: /plumb:init records the app's page roots)\nAllowed raw values:"))
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+
+
+def test_session_start_is_quiet_about_routes_once_recorded(launcher, tmp_path, proj):
+    text = context(session_start(launcher, tmp_path, proj))
+    assert "Routes not recorded" not in text and ".plumb-tmp" not in text
+
+
 def test_prototype_first_is_off_when_prototype_sync_is_off(launcher, tmp_path, proj):
     set_plumb(proj, sync="off")
     allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))

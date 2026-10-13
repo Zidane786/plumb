@@ -48,6 +48,10 @@ answers.json (every key optional; unknown keys are ignored with a note):
     "python":      "python3",                          (the command PLUMB.md and the Makefile use)
     "role":        "home" | "linked",
     "ui_packages": ". (Next.js · Tailwind v4)",        (PLUMB.md)
+    "routes":      "frontend/src/app (next-app)",       (PLUMB.md `Routes:`: the app's page roots the agent found and the
+                   user confirmed, each "<path> (<kind>)": next-app, next-pages, nuxt, sveltekit, router (a router config
+                   file or glob), comma separated, or "none"; unanswered: not recorded (web) or none (mobile only).
+                   Scripts and hooks read routes only from here: they never guess the layout)
     "ui_files":    "app/**, components/** · *.tsx *.css",   (PLUMB.md; unanswered: detect.py's value for the chosen
                    platforms' packages (Angular: src/** · *.component.ts ... styles.css; web next to iOS/Android: the
                    mobile folders too; a chosen platform with no package keeps *.swift / *.kt), printed as a note;
@@ -172,7 +176,7 @@ DEFAULT_ICONS: List[Dict[str, str]] = [
 KNOWN_KEYS = frozenset((
     "name", "description", "audience", "direction", "voice", "themes", "python", "role", "ui_packages", "ui_files",
     "allowed_raw", "web_copies", "colors", "fonts", "type_scale", "spacing", "radius", "shadows", "motion", "icons",
-    "theme_switch", "reduced_motion",
+    "theme_switch", "reduced_motion", "routes", "reset_palette",
 ))
 # Answers that, when absent, are listed in design.md as neutral defaults.
 DEFAULT_NOTE_KEYS = (("description", "description"), ("audience", "audience"), ("direction", "direction"),
@@ -439,7 +443,7 @@ def detected_ui_files(root: Path, platforms: List[str]) -> Optional[str]:
     try:
         mod = load_detect()
         ui, _ = mod.classify(root)
-        value = mod.ui_files_for([u for u in ui if set(u["platforms"]) & set(platforms)])
+        value = mod.ui_files_for([u for u in ui if set(u["platforms"]) & set(platforms)], root)
     except Exception as exc:  # noqa: BLE001 - detection is a convenience: fall back to the platform default
         print(f"note: UI files: the platform default (detecting the stack failed: {exc})", file=sys.stderr)
         return None
@@ -460,6 +464,7 @@ def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: st
                   file=sys.stderr)
     ui_files = ui_files or " · ".join(PLATFORM_UI_FILES[p] for p in platforms)
     return {
+        "ROUTES": routes_value(answers, platforms),
         "PROJECT": name, "SKILL_DIR": skill_dir + "/", "ROLE": base["ROLE"], "PLATFORMS": ", ".join(platforms),
         "UI_PACKAGES": answers.get("ui_packages") or (f". ({STYLING_LABEL[styling]})" if "web" in platforms else "."),
         "PYTHON": base["PYTHON"], "EDIT_CHECK": "on", "END_CHECK": "on", "THEMES": base["THEMES"],
@@ -468,6 +473,35 @@ def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: st
         "SCREENS_MAP": f"{docs}/prototype/screens.json", "PROTOTYPE_SYNC": "on",
         "DATE": base["DATE"], "DIRECTION": base["DIRECTION"],
     }
+
+
+ROUTES_UNRECORDED = "(not recorded yet: /plumb:init records the app's page roots)"
+
+
+def routes_value(answers: dict, platforms: List[str]) -> str:
+    """PLUMB.md's `Routes:` value: the `routes` answer (the page roots the agent found and the user confirmed, e.g.
+    "frontend/src/app (next-app)"), checked by the same parser the audit and the hooks use; unanswered: "none" without
+    a web platform, else a placeholder that reads as not recorded (scripts never guess the app's layout)."""
+    given = answers.get("routes")
+    if given is None:
+        return "none" if "web" not in platforms else ROUTES_UNRECORDED
+    if not isinstance(given, str) or not given.strip() or re.search(r"[\r\n]", given):
+        raise ScaffoldError("answers.routes must be a non-empty text on one line",
+                            'write it like "frontend/src/app (next-app)", "src/app/app.routes.ts (router)" or "none"')
+    roots, problems = load_plumb_core().parse_routes(given)
+    if problems or roots is None:
+        raise ScaffoldError("answers.routes: " + ("; ".join(problems) if problems else f"{given!r} is not a value"),
+                            'write each page root as "<path> (<kind>)", kinds: next-app, next-pages, nuxt, sveltekit, '
+                            'router (a router config file), comma separated; or "none"')
+    return " ".join(given.split())
+
+
+def load_plumb_core():
+    """The plugin's _plumb.py (the PLUMB.md parsers the audit and hooks use)."""
+    spec = importlib.util.spec_from_file_location("plumb_core_for_scaffold", SKILL_SRC / "scripts" / "_plumb.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
 
 
 # ---------------------------------------------------------------- rendering
@@ -828,6 +862,88 @@ def check_make_targets(text: str, root: Path) -> "Tuple[Optional[str], Optional[
                         f"target{'s' if len(missing) != 1 else ''}")
 
 
+def check_routes(keys: dict, root: Path) -> List[Tuple[str, str]]:
+    """PLUMB.md `Routes:`: each recorded page root (a folder, or a router file or glob) exists. Not recorded is a note
+    (a project set up before 1.0.0's Routes line keeps working: the route checks stay off until /plumb:init records
+    them). Returns (ok | note | problem, text) lines."""
+    core = load_plumb_core()
+    roots, problems = core.parse_routes(keys.get("Routes"))
+    out: List[Tuple[str, str]] = [("problem", p) for p in problems]
+    if roots is None:
+        out.append(("note", core.ROUTES_NOT_RECORDED + "; until then the prototype-first check and route-not-prototyped "
+                    "are off"))
+        return out
+    if not roots and not problems:
+        out.append(("ok", "Routes: none (no page routes to check)"))
+    for path, kind in roots:
+        if kind == "router" and any(c in path for c in "*?"):
+            rx = core.glob_rx(path)
+            fixed = root / path.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
+            found = fixed.is_dir() and any(rx.match(f.relative_to(root).as_posix()) for f in fixed.rglob("*") if f.is_file())
+        else:
+            found = (root / path).is_file() if kind == "router" else (root / path).is_dir()
+        if found:
+            out.append(("ok", f"Routes: {path} ({kind}) exists"))
+        else:
+            out.append(("problem", f"Routes: {path} ({kind}) does not exist in the project"))
+    if any(kind == "problem" for kind, _t in out):
+        out.append(("fix", "ask the user: correct Routes: in PLUMB.md to the folders (or router files) that "
+                    "hold the app's pages, each as <path> (<kind>)"))
+    return out
+
+
+UI_FILES_SCAN_MAX = 50000
+
+
+def check_ui_files(keys: dict, root: Path, skill_rel: str) -> List[Tuple[str, str]]:
+    """PLUMB.md `UI files:` must cover at least one file (globs from the project root, as the audit reads them): a
+    value that matches 0 files switches the audit and the checks off without a word. A folder glob that matches
+    nothing is a note."""
+    value = str(keys.get("UI files", "") or "").strip()
+    if not value:
+        return []
+    core = load_plumb_core()
+    left, _, right = value.partition("·")
+    items = [i.strip() for i in (left + "," + right).replace(" ", ",").split(",") if i.strip()]
+    dirs = [i for i in items if "/" in i]
+    names = [i for i in items if "/" not in i]
+    dir_rx = [(d, core.glob_rx(d)) for d in dirs]
+    name_rx = [core.glob_rx(n) for n in names]
+    used = {d: 0 for d in dirs}
+    total = seen = sources = 0
+    docs = (root / str(keys.get("docs_dir") or "docs/design")).resolve()
+    skill = (root / skill_rel).resolve() if skill_rel else None
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in core.SKIP_DIRS and not d.startswith(".git"))
+        if Path(dirpath).resolve() in (skill, docs):
+            dirnames[:] = []
+            continue
+        for fn in filenames:
+            seen += 1
+            if seen > UI_FILES_SCAN_MAX:
+                break
+            if core.source_ext(fn) is None:
+                continue
+            sources += 1
+            if name_rx and not any(rx.match(fn) for rx in name_rx):
+                continue
+            rel = (Path(dirpath) / fn).relative_to(root).as_posix()
+            hit = [d for d, rx in dir_rx if rx.match(rel)]
+            for d in hit:
+                used[d] += 1
+            if hit or not dirs:
+                total += 1
+    if total == 0 and not sources:
+        return [("note", f"PLUMB.md UI files: {value} matches no file yet (the project has no UI code yet)")]
+    if total == 0:
+        return [("problem", f"PLUMB.md UI files: {value} matches 0 files (globs are read from the project root, e.g. "
+                            f"frontend/src/** for a UI package in frontend/), so the audit and the checks see nothing"),
+                ("fix", "ask the user: correct UI files: in PLUMB.md to the folders that hold the UI code")]
+    out = [("ok", f"PLUMB.md UI files: matches {total} file{'s' if total != 1 else ''}")]
+    out += [("note", f"UI files: {d} matches 0 files") for d, n in used.items() if n == 0]
+    return out
+
+
 def verify(root: Path) -> int:
     problems = 0
 
@@ -914,6 +1030,12 @@ def verify(root: Path) -> int:
                 print(f"note: web copy {rel} is not written yet (run the tokens build)")
             else:
                 print(f"ok: web copy {rel} resolves")
+    keys = load_plumb_core().read_plumb_md(plumb_md)
+    for kind, text in check_routes(keys, root) + check_ui_files(keys, root, skill_rel):
+        if kind == "problem":
+            problem(text)
+        else:
+            print(f"{kind}: {text}")
     make_ok, make_note, make_problem = check_make_targets(plumb_text, root)
     if make_ok:
         print(f"ok: {make_ok}")

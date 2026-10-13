@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from test_scaffold import PLUGIN, SCAFFOLD, SKILL_REL, run, tree
 
 NEW = ".github/skills/demo-design-system"
@@ -223,7 +225,8 @@ def test_verify_passes_in_a_linked_repo(tmp_path: Path) -> None:
     api.mkdir()
     linked = (PLUGIN / "templates/PLUMB.md").read_text(encoding="utf-8")
     skill = f"../proj/{SKILL_REL}/"
-    for slot, value in {"SKILL_DIR": skill, "ROLE": "linked", "PYTHON": "python3", "PROJECT": "api"}.items():
+    for slot, value in {"SKILL_DIR": skill, "ROLE": "linked", "PYTHON": "python3", "PROJECT": "api",
+                        "ROUTES": "none"}.items():
         linked = linked.replace("{{" + slot + "}}", value)
     (api / "PLUMB.md").write_text(linked, encoding="utf-8")
     r = cli(api, "--verify")
@@ -293,3 +296,73 @@ def test_check_make_targets_returns_its_lines_and_prints_nothing(tmp_path: Path,
     assert ok == "PLUMB.md's make targets exist in the Makefile" and note is None and problem is None
     assert mod.check_make_targets("no make hints here", tmp_path) == (None, None, None)
     assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------- Routes: and UI files: (recorded, checked by --verify)
+
+
+def _scaffold_with(tmp_path: Path, answers: dict, platforms: str = "web") -> "tuple[Path, subprocess.CompletedProcess]":
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps(answers), encoding="utf-8")
+    root = tmp_path / "proj"
+    root.mkdir(exist_ok=True)
+    return root, run(root, "--answers", str(path), platforms=platforms)
+
+
+def test_routes_answer_is_written_to_plumb_md_and_verified(tmp_path: Path) -> None:
+    root, r = _scaffold_with(tmp_path, {"routes": "frontend/src/app (next-app)", "ui_files": "frontend/src/** · *.tsx"})
+    assert r.returncode == 0, r.stderr
+    text = (root / "PLUMB.md").read_text(encoding="utf-8")
+    assert "Routes: frontend/src/app (next-app)   " in text
+    v = cli(root, "--verify")
+    assert "problem: Routes: frontend/src/app (next-app) does not exist in the project" in v.stdout
+    assert "fix: ask the user: correct Routes:" in v.stdout and v.returncode == 1
+    (root / "frontend/src/app/keys").mkdir(parents=True)
+    (root / "frontend/src/app/keys/page.tsx").write_text("export default () => null;\n", encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "ok: Routes: frontend/src/app (next-app) exists" in v.stdout
+    assert "ok: PLUMB.md UI files: matches 1 file" in v.stdout
+    assert v.returncode == 0, v.stdout
+
+
+def test_routes_unanswered_is_not_recorded_for_web_and_none_for_mobile(tmp_path: Path) -> None:
+    root, r = _scaffold_with(tmp_path / "web", {})
+    assert r.returncode == 0, r.stderr
+    assert "Routes: (not recorded yet: /plumb:init records the app's page roots)" in (root / "PLUMB.md").read_text(
+        encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "note: Routes not recorded: run /plumb:init to record them" in v.stdout and v.returncode == 0, v.stdout
+    root, r = _scaffold_with(tmp_path / "ios", {}, platforms="ios")
+    assert "Routes: none   " in (root / "PLUMB.md").read_text(encoding="utf-8")
+    assert "ok: Routes: none" in cli(root, "--verify").stdout
+
+
+@pytest.mark.parametrize("routes", ["../app (next-app)", "frontend/views", "app (remix)", 7, "a\nb"])
+def test_a_bad_routes_answer_is_refused(tmp_path: Path, routes: object) -> None:
+    root, r = _scaffold_with(tmp_path, {"routes": routes})
+    assert r.returncode == 2 and r.stderr.startswith("error: answers.routes") and "fix: " in r.stderr
+    assert not (root / "PLUMB.md").exists()
+
+
+def test_verify_reports_ui_files_that_match_no_file(tmp_path: Path) -> None:
+    """Live test 2: `UI files: app/**, src/**, components/**` in a monorepo whose UI is in frontend/ covered 0 files,
+    which silently switched the audit and the checks off."""
+    root, r = _scaffold_with(tmp_path, {"routes": "frontend/src/app (next-app)"})
+    assert r.returncode == 0, r.stderr
+    for name in ("frontend/src/app/page.tsx", "frontend/src/components/ui/button.tsx"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("export default () => null;\n", encoding="utf-8")
+    plumb = root / "PLUMB.md"
+    text = plumb.read_text(encoding="utf-8")
+    plumb.write_text(re.sub(r"UI files: [^\n]*", "UI files: app/**, src/**, components/** · *.tsx *.css", text),
+                     encoding="utf-8")
+    v = cli(root, "--verify")
+    assert v.returncode == 1
+    assert "problem: PLUMB.md UI files: app/**, src/**, components/** · *.tsx *.css matches 0 files" in v.stdout
+    assert "fix: ask the user: correct UI files:" in v.stdout
+    plumb.write_text(re.sub(r"UI files: [^\n]*", "UI files: frontend/src/**, frontend/lib/** · *.tsx *.css", text),
+                     encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "ok: PLUMB.md UI files: matches 2 files" in v.stdout and v.returncode == 0, v.stdout
+    assert "note: UI files: frontend/lib/** matches 0 files" in v.stdout

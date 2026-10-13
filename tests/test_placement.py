@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import List
 
 import pytest
 
@@ -43,6 +44,15 @@ def repo(root: Path) -> None:
         subprocess.run(["git", "init", "-q", str(root)], check=True, encoding="utf-8")
     else:
         (root / ".git").mkdir()
+
+
+def detect_glob(glob: str):
+    """The audit's glob reading (from the project root), from the shared core."""
+    core = REPO / "plugins/plumb/assets/skill/scripts/_plumb.py"
+    spec = importlib.util.spec_from_file_location("plumb_core_for_placement", core)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod.glob_rx(glob)
 
 
 def run(path: Path) -> dict:
@@ -138,6 +148,67 @@ def test_monorepo_frontend_backend_siblings(tmp_path: Path) -> None:
     assert [u["path"] for u in r["ui_packages"]] == ["frontend"]
     assert r["ui_packages"][0]["framework"] == "vue"
     assert r["no_ui"] == [{"path": "backend", "stack": "go"}]
+
+
+def _monorepo_app(root: Path, pages: int = 20, components: int = 90) -> List[str]:
+    """A monorepo like the live test's: Next.js 16 + Tailwind v4 + shadcn in frontend/ (src/ layout), Python in
+    backend/, no package.json or next.config at the repo root. Returns the UI files written (repo-relative)."""
+    repo(root)
+    pkg(root, "frontend/package.json", {"next": "16.0.0", "react": "19", "tailwindcss": "4", "next-themes": "0.4"},
+        "frontend")
+    put(root, "frontend/components.json", "{}")
+    put(root, "frontend/next.config.ts", "export default {};\n")
+    put(root, "frontend/src/app/globals.css", '@import "tailwindcss";\n')
+    put(root, "backend/pyproject.toml", "[project]\ndependencies=['fastapi']\n")
+    put(root, "backend/app/main.py", "app = None\n")
+    files = ["frontend/src/app/layout.tsx", "frontend/src/app/page.tsx"]
+    files += [f"frontend/src/app/p{i}/page.tsx" for i in range(pages)]
+    files += [f"frontend/src/components/ui/c{i}.tsx" for i in range(components)]
+    for f in files:
+        put(root, f, "export default function X() { return null; }\n")
+    return files
+
+
+def test_monorepo_ui_files_and_routes_are_relative_to_the_repo_root(tmp_path: Path) -> None:
+    """Live test 2: detect proposed app/**, src/**, components/** for a UI package in frontend/, which matched 0 of
+    its 113 files (the audit reads the globs from the repo root). Now the guess names frontend/src/**, it covers
+    every UI file detect counted, and the routes guess names frontend/src/app; both are labelled as guesses."""
+    files = _monorepo_app(tmp_path)
+    r = run(tmp_path)
+    assert r["layout"] == "monorepo"
+    (ui,) = r["ui_packages"]
+    assert ui["path"] == "frontend" and ui["files"] == len(files) == 112
+    value = r["proposal"]["ui_files"]
+    assert value == "frontend/src/** · *.tsx *.jsx *.vue *.svelte *.css"
+    left, _, right = value.partition(" · ")
+    dirs = [detect_glob(d) for d in left.split(", ")]
+    names = [detect_glob(n) for n in right.split()]
+    matched = [f for f in files + ["frontend/src/app/globals.css"]
+               if any(d.match(f) for d in dirs) and any(n.match(f.rsplit("/", 1)[-1]) for n in names)]
+    assert len(matched) == len(files) + 1
+    assert r["proposal"]["routes"] == "frontend/src/app (next-app)"
+    text = detect.human(r)
+    assert "  UI files   frontend/src/** · *.tsx *.jsx *.vue *.svelte *.css   (a guess" in text
+    assert "  Routes     frontend/src/app (next-app)   (a guess" in text
+
+
+def test_routes_guesses_for_each_stack(tmp_path: Path) -> None:
+    cases = [
+        ("sk", {"svelte": "5", "@sveltejs/kit": "2"}, ["src/routes/+page.svelte"], "src/routes (sveltekit)"),
+        ("nx", {"nuxt": "3", "vue": "3"}, ["pages/index.vue"], "pages (nuxt)"),
+        ("vr", {"vue": "3", "vue-router": "4"}, ["src/router/index.ts", "src/App.vue"], "src/router/index.ts (router)"),
+        ("ng", {"@angular/core": "17"}, ["src/app/app.routes.ts", "src/app/app.component.ts"],
+         "src/app/app.routes.ts (router)"),
+        ("np", {"next": "14"}, ["pages/index.tsx"], "pages (next-pages)"),
+        ("re", {"react": "18"}, ["src/App.tsx"], None),
+    ]
+    for name, deps, files, want in cases:
+        root = tmp_path / name
+        repo(root)
+        pkg(root, "package.json", deps)
+        for f in files:
+            put(root, f, "x")
+        assert run(root)["proposal"]["routes"] == want, name
 
 
 def test_separate_frontend_repo(tmp_path: Path) -> None:
@@ -705,7 +776,7 @@ def test_other_web_stacks_keep_the_platform_default(tmp_path: Path, deps: dict, 
     assert all(u["ui_files"] is None for u in r["ui_packages"])
     assert r["ui_packages"][0]["files"] == len(files)
     # the placement block still shows the UI files line: the platform default PLUMB.md will get
-    assert "  UI files   " + detect.PLATFORM_UI_FILES["web"] + "   (PLUMB.md:" in detect.human(r)
+    assert "  UI files   " + detect.PLATFORM_UI_FILES["web"] + "   (a guess" in detect.human(r)
 
 
 def test_placement_block_shows_ui_files_and_what_happens_to_an_existing_stylesheet(tmp_path: Path) -> None:

@@ -255,7 +255,8 @@ def scaffold(project: Path, app: App, found: dict, extra: Optional[dict] = None)
     tmp = Path(tempfile.mkdtemp(prefix="plumb-answers-"))
     try:
         path = tmp / "answers.json"
-        write(path, json.dumps({**answers(app), **(extra or {})}, ensure_ascii=False))
+        routes = {"routes": proposal.get("routes") or "none"}  # detect's guess, as the agent confirmed it
+        write(path, json.dumps({**answers(app), **routes, **(extra or {})}, ensure_ascii=False))
         r = ok(py(project, SCAFFOLD, "--project-root", str(project), "--name", app.name, "--skill-dir",
                   proposal["skill_dir"], "--platforms", ",".join(proposal["platforms"]), "--styling", app.styling,
                   "--answers", str(path)))

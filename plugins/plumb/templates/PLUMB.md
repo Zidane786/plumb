@@ -13,6 +13,7 @@ Edit check: {{EDIT_CHECK}}
 End-of-turn check: {{END_CHECK}}
 Themes: {{THEMES}}          (light-and-dark | light-only: an explicit decision)
 UI files: {{UI_FILES}}
+Routes: {{ROUTES}}          (the app's page roots, each with its kind: next-app, next-pages, nuxt, sveltekit or router; or none)
 Allowed raw values: {{ALLOWED_RAW}}
 
 ## Commands

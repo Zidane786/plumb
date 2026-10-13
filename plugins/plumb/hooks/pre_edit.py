@@ -22,7 +22,8 @@ In such a project, in this order:
    unlink, del, Remove-Item, git rm, the sources of mv / Move-Item / git mv), or a folder that holds one, is refused
    the same way; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
-   path in a router config: the audit's route discovery for the project's framework) unless a screen in screens.json
+   path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
+   start note says the routes are not recorded) unless a screen in screens.json
    covers it (same route, a source glob matching the file, or the route's slug as its id) and its current screen file
    is the approved one: `fix: /plumb:prototype <slug>`.
 3. Edit check (PLUMB.md `Edit check: on`): for a UI file (the audit's file types, inside PLUMB.md's `UI files`), the
@@ -256,10 +257,13 @@ def _approved(bp, root: Path, docs: str, entry: dict) -> bool:
 
 def prototype_first(proj: H.Project, A, settings: dict, rel: str, before: Optional[str], after: str) -> Optional[str]:
     root = Path(proj.root_s)
-    routes = A.discover_routes(root, [(rel, after)])
+    roots = A.route_roots(settings)  # PLUMB.md `Routes:` only; not recorded: fail open (session start says so)
+    if not roots:
+        return None
+    routes = A.discover_routes(root, [(rel, after)], roots)
     if not routes:
         return None
-    old = {A._route_key(r.route) for r in A.discover_routes(root, [(rel, before)])} if before is not None else set()
+    old = {A._route_key(r.route) for r in A.discover_routes(root, [(rel, before)], roots)} if before is not None else set()
     routes = [r for r in routes if A._route_key(r.route) not in old]
     if not routes:
         return None

@@ -118,13 +118,14 @@ screens.json it was reading. Findings sit on the screen file's <section data-scr
                             `| Screen | States |` table row) lists a screen's states, `- settings: none (reason)` exempts
                             it, and a screen not listed is not checked. The table under "## States (every screen has all
                             that apply)" is the catalogue of states (first cell = the state), never a requirement.
-Routes are found in the audited files: Next.js app router (app/**/page.tsx|jsx|ts|js; (groups) and @slots are not in the
-URL, _private folders are not routes) and pages router (pages/**, not _app/_document/api), both only in a Next project
-(next.config.* or "next" in package.json); Nuxt (pages/**/*.vue, only in a Nuxt project: nuxt.config.* or "nuxt" in
-package.json, so a plain Vue app's src/pages/ components are not routes); SvelteKit (src/routes/**/+page.svelte); and
-router configs (*.routes.ts, *routing.module.ts, routes.ts, router.ts, router/index.ts: Angular Routes and Vue Router
-objects with a path and a component or loadComponent; children paths join their parents'; redirects and ** are skipped;
-the component file comes from its import, relative or @/ and ~/ for src/). Best-effort: anything else is not a route.
+Routes are read only through PLUMB.md's `Routes:` (recorded by /plumb:init; scripts never guess the app's layout):
+each entry is a folder or a router file, with its kind. next-app: <root>/**/page.tsx|jsx|ts|js ((groups) and @slots are
+not in the URL, _private folders are not routes); next-pages: <root>/** (not _app/_document/api); nuxt: <root>/**/*.vue;
+sveltekit: <root>/**/+page.svelte; router: the named file or glob (Angular Routes and Vue Router objects with a path and
+a component or loadComponent; children paths join their parents'; redirects and ** are skipped; the component file comes
+from its import, relative or @/ and ~/ for the src/ folder the file is in). The full audit walks the recorded folders
+(and the audited files); with PATHS or --changed only those files. No `Routes:` (a PLUMB.md from before it, or not
+filled yet): route-not-prototyped is skipped and one note says "Routes not recorded: run /plumb:init to record them".
 
 Inconsistency-only mode: when there is no tokens file (a prototype, code before /plumb:extract) or with --no-tokens. The
 de-facto scales are inferred from the inventory (_plumb.scan_inventory's scanner, the one /plumb:extract uses) and
@@ -2538,8 +2539,6 @@ class Route(NamedTuple):
 
 
 _PAGE_EXT = (".tsx", ".jsx", ".ts", ".js")
-_CONFIG_EXT = ("js", "mjs", "ts", "cjs", "mts")
-_ROUTER_FILE = re.compile(r"(?:^|/)(?:[\w.-]+\.routes|[\w.-]*routing\.module|routes|router(?:/index)?)\.(?:ts|js|mjs)$")
 _ROUTE_PATH = re.compile(r"(?<![\w$.])path\s*:\s*(['\"`])([^'\"`\n]*)\1")
 _ROUTE_COMPONENT = re.compile(r"(?<![\w$.])component\s*:\s*([A-Za-z_$][\w$]*)(?![\w$])")
 _ROUTE_LAZY = re.compile(r"(?<![\w$.])(?:loadComponent|component)\s*:")
@@ -2548,22 +2547,15 @@ _RESOLVE_EXT = ("", ".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", "/index.ts"
 _ROUTE_PARAM = re.compile(r"^(?::.+|\[{1,2}(?:\.\.\.)?[^\]]+\]{1,2}|\{[^}]+\}|\$.+)$")
 
 
-def project_frameworks(root: Path) -> frozenset:
-    """The file-routing frameworks of the project: "next" (next.config.* or `next` in package.json) and "nuxt"
-    (nuxt.config.* or `nuxt`). Their file conventions (app/**/page.*, pages/**) are routes only in such a project."""
-    found = set()
-    deps: dict = {}
-    try:
-        pkg = json.loads((root / "package.json").read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError, UnicodeDecodeError):
-        pkg = None
-    for key in ("dependencies", "devDependencies"):
-        if isinstance(pkg, dict) and isinstance(pkg.get(key), dict):
-            deps.update(pkg[key])
-    for name in ("next", "nuxt"):
-        if name in deps or any((root / f"{name}.config.{ext}").is_file() for ext in _CONFIG_EXT):
-            found.add(name)
-    return frozenset(found)
+RouteRoots = List[Tuple[str, str]]
+
+
+def route_roots(settings: dict) -> Optional[RouteRoots]:
+    """PLUMB.md's `Routes:` as [(project-relative path, kind)], [] for `Routes: none`, or None when it is not recorded
+    (scripts never guess the app's layout: the route checks are skipped and say so). Entries that do not parse are left
+    out (scaffold.py --verify names them)."""
+    roots, _problems = P.parse_routes(settings.get("Routes") if isinstance(settings, dict) else None)
+    return roots
 
 
 def _route_of(segments: List[str]) -> Optional[str]:
@@ -2579,25 +2571,39 @@ def _route_of(segments: List[str]) -> Optional[str]:
     return "/" + "/".join(kept)
 
 
-def file_route(path: str, frameworks: Iterable[str]) -> Optional[str]:
-    """The route a file defines by where it is, or None: SvelteKit +page.svelte always; Next.js app/**/page.* and
-    pages/** only in a Next project; Nuxt pages/**/*.vue only in a Nuxt project (a plain Vue app keeps components in
-    src/pages/ that are not routes)."""
-    frameworks = frozenset(frameworks)
-    parts = path.replace("\\", "/").split("/")
-    name, dirs = parts[-1], parts[:-1]
-    stem, dot, ext = name.rpartition(".")
-    ext = f".{ext}" if dot else ""
-    if name == "+page.svelte" and "routes" in dirs:
-        return _route_of(dirs[dirs.index("routes") + 1:])
-    if "next" in frameworks and stem == "page" and ext in _PAGE_EXT and "app" in dirs:
-        return _route_of(dirs[dirs.index("app") + 1:])
-    if "pages" in dirs and (("nuxt" in frameworks and ext == ".vue") or ("next" in frameworks and ext in _PAGE_EXT)):
-        rest = dirs[dirs.index("pages") + 1:]
-        if rest[:1] == ["api"] or stem.startswith("_"):
-            return None
-        return _route_of(rest + ([] if stem == "index" else [stem]))
+def _under(path: str, root: str) -> Optional[List[str]]:
+    """path's parts below root (a project-relative folder), or None when it is not inside it."""
+    if root in ("", "."):
+        return path.split("/")
+    return path[len(root) + 1:].split("/") if path.startswith(root + "/") else None
+
+
+def file_route(path: str, roots: Optional[RouteRoots]) -> Optional[str]:
+    """The route a file defines by where it is, from PLUMB.md's `Routes:` only, or None: next-app <root>/**/page.*,
+    next-pages <root>/** (not api/, not _app ...), nuxt <root>/**/*.vue, sveltekit <root>/**/+page.svelte."""
+    path = path.replace("\\", "/")
+    for root, kind in roots or []:
+        parts = _under(path, root)
+        if not parts or kind == "router":
+            continue
+        name, dirs = parts[-1], parts[:-1]
+        stem, dot, ext = name.rpartition(".")
+        ext = f".{ext}" if dot else ""
+        if kind == "sveltekit" and name == "+page.svelte":
+            return _route_of(dirs)
+        if kind == "next-app" and stem == "page" and ext in _PAGE_EXT:
+            return _route_of(dirs)
+        if (kind == "next-pages" and ext in _PAGE_EXT) or (kind == "nuxt" and ext == ".vue"):
+            if dirs[:1] == ["api"] or stem.startswith("_"):
+                return None
+            return _route_of(dirs + ([] if stem == "index" else [stem]))
     return None
+
+
+def is_router_file(path: str, roots: Optional[RouteRoots]) -> bool:
+    """The file is one of the router configs PLUMB.md's `Routes:` names (a path or a glob, kind router)."""
+    path = path.replace("\\", "/")
+    return any(kind == "router" and P.glob_rx(root).match(path) for root, kind in roots or [])
 
 
 def _bracket_tree(code: str, marks: List[int]) -> Tuple[Dict[int, Tuple[int, str, Optional[int]]], Dict[int, Optional[int]]]:
@@ -2665,8 +2671,9 @@ def _resolve_module(root: Path, from_file: str, spec: str) -> Optional[str]:
     """A relative (or @/ and ~/ for src/) import as a project-relative file that exists, else None."""
     if spec.startswith("."):
         base = posixpath.normpath(posixpath.join(posixpath.dirname(from_file), spec))
-    elif spec.startswith(("@/", "~/")):
-        base = "src/" + spec[2:]
+    elif spec.startswith(("@/", "~/")):  # the src/ folder of the package the file is in (frontend/src/ in a monorepo)
+        parts = from_file.split("/")[:-1]
+        base = "/".join(parts[:parts.index("src") + 1] if "src" in parts else ["src"]) + "/" + spec[2:]
     else:
         return None
     if base.startswith("../") or base == "..":
@@ -2711,20 +2718,58 @@ def router_routes(root: Path, name: str, text: str) -> List[Route]:
     return out
 
 
-def discover_routes(root: Path, files: Iterable[Tuple[str, str]]) -> List[Route]:
-    """Every route in the given (project-relative path, text) files: file-based routes (Next.js app router
-    app/**/page.* and pages/** in a Next project, Nuxt pages/**/*.vue in a Nuxt project, SvelteKit
-    src/routes/**/+page.svelte) and router configs (*.routes.ts, *routing.module.ts, routes.ts, router.ts,
-    router/index.ts)."""
-    frameworks = project_frameworks(root)
+def discover_routes(root: Path, files: Iterable[Tuple[str, str]], roots: Optional[RouteRoots]) -> List[Route]:
+    """Every route in the given (project-relative path, text) files, read only through PLUMB.md's `Routes:` (roots,
+    from route_roots()): file-based routes under its next-app, next-pages, nuxt and sveltekit folders, and the routes
+    declared in its router config files. None or [] (not recorded, or none): no routes."""
     out: List[Route] = []
+    if not roots:
+        return out
     for name, text in files:
         name = name.replace("\\", "/")
-        route = file_route(name, frameworks)
+        route = file_route(name, roots)
         if route is not None:
             out.append(Route(route, name, 1, name))
-        elif _ROUTER_FILE.search(name):
+        elif is_router_file(name, roots):
             out.extend(router_routes(root, name, text))
+    return out
+
+
+ROUTE_FILES_MAX = 20000  # files looked at under the recorded route folders
+
+
+def route_files(root: Path, roots: Optional[RouteRoots]) -> List[Tuple[str, str]]:
+    """(project-relative path, text) of the files under PLUMB.md's `Routes:`: the page files in its route folders
+    (text left empty: the route is in the path) and its router config files (read), for the full audit's
+    route-not-prototyped. A recorded folder or file that is missing gives nothing (scaffold.py --verify reports it)."""
+    out: List[Tuple[str, str]] = []
+    seen = 0
+    for base, kind in roots or []:
+        if kind == "router":
+            if any(c in base for c in "*?"):
+                fixed = base.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
+                start, rx = root / fixed if fixed else root, P.glob_rx(base)
+                for dirpath, dirnames, filenames in os.walk(start):
+                    dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+                    for fn in sorted(filenames):
+                        name = rel(Path(dirpath) / fn, root)
+                        if rx.match(name):
+                            out.append((name, _read_text(root / name) or ""))
+            elif (root / base).is_file():
+                out.append((base, _read_text(root / base) or ""))
+            continue
+        folder = root / base
+        if not folder.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(folder):
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+            for fn in sorted(filenames):
+                seen += 1
+                if seen > ROUTE_FILES_MAX:
+                    return out
+                name = rel(Path(dirpath) / fn, root)
+                if file_route(name, roots) is not None:
+                    out.append((name, ""))
     return out
 
 
@@ -2941,7 +2986,14 @@ def check_route_not_prototyped(proj: Project) -> Iterator[XHit]:
     fid = _fid(proj)
     if fid is None:
         return
-    for r in discover_routes(proj.root, ((c.path, c.text) for c in proj.ctxs)):
+    roots = route_roots(proj.settings)
+    if roots is None:  # not recorded: no guessing; the full audit prints one note (routes_note)
+        return
+    files = [(c.path, c.text) for c in proj.ctxs]
+    if not proj.explicit:  # the full audit: every page under the recorded route folders, and the router files
+        known = {name for name, _t in files}
+        files += [(name, text) for name, text in route_files(proj.root, roots) if name not in known]
+    for r in discover_routes(proj.root, files, roots):
         target = r.source or r.file
         if any(same_route(s.entry.get("route"), r.route) or any(P.glob_rx(g).match(target) for g in s.entry["files"])
                for s in fid.screens):
@@ -2955,6 +3007,21 @@ def check_route_not_prototyped(proj: Project) -> Iterator[XHit]:
                    f"prototype it first: /plumb:prototype {slug}, approve it, then map it: {fid.command} --map {slug} "
                    f"--route={_arg(r.route)} --files {_q(target)}",
                    severity="error" if fid.sync_on else "warn")
+
+
+def routes_note(proj: Project) -> Optional[str]:
+    """The note the full audit prints when PLUMB.md does not record the routes (`Routes:`) while there is a prototype
+    or Prototype sync is on: route-not-prototyped was skipped, nothing was guessed. None otherwise."""
+    if route_roots(proj.settings) is not None:
+        return None
+    try:
+        fid = _fidelity_of(proj)
+    except PlumbError:
+        return None
+    if not (fid.active or fid.sync_on):
+        return None
+    return (f"note: {P.ROUTES_NOT_RECORDED}; route-not-prototyped was skipped (Plumb never guesses where the app's "
+            f"pages are)")
 
 
 def check_no_prototype(proj: Project) -> Iterator[XHit]:
@@ -4243,7 +4310,8 @@ def changed_findings(snapshot: dict, root: Path, skill_dir: Path, doc: Optional[
         c = befores.get(hit.file)
         if c is None or (c.existed and c.before is None):
             continue  # the file was there before and its old routes are unknown: not new
-        old = {_route_key(r.route) for r in discover_routes(root, [(c.rel, c.before)])} if c.before is not None else set()
+        old = ({_route_key(r.route) for r in discover_routes(root, [(c.rel, c.before)], route_roots(settings))}
+               if c.before is not None else set())
         if _route_key(hit.match) not in old:
             findings.append(_finding("route-not-prototyped", hit))
     findings.extend(_session_sync(proj, snapshot, changes))
@@ -4764,6 +4832,9 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
         print(f"note: {_BUILD_TOKENS} is not next to audit.py: contrast and generated-file checks skipped", file=sys.stderr)
     proj = Project(root, skill_dir, doc, settings, ctxs, explicit, tokens_file, generated)
     findings.extend(cross_findings(proj))
+    note = routes_note(proj)
+    if note:
+        print(note, file=sys.stderr)
     mode = MODE_INCONSISTENCY if inconsistency else MODE_FULL
     scales = proj.scales_inferred() if inconsistency else None
     code = _report(findings, len(ctxs), as_json, mode, scales, review.findings if review is not None else None)

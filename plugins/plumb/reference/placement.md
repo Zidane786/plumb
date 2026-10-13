@@ -28,7 +28,8 @@ files and folders. No script knows every layout, so:
    folder** (`docs/design/`: the directions or extract page, the decision log, the prototype, the reports), so the
    first page written later is covered by this OK; the skills still name each page's path before writing it.
 4. What the user confirms is what gets written, and it is recorded in `PLUMB.md` (`Design system:`, `Role:`,
-   `Platforms:`, `UI packages:`, `UI files:`, the copy paths in the tokens file), so later commands never guess again.
+   `Platforms:`, `UI packages:`, `UI files:`, `Routes:`, the copy paths in the tokens file), so later commands never
+   guess again. Scripts and hooks never discover the layout themselves: they read only these recorded values.
 
 ```
 Plumb found:
@@ -42,14 +43,27 @@ I'll create:
   docs/design/                         in ~/Projects/acme   (directions or extract page, decision log, prototype, reports)
   generated copy → apps/web/app/globals.css   (Plumb's marked block of the token CSS)
   apps/web/app/globals.css exists: Plumb will add a marked block; the rest stays yours
-  UI files   apps/web/app/**, apps/web/components/** · *.tsx *.css   (PLUMB.md: what the audit and the checks cover)
+  UI files   apps/web/app/**, apps/web/components/** · *.tsx *.css   (a guess from the usual folders: check it covers the UI code; …)
+  Routes     apps/web/app (next-app)   (a guess: check where the pages are; PLUMB.md: the prototype-first check and the audit read routes only from here)
 OK, or change something?
 ```
 
 `detect.py` without `--json` prints this block. **Print it in the chat in full, verbatim** (a code block, every
 line), mark what you corrected `(corrected: <why>)`, then ask. It always has the `UI files` line (the stack's value, else the
-platform default) and one `exists:` line per web copy whose file is already there (Plumb adds and owns only a marked
+platform default), a `Routes` line for a web project (detect's guess, or "not found"; both are hints you check) and one `exists:` line per web copy whose file is already there (Plumb adds and owns only a marked
 `plumb:start … plumb:end` block in it; the rest stays the project's). Never summarise it, and never ask about "the setup above" when it is not above.
+
+**Routes (`PLUMB.md` `Routes:`)** are where the app's pages are: the prototype-first check, the audit's
+`route-not-prototyped` and extract's route list read routes **only** from here. Each entry is a folder or a router
+file, relative to the repo root, with its kind: `next-app` (Next.js app router), `next-pages`, `nuxt`, `sveltekit`, or
+`router` (an Angular routes file or a Vue Router config; a glob such as `src/app/**/*.routes.ts` is fine), comma
+separated; `none` when the project has no page routes (a component library, a mobile-only app). Examples:
+`frontend/src/app (next-app)`, `src/app/app.routes.ts (router)`. Look for them (detect's `routes` is a guess from the
+usual places), show the value in the confirmation block, and pass the confirmed one to `scaffold.py` as the `routes`
+answer. Without it a web project's `PLUMB.md` says `Routes: (not recorded yet …)`: the hooks fail open, session start
+and `/plumb:status` say "Routes not recorded — run /plumb:init to record them", and the audit prints a note. A
+`PLUMB.md` from before `Routes:` existed behaves the same until `/plumb:init` (or `/plumb:upgrade`) records it.
+`scaffold.py --verify` checks that each recorded folder or file exists.
 
 ## Temporary files
 
@@ -72,7 +86,7 @@ outside the project, so Copilot CLI asks for path access to them, and nothing ou
 | `children[]` | Only for `parent`: the project folders under it, by path up to the scan depth (`Projects/acme`): git repos and folders with markers (`name`, `path`, `is_repo`, `has_ui`). A folder that holds other git repos is never taken as a project root. |
 | `enclosing` | Outside git only: the nearest folder above with monorepo markers or a `PLUMB.md` (`root`, `markers`, `plumb_md`), else `null`. Lowers confidence: the project may be that folder. |
 | `existing` | `plumb_md` (a `PLUMB.md` is there), `skill`, `role`. |
-| `proposal` | `project` (kebab-case name), `skill_dir`, `plumb_md`, `docs_dir`, `copies` (generated CSS copy paths), `platforms`, `ui_files` (the packages' `ui_files` joined, or `null`), `alternatives`. |
+| `proposal` | `project` (kebab-case name), `skill_dir`, `plumb_md`, `docs_dir`, `copies` (generated CSS copy paths), `platforms`, `ui_files` (the packages' `ui_files` joined, or `null`), `routes` (a guess at `PLUMB.md`'s `Routes:` from the usual places, or `null`), `alternatives`. Every value is a hint: look, then confirm with the user. |
 | `confidence`, `reasons` | How sure the guess is and why not more. `low`: no markers, a guessed CSS path, several UI packages without monorepo markers, a parent folder, SwiftUI sources with no Package.swift or Xcode project. `medium`: an unsupported stack, backend and UI side by side, not a git repo, Angular files without the `.component` suffix. |
 
 **UI files (`PLUMB.md` `UI files:`)** decide what the audit walks and what the edit and end-of-turn checks cover: a
@@ -80,7 +94,13 @@ file counts only when it is in a listed folder (an entry with a `/`) **and** has
 Show the value in the confirmation block and pass the confirmed one to `scaffold.py` as the `ui_files` answer. Without
 that answer, `scaffold.py` uses detect's value for the packages of the chosen platforms (it prints `note: UI files
 from the detected stack: …`), else the platform default (web `app/**, src/**, components/** · *.tsx *.jsx *.vue
-*.svelte *.css`, iOS `*.swift`, Android `*.kt`). The value differs from the default in three cases:
+*.svelte *.css`, iOS `*.swift`, Android `*.kt`). The globs are read from the project root. The value differs from the
+default in four cases:
+
+- **A web package in a subfolder** (a monorepo's `frontend/`, `apps/web/`): its own source folders that exist, from the
+  repo root (`frontend/src/** · *.tsx *.jsx *.vue *.svelte *.css`), or the whole package (`frontend/**`) when it has no
+  `app/`, `src/`, `components/` or `pages/`. The root default (`app/**, src/**, components/**`) would match nothing
+  there; `scaffold.py --verify` reports a `UI files:` value that matches 0 files as a problem.
 
 - **Angular:** `src/** · *.component.ts *.component.html *.component.scss *.component.css *.routes.ts
   *routing.module.ts styles.scss styles.css` (the component templates, classes and styles, the route configs the

@@ -23,7 +23,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 PLUMB_VERSION = "1.0.0"
 SCHEMA_VERSION = 1
@@ -569,6 +569,59 @@ def read_plumb_md(path: Path) -> dict:
             val = val[1:-1].strip()
         out[m.group(1).strip()] = val
     return out
+
+
+# PLUMB.md `Routes:` (recorded by /plumb:init after looking at the project; scripts never guess the app's layout): the
+# folders (or router config files) that define the app's routes, relative to the project root, each with its kind:
+#   next-app    Next.js app router: <root>/**/page.tsx|jsx|ts|js
+#   next-pages  Next.js pages router: <root>/**/*.tsx|jsx|ts|js (not api/, not _app etc.)
+#   nuxt        Nuxt: <root>/**/*.vue
+#   sveltekit   SvelteKit: <root>/**/+page.svelte
+#   router      a router config file (Angular Routes, Vue Router): the path is the file, or a glob of files
+# e.g. `Routes: frontend/src/app (next-app)` or `Routes: src/app/app.routes.ts (router), admin/pages (next-pages)`;
+# `Routes: none` for a project without routes (a component library, a mobile-only app). The kind can be left out when
+# the folder says it (.../app: next-app, .../pages: next-pages, .../routes: sveltekit, a .ts/.js file or glob: router).
+ROUTE_KINDS = ("next-app", "next-pages", "nuxt", "sveltekit", "router")
+_ROUTE_ENTRY = re.compile(r"^(.*?)(?:\s*\(([A-Za-z-]+)\))?$")
+_SCRIPT_FILE = re.compile(r"\.(?:ts|js|mjs|cjs|mts|cts)$", re.I)
+ROUTES_NOT_RECORDED = "Routes not recorded: run /plumb:init to record them (PLUMB.md `Routes:`)"
+
+
+def _route_kind_of(path: str) -> Optional[str]:
+    last = path.rsplit("/", 1)[-1]
+    if _SCRIPT_FILE.search(path) or "*" in path:
+        return "router"
+    return {"app": "next-app", "pages": "next-pages", "routes": "sveltekit"}.get(last)
+
+
+def parse_routes(value: object) -> Tuple[Optional[List[Tuple[str, str]]], List[str]]:
+    """PLUMB.md's `Routes:` value as ([(path, kind), ...], problems). (None, []) when it is missing, empty or still a
+    placeholder in parentheses (not recorded: callers fail open and say so); ([], []) for `none`. Paths are
+    project-relative posix paths without a trailing slash; an absolute path, a .. or an unknown kind is a problem (the
+    entry is left out)."""
+    text = str(value or "").strip()
+    if not text or text.startswith("("):
+        return None, []
+    if text.lower() in ("none", "no", "-"):
+        return [], []
+    out: List[Tuple[str, str]] = []
+    problems: List[str] = []
+    for item in [i.strip() for i in text.split(",") if i.strip()]:
+        m = _ROUTE_ENTRY.match(item)
+        path = (m.group(1) if m else item).strip().strip("`").replace("\\", "/")
+        kind = (m.group(2) or "").lower() if m else ""
+        while path.startswith("./"):
+            path = path[2:]
+        path = path.rstrip("/")
+        if not path or path.startswith("/") or re.match(r"^[A-Za-z]:", path) or ".." in path.split("/"):
+            problems.append(f"Routes: {item!r} is not a path inside the project")
+            continue
+        kind = kind or (_route_kind_of(path) or "")
+        if kind not in ROUTE_KINDS:
+            problems.append(f"Routes: {item!r} needs its kind in parentheses, one of {', '.join(ROUTE_KINDS)}")
+            continue
+        out.append((path, kind))
+    return out, problems
 
 
 # ---------------------------------------------------------------- source files (shared by audit.py and the inventory)
