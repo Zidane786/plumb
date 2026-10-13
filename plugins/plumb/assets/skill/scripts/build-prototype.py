@@ -551,7 +551,7 @@ def glob_files(root: Path, glob: str) -> List[str]:
     parts = glob.split("/")
     base: List[str] = []
     for part in parts:
-        if any(c in part for c in "*?["):
+        if any(c in part for c in "*?[{"):
             break
         base.append(part)
     rx = P.glob_rx(glob)

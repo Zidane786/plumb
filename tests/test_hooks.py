@@ -731,28 +731,36 @@ def test_broken_tokens_file_fails_open(launcher, tmp_path, proj):
 # ---------------------------------------------------------------- timing (measured through the launcher)
 
 
-def _best(fn, limit: float, n: int = 12) -> float:
-    """The fastest of at least 5 runs, and up to n while none is under the limit: a loaded machine (other test
-    processes, CI neighbours) slows single runs down, while the hook's own cost shows in the fastest one."""
-    best = float("inf")
+def _best_hook(launcher, proj, tmp_path, script: str, stdin: str, check, limit: float, n: int = 12) -> float:
+    """The fastest of at least 5 timed runs of the hook (up to n while none is under the limit). Only the hook's own
+    process is timed: the payload and the environment are built once, before; one untimed warm-up run fills the disk
+    cache and the .pyc files; each result is checked after its timing. A loaded machine (other test processes, CI
+    neighbours) slows single runs down, while the hook's own cost shows in the fastest one."""
+    env = hook_env(tmp_path)
+    check(run_hook(launcher, script, stdin, proj, env))  # warm-up, not timed
+    times = []
     for i in range(n):
         t = time.perf_counter()
-        fn()
-        best = min(best, time.perf_counter() - t)
-        if i >= 4 and best < limit:
+        r = run_hook(launcher, script, stdin, proj, env)
+        times.append(time.perf_counter() - t)
+        check(r)
+        if len(times) >= 5 and min(times) < limit:
             break
-    return best
+    assert len(times) >= 5
+    return min(times)
 
 
 def test_non_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 0.6 if CI or launcher == "powershell" else 0.15
-    took = _best(lambda: allowed(edit(launcher, tmp_path, proj, "README.md", "Notes.", "More notes.")), limit)
+    stdin = payload("claude", "edit", CWD=str(proj), FILE=str(proj / "README.md"), OLD="Notes.", NEW="More notes.")
+    took = _best_hook(launcher, proj, tmp_path, "pre_edit.py", stdin, allowed, limit)
     assert took < limit, f"non-UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
 def test_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 3.0 if CI or launcher == "powershell" else 1.0
-    took = _best(lambda: refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW)), limit)
+    stdin = payload("claude", "edit", CWD=str(proj), FILE=str(proj / "app/page.tsx"), OLD=H1, NEW=H1_RAW)
+    took = _best_hook(launcher, proj, tmp_path, "pre_edit.py", stdin, refused, limit)
     assert took < limit, f"UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
@@ -918,6 +926,22 @@ def test_a_setup_marker_older_than_six_hours_is_stale(launcher, tmp_path, proj):
     assert "stands down" not in text
 
 
+def test_a_rewritten_setup_marker_is_fresh_again(launcher, tmp_path, proj):
+    """Re-review N2: init, create and extract rewrite the marker at every checkpoint (and on resume), so a long setup
+    keeps the stand-down; only an abandoned one goes stale."""
+    _start(launcher, tmp_path, proj)
+    marker = proj / ".plumb-tmp/setup-in-progress"
+    write(marker, "create 2026-10-13\n")
+    old = time.time() - 7 * 3600
+    os.utime(marker, (old, old))
+    write(proj / "components/panel.tsx", f"export const P = () => <p {RAW}>p</p>;\n")
+    _block(stop(launcher, tmp_path, proj))  # stale
+    write(marker, "create 2026-10-13 checkpoint 9\n")  # the next checkpoint rewrites it
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
+    assert "stands down" in context(session_start(launcher, tmp_path, proj, session="sess-4"))
+
+
 def test_session_start_notes_a_routes_entry_without_a_kind(launcher, tmp_path, proj):
     write(proj / "PLUMB.md", read(proj / "PLUMB.md").replace("Routes: app (next-app)", "Routes: app, web/app (next-app)"))
     text = context(session_start(launcher, tmp_path, proj))
@@ -966,6 +990,11 @@ def test_parse_routes_keeps_brace_globs_and_a_kind_after_any_spacing(tmp_path, H
     core = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(core)
     assert core.parse_routes("src/**/*.{routes,router}.ts (router)") == ([("src/**/*.{routes,router}.ts", "router")], [])
+    rx = core.glob_rx("src/**/*.{routes,router}.ts")  # re-review N1: braces match, as in a shell
+    assert rx.match("src/router/a.routes.ts") and rx.match("src/b.router.ts") and not rx.match("src/a.ts")
+    assert core.glob_rx("*.{tsx,css}").match("x.css") and core.glob_rx("{app,pages}/**").match("pages/a/b.tsx")
+    assert core.split_globs("frontend/src/**, src/{a,b}/** · *.{tsx,css} *.ts") == [
+        "frontend/src/**", "src/{a,b}/**", "*.{tsx,css}", "*.ts"]
     assert core.parse_routes("app\t(next-app),  pages   (nuxt)") == ([("app", "next-app"), ("pages", "nuxt")], [])
     write(tmp_path / "PLUMB.md", "Routes: app  (next-app)\nThemes: light-and-dark          (a note)\n")
     keys = core.read_plumb_md(tmp_path / "PLUMB.md")

@@ -56,8 +56,9 @@ These instructions are already loaded: don't load this skill again with a skill 
 Routed from `/plumb:init`: use its confirmed placement (UI files, routes) and `<root>`. Run directly: an existing design
 system → stop, offer `/plumb:update`; else do `/plumb:init` steps 0–1 (`ROOT/skills/init/SKILL.md`): the placement
 question holds the whole block. **STOP: ask, wait for the answer.** Then write `<root>/.plumb-tmp/.gitignore` (`*`) and
-the marker `<root>/.plumb-tmp/setup-in-progress`; say so in one line. **Design only** (React Native, or the user's
-choice): `web`, `css`, no web copies, no components in the app, `routes: none`, an HTML prototype only.
+the marker `<root>/.plumb-tmp/setup-in-progress` (rewrite it at every checkpoint); say so in one line. **Design
+only** (React Native, or the user's choice): `web`, `css`, no web copies, no components in the app, `routes: none`,
+an HTML prototype only.
 
 ## 2. The UI folders — STOP, then the inventory
 

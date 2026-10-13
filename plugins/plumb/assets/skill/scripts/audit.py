@@ -510,7 +510,7 @@ def file_ext(path_name: str) -> Optional[str]:
 
 
 def _split_list(value: object) -> List[str]:
-    return [g for g in re.split(r"[,\s]+", str(value or "")) if g and g not in ("·", "-")]
+    return P.split_globs(value)  # never splits a brace glob such as *.{tsx,css}
 
 
 _glob_rx = P.glob_rx
@@ -2812,8 +2812,8 @@ def route_files(root: Path, roots: Optional[RouteRoots]) -> List[Tuple[str, str]
     seen = 0
     for base, kind in roots or []:
         if kind in P.ROUTER_KINDS:
-            if any(c in base for c in "*?"):
-                fixed = base.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
+            if any(c in base for c in P.GLOB_CHARS):
+                fixed = P.glob_base(base)
                 start, rx = root / fixed if fixed else root, P.glob_rx(base)
                 for dirpath, dirnames, filenames in os.walk(start):
                     dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)

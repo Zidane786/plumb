@@ -949,3 +949,18 @@ def test_release_notes_cover_the_live_2_changes() -> None:
         assert phrase in flat, f"CHANGELOG 1.0.0: {phrase!r}"
     upgrade = _flat(PLUGIN / "upgrades/1.0.0.md")
     assert "routes:" in upgrade and "/plumb:init" in upgrade, "older projects: record Routes with /plumb:init"
+
+
+def test_setup_marker_is_rewritten_at_every_checkpoint() -> None:
+    # Re-review N2: a setup longer than 6 hours must keep the end-of-turn stand-down.
+    assert "rewrite the marker at every checkpoint" in _flat(REFERENCE / "interview.md")
+    for name in SETUP_SKILLS:
+        flat = _flat(SKILLS / name / "SKILL.md")
+        assert "rewrite it at every checkpoint" in flat or "rewrite the marker" in flat, name
+    assert "rewrite the marker" in _flat(SKILLS / "init/SKILL.md"), "init rewrites it when it resumes a setup"
+
+
+def test_init_rechecks_with_check_ignore_q() -> None:
+    # Re-review N3: after the fix, `-v` still prints a matching `!` line (kept); `-q` exit 1 is the clear answer.
+    flat = _flat(SKILLS / "init/SKILL.md")
+    assert "check-ignore -q" in flat and "exit 1" in flat and "a `!` line means kept" in flat

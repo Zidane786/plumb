@@ -66,7 +66,8 @@ folder above), say so and take `enclosing.root` (never offer a second setup insi
    is off while it does), or a stage is missing, in order: the skill folder and tokens · generated files current
    (`build-tokens.py --check`) · components (`references/inventory.md`) · a screen in `docs/design/prototype/screens/`
    · decision entries · the wire-in items of step 4. Ask: (a) Resume `/plumb:create` (or `/plumb:extract`) from
-   "<stage>" (Recommended) (b) Just show status. On (a) read that skill's `SKILL.md` and continue at that checkpoint.
+   "<stage>" (Recommended) (b) Just show status. On (a) rewrite the marker (it keeps the end-of-turn check standing
+   down), read that skill's `SKILL.md` and continue at that checkpoint.
 4. Otherwise a short status (role, path, platforms, checks; `/plumb:status` for more). Never re-scaffold. Stop.
 
 A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, say so and ask for the new path.
@@ -97,7 +98,8 @@ A `Role: linked` project: check the linked path still holds `SKILL.md`; if not, 
    whose parent folder is ignored). A global excludes file applies to every repo: offer instead `!.claude/`,
    `.claude/*`, `!.claude/skills/` in this repo's `.gitignore` (it wins over that file and `.git/info/exclude`)
    (b) Another location (e.g. `.github/skills/<project>-design-system/`). **STOP: ask, wait for the answer.** Run the
-   check again after the edit or a move and show its result; still ignored → say by which file and line, ask again.
+   check again after the edit or a move with `git -C "<root>" check-ignore -q <skill dir>/SKILL.md`: exit 1 = kept
+   (good); exit 0 = still ignored → `-v` says by which file and line, ask again (with `-v`, a `!` line means kept).
 6. **The placement question — the whole block inside it, even at high confidence.** detect.py's text block **verbatim**,
    every line, is the question text (or the recommended option's preview), in a code block. **Never summarise it**,
    never put only part of it in the question, never ask about "the setup above". Mark lines you changed

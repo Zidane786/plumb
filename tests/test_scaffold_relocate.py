@@ -399,6 +399,12 @@ IGNORE_CASES = [
     ("info-exclude", None, ".claude/\n", None,
      'in .git/info/exclude replace the line ".claude/" with ".claude/*" and add "!.claude/skills/" after it'),
     ("global", None, None, ".claude\n", "in your global git excludes file"),
+    # a pattern with no folder in front matches that name at any depth: the fix is anchored at the folder it hit
+    ("gitignore-noprefix-dir", "skills/\n", None, None,
+     'in .gitignore add "!/.claude/skills/" after the line "skills/"'),
+    ("gitignore-noprefix-name", "skills\n", None, None, 'in .gitignore add "!/.claude/skills/" after the line "skills"'),
+    ("gitignore-noprefix-skill", "demo-design-system/\n", None, None,
+     'in .gitignore add "!/.claude/skills/demo-design-system/" after the line "demo-design-system/"'),
 ]
 
 
@@ -443,6 +449,20 @@ def test_the_unignore_fix_names_the_real_source_and_works(tmp_path: Path, hermet
         assert not _skill_ignored(root), f"{name}: the repo override did not un-ignore the skill"
     v = cli(root, "--verify")
     assert "git-ignored" not in v.stdout, v.stdout
+
+
+def test_brace_globs_in_routes_and_ui_files_are_matched(tmp_path: Path) -> None:
+    """Re-review N1: `{a,b}` in a Routes router glob or a UI files pattern matches files (--verify sees them)."""
+    root, r = _scaffold_with(tmp_path, {"routes": "frontend/src/**/*.{routes,router}.ts (router)",
+                                        "ui_files": "frontend/src/** · *.{tsx,css}"})
+    assert r.returncode == 0, r.stderr
+    assert "Routes: frontend/src/**/*.{routes,router}.ts (router)" in (root / "PLUMB.md").read_text(encoding="utf-8")
+    for name in ("frontend/src/router/a.routes.ts", "frontend/src/app/page.tsx", "frontend/src/app/x.css"):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text("export default () => null;\n", encoding="utf-8")
+    v = cli(root, "--verify")
+    assert "ok: Routes: frontend/src/**/*.{routes,router}.ts (router) exists" in v.stdout, v.stdout
+    assert "ok: PLUMB.md UI files: matches 2 files" in v.stdout, v.stdout
 
 
 @pytest.mark.parametrize("line,want", [

@@ -862,6 +862,12 @@ def unignore_fix(shown: str, pattern: str, source: str) -> Unignore:
     nxt = under(pat)
     if nxt:
         return Unignore(pattern, True, [f"{pat}/*", f"!{pat}/{nxt}/"], [f"!{pat}/", f"{pat}/*", f"!{pat}/{nxt}/"])
+    comps = path.split("/")
+    if pat and "/" not in pat and not any(c in pat for c in "*?[") and pat in comps:
+        k = comps.index(pat)  # a name with no folder in front (skills/) matches at any depth: re-include the folder
+        if k < len(comps) - 1 or shown.endswith("/"):  # it hit, anchored at the project root
+            anchored = "!/" + "/".join(comps[:k + 1]) + "/"
+            return Unignore(pattern, False, [anchored], [anchored])
     return Unignore(pattern, False, [f"!{shown}"], [f"!{shown}"])
 
 
@@ -1156,9 +1162,9 @@ def check_routes(keys: dict, root: Path) -> List[Tuple[str, str]]:
         out.append(("ok", "Routes: none (no page routes to check)"))
     for path, kind in roots:
         router = kind in core.ROUTER_KINDS
-        if router and any(c in path for c in "*?"):
+        if router and any(c in path for c in core.GLOB_CHARS):
             rx = core.glob_rx(path)
-            fixed = root / path.split("*", 1)[0].split("?", 1)[0].rsplit("/", 1)[0]
+            fixed = root / core.glob_base(path)
             found = fixed.is_dir() and any(rx.match(f.relative_to(root).as_posix()) for f in fixed.rglob("*") if f.is_file())
         else:
             found = (root / path).is_file() if router else (root / path).is_dir()
@@ -1184,7 +1190,7 @@ def check_ui_files(keys: dict, root: Path, skill_rel: str) -> List[Tuple[str, st
         return []
     core = load_plumb_core()
     left, _, right = value.partition("·")
-    items = [i.strip() for i in (left + "," + right).replace(" ", ",").split(",") if i.strip()]
+    items = core.split_globs(left) + core.split_globs(right)  # a brace glob (*.{tsx,css}) stays whole
     dirs = [i for i in items if "/" in i]
     names = [i for i in items if "/" not in i]
     dir_rx = [(d, core.glob_rx(d)) for d in dirs]

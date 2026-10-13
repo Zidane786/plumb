@@ -90,7 +90,7 @@ Fill an **evidence table** as you go and keep it for the questions that follow:
 confirmed. Init, create and extract fill these from the investigation (never from detect alone), show each with its
 evidence and matched-file count inside the placement question, and write them to `PLUMB.md` (scaffold answers keys in
 brackets): `UI packages:` (`ui_packages`), `UI files:` (`ui_files`: patterns from the repo root, each matching at least
-one file, e.g. `frontend/src/** · *.tsx *.css`), `Routes:` (`routes`, below), `Allowed raw values:` (`allowed_raw`),
+one file, e.g. `frontend/src/** · *.tsx *.css`; `{a,b}` works as in a shell: `*.{tsx,css}`), `Routes:` (`routes`, below), `Allowed raw values:` (`allowed_raw`),
 the copy paths (`web_copies`) and the tokens settings. `scaffold.py --verify` checks them (each route root exists;
 each UI-file pattern matches a file). Changing them later: `/plumb:update` (or `/plumb:init` again); a project with no
 `Routes:` recorded is told to run `/plumb:init` by status and audit.
@@ -350,7 +350,9 @@ scratch folder (they sit outside the project, so Copilot CLI asks for path acces
 written). Write `<root>/.plumb-tmp/.gitignore` containing `*` first when the folder is new.
 
 **The setup marker.** A setup in progress is the marker file **`<root>/.plumb-tmp/setup-in-progress`**, and only init,
-create and extract write it: right after the placement OK (one line in it: the command and the date). The end-of-turn
+create and extract write it: right after the placement OK (one line in it: the command, the date and the
+checkpoint), and they rewrite the marker at every checkpoint and when init resumes a setup, so only an abandoned
+setup goes stale. The end-of-turn
 check stands down while the marker exists and is under 6 hours old, so it does not stop a half-built setup (an older
 marker is stale: the check runs again and session start and status say "a setup marker from <time> is stale — finish
 /plumb:init or remove .plumb-tmp/"); init's resume check and status's half-setup report look for the marker file,

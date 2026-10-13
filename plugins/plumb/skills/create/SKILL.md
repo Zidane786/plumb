@@ -55,8 +55,8 @@ These instructions are already loaded: don't load this skill again with a skill 
 Routed from `/plumb:init`: use its placement (UI files, routes), `<root>` and Python. Run directly: an existing system →
 stop, offer `/plumb:update`; else do `/plumb:init` steps 0–1 (`ROOT/skills/init/SKILL.md`): the placement question
 holds the whole block. **STOP: ask, wait for the answer.** Then write `<root>/.plumb-tmp/.gitignore` (`*`) and the
-marker `<root>/.plumb-tmp/setup-in-progress`; say so in one line. **Design only:** `web`, `css`, `web_copies: []`,
-`routes: none`, reference starters, an HTML prototype; step 4 does not apply.
+marker `<root>/.plumb-tmp/setup-in-progress` (rewrite it at every checkpoint); say so in one line. **Design only:**
+`web`, `css`, `web_copies: []`, `routes: none`, reference starters, an HTML prototype; step 4 does not apply.
 
 ## 2. The product — STOP
 

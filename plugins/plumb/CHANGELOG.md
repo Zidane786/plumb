@@ -86,7 +86,8 @@
   marking what it corrected; only what the code can't tell is asked.
 - **Your layout is recorded, not guessed**: `PLUMB.md` `UI files:` and `Routes:` (`<path> (<kind>)`: next-app,
   next-pages, nuxt, sveltekit, angular, router; or `none`) come from that investigation and your OK, so monorepos
-  (`frontend/src/app`) get prototype-first and `route-not-prototyped`; `scaffold.py --verify` checks both.
+  (`frontend/src/app`) get prototype-first and `route-not-prototyped`; `scaffold.py --verify` checks both. Patterns
+  may use `{a,b}` (`src/**/*.{routes,router}.ts`).
 - **An existing app keeps Tailwind's built-in scales**: `$extensions.plumb.web.reset_palette` (`reset_palette` in the
   answers) is asked; a new app resets all six namespaces so only tokens exist, an app that already uses classes like
   `bg-emerald-500` keeps them working (the audit suggests moving them onto tokens).
