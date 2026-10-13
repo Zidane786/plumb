@@ -2194,10 +2194,62 @@ def migrate(doc: dict, defaults_project: str = "") -> List[str]:
     return added
 
 
-def css_vars(doc: dict) -> str:
-    """Plain custom properties: :root (light), the md breakpoint, .dark and the prefers-color-scheme dark block."""
+_BARE_VAR = re.compile(r"^var\(\s*(--[\w-]+)\s*\)$")
+_PAGE_STACKS = {"mono": 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                "serif": 'Georgia, "Times New Roman", serif',
+                "sans": 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'}
+
+
+def _split_top(value: str) -> List[str]:
+    """A comma list split at the top level (commas inside var(...) stay)."""
+    out, depth, cur = [], 0, []
+    for ch in value:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    out.append("".join(cur).strip())
+    return [x for x in out if x]
+
+
+def page_font_value(name: str, value: str) -> str:
+    """A font-family value for Plumb's own pages: each app font variable without a fallback (var(--font-geist-sans),
+    which next/font defines only inside the app) gets the rest of the list, or a system stack, as its fallback. Without
+    one the whole variable is invalid outside the app and the page falls back to the browser's serif."""
+    items = _split_top(value)
+    if not any(_BARE_VAR.match(i) for i in items):
+        return value
+    out = []
+    for i, item in enumerate(items):
+        m = _BARE_VAR.match(item)
+        if m:
+            rest = ", ".join(x for x in items[i + 1:] if not _BARE_VAR.match(x))
+            key = "mono" if "mono" in name or "code" in name else "serif" if "serif" in name and "sans" not in name else "sans"
+            item = f"var({m.group(1)}, {rest or _PAGE_STACKS[key]})"
+        out.append(item)
+    return ", ".join(out)
+
+
+def _is_font_var(name: str) -> bool:
+    return (name.startswith("--font-") and not name.startswith("--font-weight")) or name.endswith("--font-family")
+
+
+def page_decls(decls: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+    """Declarations as Plumb's pages inline them: font families get fallbacks (page_font_value)."""
+    return [(n, page_font_value(n, v) if _is_font_var(n) else v) for n, v in decls]
+
+
+def css_vars(doc: dict, pages: bool = False) -> str:
+    """Plain custom properties: :root (light), the md breakpoint, .dark and the prefers-color-scheme dark block.
+    pages: as Plumb's own pages inline them (font variables of the app get a fallback, page_font_value)."""
 
     def rule(selector: str, decls: List[Tuple[str, str]], indent: str = "", extra: Tuple[str, ...] = ()) -> List[str]:
+        decls = page_decls(decls) if pages else decls
         lines = [f"{indent}{selector} {{"] + [f"{indent}  {n}: {v};" for n, v in decls] + [f"{indent}  {e}" for e in extra]
         return lines + [f"{indent}}}"]
 
@@ -2347,7 +2399,7 @@ TOKEN_BLOCK_END = "/* plumb:tokens:end */"
 
 def token_block(doc: dict) -> str:
     """The --css-vars export between the token-block markers: what prototype pages inline and --check compares."""
-    return f"{TOKEN_BLOCK_START}\n{css_vars(doc)}{TOKEN_BLOCK_END}"
+    return f"{TOKEN_BLOCK_START}\n{css_vars(doc, pages=True)}{TOKEN_BLOCK_END}"
 
 
 def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = False) -> str:
@@ -2357,11 +2409,11 @@ def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = Fa
     if doc is None:
         return "/* No tokens yet: Plumb's neutral page colours. */"
     roles = [f"  {n}: {v};" for n, v in page_roles(doc)]
-    tokens = token_block(doc) if markers else css_vars(doc).rstrip("\n")
+    tokens = token_block(doc) if markers else css_vars(doc, pages=True).rstrip("\n")
     lines = ["/* The project's tokens (build-tokens.py --css-vars). */", tokens,
              "/* Plumb's page roles, mapped to the project's tokens. */", ":root {", *roles, "}"]
     if scopes:
-        light, dark, md = declarations(doc, "light"), declarations(doc, "dark"), declarations(doc, "md")
+        light, dark, md = (page_decls(declarations(doc, m)) for m in ("light", "dark", "md"))
         lines += ["/* One theme pinned inside an element (light and dark side by side). */", ".pl-light {"]
         lines += [f"  {n}: {v};" for n, v in light] + roles + ["  color-scheme: light;", "}", ".pl-dark {"]
         lines += [f"  {n}: {v};" for n, v in light + dark] + roles + ["  color-scheme: dark;", "}"]

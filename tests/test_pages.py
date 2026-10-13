@@ -484,6 +484,41 @@ def _open(browser, path: Path, width: int, scheme: str, reduced: str = "no-prefe
     return ctx, page, errors, requests
 
 
+def _app_fonts(doc: dict) -> None:
+    """Fonts an app loads through next/font: the variable exists only inside the app (live test 2, B13)."""
+    doc["font"]["sans"]["$value"] = ["var(--font-geist-sans)", "Geist", "system-ui", "sans-serif"]
+    doc["font"]["mono"]["$value"] = ["var(--font-geist-mono)"]
+
+
+def test_plumbs_pages_give_app_font_variables_a_fallback(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "proj", mutate=_app_fonts)
+    specimen = read(p / SPECIMEN_REL)
+    assert ("--font-sans: var(--font-geist-sans, Geist, system-ui, sans-serif), Geist, system-ui, sans-serif;"
+            in specimen)
+    assert "--font-mono: var(--font-geist-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);" in specimen
+    # the app's own CSS keeps the tokens as written (next/font defines the variable there)
+    css = read(p / SKILL_REL / "assets/platforms/web/tokens.css")
+    assert "--font-sans: var(--font-geist-sans), Geist, system-ui, sans-serif;" in css
+    assert BT.page_font_value("--font-x", "var(--a, b), c") == "var(--a, b), c"  # a fallback is kept as it is
+    assert BT.page_font_value("--font-x", "Inter, sans-serif") == "Inter, sans-serif"
+    assert build_tokens(p, "--check").returncode == 0
+
+
+def test_plumbs_pages_never_fall_back_to_serif(browser, tmp_path: Path) -> None:
+    p = make_project(tmp_path / "proj", mutate=_app_fonts)
+    assert audit(p, "--html").returncode == 1
+    for path in (p / SPECIMEN_REL, today_report(p)):
+        ctx, page, errors, _ = _open(browser, path, 1280, "light")
+        try:
+            family = page.evaluate("getComputedStyle(document.body).fontFamily")
+            assert "system-ui" in family or "Geist" in family, (path.name, family)
+            assert "serif" not in family.replace("sans-serif", ""), (path.name, family)
+            mono = page.evaluate("getComputedStyle(document.querySelector('code') || document.body).fontFamily")
+            assert "Times" not in mono, mono
+        finally:
+            ctx.close()
+
+
 @pytest.mark.parametrize("name", ["specimen", "report"])
 @pytest.mark.parametrize("width", [1280, 390])
 @pytest.mark.parametrize("scheme", ["light", "dark"])
