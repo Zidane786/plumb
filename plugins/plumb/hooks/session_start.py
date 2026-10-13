@@ -16,7 +16,10 @@ Every script it runs is the plugin's own copy (`--root <the project's skill>`), 
 - "this project's Plumb scripts are vX; the plugin is vY — run /plumb:upgrade" when the project's copied scripts
   (PLUMB_VERSION in its _plumb.py, read as text) differ from the plugin's;
 - when the design-system folder PLUMB.md names (`Design system:`) is missing, "design system not found" and a
-  warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill).
+  warning: line + fix: line (a linked repo whose home repo is not there, or a moved skill);
+- "Routes not recorded — run /plumb:init to record them" when PLUMB.md has no `Routes:` value (the route checks stay
+  off: scripts never guess the app's layout), and a note while <root>/.plumb-tmp/ exists (the end-of-turn check
+  stands down during a setup).
 
 Claude Code adds plain stdout to the session; GitHub Copilot CLI (COPILOT_CLI set) reads {"additionalContext": ...}.
 Kiro (--kiro on the command) reads plain stdout too, with commands written /plumb-<name>, plus a line when a newer Plumb
@@ -135,6 +138,24 @@ def snapshot(proj: H.Project, session_id: str) -> None:
                f"{str(exc).splitlines()[0] if str(exc) else ''})")
 
 
+ROUTES_NOT_RECORDED = ("Routes not recorded \u2014 run /plumb:init to record them (PLUMB.md `Routes:`, the app's page "
+                       "roots); until then the prototype-first check and route-not-prototyped are off")
+
+
+def setup_notes(proj: H.Project) -> list:
+    """Lines for a project whose setup is not finished: PLUMB.md has no `Routes:` (Plumb never guesses the app's
+    layout, so the route checks are off), or <root>/.plumb-tmp/ is still there (setup in progress, or left behind:
+    the end-of-turn check stands down while it exists)."""
+    out = []
+    routes = str(proj.keys.get("Routes", "") or "").strip()
+    if not routes or routes.startswith("("):
+        out.append(ROUTES_NOT_RECORDED)
+    if os.path.isdir(os.path.join(proj.root_s, H.SETUP_TMP)):
+        out.append(f"note: {H.SETUP_TMP}/ is in the project, so the end-of-turn check stands down (a Plumb setup is in "
+                   f"progress); when no setup is running, delete {H.SETUP_TMP}/ (ask the user first)")
+    return out
+
+
 def main() -> int:
     p = H.read_payload() or H.Payload({})
     proj = H.load_project(p)
@@ -161,6 +182,7 @@ def main() -> int:
         scripts = H.scripts_note(proj)
         if scripts:
             lines.append(scripts)
+        lines += setup_notes(proj)
         snapshot(proj, p.session_id)
     if H.kiro_run():
         stale = kiro_stale_note(proj, p)

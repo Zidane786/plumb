@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -771,6 +772,21 @@ def test_stop_reports_a_new_route_without_a_prototype(launcher, tmp_path, proj):
     write(proj / "app/billing/page.tsx", BILLING)
     reason = _block(stop(launcher, tmp_path, proj))
     assert "route /billing" in reason and "/plumb:prototype billing" in reason
+
+
+def test_stop_stands_down_while_a_setup_is_in_progress(launcher, tmp_path, proj):
+    """<root>/.plumb-tmp/ exists while create or extract runs: the half-done state is expected, so the end-of-turn
+    check is silent; once the setup deletes the folder, the changes are checked against the session's snapshot."""
+    _start(launcher, tmp_path, proj)
+    write(proj / ".plumb-tmp/answers.json", "{}\n")
+    write(proj / "components/widget.tsx", f"export const W = () => <p {RAW}>w</p>;\n")
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and r.stdout == "" and r.stderr == ""
+    assert ".plumb-tmp/ is in the project, so the end-of-turn check stands down" in context(
+        session_start(launcher, tmp_path, proj, session="sess-2"))
+    shutil.rmtree(proj / ".plumb-tmp")
+    reason = _block(stop(launcher, tmp_path, proj))
+    assert "components/widget.tsx" in reason
 
 
 def test_stop_end_of_turn_check_off_is_silent(launcher, tmp_path, proj):

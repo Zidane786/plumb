@@ -21,6 +21,10 @@ GitHub Copilot CLI: whether a plugin's Stop hook reaches Copilot's agentStop and
 verified yet (spec §17); the hook answers it with the same JSON, and live testing decides. Without that, the edit check
 stays the hard guard there.
 
+Stands down (silent, exit 0) while <root>/.plumb-tmp/ exists: a Plumb setup (create, extract) is in progress and
+its half-done state is expected; the session snapshot is kept, so the files changed meanwhile are checked at the first
+end of turn after the setup deletes the folder.
+
 Fails open: no PLUMB.md, bad input, no design-system skill, a broken audit.py or tokens file: exit 0, at most one
 stderr line. Standard library only.
 """
@@ -60,6 +64,8 @@ def main() -> int:
     proj = H.load_project(p)
     if proj is None or not proj.on("End-of-turn check") or not proj.skill_ok:
         return 0
+    if os.path.isdir(os.path.join(proj.root_s, H.SETUP_TMP)):
+        return 0  # a setup is in progress (<root>/.plumb-tmp/): its half-done state is expected; the snapshot is kept
     path = H.snapshot_path(proj.root, p.session_id)
     if path is None:
         return 0  # no private temp folder (snapshot_dir said why): stay quiet
