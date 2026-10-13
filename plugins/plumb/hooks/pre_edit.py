@@ -389,6 +389,8 @@ def checks(p: H.Payload, proj: H.Project, base: str) -> Optional[str]:
                     return edit_refusal(proj, rel, errors)
     except Exception as exc:  # noqa: BLE001 - the checks never break an edit
         H.note(f"the design checks were skipped ({type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''})")
+        H.log_failure(f"the design checks were skipped ({type(exc).__name__}: {exc})",
+                      "the edit check and the prototype-first check run on this edit", exc=exc)
         return None
     return None
 
@@ -441,5 +443,7 @@ if __name__ == "__main__":
         code = main()
     except Exception as _exc:  # noqa: BLE001 - never break a tool call on odd input
         H.note(f"pre-edit check skipped ({type(_exc).__name__})")
+        H.log_failure(f"pre-edit check skipped ({type(_exc).__name__}: {_exc})",
+                      "the guards and checks run, or allow the tool call quietly", exc=_exc)
         code = 0
     sys.exit(code)

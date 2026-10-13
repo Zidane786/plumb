@@ -41,6 +41,16 @@ and write files in the project.
   (POSIX), the hooks keep no snapshot and never read, write or delete there. Snapshot files are written 0600 without following
   symlinks; cleanup only removes your own regular files in that folder. A snapshot's commit hash is checked before it
   reaches git.
+- **The feedback log** (Plumb's own mistakes, for Plumb's developers) lives outside every project, in
+  `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on Windows). Only a hook that failed open (a crash, a plugin
+  script it cannot load, a timeout) in a project with a `PLUMB.md` writes there: one line appended to `hooks.md`, at
+  most once a day for the same failure, never more than 512 KB in all. `~/.plumb` and `feedback/` are created 0700 and
+  `hooks.md` 0600, without following symlinks; if either folder is a symlink (or on Windows any reparse point),
+  someone else's, or writable by others (POSIX), or `hooks.md` is a symlink, nothing is written. The line holds the
+  hook, the Plumb version, the CLI, the OS, the project folder's name, the event, tool and project-relative path, and
+  the failure message (cut to one short line); never file contents or the shell command. A problem with the log never
+  fails or blocks a hook. Nothing in it leaves the machine: `/plumb:feedback` reads it and drafts issue text that you
+  post yourself, if you want to.
 - **Windows launcher.** `hooks/run.cmd` sets `NoDefaultCurrentDirectoryInExePath`, so cmd.exe never runs a `py`,
   `python` or `python3` found in the project folder instead of the one on `PATH`.
 - **A project's copied scripts run only when someone runs them on purpose:** a Plumb command such as `/plumb:audit`,

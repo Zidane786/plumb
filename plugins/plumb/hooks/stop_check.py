@@ -92,6 +92,8 @@ def main() -> int:
                                                changes)
     except Exception as exc:  # noqa: BLE001 - the end-of-turn check never breaks the turn
         H.note(f"the end-of-turn check was skipped ({type(exc).__name__}: {str(exc).splitlines()[0] if str(exc) else ''})")
+        H.log_failure(f"the end-of-turn check was skipped ({type(exc).__name__}: {exc})",
+                      "the end-of-turn check runs on the files changed this session", exc=exc)
         return 0
     errors = [f for f in findings if f.severity == "error"]
     keys = sorted({_key(f) for f in errors})
@@ -145,5 +147,7 @@ if __name__ == "__main__":
         code = main()
     except Exception as _exc:  # noqa: BLE001
         H.note(f"end-of-turn check skipped ({type(_exc).__name__})")
+        H.log_failure(f"end-of-turn check skipped ({type(_exc).__name__}: {_exc})",
+                      "the end-of-turn check runs, or stays quiet", exc=_exc)
         code = 0
     sys.exit(code)

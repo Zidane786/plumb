@@ -42,6 +42,11 @@ the commands a repository's config can name (see SECURITY.md "Trust boundary"). 
 version, scripts_note() says so (run /plumb:upgrade); the checks still use the plugin's. When loading fails the checks
 are skipped with one stderr line: hooks fail open. Snapshots live in a private per-user temp folder (snapshot_dir).
 
+A hook that fails open (a crash, a script it cannot load, a timeout) also writes one line to the Plumb feedback log,
+~/.plumb/feedback/hooks.md (%USERPROFILE%\\.plumb\\feedback on Windows): Plumb's own mistakes, for Plumb's developers,
+read with /plumb:feedback; never written into the project, private (0700 folders, a 0600 file, no symlink followed),
+and never able to fail or block the hook (log_failure).
+
 Python 3.9+, standard library only.
 """
 
@@ -126,6 +131,7 @@ KIRO_ARG = "--kiro"
 KIRO_GLOBAL_ARG = "--kiro-global"
 KIRO_MARK = "installed by Plumb's kiro.py"
 SCRIPT_TRIGGERS = {"session_start.py": "SessionStart", "pre_edit.py": "PreToolUse", "stop_check.py": "Stop"}
+_LOG_CONTEXT: Dict[str, object] = {}  # the payload and project of this run, for log_failure
 
 
 def kiro_run() -> bool:
@@ -428,7 +434,11 @@ def read_payload(text: Optional[str] = None) -> Optional[Payload]:
         raw = json.loads(text)
     except (ValueError, TypeError):
         return None
-    return Payload(raw) if isinstance(raw, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    payload = Payload(raw)
+    _LOG_CONTEXT["payload"] = payload  # for log_failure: the event, tool and path of a hook that fails open
+    return payload
 
 
 def refuse(message: str, copilot: bool) -> int:
@@ -742,7 +752,9 @@ def load_project(payload: Optional[Payload]) -> Optional[Project]:
         if start:
             root = find_project(start)
             if root is not None:
-                return Project(root)
+                project = Project(root)
+                _LOG_CONTEXT["project"] = project  # for log_failure
+                return project
     return None
 
 
@@ -758,6 +770,8 @@ def load_script(file_name: str, module_name: str):
     if not path.is_file():
         note(f"the plugin's {file_name} is missing, so the design checks are skipped (the guards stay on); reinstall "
              f"the Plumb plugin")
+        log_failure(f"the plugin's {file_name} is missing, so the design checks were skipped",
+                    f"the plugin's {file_name} loads and the design checks run")
         return None
     if sys.path[:1] != [PLUGIN_SCRIPTS]:
         sys.path.insert(0, PLUGIN_SCRIPTS)
@@ -773,6 +787,8 @@ def load_script(file_name: str, module_name: str):
             raise
         note(f"cannot load the plugin's {file_name} ({type(exc).__name__}: {exc}), so the design checks are skipped "
              f"(the guards stay on); reinstall the Plumb plugin")
+        log_failure(f"cannot load the plugin's {file_name} ({type(exc).__name__}: {exc}), so the design checks were "
+                    f"skipped", f"the plugin's {file_name} loads and the design checks run", exc=exc)
         return None
 
 
@@ -906,6 +922,121 @@ def clean_snapshots(days: int = SNAPSHOT_DAYS) -> None:
                 p.unlink()
         except OSError:
             pass
+
+
+# ---------------------------------------------------------------- the Plumb feedback log (hook failures)
+
+FEEDBACK_HOOKS = "hooks.md"
+FEEDBACK_MAX_BYTES = 512 * 1024  # a bigger hooks.md is left alone: the log never grows without bound
+FEEDBACK_FIELD = 240  # characters kept of each free-text field (one line each, never a source dump)
+FEEDBACK_HEADER = ("# Plumb hook failures\n\n"
+                   "Written by Plumb's hooks when one failed open (a crash or a timeout), one line each in Given / "
+                   "Expected form. Plumb's own mistakes only; read them with /plumb:feedback (Kiro: /plumb-feedback).\n\n")
+
+
+def feedback_dir() -> Optional[Path]:
+    """The Plumb feedback folder: ~/.plumb/feedback (%USERPROFILE%\\.plumb\\feedback on Windows), outside every project.
+    ~/.plumb and feedback/ are created 0700; None when either is a symlink (or on Windows any reparse point), someone
+    else's or writable by others (the same rules as snapshot_dir), or the home folder is missing."""
+    try:
+        home = Path.home()
+        if not home.is_dir():
+            return None
+        for folder in (home / ".plumb", home / ".plumb" / "feedback"):
+            try:
+                os.mkdir(str(folder), 0o700)
+            except FileExistsError:
+                pass
+            if not _ours(os.lstat(str(folder)), folder=True):
+                return None
+        return home / ".plumb" / "feedback"
+    except (OSError, RuntimeError, KeyError):
+        return None
+
+
+def _one_line(text: object) -> str:
+    out = " ".join(str(text).split()).replace("·", "-")
+    return out if len(out) <= FEEDBACK_FIELD else out[:FEEDBACK_FIELD - 1] + "…"
+
+
+def _cli_name(payload: Optional["Payload"]) -> str:
+    if kiro_run():
+        return "kiro"
+    if os.environ.get("COPILOT_CLI") or (payload is not None and payload.copilot):
+        return "copilot-cli"
+    return "claude-code"
+
+
+def _failure_where(exc: Optional[BaseException]) -> str:
+    """The last frames of a crash's traceback, as file:line function (base names only, never a full path)."""
+    if exc is None or exc.__traceback__ is None:
+        return ""
+    import traceback
+    frames = [f for f in traceback.extract_tb(exc.__traceback__) if not f.filename.startswith("<")][-2:]
+    return " < ".join(f"{os.path.basename(f.filename)}:{f.lineno} {f.name}" for f in reversed(frames))
+
+
+def _log_project() -> Optional[Path]:
+    project = _LOG_CONTEXT.get("project")
+    if isinstance(project, Project):
+        return project.root
+    try:  # a crash before load_project: only a folder holding a PLUMB.md is a Plumb project (no PLUMB.md: no log)
+        return find_project(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def log_failure(given: str, expected: str, category: str = "crash", exc: Optional[BaseException] = None,
+                exit_code: int = 0) -> None:
+    """Append one line about a hook that failed open to ~/.plumb/feedback/hooks.md (Plumb's own mistakes, for Plumb's
+    developers; never written into the project). Only in a project with a PLUMB.md; the same line (hook, project,
+    Given) is written once a day. Never raises, never prints, never blocks: any problem (no private folder, a symlinked
+    or foreign hooks.md, a full log) leaves the log out. A PlumbError is the scripts' actionable refusal about the
+    project's own files (a broken tokens file, a snapshot that is not valid): the project's problem, never logged."""
+    try:
+        if exc is not None and type(exc).__name__ == "PlumbError":
+            return
+        root = _log_project()
+        if root is None:
+            return
+        folder = feedback_dir()
+        if folder is None:
+            return
+        payload = _LOG_CONTEXT.get("payload")
+        p = payload if isinstance(payload, Payload) else None
+        hook = os.path.basename(sys.argv[0] or "") or "hook"
+        rel = ""
+        if p is not None and p.file_path:
+            inside = under(resolve(p.file_path, p.cwd or str(root)), os.path.realpath(str(root)))
+            rel = inside if inside is not None else os.path.basename(p.file_path)
+        fields = [hook, category, f"Plumb {plugin_version() or 'unknown'}", _cli_name(p), sys.platform,
+                  f"project {root.name}", f"event {(p.event if p else '') or SCRIPT_TRIGGERS.get(hook, '?')}",
+                  f"tool {(p.tool_name if p else '') or '-'}", f"path {rel or '-'}",
+                  f"exit {exit_code} (failed open)", f"Given: {_one_line(given)}", f"Expected: {_one_line(expected)}"]
+        where = _failure_where(exc)
+        if where:
+            fields.append(f"at {where}")
+        rest = " · ".join(fields)
+        now = time.localtime()
+        day = time.strftime("%Y-%m-%d", now)
+        path = folder / FEEDBACK_HOOKS
+        if os.path.lexists(str(path)):
+            st = os.lstat(str(path))
+            if not _ours(st, folder=False) or st.st_size >= FEEDBACK_MAX_BYTES:
+                return
+            text = read_private(path) or ""
+            if any(ln.startswith(f"- {day} ") and ln.split(" ", 3)[3:] == [rest] for ln in text.splitlines()):
+                return  # said already today
+        line = f"- {day} {time.strftime('%H:%M', now)} {rest}\n"
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        fd = os.open(str(path), flags, 0o600)
+        with os.fdopen(fd, "ab") as fh:
+            st = os.fstat(fh.fileno())
+            if not _ours(st, folder=False):
+                return
+            fh.write(((FEEDBACK_HEADER if st.st_size == 0 else "") + line).encode("utf-8"))
+    except Exception:  # noqa: BLE001 - the log never fails a hook
+        return
 
 
 # ---------------------------------------------------------------- shell commands
