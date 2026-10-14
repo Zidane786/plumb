@@ -245,7 +245,10 @@ project is older than the plugin. Upgrade never runs by itself.
 1. Open a session at the repository root. `/plumb:init` → confirm the block → **Extract the system you already have**.
 2. `/plumb:extract` asks which folders hold the UI (and what to leave out, such as vendored or legacy code), then lists
    every colour, font, size, spacing, radius, shadow, duration and easing in use, with counts and `file:line`.
-3. Near-duplicates are grouped (colours closer than ΔE 3, sizes within 1px or 6%); the most-used value of each group
+3. Near-duplicates are grouped (colours closer than ΔE 3 and only within one source: a named CSS variable, a Tailwind
+   palette class or any other value; sizes within 1px or 6%); a Tailwind `rounded-*` class counts at the project's own
+   `@theme` radius (a `--radius` base with `calc()` steps), Tailwind's default only for a size it doesn't define;
+   the most-used value of each group
    becomes the proposed token. A before/after page (`docs/design/extract.html`) shows it; you confirm group by group:
    accept, rename, merge, split or leave out.
 4. It asks only the product and UX questions the code can't answer, generates the same design system as create, and

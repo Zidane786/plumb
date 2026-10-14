@@ -126,6 +126,11 @@
   `web/src/components/ui/**` for a UI package in `web/`), read from the package's `components.json` and `tsconfig`
   instead of always `components/ui/**` from the repo root. Your own answer still wins. `scaffold.py --verify` warns
   (with a fix) when an allowed pattern matches no file.
+- `audit.py --inventory` reads a Tailwind `rounded-*` class at the project's own `@theme` radius (a base `--radius`
+  with `calc()` steps renders `rounded-lg` as that value, not 8px); Tailwind's defaults remain for sizes the project
+  does not define.
+- `audit.py --inventory` no longer merges a named CSS variable's colour (a theme or chart colour) with Tailwind
+  palette-class colours: clusters stay within one source kind and say which.
 
 ### Security
 
