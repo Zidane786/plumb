@@ -22,6 +22,28 @@ The `audience` picks the mode that opens first: `client` and `whats-new` open in
 `#tour-<id>-<n>` its step n. Captions and callouts are `aria-live`; every control works by keyboard; a skip link leads
 to the walkthrough.
 
+## The player on the page
+
+- **Hide panel** (the button at the top of the walkthrough's panel, or the `H` key) moves the panel out of the way of
+  the screen. A small pill stays at the bottom of the window: in guide mode it names the step, in play mode it is only
+  the "Show panel" button (the subtitle keeps narrating). `H` again, or the pill's button, brings the panel back. The
+  arrow keys, Space and Esc still work while it is hidden. `H` does nothing while you type in a field or with Shift,
+  Ctrl, Alt or Cmd held. The choice is remembered in this browser (`localStorage`; with storage off it lasts for the
+  page).
+- **On top, always:** the screen frame is its own stacking context, so a screen's own dialogs, toasts and sheets
+  (whatever their `z-index`) stay under the panel, the subtitle, the cursor and the labels.
+- **What it points at:** the first element of a selector that is visible: an element hidden with `visibility: hidden`
+  (also inside a hidden parent) or pushed off the frame (an off-canvas drawer) is skipped.
+- **Long pages:** a step scrolls its element into the room between the top bar and the panel. An element taller than
+  that room scrolls to its top edge when the step has labels (so the first label shows), else only as far as needed.
+  Title cards stay pinned in the window.
+- **Room for the screen:** while a tour runs, the screens list and the "Why it looks like this" / Guide rail fold away,
+  so the frame keeps the width the screens' desktop layout needs (their `@container plumb-frame (min-width: 48rem)`
+  rules); they come back when the tour ends.
+- **The project's look:** the player's colours, fonts, radius and shadow come from the project's tokens where they exist
+  (`color.primary` for its accent, `color.surface`, `color.outline`, `font.sans`, `radius.lg`, `shadow.popover` …) and
+  fall back to Plumb's neutral look. Subtitles, the play badge and the cursor keep one fixed high-contrast look.
+
 ## The file
 
 One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits, `_` and `-` (and not

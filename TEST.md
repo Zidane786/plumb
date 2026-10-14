@@ -456,6 +456,23 @@ uv run --with playwright python check_pages.py <repo>/docs/what-you-get.html plu
 **Expected:** no errors, no network requests, no horizontal scroll at 390 px, and both themes readable in the
 screenshots.
 
+**The walkthrough player** (still headless): in the same script, open `plumb-scratch/docs/design/tours/first-look.html`
+(from 3.5) at 1440 and 1280 wide, wait for the tour to start, then:
+
+```python
+frame = page.evaluate("document.getElementById('pp-frame').getBoundingClientRect().width")
+cols = page.evaluate("[...document.querySelectorAll('.pp-side, #pp-rail')].filter(e => e.getClientRects().length).length")
+page.keyboard.press("h")
+pill = page.inner_text(".pl-pill")
+dock = page.evaluate("document.querySelector('.pl-dock').hidden")
+print("frame", frame, "| side columns shown", cols, "| pill", pill, "| dock hidden", dock)
+```
+
+**Expected:** `frame` at least 768 at both widths (the screens list and the rail fold away while the tour runs),
+`side columns shown 0`, `pill Show panel` (play mode: only the button; the subtitle keeps playing), `dock hidden True`.
+Press `h` again: the panel is back. Reload: a panel you hid stays hidden until you show it. Press Esc: the screens
+list and the rail come back.
+
 ---
 
 ## Report format
