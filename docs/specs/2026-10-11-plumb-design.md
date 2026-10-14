@@ -788,7 +788,17 @@ in `tours/`), `app.html` (the app view of §3.4.2: every screen full window, has
 `screens.html` (sidebar navigation, every screen × every `data-state`, and the control-state sheet
 generated from the tokens and components). It inlines `build-tokens.py --css-vars`, a small
 dependency-free runtime, and each screen's scripts, so every page is a single file that opens from
-disk.
+disk. In `screens.html` each screen's markup, styles and scripts are in the page once (one
+`<template>` each), shared by its light and dark copies in every state; the page builds each copy's
+iframe from them and hides every outer state block but the copy's, and the token block is there
+once, so the page grows with the screens, not screens × states × 2. Any page it writes (the main
+pages, the tour pages, the proposal pages) over 10 MB prints one `warning: <page> is <N> MB, …`
+line naming every such page (also on `--check`, exit code unchanged), a note naming the heaviest
+screen files, and what helps: smaller screen files (every page holds each one once: inline `data:`
+images and large SVG moved into image files, very long sample content cut), or git-ignoring the
+pages with the build run in CI instead of `--check` (a git-ignored page is missing on a fresh
+clone). Splitting a screen into several files does not help, since every page still holds all of
+them.
 
 It is the **only writer of `screens.json`** (as Slate's `board.py` is of `tickets.json`): skills
 change it through commands, never by editing it. `--map <id> --route=<route> --files <globs>`

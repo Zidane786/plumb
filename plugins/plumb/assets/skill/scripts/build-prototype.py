@@ -27,10 +27,12 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
   <docs>/screens.html              the catalogue: a sidebar, every screen in every state in light and dark side by side,
                                    the control-state sheet (buttons, input, chip, link in default, hover, focus, pressed,
                                    disabled, loading) drawn from the tokens, and the Decisions page. Each copy is its
-                                   own <iframe srcdoc> document, built by the page from a <template>, with a <base> at
-                                   the docs folder (relative images load as in prototype.html) and a CSP that allows no
-                                   network, sized to its content: ids, url(#id), #id selectors, scripts and radio groups
-                                   never meet another copy. The catalogue needs JavaScript (a <noscript> note says so).
+                                   own <iframe srcdoc> document, built by the page from the screen's one <template>
+                                   (shared by all its copies; the page hides every outer state block but the copy's),
+                                   with a <base> at the docs folder (relative images load as in prototype.html) and a
+                                   CSP that allows no network, sized to its content: ids, url(#id), #id selectors,
+                                   scripts and radio groups never meet another copy. The page grows with the screens,
+                                   not screens × states. It needs JavaScript (a <noscript> note says so).
   <docs>/prototype/screens.json    the screen map. This script is its only writer: id, title, states, route, files
                                    (globs relative to the project root), files_hash, approved {by, at, hash} | null,
                                    synced_from_code, status (to-build | built).
@@ -106,7 +108,10 @@ stale. The main build (and build-tokens.py) refreshes the token block of every g
 keep rendering; their screen files are never touched. screens.json is not read or written.
 
 Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...). An unreadable decisions.md is a warning:
-the build carries on with empty decision panels.
+the build carries on with empty decision panels. Pages it builds over PAGE_WARN_BYTES (10 MB) are a warning too, also
+on --check (one `warning: <page> is <N> MB, ...` line naming every such page, a note naming the heaviest screen files
+and a fix: smaller screen files, e.g. inline data: images moved to image files, or git-ignore the pages and build in
+CI); the pages are still written and the exit code does not change.
 
 Python 3.9+, standard library only. Imports _plumb.py and build-tokens.py from its own directory.
 """
@@ -141,6 +146,7 @@ PLAYER_CSS = "player.css"
 PLAYER_JS = "player.js"
 ROLES_CSS = "chrome-roles.css"
 SCHEMA = 1
+PAGE_WARN_BYTES = 10 * 1024 * 1024  # a generated page over this (10 MB) gets a size warning (size_warnings)
 USAGE = ("[--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
          "[--project PATH]")
 _ID = re.compile(r"^\w[\w-]*\Z")
@@ -1679,6 +1685,10 @@ def tour_header(ctx: dict, tour: dict) -> str:
 
 
 def build_catalogue(ctx: dict, template: str, bt) -> str:
+    """screens.html: every screen × state × theme as its own iframe copy. A screen's markup, styles and scripts are in
+    the page once (three <template>s), shared by all its copies; the page's script builds each copy from them and hides
+    every outer state block but the copy's, as Screen.render does. So the page grows with the screens, not with
+    screens × states × 2, and the token block is in it once."""
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
     nav, body = [], []
@@ -1696,11 +1706,11 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                 # each copy is its own document (an iframe built from the template by the page's script), so ids,
                 # url(#id), #id selectors, getElementById and radio groups never meet another copy's. No sandbox: an
                 # opaque-origin frame may not load the screen's relative file:// images; its CSP keeps the network out
+                # the markup is the screen's one shared template (below); the page hides the other states per copy
                 pair.append(f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
                             f'<figcaption>{name}</figcaption>'
                             f'<iframe class="sc-iframe" '
-                            f'title="{_e(s.title)}: {_e(label)}, {theme} theme"></iframe>'
-                            f'<template class="sc-copy">{s.render(st)}</template></figure>')
+                            f'title="{_e(s.title)}: {_e(label)}, {theme} theme"></iframe></figure>')
             copies = "".join(pair)
             code = f" <code>{_e(st)}</code>" if label.lower() != st.lower() else ""
             blocks.append(f'<div class="sc-state" id="screen-{_e(s.id)}/{_e(st)}"><h3 class="sc-state-h sc-ui">'
@@ -1710,6 +1720,7 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                     f'<p class="sc-meta">{_meta_line(e, appr)}</p></div>'
                     f'<a class="sc-open" href="prototype.html#screen-{_e(s.id)}">Open in the prototype</a></header>'
                     + "".join(blocks)
+                    + f'<template data-screen-markup="{_e(s.id)}">{s.section}</template>'
                     + f'<template data-screen-styles="{_e(s.id)}">{screen_styles([s])}</template>'
                     + f'<template data-screen-scripts="{_e(s.id)}">{screen_scripts([s])}</template>'
                     + "</section>")
@@ -1729,6 +1740,55 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     }
     text = P.fill_template(template, values, CATALOGUE_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
+
+
+_DATA_URI = re.compile(r"\bdata:[^\s\"'()<>]+", re.I)
+MIB = 1024 * 1024
+
+
+def screen_weight(s: Screen) -> Tuple[int, int]:
+    """(bytes the screen adds to each page, bytes of those in inline data: URIs): its markup, styles and scripts."""
+    text = s.section + "".join(s.styles) + "".join(s.scripts)
+    return len(text.encode("utf-8")), sum(len(m.group(0)) for m in _DATA_URI.finditer(text))
+
+
+def size_warnings(files: Dict[Path, str], root: Path, rel, command: str, screens: List[Screen]) -> str:
+    """One warning for every generated page (.html) over PAGE_WARN_BYTES (big pages open slowly and weigh on the
+    repository; data files such as screens.json are not pages), the screen files that weigh most, and a fix. Every
+    page holds each screen file once, so smaller screen files are what make the pages smaller."""
+    big = [(rel(path, root), len(text.encode("utf-8"))) for path, text in sorted(files.items())
+           if path.suffix == ".html" and len(text.encode("utf-8")) > PAGE_WARN_BYTES]
+    if not big:
+        return ""
+    pages = ", ".join(f"{page} is {_mb(size)} MB" for page, size in big)
+    why = "a generated page should stay under (slow to open, heavy in the repository)"
+    lines = [f"warning: {pages}: over the {_limit()} MB {why}"]
+    heavy = sorted(((screen_weight(s), s.rel) for s in screens), key=lambda x: (-x[0][0], x[1]))[:3]
+    heavy = [h for h in heavy if h[0][0] * 10 >= heavy[0][0][0]]  # up to three, none under a tenth of the heaviest
+    if heavy:
+        parts = []
+        for (size, data), name in heavy:
+            extra = f", {_mb(data)} MB of it inline data: URIs" if data * 10 >= size else ""
+            parts.append(f"{name} ({_mb(size)} MB{extra})")
+        lines.append(f"note: every page holds each screen file once; the largest: {', '.join(parts)}")
+    lines.append(f"fix: make the screen files smaller: move inline data: images and large inline SVG into image files "
+                 f"in the docs folder and point at them with a relative src (screens load relative images), and cut "
+                 f"very long sample content; or git-ignore the pages (they are generated: {command} rebuilds them), "
+                 f"but a git-ignored page is missing on a fresh clone, so --check then fails: run the build in CI "
+                 f"instead of --check, or keep the pages committed")
+    return "\n".join(lines)
+
+
+def _mb(size: int) -> str:
+    """Megabytes (MiB, as ls -lh and the hosting limits count them), rounded up to one decimal: a page just over the
+    limit never reads as the limit itself."""
+    tenths = -(-size * 10 // MIB)
+    return f"{tenths // 10}.{tenths % 10}"
+
+
+def _limit() -> str:
+    whole, rest = divmod(PAGE_WARN_BYTES, MIB)
+    return str(whole) if not rest else f"{PAGE_WARN_BYTES / MIB:.3g}"
 
 
 def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
@@ -1879,6 +1939,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     player_css, player_js = read_template(skill_dir, PLAYER_CSS), read_template(skill_dir, PLAYER_JS)
     chrome_roles = read_template(skill_dir, ROLES_CSS)
     files: Dict[Path, str] = {}
+    variant_screens: List[Screen] = []
     cards, summary = [], []
     for folder in folders:
         if not _ID.match(folder.name):
@@ -1891,6 +1952,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             raise _err(f"{rel(folder, root)}: variant {folder.name} has no screen files in screens/",
                        f"write its screens as {rel(screens_dir, root)}/<id>.html (or remove the folder), then run {again}")
         screens = load_screens(screens_dir, root, rel)
+        variant_screens += screens
         title, paras, trade = read_idea(folder / "idea.md")
         title = title or state_label(folder.name)
         header = (f"GENERATED by {script_rel} --proposal {name} from {rel(screens_dir, root)}/*.html and {tokens_rel}. "
@@ -1926,6 +1988,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     files[base / "index.html"] = index if index.endswith("\n") else index + "\n"
     line = f"proposal {name}: {len(folders)} variant{'s' if len(folders) != 1 else ''} ({', '.join(summary)})"
 
+    warning = size_warnings(files, root, rel, again, variant_screens)
     if args.check:
         stale = []
         for path, text in files.items():
@@ -1935,6 +1998,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
                 current = None
             if current != text:
                 stale.append(f"stale: {rel(path, root)}" + (" (missing)" if current is None else ""))
+        if warning:  # --check builds every page in memory: a page over the limit is said here too (exit code unchanged)
+            print(warning, file=sys.stderr)
         if stale:
             print("\n".join(stale))
             print(f"fix: {again}")
@@ -1953,6 +2018,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             return 2
         wrote += 1
         print(f"wrote {rel(path, root)}")
+    if warning:
+        print(warning, file=sys.stderr)
     print(line if wrote else f"ok: {line}: up to date")
     print(f"open {rel(base / 'index.html', root)} to compare them")
     return 0
@@ -2144,6 +2211,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     files.update(proposal_refresh(docs, doc, bt))
     orphans = orphan_tour_pages(pages_folder, tour_pages)
     count = f"{len(screens)} screens, {len(tours)} tour{'s' if len(tours) != 1 else ''}"
+    size_warning = size_warnings(files, root, rel, command, screens)
 
     if args.check:
         stale = []
@@ -2161,6 +2229,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             else:
                 stale.append(f"stale: {rel(path, root)}")
         stale += [f"stale: {rel(path, root)} (its tour file is gone)" for path in orphans]
+        if size_warning:  # --check builds every page in memory: a page over the limit is said here too (exit code unchanged)
+            print(size_warning, file=sys.stderr)
         if stale:
             print("\n".join(stale))
             print(f"fix: {command}")
@@ -2204,6 +2274,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             pages_folder.rmdir()
         except OSError:
             pass
+    if size_warning:
+        print(size_warning, file=sys.stderr)
     for line in done:
         print(line)
     states = {s.id: approval_state(entries[s.id], s) for s in screens}

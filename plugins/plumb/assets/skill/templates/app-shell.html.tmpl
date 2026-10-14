@@ -157,7 +157,7 @@ body {
     return Array.prototype.filter.call(section.querySelectorAll(DIALOGS), shown);
   }
   function showState(section, state) {
-    outerStates(section).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+    outerStates(section).forEach(function (el) { el.hidden = (el.getAttribute("data-state") || "").trim() !== state; });
   }
   /* Bring into view a dialog this change opened. A dialog the screen fixes in place is already on the window (the
      frame is an inline-size container: no containing block for position: fixed); this is for a dialog in the flow of a

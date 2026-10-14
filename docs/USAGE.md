@@ -806,7 +806,19 @@ Every Plumb project has **one main prototype of the whole product**, kept in ste
   dialog a click opens is scrolled into view. **prototype.html to review, app.html to demo.**
 - **`docs/design/screens.html`**: the catalogue. A sidebar, and every screen in every state (loading, empty, error,
   success, disabled, long text, zero, offline where relevant) in **light and dark side by side**, plus every control
-  state (default, hover, focus, pressed, disabled, loading).
+  state (default, hover, focus, pressed, disabled, loading). Each screen is stored in it once and drawn in every
+  state by the page, so it stays small as screens gain states.
+
+Every page holds each screen file once, so a page is about as big as your screen files together. A page over 10 MB
+still builds (and `--check` still exits as before), with one line naming every such page, `warning:
+docs/design/screens.html is 12.4 MB, …: over the 10 MB a generated page should stay under …`, a `note:` naming the
+heaviest screen files (and how much of each is inline `data:` URIs), and a `fix:`. What shrinks the pages is smaller
+screen files: move inline `data:` images and large inline SVG into image files in the docs folder and point at them with
+a relative `src` (screens load relative images), and cut very long sample content. Or git-ignore the pages (they are
+generated, and the build rebuilds them), but a git-ignored page is missing on a fresh clone, so
+`build-prototype.py --check` then fails there: run the build in CI instead of `--check`, or keep the pages committed.
+Every page the build writes is checked: `prototype.html`, `app.html`, `screens.html`, the tour pages and the proposal
+pages.
 
 Every page opens from disk, with no server and no network.
 
