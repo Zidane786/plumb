@@ -212,9 +212,16 @@
     if (!section || !sel) return null;
     var list;
     try { list = section.querySelectorAll(sel); } catch (err) { return null; }
-    var f = frame.getBoundingClientRect();
+    var f = frameBox();
     for (var i = 0; i < list.length; i++) if (seen(list[i], f)) return list[i];
     return null;  /* nothing of it is on screen (another state, or the screen moved on): point at nothing */
+  }
+  /* The frame's padding box in the window (inside its border, scaled with a zoom): what a screen's content can cover. A
+     drawer moved off with translateX(100%) starts exactly at its edge. */
+  function frameBox() {
+    var b = frame.getBoundingClientRect(), k = frame.offsetWidth ? b.width / frame.offsetWidth : 1;
+    var left = b.left + frame.clientLeft * k, top = b.top + frame.clientTop * k;
+    return { left: left, top: top, right: left + frame.clientWidth * k, bottom: top + frame.clientHeight * k };
   }
   /* The element whose box stands for a node: the node itself, or for display: contents (no box of its own) its first
      child that has one. */
@@ -239,7 +246,7 @@
     var vis = getComputedStyle(s).visibility;
     if (vis === "hidden" || vis === "collapse") return false;
     var q = reach(s, r);
-    return q.right > f.left && q.left < f.right && q.bottom > f.top && q.top < f.bottom;
+    return !!q && q.right > f.left && q.left < f.right && q.bottom > f.top && q.top < f.bottom;
   }
   function scrolls(cs) {
     return { x: /auto|scroll/.test(cs.overflowX), y: /auto|scroll/.test(cs.overflowY) };
@@ -279,14 +286,23 @@
     var dy = sc.y ? range(a.scrollTop, want(r.top, r.bottom, top, bottom), Math.max(0, a.scrollHeight - a.clientHeight), false) : 0;
     return { dx: dx, dy: dy };
   }
-  /* Where a node's rect would be once every scroller between it and the frame brought it in (no scrolling). */
+  /* Where a node's rect would be once every scroller between it and the frame brought it in (no scrolling), or null
+     when a box it moves with still leaves it fully outside: an overflow hidden / clip box (a carousel's other slide, a
+     collapsed accordion) or a scroller whose range does not reach it. Innermost first: an outer scroller moves the
+     node and the boxes inside it together, so each box is checked against the node where it then is. */
   function reach(s, r) {
     var q = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
     for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
-      var cs = getComputedStyle(a), sc = scrolls(cs);
-      if ((!sc.x && !sc.y) || !movesWith(s, a)) continue;
-      var d = nudge(a, cs, q);
-      q = { left: q.left - d.dx, top: q.top - d.dy, right: q.right - d.dx, bottom: q.bottom - d.dy };
+      var cs = getComputedStyle(a), cx = cs.overflowX !== "visible", cy = cs.overflowY !== "visible";
+      if ((!cx && !cy) || !movesWith(s, a)) continue;
+      var sc = scrolls(cs);
+      if (sc.x || sc.y) {
+        var d = nudge(a, cs, q);
+        q = { left: q.left - d.dx, top: q.top - d.dy, right: q.right - d.dx, bottom: q.bottom - d.dy };
+      }
+      var ar = a.getBoundingClientRect(), left = ar.left + a.clientLeft, top = ar.top + a.clientTop;
+      if ((cx && (q.right <= left || q.left >= left + a.clientWidth)) ||
+          (cy && (q.bottom <= top || q.top >= top + a.clientHeight))) return null;
     }
     return q;
   }
@@ -556,7 +572,8 @@
       .filter(function (n) { return n && !clipped(n); });
     if (targets.length) bringIntoView(targets[0], labelled);
     T.redraw = function () { draw(step); };
-    if (step.point === "zoom" && targets.length && zoom(targets)) {
+    var shown = targets.filter(function (n) { return !clipped(n); });
+    if (step.point === "zoom" && shown.length && zoom(shown)) {
       T.zoomTimer = setTimeout(function () { if (T.redraw) T.redraw(); }, calm() ? 0 : 400);
     }
     draw(step);
@@ -1064,6 +1081,14 @@
     if (T.tour) { sizeDock(); placeSubtitle(); placeCard(); }
   });
   window.addEventListener("scroll", function () { if (T.tour) { placeSubtitle(); placeCard(); } }, { passive: true });
+  /* The marks follow the viewer's own scrolling inside the screen (a list, a table, a scrolling main): redrawn once a
+     frame while something in the frame scrolls; a redraw measures and never scrolls. */
+  var scrollRedraw = 0;
+  document.addEventListener("scroll", function (e) {
+    var n = e.target;
+    if (!T.redraw || scrollRedraw || !n || n.nodeType !== 1 || !frame.contains(n)) return;
+    scrollRedraw = requestAnimationFrame(function () { scrollRedraw = 0; if (T.redraw) T.redraw(); });
+  }, { capture: true, passive: true });
   if (window.ResizeObserver) {
     new ResizeObserver(function () { if (T.redraw) T.redraw(); }).observe(frame);
     var chromeSized = new ResizeObserver(function () { if (T.tour) { sizeDock(); placeSubtitle(); placeCard(); } });

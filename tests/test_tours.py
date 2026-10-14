@@ -1334,6 +1334,10 @@ BOXES = """<style>
 [data-screen="boxes"] .box { height: 100px; overflow: auto; }
 [data-screen="boxes"] .box .roomy { width: 2000px; }
 [data-screen="boxes"] .drawer { position: fixed; right: 0; top: 0; transform: translateX(110%); }
+[data-screen="boxes"] .drawer100 { position: fixed; right: 0; top: 0; transform: translateX(100%); }
+[data-screen="boxes"] .acc { max-height: 0; overflow: hidden; }
+[data-screen="boxes"] .track { height: 40px; overflow: hidden; }
+[data-screen="boxes"] .track .off { margin-top: 60px; }
 </style>
 <section data-screen="boxes" data-title="Boxes" data-order="6">
   <h2>Boxes</h2>
@@ -1343,6 +1347,11 @@ BOXES = """<style>
     <div class="main"><div class="tallin"><p class="topin">Top</p><p class="midin">Halfway</p></div></div>
     <div class="box"><nav class="drawer slide">Drawer</nav><p class="roomy">Wide content</p></div>
     <p><span class="slide">The visible one</span></p>
+    <div class="acc"><p class="card">In a collapsed accordion</p></div>
+    <div class="track"><p class="slide-a">Shown slide</p><p class="card off">The next slide, clipped</p></div>
+    <p class="card">The visible card</p>
+    <nav class="drawer100 slide3">A drawer moved off by exactly its width</nav>
+    <p><span class="slide3">The visible fallback</span></p>
   </div>
 </section>
 """
@@ -1382,6 +1391,10 @@ def staged_tour() -> dict:
                  "target": ".tallin", "point": "ring", "labels": [{"target": ".tallin .midin", "text": "Mid"}]},
                 {"screen": "boxes", "title": "A drawer", "caption": "The drawer is off the frame.",
                  "target": ".slide", "point": "ring"},
+                {"screen": "boxes", "title": "A card", "caption": "Clipped matches come first.",
+                 "target": ".card", "point": "ring"},
+                {"screen": "boxes", "title": "Another drawer", "caption": "Moved off by 100%.",
+                 "target": ".slide3", "point": "ring"},
             ]}
 
 
@@ -2011,6 +2024,45 @@ def test_the_md_container_query_still_follows_the_frame_with_containment(browser
         wide = page.evaluate("document.getElementById('pp-frame').getBoundingClientRect().width") >= 768
         assert wide == (width == 1280)
         assert page.evaluate(FORM_TRACKS) == (2 if wide else 1), "the md layout follows the frame's width"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------------- review round 3: clip boxes, the frame's edge, scrolling
+
+
+def test_matches_a_clip_box_hides_are_passed_over_for_a_visible_one(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=15)
+        _ringed(page, '#pp-frame [data-screen="boxes"] > [data-state] > p.card')
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_drawer_moved_off_by_exactly_its_width_is_skipped(browser, staged, width: int) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, width=width)
+    try:
+        _start(page, "staged", "guide", step=16)
+        _ringed(page, '#pp-frame [data-screen="boxes"] p > .slide3')
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_marks_follow_the_viewers_scrolling_inside_a_list(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=6)
+        _ringed(page, "#pp-frame .list .last")
+        top = page.evaluate("document.querySelector('#pp-frame .list').scrollTop")
+        page.evaluate("document.querySelector('#pp-frame .list').scrollTop -= 30")
+        page.wait_for_timeout(100)
+        _ringed(page, "#pp-frame .list .last")
+        assert page.evaluate("document.querySelector('#pp-frame .list').scrollTop") == top - 30, "nothing scrolled back"
         assert errors == []
     finally:
         ctx.close()

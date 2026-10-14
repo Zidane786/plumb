@@ -41,8 +41,10 @@ to the walkthrough.
 - **What it points at:** the first element of a selector that is visible: an element hidden with `visibility: hidden`
   (also inside a hidden parent) or pushed off the frame (an off-canvas drawer) is skipped. One that an inner scroller
   has scrolled away (a wide table's far column, a lower item of a fixed-height list) still counts: when the step
-  opens, its first element is scrolled into view inside that scroller, once. Nothing else scrolls: other elements and
-  labels that a scroller holds out of view are left out, and a redraw never undoes your own scrolling. A
+  opens, its first element is scrolled into view inside that scroller, once. One a box that does not scroll keeps out
+  of view (a carousel's other slide, a collapsed accordion) is passed over for the next match. Nothing else scrolls:
+  other elements and labels that a scroller holds out of view are left out, the marks follow your own scrolling inside
+  the screen, and a redraw never undoes it. A
   `display: contents` element is pointed at through its first child that has a box.
 - **Long pages:** a step scrolls its element into the room between the top bar and the panel, at once (whatever
   `scroll-behavior` the page sets). For an element taller than that room, its top edge and its topmost label come into
