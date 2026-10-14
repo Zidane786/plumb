@@ -120,6 +120,13 @@
 - Works on macOS, Linux and Windows (`py -3`, `python` or `python3`), over SSH and in tmux; every generated page opens
   offline (no CDN, no hosted fonts).
 
+### Fixed
+
+- `Allowed raw values:` in `PLUMB.md` now defaults to the folder where your UI primitives really are (for example
+  `web/src/components/ui/**` for a UI package in `web/`), read from the package's `components.json` and `tsconfig`
+  instead of always `components/ui/**` from the repo root. Your own answer still wins. `scaffold.py --verify` warns
+  (with a fix) when an allowed pattern matches no file.
+
 ### Security
 
 - The hooks run only the plugin's own installed scripts, never the copies inside a project, so a cloned repository

@@ -745,3 +745,149 @@ def test_the_dry_run_prints_a_token_that_fits_only_that_list(tmp_path: Path) -> 
     r = raw(root, "--answers", str(answers), "--confirm", token)
     assert r.returncode == 0, r.stderr
     assert "wrote: PLUMB.md" in r.stdout
+
+
+# ---------------------------------------------------------------- Allowed raw values default and --verify
+
+
+def _app(root: Path, pkg: str, aliases_ui: Optional[str] = "@/components/ui", paths: Optional[dict] = None,
+         ui_dir: Optional[str] = "src/components/ui") -> None:
+    """A Next.js UI package in `pkg` ('.' = the repo root) with a shadcn components.json and a tsconfig."""
+    base = root if pkg == "." else root / pkg
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "package.json").write_text(json.dumps({"name": "x", "dependencies": {"next": "15", "react": "19"}}),
+                                       encoding="utf-8")
+    if aliases_ui:
+        (base / "components.json").write_text(json.dumps({"aliases": {"ui": aliases_ui}}), encoding="utf-8")
+    if paths is not None:  # tsconfig is JSON with comments
+        (base / "tsconfig.json").write_text("// comment\n" + json.dumps({"compilerOptions": {"paths": paths}}) + "\n",
+                                            encoding="utf-8")
+    if ui_dir:
+        (base / ui_dir).mkdir(parents=True, exist_ok=True)
+        (base / ui_dir / "button.tsx").write_text("export const B = () => null\n", encoding="utf-8")
+
+
+def allowed_line(root: Path) -> str:
+    return re.search(r"^Allowed raw values: (.*)$", (root / "PLUMB.md").read_text(encoding="utf-8"), re.M).group(1).strip()
+
+
+@pytest.mark.parametrize("pkg", ["web", "client-app"])
+def test_allowed_raw_default_follows_the_ui_package_folder(tmp_path: Path, pkg: str) -> None:
+    _app(tmp_path, pkg, paths={"@/*": ["./src/*"]})
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == f"{pkg}/src/components/ui/**"
+
+
+def test_allowed_raw_default_single_package_repo_and_tsconfig_without_src(tmp_path: Path) -> None:
+    _app(tmp_path, ".", paths={"@/*": ["./*"]}, ui_dir="components/ui")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "components/ui/**"
+    other = tmp_path / "second"
+    _app(other, "ui", aliases_ui="@/lib/primitives", paths={"@/*": ["./app/*"]}, ui_dir="app/lib/primitives")
+    assert run(other).returncode == 0
+    assert allowed_line(other) == "ui/app/lib/primitives/**"
+
+
+def test_allowed_raw_default_without_tsconfig_reads_at_as_src(tmp_path: Path) -> None:
+    _app(tmp_path, "site")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "site/src/components/ui/**"
+
+
+def test_allowed_raw_default_without_components_json_uses_the_folder_that_exists(tmp_path: Path) -> None:
+    _app(tmp_path, "web", aliases_ui=None, ui_dir="components/ui")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/components/ui/**"
+
+
+def test_allowed_raw_default_keeps_the_old_value_with_no_package_and_none_without_web(tmp_path: Path) -> None:
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "components/ui/**"
+    ios = tmp_path / "ios-only"
+    ios.mkdir()
+    assert run(ios, platforms="ios").returncode == 0
+    assert allowed_line(ios) == "none"
+
+
+def test_the_answer_wins_over_the_derived_default(tmp_path: Path) -> None:
+    _app(tmp_path, "web", paths={"@/*": ["./src/*"]})
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"allowed_raw": "lib/primitives/**"}), encoding="utf-8")
+    assert run(tmp_path, "--answers", str(path)).returncode == 0
+    assert allowed_line(tmp_path) == "lib/primitives/**"
+
+
+def _verify(root: Path) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run([sys.executable, str(SCAFFOLD), "--verify", "--project-root", str(root)],
+                          capture_output=True, text=True, encoding="utf-8")
+
+
+def test_verify_is_quiet_when_the_allowed_pattern_matches(tmp_path: Path) -> None:
+    _app(tmp_path, "web", paths={"@/*": ["./src/*"]})
+    assert run(tmp_path).returncode == 0
+    r = _verify(tmp_path)
+    assert "Allowed raw values" not in r.stdout and "warning:" not in r.stdout, r.stdout
+
+
+def test_verify_warns_when_the_allowed_pattern_matches_nothing(tmp_path: Path) -> None:
+    _app(tmp_path, "web", paths={"@/*": ["./src/*"]})
+    assert run(tmp_path).returncode == 0
+    plumb = tmp_path / "PLUMB.md"
+    plumb.write_text(plumb.read_text(encoding="utf-8").replace("web/src/components/ui/**", "frontend/src/ui/**"),
+                     encoding="utf-8")
+    r = _verify(tmp_path)
+    assert "warning: PLUMB.md Allowed raw values: frontend/src/ui/** matches 0 files" in r.stdout, r.stdout
+    assert "fix: ask the user: correct Allowed raw values:" in r.stdout
+    assert "problem: PLUMB.md Allowed raw values" not in r.stdout
+
+
+def test_verify_accepts_none_for_allowed_raw_values(tmp_path: Path) -> None:
+    _app(tmp_path, "web", paths={"@/*": ["./src/*"]})
+    path = tmp_path / "a.json"
+    path.write_text(json.dumps({"allowed_raw": "none"}), encoding="utf-8")
+    assert run(tmp_path, "--answers", str(path)).returncode == 0
+    assert "Allowed raw values" not in _verify(tmp_path).stdout
+
+
+def test_allowed_raw_default_follows_a_tsconfig_extends(tmp_path: Path) -> None:
+    _app(tmp_path, "web", ui_dir="components/ui")  # the alias would guess src/ without the base config
+    base = tmp_path / "web"
+    (base / "tsconfig.base.json").write_text(json.dumps({"compilerOptions": {"paths": {"@/*": ["./*"]}}}),
+                                             encoding="utf-8")
+    (base / "tsconfig.json").write_text('{"extends": "./tsconfig.base", "compilerOptions": {}}', encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/components/ui/**"
+
+
+def test_allowed_raw_default_survives_an_extends_cycle_and_a_missing_base(tmp_path: Path) -> None:
+    _app(tmp_path, "web")
+    (tmp_path / "web/tsconfig.json").write_text('{"extends": "./tsconfig.json"}', encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/src/components/ui/**"
+    other = tmp_path / "b"
+    _app(other, "web")
+    (other / "web/tsconfig.json").write_text('{"extends": "./nope.json"}', encoding="utf-8")
+    assert run(other).returncode == 0
+    assert allowed_line(other) == "web/src/components/ui/**"
+
+
+def test_allowed_raw_default_reads_jsconfig_with_comments_and_trailing_commas(tmp_path: Path) -> None:
+    _app(tmp_path, "site", ui_dir="components/ui")
+    (tmp_path / "site/jsconfig.json").write_text(
+        '{\n  // aliases\n  "compilerOptions": {\n    /* root */\n    "paths": { "@/*": ["./*",], },\n  },\n}\n',
+        encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "site/components/ui/**"
+
+
+def test_allowed_raw_default_prefers_an_existing_folder_over_a_wrong_alias_guess(tmp_path: Path) -> None:
+    _app(tmp_path, "web", ui_dir="components/ui")  # no tsconfig: "@/" would mean src/, which does not exist
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/components/ui/**"
+
+
+def test_allowed_raw_default_lists_every_web_package(tmp_path: Path) -> None:
+    _app(tmp_path, "admin", paths={"@/*": ["./src/*"]})
+    _app(tmp_path, "portal", paths={"@/*": ["./*"]}, ui_dir="components/ui")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "admin/src/components/ui/**, portal/components/ui/**"
