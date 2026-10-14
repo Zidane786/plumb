@@ -136,6 +136,11 @@
   does not define.
 - `audit.py --inventory` no longer merges a named CSS variable's colour (a theme or chart colour) with Tailwind
   palette-class colours: clusters stay within one source kind and say which.
+- `screens.html` stays small on a large prototype: each screen is stored once and drawn in every state and both
+  themes by the page, instead of one full copy per screen × state × theme (a 20-screen × 10-state prototype went from
+  several MB to under half a MB). Every copy still shows its own state, in its own theme, with its own scripts.
+- Any page `build-prototype.py` writes (`prototype.html`, `app.html`, `screens.html`, the tour pages, the proposal
+  pages) over 10 MB prints `warning: <page> is <N> MB …` with what to do: git-ignore it or split the screens.
 
 ### Security
 

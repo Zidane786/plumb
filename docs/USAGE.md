@@ -800,7 +800,13 @@ Every Plumb project has **one main prototype of the whole product**, kept in ste
   dialog a click opens is scrolled into view. **prototype.html to review, app.html to demo.**
 - **`docs/design/screens.html`**: the catalogue. A sidebar, and every screen in every state (loading, empty, error,
   success, disabled, long text, zero, offline where relevant) in **light and dark side by side**, plus every control
-  state (default, hover, focus, pressed, disabled, loading).
+  state (default, hover, focus, pressed, disabled, loading). Each screen is stored in it once and drawn in every
+  state by the page, so it stays small as screens gain states.
+
+A page over 10 MB (a very large prototype) still builds, with `warning: docs/design/screens.html is 12.4 MB, over the
+10 MB a generated page should stay under …` and a `fix:` line: git-ignore it (it is generated, and the build rebuilds
+it), or split the screens (fewer states per screen file, or a large screen as several screen files). Every page the
+build writes is checked: `prototype.html`, `app.html`, `screens.html`, the tour pages and the proposal pages.
 
 Every page opens from disk, with no server and no network.
 
