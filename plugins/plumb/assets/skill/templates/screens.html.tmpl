@@ -149,7 +149,6 @@ body {
 /* Each copy is a document of its own: its body is the plumb-frame container (the md breakpoint follows the copy) and
    its viewport holds anything the screen fixes in place. Until the copy reports its height it keeps 18rem. */
 .sc-iframe { display: block; width: 100%; height: 18rem; border: 0; background: var(--pl-bg); }
-.sc-copy { display: none; }
 
 .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--pl-text); }
 .badge .mark { width: 8px; height: 8px; flex: none; }
@@ -349,7 +348,8 @@ body {
 </footer>
 <script>
 /* Each copy of a screen is its own document: an iframe whose srcdoc is built here from the page's own token and role
-   styles, the screen's styles, the copy's markup (its state already chosen) and the screen's scripts, with a <base> at
+   styles (in the page once), the screen's styles, its markup with only the copy's state showing (one template per
+   screen, shared by all its copies) and the screen's scripts, with a <base> at
    this page's folder and a CSP that allows no network. It is not sandboxed: an opaque-origin frame may not load the
    screen's relative file:// images. The frame reports its height, and links to other screens, by postMessage. */
 (function () {
@@ -404,9 +404,32 @@ body {
     window.addEventListener("load", report);
     report();
   }
-  function part(selector, attr, id) {
-    var found = Array.prototype.filter.call(document.querySelectorAll(selector), function (t) { return t.getAttribute(attr) === id; });
-    return found.length ? found[0].innerHTML : "";
+  /* A screen's markup, styles and scripts are in the page once, as three templates every copy of it shares. */
+  function templates(attr) {
+    var map = Object.create(null);  /* no prototype: any screen id (even __proto__) is a plain key */
+    Array.prototype.forEach.call(document.querySelectorAll("template[" + attr + "]"), function (t) {
+      var id = t.getAttribute(attr);
+      if (!(id in map)) map[id] = t;
+    });
+    return map;
+  }
+  var markups = templates("data-screen-markup"), styles = templates("data-screen-styles"),
+    scripts = templates("data-screen-scripts");
+  function part(map, id) { return id in map ? map[id].innerHTML : ""; }
+  /* The screen's markup in one state: every outer state block (no [data-state] or [data-screen] between it and the
+     section) but `state` gets hidden, as the build's Screen.render does and as prototype.html's setState picks them.
+     The shared template is cloned, never changed. */
+  function markupIn(id, state) {
+    var holder = document.createElement("template");
+    holder.content.appendChild(markups[id].content.cloneNode(true));
+    var section = holder.content.querySelector("[data-screen]");
+    if (section) {
+      Array.prototype.forEach.call(section.querySelectorAll("[data-state]"), function (el) {
+        var outer = el.parentElement && el.parentElement.closest("[data-state], [data-screen]") === section;
+        if (outer && el.getAttribute("data-state") !== state) el.setAttribute("hidden", "");
+      });
+    }
+    return holder.innerHTML;
   }
   var copies = Array.prototype.slice.call(document.querySelectorAll("figure[data-copy]"));
   window.addEventListener("message", function (event) {
@@ -428,14 +451,14 @@ body {
   copies.forEach(function (fig) {
     var key = fig.getAttribute("data-copy");
     var parts = key.split("/"), theme = parts.pop(), state = parts.pop(), id = parts.join("/");
-    var frame = fig.querySelector("iframe"), markup = fig.querySelector("template.sc-copy");
-    if (!frame || !markup) return;
+    var frame = fig.querySelector("iframe");
+    if (!frame || !(id in markups)) return;
     frame.srcdoc = "<!doctype html><html lang=\"" + lang + "\" class=\"" + theme + "\" data-theme=\"" + theme + "\"><head>" +
       "<meta charset=\"utf-8\"><base href=\"" + attr(base) + "\">" +
       "<meta http-equiv=\"Content-Security-Policy\" content=\"" + attr(CSP) + "\">" +
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
-      "<style>" + frameCss + "\n" + BASE + "</style>" + part("template[data-screen-styles]", "data-screen-styles", id) + SHIM +
-      "</head><body>" + markup.innerHTML + part("template[data-screen-scripts]", "data-screen-scripts", id) +
+      "<style>" + frameCss + "\n" + BASE + "</style>" + part(styles, id) + SHIM +
+      "</head><body>" + markupIn(id, state) + part(scripts, id) +
       "<script>(" + inFrame.toString() + ")(" + JSON.stringify(key) + ", " + JSON.stringify(state) + ");<\/script>" +
       "</body></html>";
   });

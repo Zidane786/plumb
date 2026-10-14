@@ -27,10 +27,12 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
   <docs>/screens.html              the catalogue: a sidebar, every screen in every state in light and dark side by side,
                                    the control-state sheet (buttons, input, chip, link in default, hover, focus, pressed,
                                    disabled, loading) drawn from the tokens, and the Decisions page. Each copy is its
-                                   own <iframe srcdoc> document, built by the page from a <template>, with a <base> at
-                                   the docs folder (relative images load as in prototype.html) and a CSP that allows no
-                                   network, sized to its content: ids, url(#id), #id selectors, scripts and radio groups
-                                   never meet another copy. The catalogue needs JavaScript (a <noscript> note says so).
+                                   own <iframe srcdoc> document, built by the page from the screen's one <template>
+                                   (shared by all its copies; the page hides every outer state block but the copy's),
+                                   with a <base> at the docs folder (relative images load as in prototype.html) and a
+                                   CSP that allows no network, sized to its content: ids, url(#id), #id selectors,
+                                   scripts and radio groups never meet another copy. The page grows with the screens,
+                                   not screens × states. It needs JavaScript (a <noscript> note says so).
   <docs>/prototype/screens.json    the screen map. This script is its only writer: id, title, states, route, files
                                    (globs relative to the project root), files_hash, approved {by, at, hash} | null,
                                    synced_from_code, status (to-build | built).
@@ -101,7 +103,8 @@ stale. The main build (and build-tokens.py) refreshes the token block of every g
 keep rendering; their screen files are never touched. screens.json is not read or written.
 
 Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...). An unreadable decisions.md is a warning:
-the build carries on with empty decision panels.
+the build carries on with empty decision panels. A page it builds over PAGE_WARN_BYTES (10 MB) is a warning too
+(`warning: <page> is <N> MB ...` and a fix: git-ignore it or split the screens); the page is still written.
 
 Python 3.9+, standard library only. Imports _plumb.py and build-tokens.py from its own directory.
 """
@@ -135,6 +138,7 @@ INDEX_TEMPLATE = "proposal-index.html.tmpl"
 PLAYER_CSS = "player.css"
 PLAYER_JS = "player.js"
 SCHEMA = 1
+PAGE_WARN_BYTES = 10 * 1024 * 1024  # a generated page over this (10 MB) gets a size warning (size_warnings)
 USAGE = ("[--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
          "[--project PATH]")
 _ID = re.compile(r"^\w[\w-]*\Z")
@@ -1660,6 +1664,10 @@ def tour_header(ctx: dict, tour: dict) -> str:
 
 
 def build_catalogue(ctx: dict, template: str, bt) -> str:
+    """screens.html: every screen × state × theme as its own iframe copy. A screen's markup, styles and scripts are in
+    the page once (three <template>s), shared by all its copies; the page's script builds each copy from them and hides
+    every outer state block but the copy's, as Screen.render does. So the page grows with the screens, not with
+    screens × states × 2, and the token block is in it once."""
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
     nav, body = [], []
@@ -1677,11 +1685,11 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                 # each copy is its own document (an iframe built from the template by the page's script), so ids,
                 # url(#id), #id selectors, getElementById and radio groups never meet another copy's. No sandbox: an
                 # opaque-origin frame may not load the screen's relative file:// images; its CSP keeps the network out
+                # the markup is the screen's one shared template (below); the page hides the other states per copy
                 pair.append(f'<figure class="sc-frame pl-{theme}" data-copy="{_e(s.id)}/{_e(st)}/{theme}">'
                             f'<figcaption>{name}</figcaption>'
                             f'<iframe class="sc-iframe" '
-                            f'title="{_e(s.title)}: {_e(label)}, {theme} theme"></iframe>'
-                            f'<template class="sc-copy">{s.render(st)}</template></figure>')
+                            f'title="{_e(s.title)}: {_e(label)}, {theme} theme"></iframe></figure>')
             copies = "".join(pair)
             code = f" <code>{_e(st)}</code>" if label.lower() != st.lower() else ""
             blocks.append(f'<div class="sc-state" id="screen-{_e(s.id)}/{_e(st)}"><h3 class="sc-state-h sc-ui">'
@@ -1691,6 +1699,7 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                     f'<p class="sc-meta">{_meta_line(e, appr)}</p></div>'
                     f'<a class="sc-open" href="prototype.html#screen-{_e(s.id)}">Open in the prototype</a></header>'
                     + "".join(blocks)
+                    + f'<template data-screen-markup="{_e(s.id)}">{s.section}</template>'
                     + f'<template data-screen-styles="{_e(s.id)}">{screen_styles([s])}</template>'
                     + f'<template data-screen-scripts="{_e(s.id)}">{screen_scripts([s])}</template>'
                     + "</section>")
@@ -1710,6 +1719,27 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     }
     text = P.fill_template(template, values, CATALOGUE_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
+
+
+def size_warnings(files: Dict[Path, str], root: Path, rel, command: str) -> List[str]:
+    """A `warning:` + `fix:` pair for each generated page (.html) over PAGE_WARN_BYTES: big pages open slowly and weigh
+    on the repository. Data files (screens.json) are not pages."""
+    why = "a generated page should stay under (slow to open, heavy in the repository)"
+    out = []
+    for path in sorted(files):
+        size = len(files[path].encode("utf-8"))
+        if path.suffix != ".html" or size <= PAGE_WARN_BYTES:
+            continue
+        page = rel(path, root)
+        out.append(f"warning: {page} is {_mb(size)} MB, over the {_mb(PAGE_WARN_BYTES)} MB {why}\n"
+                   f"fix: git-ignore {page} (it is generated: {command} rebuilds it), or split the screens: fewer "
+                   f"states per screen file, or a large screen as several screen files")
+    return out
+
+
+def _mb(size: int) -> str:
+    text = f"{size / (1024 * 1024):.1f}"
+    return text[:-2] if text.endswith(".0") else text
 
 
 def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
@@ -1932,6 +1962,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             return 2
         wrote += 1
         print(f"wrote {rel(path, root)}")
+    for warning in size_warnings(files, root, rel, again):
+        print(warning, file=sys.stderr)
     print(line if wrote else f"ok: {line}: up to date")
     print(f"open {rel(base / 'index.html', root)} to compare them")
     return 0
@@ -2179,6 +2211,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             pages_folder.rmdir()
         except OSError:
             pass
+    for warning in size_warnings(files, root, rel, command):
+        print(warning, file=sys.stderr)
     for line in done:
         print(line)
     states = {s.id: approval_state(entries[s.id], s) for s in screens}

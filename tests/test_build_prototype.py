@@ -198,10 +198,12 @@ def test_catalogue_has_every_screen_state_in_both_themes(project: Path) -> None:
             for theme in ("light", "dark"):
                 copy = block(page, "data-copy", f"{sid}/{state}/{theme}")
                 assert f"pl-{theme}" in page[page.rindex("<", 0, page.index(f'data-copy="{sid}/{state}/{theme}"')):][:200]
-                shown = re.findall(r'<div data-state="([^"]+)"', copy)
-                hidden = re.findall(r'<div hidden data-state="([^"]+)"', copy)
-                assert shown == [state], (sid, state, theme, shown)
-                assert sorted(hidden) == sorted(s for s in states if s != state)
+                assert "<template" not in copy.split("</figure>", 1)[0]  # the copies share the screen's one template
+        # one template per screen holds the whole section, every state as written; the page picks each copy's state
+        markup = re.findall(f'<template data-screen-markup="{sid}">(.*?)</template>', page, re.S)
+        assert len(markup) == 1, sid
+        assert re.findall(r'<div data-state="([^"]+)"', markup[0]) == states
+        assert "<div hidden data-state=" not in markup[0]
     assert page.count('data-copy="') == 2 * sum(len(s) for s in SCREENS.values())
 
 
@@ -704,8 +706,11 @@ def test_catalogue_copies_are_isolated_documents(project: Path) -> None:
     for theme in ("light", "dark"):
         copy = block(page, "data-copy", f"signup/ready/{theme}")
         assert '<iframe class="sc-iframe" title="Sign up: Ready, ' + theme + ' theme">' in copy
-        assert '<template class="sc-copy"><section data-screen="signup"' in copy
-        assert '<label for="email">' in copy and '<input id="email"' in copy  # markup untouched: ids stay as written
+        assert "<template" not in copy.split("</figure>", 1)[0]
+    markup = page[page.index('<template data-screen-markup="signup">'):]
+    assert markup.startswith('<template data-screen-markup="signup"><section data-screen="signup"')
+    assert '<label for="email">' in markup and '<input id="email"' in markup  # markup untouched: ids stay as written
+    assert page.count('<template data-screen-markup="signup">') == 1
     assert "sandbox=" not in page  # an opaque origin would block the screens' relative file:// images
     assert '<base href=' in page  # relative paths resolve against the docs folder, as in prototype.html
     assert page.count('<template data-screen-scripts="booking">') == 1 and page.count('<template data-screen-styles="booking">') == 1
@@ -1528,5 +1533,148 @@ def test_app_announces_each_screen_change(browser, app_built) -> None:
         page.wait_for_function("window.seen.filter(t => t === 'Overview').length === 2")
         assert page.evaluate("window.seen") == ["Overview", "", "Overview"]  # emptied before the repeat
         assert errors == []
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------------- catalogue size and the page-size warning
+
+FILLER = "<p>" + "A row of ordinary screen text, long enough to weigh something. " * 20 + "</p>"
+
+
+def big_screen(sid: str, order: int, states: int, shape: str) -> str:
+    """A synthetic screen with `states` state blocks of about 1.3 KB each. Two shapes, so the size rule is not shaped
+    to one markup: plain <div> states straight in the section, or <article> states inside a wrapper, each holding an
+    inner [data-state] (an inner one belongs to its state block and is never hidden on its own)."""
+    if shape == "div":
+        blocks = "".join(f'  <div data-state="s{j}"><h3>State {j}</h3>{FILLER}</div>\n' for j in range(states))
+        body = f"  <h2>Screen {sid}</h2>\n{blocks}"
+    else:
+        blocks = "".join(f'    <article data-state="v{j}"><h3>Variant {j}</h3>{FILLER}<span data-state="inner">inner</span>'
+                         f"</article>\n" for j in range(states))
+        body = f'  <div class="wrap">\n{blocks}  </div>\n'
+    return (f'<section data-screen="{sid}" data-title="Screen {sid}" data-order="{order}">\n{body}</section>\n'
+            f"<script data-screen-script>\nscreen.setAttribute(\"data-ran\", plumb.state());\n</script>\n")
+
+
+def big_project(dest: Path, screens: int, states: int, shape: str = "div") -> Path:
+    p = make_project(dest, screens=False, decisions=False, build=False)
+    for i in range(screens):
+        write(p / SCREENS_REL / f"x{i:02d}.html", big_screen(f"x{i:02d}", i + 1, states, shape))
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return p
+
+
+@pytest.mark.parametrize("shape", ["div", "nested"])
+def test_catalogue_grows_with_screens_not_screens_times_states(tmp_path: Path, shape: str) -> None:
+    """20 screens × 10 states: each screen's markup is in the page once (shared by its 20 copies), not once per copy."""
+    sizes = {n: (big_project(tmp_path / f"{shape}-{n}", n, 10, shape) / CATALOGUE_REL).stat().st_size for n in (10, 20)}
+    screen_bytes = len(big_screen("x00", 1, 10, shape).encode("utf-8"))
+    per_screen = (sizes[20] - sizes[10]) / 10
+    # one copy of the markup plus the 20 copies' small figures; one template per copy would be 2 × 10 × screen_bytes
+    assert per_screen < 2 * screen_bytes, (per_screen, screen_bytes)
+    assert sizes[20] < 1_000_000, sizes  # the byte budget (several MB with a full render per copy)
+    page = read(tmp_path / f"{shape}-20" / CATALOGUE_REL)
+    assert page.count("<template data-screen-markup=") == 20
+    assert page.count('data-copy="') == 20 * 10 * 2
+    assert page.count("/* plumb:tokens */") == 1  # tokens once in the page; each copy takes them from there
+    assert page.count(FILLER) == 20 * 10
+
+
+def test_large_catalogue_is_deterministic(tmp_path: Path) -> None:
+    a = big_project(tmp_path / "a", 20, 10, "nested")
+    b = big_project(tmp_path / "elsewhere" / "b", 20, 10, "nested")
+    assert (a / CATALOGUE_REL).read_bytes() == (b / CATALOGUE_REL).read_bytes()
+    before = (a / CATALOGUE_REL).read_bytes()
+    r = run(a)
+    assert r.returncode == 0 and f"wrote {CATALOGUE_REL}" not in r.stdout
+    assert (a / CATALOGUE_REL).read_bytes() == before
+
+
+def _size_warnings(err: str) -> list:
+    return re.findall(r"^warning: (\S+) is [0-9.]+ MB, over the [0-9.]+ MB", err, re.M)
+
+
+def test_every_page_over_the_limit_warns(project: Path, monkeypatch, capsys) -> None:
+    write(project / DOCS / "prototype/tours/demo.json", read(FIXTURE / "tours/demo.json"))
+    write(project / DOCS / "prototype/proposals/pick/a-one/screens/home.html", read(FIXTURE / "screens/home.html"))
+    monkeypatch.setattr(BP, "PAGE_WARN_BYTES", 2000)
+    code = BP.main(["--root", str(project / SKILL_REL)])
+    _out, err = capsys.readouterr()
+    assert code == 0, err
+    named = _size_warnings(err)
+    assert sorted(named) == sorted([PROTO_REL, APP_REL, CATALOGUE_REL, f"{DOCS}/tours/demo.html"]), err
+    assert JSON_REL not in err  # the map is data, not a page
+    for page in named:
+        assert f"\nfix: git-ignore {page} (it is generated" in err and "split the screens" in err
+    code = BP.main(["--root", str(project / SKILL_REL)])  # nothing rewritten: the pages are still too big
+    _out, err = capsys.readouterr()
+    assert code == 0 and len(_size_warnings(err)) == 4, err
+    code = BP.main(["--root", str(project / SKILL_REL), "--proposal", "pick"])
+    _out, err = capsys.readouterr()
+    assert code == 0, err
+    base = f"{DOCS}/prototype/proposals/pick"
+    assert sorted(_size_warnings(err)) == sorted([f"{base}/a-one/prototype.html", f"{base}/a-one/app.html",
+                                                  f"{base}/a-one/screens.html", f"{base}/index.html"]), err
+    code = BP.main(["--root", str(project / SKILL_REL), "--check"])  # --check writes nothing and reports staleness only
+    _out, err = capsys.readouterr()
+    assert code == 0 and _size_warnings(err) == [], err
+
+
+def test_pages_under_the_limit_do_not_warn(project: Path, monkeypatch, capsys) -> None:
+    code = BP.main(["--root", str(project / SKILL_REL)])
+    _out, err = capsys.readouterr()
+    assert code == 0 and "MB" not in err, err  # the default limit (10 MB) is far above this project's pages
+    assert BP.PAGE_WARN_BYTES == 10 * 1024 * 1024
+    exact = (project / CATALOGUE_REL).stat().st_size
+    monkeypatch.setattr(BP, "PAGE_WARN_BYTES", exact)  # a page exactly at the limit is not over it
+    code = BP.main(["--root", str(project / SKILL_REL)])
+    _out, err = capsys.readouterr()
+    assert code == 0 and CATALOGUE_REL not in err, err
+
+
+NEST = ('<section data-screen="nest" data-title="Nested states" data-order="0">\n'
+        '  <div class="wrap"><article data-state="one"><p data-test="one">One</p>'
+        '<span data-state="inner" data-test="inner">inner of one</span></article>\n'
+        '  <article data-state="two" data-test="two">Two</article></div>\n'
+        '  <p data-state="three" data-test="three">Three</p>\n'
+        '  <p data-test="shared">In every state</p>\n'
+        '</section>\n<script data-screen-script>\n'
+        'screen.setAttribute("data-catalogue", String(plumb.catalogue));\n'
+        'screen.setAttribute("data-ran", plumb.state());\n</script>\n')
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_catalogue_copies_pick_their_state_from_the_shared_template(browser, tmp_path: Path, scheme: str) -> None:
+    """Each copy shows only its own outer state block (an inner [data-state] stays with its block), runs the screen's
+    script with plumb.catalogue === true and its state, takes its own theme and sizes to its content."""
+    p = make_project(tmp_path / "p", build=False)
+    write(p / SCREENS_REL / "nest.html", NEST)
+    assert run(p).returncode == 0
+    ctx, page, errors, requests = _open(browser, p / CATALOGUE_REL, scheme=scheme)
+    try:
+        _copies_ready(page)
+        expect = {"one": ["one", "inner", "shared"], "two": ["two", "shared"], "three": ["three", "shared"]}
+        for state, shown in expect.items():
+            for theme in ("light", "dark"):
+                frame = _copy(page, f"nest/{state}/{theme}")
+                seen = frame.locator("[data-test]").evaluate_all(
+                    "els => els.filter(e => e.offsetParent !== null).map(e => e.dataset.test)")
+                assert seen == shown, (state, theme, seen)
+                frame.locator(f'[data-screen="nest"][data-ran="{state}"]').wait_for(state="attached")
+                assert frame.locator('[data-screen="nest"]').get_attribute("data-catalogue") == "true"
+                assert frame.locator("html").get_attribute("data-theme") == theme
+                content = frame.locator("body").evaluate("b => Math.ceil(b.getBoundingClientRect().height)")
+                height = page.evaluate(f"document.querySelector('[data-copy=\"nest/{state}/{theme}\"] iframe')"
+                                       f".getBoundingClientRect().height")
+                assert abs(height - content) <= 1, (state, theme, height, content)
+        bg = "el => getComputedStyle(el).backgroundColor"
+        assert _copy(page, "home/ready/light").locator("[data-screen]").evaluate(bg) == "rgb(255, 255, 255)"
+        assert _copy(page, "home/ready/dark").locator("[data-screen]").evaluate(bg) == "rgb(15, 18, 23)"
+        # the shared template itself stays as written: picking a copy's state never changes it
+        assert page.evaluate("""document.querySelector('template[data-screen-markup="nest"]').content
+            .querySelectorAll('[hidden]').length""") == 0
+        assert errors == [] and requests == [], (errors, requests)
     finally:
         ctx.close()
