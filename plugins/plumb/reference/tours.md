@@ -3,7 +3,8 @@
 Three things, kept apart:
 
 - **the screens** (`/plumb:prototype`, [prototypes.md](prototypes.md));
-- **the walkthrough player**, built into every `prototype.html` by `build-prototype.py` (guide mode and play mode);
+- **the walkthrough player**, built into every `prototype.html` and every tour page by `build-prototype.py` (guide
+  mode and play mode);
 - **a tour file** (`<docs>/prototype/tours/<id>.json`): which steps, which words. `/plumb:prototype` writes a default
   one for every flow it builds and updates it when the flow changes; `/plumb:tour` writes extra or custom ones.
 
@@ -21,6 +22,30 @@ The `audience` picks the mode that opens first: `client` and `whats-new` open in
 `team` in guide mode. Either mode is one click away. Links: `prototype.html#tour-<id>` opens a tour,
 `#tour-<id>-<n>` its step n. Captions and callouts are `aria-live`; every control works by keyboard; a skip link leads
 to the walkthrough.
+
+## Where it plays
+
+Each tour file says where its own page, `<docs>/tours/<id>.html`, plays it (`"view"`):
+
+- **`app`** (the default, also when `view` is left out): the full-window app view (the same screens as `app.html`, no
+  screens list, no state switcher, no decisions) with the player on top. For a demo, a client, training. The closing
+  card offers "Open the prototype" (the same screen in `prototype.html`).
+- **`prototype`**: the prototype page, with the screens list and the "Why it looks like this" / decisions rail (they
+  fold away while the tour runs and come back when it ends). For a design review.
+
+`prototype.html#tour-<id>` plays every tour in the prototype whatever its view, and `app.html` itself carries no player
+(a clean demo). `/plumb:tour` asks "Where should it play?" and records the answer; `/plumb:prototype`'s default tours
+leave `view` out (the app view). In both views `#tour-<id>` and `#tour-<id>-<n>` work, and the player moves between
+screens (and through the clicks it makes) without adding browser history entries: the tour's place is in the address
+(`#tour-<id>-<n>`), so Back leaves the page.
+
+**In the app view the page scrolls**, not a frame, so the player treats what the screen keeps at the top of the window
+as part of the window's edge: a step's element is brought into view below the screen's own fixed or sticky headers,
+bars and banners (only those across the element's columns, sticking to the window, and less than half the window tall;
+several stacked bars add up), never under them. A **zoom** step there scales the page's frame, which would pull the
+screen's fixed layers (a fixed header, a toast, a dialog) to the top of the page while it lasts; so on a screen showing
+a fixed layer the app view points with a spotlight instead of zooming. In `prototype.html` (and a prototype-view page)
+the frame holds those layers, so zoom works as always.
 
 ## The player on the page
 
@@ -66,6 +91,7 @@ One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits
 {
   "title": "Taking a booking",
   "audience": "client",
+  "view": "app",
   "purpose": "Show the owner how a host takes a booking in under a minute.",
   "speed": 1,
   "intro":   {"title": "Taking a booking", "text": "What you'll see: tonight's tables, a booking, the confirmation.", "hold": 600},
@@ -98,6 +124,7 @@ One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits
 |---|---|
 | `title` | The tour's name (shown in the player and the tour page). |
 | `audience` | `client`, `training`, `review` (default), `team` or `whats-new`: sets the caption tone and the opening mode. |
+| `view` | Where its page `tours/<id>.html` plays it: `app` (default: the full-window app with the player on top) or `prototype` (the prototype page with the screens list and the decisions rail, for a design review). Anything else exits 2 naming the file and line. See "Where it plays". |
 | `purpose` | One sentence: why this tour exists (shown on the intro). |
 | `speed` | Default play speed: `0.5`, `1`, `1.5` or `2`. |
 | `intro`, `closing` | Title cards: `{"title", "text", "hold"}` ("what you'll see", "what to try next"). |
@@ -142,9 +169,9 @@ custom one.
 
 ## Every tour is also its own page
 
-`build-prototype.py` writes `<docs>/tours/<id>.html` for each tour: one self-contained file with the whole prototype
-(screens, tokens, interactions) and that tour, opening straight into it (play mode for a client or what's-new audience,
-guide mode otherwise). It opens from disk with no server and no network, so it can be emailed or put in training
+`build-prototype.py` writes `<docs>/tours/<id>.html` for each tour: one self-contained file with every screen (tokens,
+interactions) and that tour, opening straight into it (play mode for a client or what's-new audience, guide mode
+otherwise), in the tour's view: the full-window app (default) or the prototype page. It opens from disk with no server and no network, so it can be emailed or put in training
 material; viewers can leave the tour and click around. It is generated: never edit it, it is rebuilt whenever a screen
 or the tour changes, and `--check` fails when it is stale. A tour page whose tour file was removed is deleted.
 
@@ -153,7 +180,8 @@ Turning a tour into in-app onboarding in the live product is not part of Plumb 1
 ## Writing good tours
 
 - **Default tour per flow** (`/plumb:prototype`): the happy path of the flow, one step per meaningful screen or action,
-  plus one step on the most important non-happy state (the error or empty state); `audience: "review"`.
+  plus one step on the most important non-happy state (the error or empty state); `audience: "review"`, no `view`
+  (it plays in the app view).
 - **Custom tours** (`/plumb:tour`): ask who is watching and what they should take away; pick the screens and states
   across one flow or several; chapters per part of the story; an intro ("what you'll see") and a closing card ("what to
   try next"); `your_turn` steps for training; a longer `hold` where there is something to read.
