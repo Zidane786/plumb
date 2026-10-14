@@ -129,6 +129,15 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    Improvements, filters, light and dark.
 4. `PY SKILL/scripts/audit.py nowhere` → exit 2 with `error:` and `fix:` (nothing checked).
 
+5. Inventory: `mkdir inv && cd inv`, write `package.json` `{"dependencies": {"tailwindcss": "^4.0.0"}}`,
+   `app/globals.css` with `@import "tailwindcss"; :root { --radius: 0.625rem; --chart-3: #10b981; }` and
+   `@theme inline { --radius-lg: var(--radius); }`, and `app/page.tsx` with
+   `<i className="rounded-lg bg-emerald-500" />`. `PY SKILL/scripts/audit.py --inventory --project .`
+   **Expect:** exit 0; `radius: 1 value in 1 group` with `10px`; a colour group `#10b981 x1 [variable]` and another
+   `#10b981 x1 [palette]` (never merged); the line `inventory: radius classes counted at the project's own theme
+   radius from app/globals.css (sizes it does not define use Tailwind's defaults)`, and the closing
+   `inventory: colour groups are per source (variable = …`.
+
 ### 3.3 The main prototype
 
 1. Write `docs/design/prototype/screens/home.html`:

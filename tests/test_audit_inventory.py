@@ -226,3 +226,36 @@ def test_inventory_colour_clusters_still_merge_inside_one_kind(tmp_path: Path) -
     r = run(["--inventory", "--json", "--project", str(tmp_path)], tmp_path)
     groups = [(g["source"], g["members"]) for g in json.loads(r.stdout)["kinds"]["color"]["clusters"]]
     assert ("variable", ["#13867f", "#14857f"]) in groups and ("literal", ["#14857f"]) in groups
+
+
+def test_inventory_radius_base_ignores_dark_overrides_and_reads_more_forms(tmp_path: Path) -> None:
+    tw_project(tmp_path, ".dark { --radius: 1rem; }\n:root { --radius: 0.5rem; }\n"
+                         "@theme inline {\n  --radius-sm: var(--radius, 3px);\n  --radius-md: calc(var(--radius) * 2);\n"
+                         "  --radius-lg: calc(var(--radius) / 2);\n  --radius-xl: 1em;\n}\n")
+    counts = radius_counts(tmp_path)
+    # sm = 8px (base), md = 16px, lg = 4px, xl = 16px; rounded-t-lg is lg again
+    assert counts == {"8px": 1, "16px": 2, "4px": 2}
+
+
+def test_inventory_radius_fallback_is_used_without_a_base(tmp_path: Path) -> None:
+    tw_project(tmp_path, "@theme { --radius-lg: var(--radius, 0.25rem); }\n")
+    assert radius_counts(tmp_path)["4px"] == 3  # sm and the default 4px, plus lg (x2 with rounded-t-lg)
+
+
+def test_inventory_radius_conflicting_files_prefer_the_theme_file_then_path_order(tmp_path: Path) -> None:
+    write(tmp_path / "package.json", '{"dependencies": {"tailwindcss": "^4.0.0"}}\n')
+    write(tmp_path / "app/a-legacy.css", ":root { --radius: 2rem; }\n@theme { --radius-lg: 2rem; --radius-xl: 3rem; }\n")
+    write(tmp_path / "app/z-main.css", '@import "tailwindcss";\n:root { --radius: 1rem; }\n@theme { --radius-lg: 1rem; }\n')
+    write(tmp_path / "app/page.tsx", '<div className="rounded-lg rounded-xl" />\n')
+    # both files hold @theme: path order wins (a-legacy first); a name only z-main defines would still come from it
+    assert radius_counts(tmp_path) == {"32px": 1, "48px": 1}
+    write(tmp_path / "app/a-legacy.css", ":root { --radius: 2rem; }\n")  # no @theme there any more: z-main wins
+    assert radius_counts(tmp_path) == {"16px": 1, "12px": 1}
+    r = run(["--inventory", "--project", str(tmp_path)], tmp_path)
+    assert "theme radius from app/z-main.css" in r.stdout
+
+
+def test_inventory_radius_note_is_absent_without_a_theme_radius(tmp_path: Path) -> None:
+    tw_project(tmp_path, ".x { color: #111111; }\n")
+    r = run(["--inventory", "--project", str(tmp_path)], tmp_path)
+    assert r.returncode == 0 and "theme radius" not in r.stdout

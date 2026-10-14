@@ -1449,10 +1449,11 @@ def inventory_add(inv: dict, name: str, text: str, tailwind: bool = False, code:
 
 _THEME_AT = re.compile(r"@theme\b[^{};]*\{")
 _RADIUS_VAR = re.compile(r"(?<![\w-])--radius(?:-([\w.]+))?\s*:\s*([^;{}]{1,200})")
-_CALC_RADIUS = re.compile(r"^calc\(\s*(var\(\s*--radius(?:-[\w.]+)?\s*\)|\d*\.?\d+(?:px|rem))\s*([+-])\s*"
-                          r"(\d*\.?\d+)(px|rem)\s*\)$")
-_LEN_ONLY = re.compile(r"^(\d*\.?\d+)(px|rem)$")
-_VAR_REF = re.compile(r"^var\(\s*--radius(?:-([\w.]+))?\s*\)$")
+_RADIUS_BASE_SELECTOR = re.compile(r"(?:^|[\s,>+~])(?::root|html|body|\*|@theme(?:\s+inline)?)\s*$", re.I)
+_LEN_ONLY = re.compile(r"^(\d*\.?\d+)(px|rem|em)$")
+_NUM_ONLY = re.compile(r"^\d*\.?\d+$")
+_VAR_REF = re.compile(r"^var\(\s*--radius(?:-([\w.]+))?\s*(?:,\s*(.+?))?\s*\)$", re.S)
+_CALC_RADIUS = re.compile(r"^calc\(\s*(.+?)\s+([+*/-])\s+(.+?)\s*\)$|^calc\(\s*(.+?)\s*([*/])\s*(.+?)\s*\)$", re.S)
 
 
 def _theme_blocks(code: str) -> list:
@@ -1467,56 +1468,99 @@ def _theme_blocks(code: str) -> list:
     return out
 
 
-def theme_radii(codes) -> dict:
+def _selector_of(code: str, pos: int) -> str:
+    """The selector (or at-rule prelude) of the innermost block that holds position pos."""
+    depth, i = 0, pos
+    while i > 0:
+        i -= 1
+        ch = code[i]
+        if ch == "}":
+            depth += 1
+        elif ch == "{":
+            if depth == 0:
+                j = max(code.rfind("}", 0, i), code.rfind(";", 0, i), code.rfind("{", 0, i)) + 1
+                return code[j:i].strip()
+            depth -= 1
+    return ""
+
+
+def theme_radii(files, used: Optional[list] = None) -> dict:
     """The project's own radius steps in px, {"sm": 6.0, "lg": 10.0, ...}, from CSS text (comments already masked).
 
-    The base is `--radius` (anywhere, first definition wins); the steps are the `--radius-<name>` variables inside
-    `@theme` / `@theme inline`. A value is a plain length, var(--radius) (or another radius variable), or
-    calc(<one of those> +/- N px|rem), rem = 16px. A step that does not resolve is left out, so the caller falls back to
-    Tailwind's default for it. Empty when the project defines no theme radius."""
+    files: [(path, code)]. The base is `--radius` declared on :root / html / body / * or inside @theme; a declaration
+    under any other selector (.dark, [data-theme=...]) is a theme override and is ignored. The steps are the
+    `--radius-<name>` variables inside `@theme` / `@theme inline`. A value is a length (px, rem, em = 16px),
+    var(--radius) or another radius variable (var(--radius, <fallback>) uses the base, else the fallback), or calc() of
+    one of those with +/- a length or * / a number. A step that does not resolve is left out, so the caller falls back
+    to Tailwind's default for it. Several files: the files that hold an @theme block come first, then path order; the
+    first definition of a name wins. used, when given, receives the path of every file a value was taken from.
+    Empty when the project defines no theme radius."""
+    ordered = sorted(files, key=lambda f: (0 if "@theme" in f[1] else 1, f[0]))
     base: Optional[float] = None
     raw: Dict[str, str] = {}
-    for code in codes:
+    for path, code in ordered:
         if "--radius" not in code:
             continue
         if base is None:
             for m in _RADIUS_VAR.finditer(code):
-                if m.group(1) is None:
-                    m2 = _LEN_ONLY.match(m.group(2).strip())
-                    if m2:
-                        base = _px_len(m2.group(1), m2.group(2))
-                        break
+                m2 = _LEN_ONLY.match(m.group(2).strip()) if m.group(1) is None else None
+                if m2 and _RADIUS_BASE_SELECTOR.search(_selector_of(code, m.start())):
+                    base = _px_len(m2.group(1), m2.group(2))
+                    if used is not None:
+                        used.append(path)
+                    break
         for block in _theme_blocks(code):
             for m in _RADIUS_VAR.finditer(block):
-                if m.group(1) is not None:
-                    raw.setdefault(m.group(1), m.group(2).strip())
+                if m.group(1) is not None and m.group(1) not in raw:
+                    raw[m.group(1)] = m.group(2).strip()
+                    if used is not None and path not in used:
+                        used.append(path)
     out: Dict[str, float] = {}
 
-    def term(text: str, seen: tuple) -> Optional[float]:
+    def num(text: str, seen: tuple) -> Optional[Tuple[float, bool]]:
+        """(value, is_length) of one operand."""
         text = text.strip()
         m = _LEN_ONLY.match(text)
         if m:
-            return _px_len(m.group(1), m.group(2))
+            return _px_len(m.group(1), "rem" if m.group(2) == "em" else m.group(2)), True
+        if _NUM_ONLY.match(text):
+            return float(text), False
         m = _VAR_REF.match(text)
         if m:
             name = m.group(1)
-            if name is None:
-                return base
-            return resolve(name, seen) if name in raw else None
+            got = base if name is None else (resolve(name, seen) if name in raw else None)
+            if got is None and m.group(2):
+                fb = num(m.group(2), seen)
+                got = fb[0] if fb and fb[1] else None
+            return (got, True) if got is not None else None
+        if text.startswith("calc("):
+            got = calc(text, seen)
+            return (got, True) if got is not None else None
+        return None
+
+    def calc(text: str, seen: tuple) -> Optional[float]:
+        m = _CALC_RADIUS.match(text)
+        if not m:
+            return None
+        a, op, b = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(4), m.group(5), m.group(6))
+        left, right = num(a, seen), num(b, seen)
+        if not left or not right:
+            return None
+        if op in "+-":
+            if not (left[1] and right[1]):
+                return None
+            return max(0.0, left[0] + right[0] if op == "+" else left[0] - right[0])
+        if op == "*" and left[1] != right[1]:
+            return max(0.0, left[0] * right[0])
+        if op == "/" and left[1] and not right[1] and right[0]:
+            return max(0.0, left[0] / right[0])
         return None
 
     def resolve(name: str, seen: tuple) -> Optional[float]:
         if name in seen:
             return None
-        text = raw[name]
-        m = _CALC_RADIUS.match(text)
-        if m:
-            first = term(m.group(1), seen + (name,))
-            if first is None:
-                return None
-            delta = _px_len(m.group(3), m.group(4))
-            return max(0.0, first + delta if m.group(2) == "+" else first - delta)
-        return term(text, seen + (name,))
+        got = num(raw[name], seen + (name,))
+        return got[0] if got and got[1] else None
 
     for name in sorted(raw):
         px = resolve(name, ())
@@ -1541,7 +1585,7 @@ def finish_inventory(inv: dict) -> dict:
 
 
 def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Optional[bool] = None,
-                   seen: Optional[list] = None) -> dict:
+                   seen: Optional[list] = None, radius_files: Optional[list] = None) -> dict:
     """Every design value used under roots: {kind: {value: {"count": n, "where": ["file:line", ...]}}}.
 
     kinds: color (lowercase #rrggbb, #rrggbbaa when translucent), font-family (lowercase stack), font-size, spacing,
@@ -1550,7 +1594,8 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
     and style attributes, JS style objects, Tailwind classes (only when the project uses Tailwind; tailwind=None
     detects it), Swift and Kotlin. Comments, node_modules and build output, generated files, files over 5 MB and
     paths matching an exclude glob are skipped. "where" paths are relative to base (default: the folder the roots share).
-    seen, when given, receives the name of every file read (audit.py --inventory counts them)."""
+    seen, when given, receives the name of every file read (audit.py --inventory counts them). radius_files, when
+    given, receives the files the project's own theme radius came from (see theme_radii)."""
     roots = [Path(r) for r in roots]
     if base is None:
         dirs = [str((r if r.is_dir() else r.parent).resolve()) for r in roots]
@@ -1596,8 +1641,8 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
     use_tw = detected if tailwind is None else tailwind
     named = None
     if use_tw:  # rounded-lg is the project's own --radius-lg when its @theme defines one, Tailwind's default otherwise
-        radii = theme_radii(mask_comments(t, source_ext(n) or ".css") for n, t in found
-                            if source_ext(n) in (".css", ".scss"))
+        radii = theme_radii([(n, mask_comments(t, source_ext(n) or ".css")) for n, t in found
+                             if source_ext(n) in (".css", ".scss")], radius_files)
         named = {"radius": radii} if radii else None
     for name, text in found:
         inventory_add(inv, name, text, use_tw, named=named)

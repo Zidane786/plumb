@@ -43,7 +43,10 @@ file was found or the input is bad. Radius: a Tailwind rounded-* class counts at
 inline) --radius-<name> value (plain length, var(--radius), calc(var(--radius) +/- N px|rem); rem = 16px), Tailwind's
 default only for a size the project does not define. Colours carry a source: variable (a named CSS variable such as a
 theme or chart colour), palette (a Tailwind palette class) or literal (anything else); a colour value lists its
-"sources" counts and a cluster has "source", and values of different sources are never merged.
+"sources" counts and a cluster has "source", and values of different sources are never merged. "variable" means a CSS
+custom property (--name); a theme object in JS or a named colour in Swift or Kotlin is "literal". Theme radius: the
+base --radius counts only on :root / html / body / * or inside @theme (a .dark or [data-theme] override is ignored); when
+several CSS files define the same name, the file holding an @theme block wins, then path order.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
@@ -5005,8 +5008,9 @@ def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
         raise PlumbError(f"error: {', '.join(missing)}: not found, nothing was scanned\n"
                          f"fix: pass existing folders that hold UI code, e.g. audit.py app components --inventory")
     seen: List[str] = []
+    radius_files: List[str] = []
     inv = P.scan_inventory([t.resolve() for t in targets], _inventory_excludes(args, skill_dir, root), base=root,
-                           seen=seen)
+                           seen=seen, radius_files=radius_files)
     if not seen:
         exts = " ".join(sorted(PLATFORM_OF))
         looked = ", ".join(rel(t, root) for t in targets)
@@ -5032,7 +5036,9 @@ def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
         by_value = {v["value"]: v for v in data["values"]}
         print(f"{kind}: {_plural(len(data['values']), 'value')} in {_plural(len(data['clusters']), 'group')}")
         for group in data["clusters"]:
-            members = ", ".join(f"{m} x{by_value[m]['count']}" for m in group["members"])
+            members = ", ".join(
+                f"{m} x{(inv[kind][m].get('sources') or {}).get(group.get('source'), by_value[m])['count']}"
+                for m in group["members"])
             places = by_value[group["canonical"]]["where"]
             source = group.get("source")
             if source:  # colours: the group's own places and its kind, never mixed across kinds
@@ -5042,6 +5048,9 @@ def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
             print(f"  {kind}: {group['canonical']} x{group['count']}{label} ({members})  at "
                   f"{', '.join(places[:INVENTORY_SHOWN])}{more}")
     print("inventory: the first value of each group is the proposed token; --json lists every value with file:line")
+    if radius_files:
+        print("inventory: radius classes counted at the project's own theme radius from " + ", ".join(radius_files)
+              + " (sizes it does not define use Tailwind's defaults)")
     if inv["color"]:
         print("inventory: colour groups are per source (variable = a named CSS variable, palette = a Tailwind palette "
               "class, literal = any other value); values of different sources are never merged")
