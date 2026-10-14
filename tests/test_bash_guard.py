@@ -9,7 +9,10 @@ Claude Code's, Copilot CLI's (both input shapes) and Kiro's payloads, and in-pro
   truncate, dd of=, and in inline code (python -c, a here-document fed to an interpreter) open(<path>, "w" | "a" | "x")
   and Path(<path>).write_text / write_bytes;
 - what only reads, runs or imports is allowed: a here-document writing a Makefile whose lines run the design system's
-  scripts, json.load of screens.json, importing a Plumb script with importlib, and quoted code with append, .dump or >.
+  scripts, json.load of screens.json, importing a Plumb script with importlib, and quoted code with append, .dump or >;
+- default deny, prove safe: the guard refuses every command the previous reader refused (tests/legacy_guard.py, the
+  frozen oracle) unless the new reader proves the guarded paths are data or reads; a security review's lists
+  (tests/bash_guard_cases.py) pin it, with the forms the review found and the speed and fallback cases.
 """
 
 from __future__ import annotations
@@ -45,6 +48,8 @@ WRITE_FORMS = [
     "sed -i 's/a/b/' {t}",
     "sed -i '' -e 's/a/b/' {t}",
     "perl -pi -e 's/a/b/' {t}",
+    "perl -0pi -e 's/a/b/' {t}",
+    "perl -0777 -pi -e 's/a/b/' {t}",
     "cp /tmp/x {t}",
     "mv /tmp/x {t}",
     "install -m 644 /tmp/x {t}",
@@ -239,7 +244,6 @@ def test_reads_name_no_guarded_target(H, tmp_path, command):
     ("env FOO=1 nice -n 5 timeout 10 sed -i s/a/b/ z.css", ["z.css"]),
     ("find . -name '*.css' -exec cp {} out.css \\;", ["out.css"]),
     ("eval 'echo x > e.txt'", ["e.txt"]),
-    ("awk '{print > \"aw.txt\"}' in.txt", ["aw.txt}", "aw.txt"]),  # as written, and without the code's }
     ("python3 -c \"import shutil; shutil.copy('a', 'sh.txt')\"", ["sh.txt"]),
     ("python3 -c \"import os; os.replace('a', 'r.txt')\"", ["r.txt"]),
     ("python3 -c \"import os; os.open('o.txt', os.O_WRONLY | os.O_CREAT)\"", ["o.txt"]),
@@ -293,11 +297,31 @@ def test_a_subshell_cd_does_not_move_later_commands(H, tmp_path):
     assert _rel(found, tmp_path) == ["sub/a.txt", "b.txt"]
 
 
-def test_quoted_strings_given_to_an_unknown_program_are_read_conservatively(H, tmp_path):
-    """Ruling: a quoted argument of a program Plumb doesn't know (ssh, watch, docker …) may be a command it runs: its
-    write targets count; the same text given to echo, git or grep is data."""
-    assert _rel(H.shell_targets("watch -n1 \"date > w.txt\"", str(tmp_path)), tmp_path) == ["w.txt"]
-    assert H.shell_targets("git log --format='%h > %s'", str(tmp_path)) == []
+UNSURE = [
+    "watch -n1 \"date > w.txt\"", "awk '{print > \"aw.txt\"}' in.txt", "ruby -e \"File.write('x', 'y')\"",
+    "npx tsx -e \"1\"", "poetry run python -c \"1\"", "xargs sed -i s/a/b/", "cat fix.py | python3",
+    "find . -name x -delete", "git rebase --exec 'make' HEAD~2", "cd $(git rev-parse --show-toplevel)",
+    "echo x > $OUT", "python3 -c \"import os; os.system('ls')\"", "python3 -c \"def f(): return 'x'\nopen(f(), 'w')\"",
+    "perl -ne 'print' a.txt", "env -C sub tee x",
+]
+SURE = [
+    "git log --format='%h > %s'", "echo 'a > b' > /tmp/x", "grep -n '>' a.txt", "OUT=/tmp/o.txt; echo x > \"$OUT\"",
+    "python3 -c \"open('/tmp/o.txt', 'w')\"", "cd sub && echo x > y", "python3 x.py --flag > /tmp/o",
+    "cat <<'EOF' > notes.md\n$(rm -rf /) `x`\nEOF",
+]
+
+
+@pytest.mark.parametrize("command", UNSURE)
+def test_what_the_reader_cannot_follow_makes_it_unsure(H, tmp_path, command):
+    """A program the reader doesn't know (ssh, watch, awk, ruby, a runner), xargs, code piped from a file, a variable or
+    $( ) it cannot resolve in a target or a cd, code that runs commands or writes where the reader cannot follow: the
+    reader is unsure, so the previous reader decides."""
+    assert H.shell_effects(command, str(tmp_path)).unsure, command
+
+
+@pytest.mark.parametrize("command", SURE)
+def test_what_the_reader_follows_leaves_it_sure(H, tmp_path, command):
+    assert not H.shell_effects(command, str(tmp_path)).unsure, H.shell_effects(command, str(tmp_path)).unsure
 
 
 def test_parsing_is_fast_on_a_long_command(H, tmp_path):
@@ -328,3 +352,149 @@ def test_the_hint_lets_no_write_form_through(H):
 @pytest.mark.skipif(os.sep != "/", reason="requires POSIX: backslash paths")
 def test_windows_style_paths_are_read_as_paths(H, tmp_path):
     assert _rel(H.shell_targets("echo x > docs\\design\\screens.html", str(tmp_path)), tmp_path) == [GEN]
+
+
+# ---------------------------------------------------------------- the decision, in-process: default deny, prove safe
+
+import bash_guard_cases as CASES  # noqa: E402
+
+SANCTIONED = {"heredoc script then run (ruling: data)"}  # the plan rules a here-document written to a file is data
+
+
+class Decider:
+    """The guard's decision for a shell command (pre_edit.shell_refusal) and the frozen previous reader's decision
+    (tests/legacy_guard.py, through the same guard), on one built project."""
+
+    def __init__(self, proj: Path) -> None:
+        self.proj = proj
+        spec = importlib.util.spec_from_file_location("plumb_pre_edit_bash_guard", HOOKS / "pre_edit.py")
+        self.pe = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.pe)
+        spec = importlib.util.spec_from_file_location("plumb_legacy_oracle", Path(__file__).parent / "legacy_guard.py")
+        self.oracle = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.oracle)
+        self.project = self.pe.H.Project(proj)
+
+    def new(self, command: str, sub: str = "") -> bool:
+        cwd = str(self.proj / sub) if sub else str(self.proj)
+        return self.pe.shell_refusal(self.project, command, cwd, cwd) is not None
+
+    def old(self, command: str, sub: str = "") -> bool:
+        cwd = str(self.proj / sub) if sub else str(self.proj)
+        if not self.oracle.WRITE_HINT.search(command):
+            return False
+        refusal = self.pe._shell_paths_refusal
+        return (refusal(self.project, self.oracle.shell_targets(command, cwd), False, cwd)
+                or refusal(self.project, self.oracle.shell_removals(command, cwd), True, cwd)) is not None
+
+
+@pytest.fixture(scope="module")
+def decide(tmp_path_factory):
+    mp = pytest.MonkeyPatch()
+    tmp = tmp_path_factory.mktemp("guard")
+    proj = make_project(tmp, "My Proj")
+    (proj / "notes").mkdir(exist_ok=True)
+    mp.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    mp.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    mp.setenv("HOME", str(proj.parent))
+    mp.setenv("USERPROFILE", str(proj.parent))
+    yield Decider(proj)
+    mp.undo()
+
+
+def test_the_guard_refuses_everything_the_previous_reader_refused(decide):
+    """The differential floor: over the review's write commands, its in-process shapes and every write form, the guard
+    refuses every command the frozen previous reader refused (except the plan's sanctioned rulings)."""
+    commands = [(label, cmd, rest[0] if rest else "") for label, cmd, *rest in CASES.writes(SKILL_REL, str(decide.proj))]
+    commands += [("shape", cmd, "") for cmd in CASES.shapes()]
+    commands += [("form", form.format(t=t), "") for form in WRITE_FORMS for t in (OWN, GEN)]
+    misses = [(label, cmd) for label, cmd, sub in commands
+              if label not in SANCTIONED and decide.old(cmd, sub) and not decide.new(cmd, sub)]
+    assert not misses, misses
+
+
+@pytest.mark.parametrize("form", WRITE_FORMS)
+def test_every_write_form_is_refused_by_the_decision(decide, form):
+    for target in (OWN, GEN):
+        assert decide.new(form.format(t=target)), form
+
+
+JS_WRITE = f"require('fs').writeFileSync('{GEN}', 'x')"
+REVIEW_MUST_REFUSE = [
+    # C1 runners and interpreters the reader did not know
+    f"poetry run python -c \"open('{GEN}', 'w').write('x')\"", f"pipenv run python -c \"open('{GEN}', 'w')\"",
+    f"conda run -n web python -c \"open('{GEN}', 'w')\"", f"uvx --from x python -c \"open('{GEN}', 'w')\"",
+    f"npx tsx -e \"{JS_WRITE}\"", f"npx -y tsx -e \"{JS_WRITE}\"", f"tsx -e \"{JS_WRITE}\"", f"ts-node -e \"{JS_WRITE}\"",
+    f"pnpm exec node -e \"{JS_WRITE}\"", f"npm exec -- node -e \"{JS_WRITE}\"", f"yarn node -e \"{JS_WRITE}\"",
+    f"ruby -e \"File.write('{GEN}', 'x')\"",
+    # C2 a cd the reader cannot resolve
+    f"cd $(git rev-parse --show-toplevel) && echo x > {GEN}", f"cd `git rev-parse --show-toplevel` && echo x > {GEN}",
+    f"cd \"$CLAUDE_PROJECT_DIR\" && echo x > {GEN}",
+    # C3 inline code whose write the reader cannot follow, or that runs commands
+    f"python3 - <<'EOF'\ndef target():\n    return '{GEN}'\nwith open(target(), 'w') as f:\n    f.write('x')\nEOF",
+    f"python3 -c \"import os; os.system('echo x > {GEN} 2>&1')\"",
+    f"python3 -c \"import subprocess; subprocess.run('echo x > {GEN}', shell=True)\"",
+    f"python3 -c \"import subprocess; subprocess.run(['cp', '/tmp/x', '{GEN}'])\"",
+    f"node -e \"require('child_process').execSync('echo x > {GEN} ')\"",
+    f"python3 -c 'exec(\"open(\\\"{GEN}\\\", \\\"w\\\")\")'",
+    # C4 code on /dev/stdin
+    f"python3 /dev/stdin <<'EOF'\nopen('{GEN}', 'w').write('x')\nEOF",
+    f"node /dev/stdin <<'EOF'\n{JS_WRITE}\nEOF",
+    # I1 perl -0pi; I2 variables and $PWD; I3 globs and braces
+    f"perl -0pi -e 's/a/b/' {GEN}", f"perl -0777 -pi -e 's/a/b/' {OWN}",
+    f"OUT={GEN}; echo x > \"$OUT\"", f"F={OWN} && sed -i 's/a/b/' $F", f"echo x > \"$PWD/{GEN}\"",
+    "[IO.File]::WriteAllText(\"$PWD\\docs\\design\\screens.html\", 'x')",
+    "rm docs/design/*.html", "rm -rf docs/design/*", "sed -i 's/a/b/' docs/design/*.html",
+    "echo x > docs/design/{screens,prototype}.html",
+    # M1 PowerShell aliases; M2 wget
+    f"sc {GEN} 'x'", f"ac {GEN} 'x'", f"cpi C:\\tmp\\x {GEN}",
+    f"wget -qO {GEN} https://example.invalid/", f"wget -o log -O {GEN} https://example.invalid/",
+    # M3 a control character must not let a redirect through
+    f"echo x > {GEN}; python3 -c \"def f(p):\n open(p,'w')\n\x01x\"",
+    # M5 nesting past the reader's depth
+    "echo " + "$( " * 9 + f"echo x > {GEN}" + " )" * 9,
+]
+
+
+@pytest.mark.parametrize("command", REVIEW_MUST_REFUSE)
+def test_the_forms_the_review_found_are_refused(decide, command):
+    assert decide.new(command), command
+
+
+def test_the_reviews_reads_and_ours_are_allowed(decide):
+    reads = list(CASES.reads(SKILL_REL, str(decide.proj))) + [("ours", c) for c in READS]
+    refused_now = [(label, cmd) for label, cmd in reads if decide.new(cmd)]
+    assert not refused_now, refused_now
+
+
+def test_a_long_for_loop_and_many_cp_arguments_are_fast(decide):
+    import time
+    for command in ("python3 -c \"for " + "a , " * 7500 + " open(a,'w')\"",
+                    "cp " + " ".join(f"a{i}" for i in range(20000)) + " dest/",
+                    "; ".join(f"echo x > /tmp/f{i}" for i in range(3000))):
+        assert len(command) > 20000
+        t = time.perf_counter()
+        decide.new(command)
+        assert time.perf_counter() - t < 1.0, command[:60]
+
+
+def test_a_glob_past_the_cap_makes_the_reader_unsure(H, tmp_path):
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for i in range(H._MAX_GLOB + 5):
+        (folder / f"f{i}.txt").write_text("x", encoding="utf-8")
+    eff = H.shell_effects("rm many/*.txt", str(tmp_path))
+    assert eff.unsure and len(eff.removals) <= H._MAX_GLOB + 1
+
+
+def test_past_its_time_budget_the_previous_reader_decides_and_one_line_is_logged(launcher, tmp_path, proj):
+    """Ruling: the reader has a time budget well under the hook's timeout; past it, the previous reader decides (a
+    command it refused stays refused, even one the reader could prove) and the hooks' log gets one line."""
+    env = hook_env(tmp_path, extra={"PLUMB_SHELL_BUDGET": "0"})
+    command = f"git commit -m 'never > {GEN} by hand'"
+    assert " is generated" in refused(run_hook(launcher, "pre_edit.py", payload("claude", "bash", CWD=str(proj),
+                                                                               COMMAND=command), proj, env))
+    log = Path(env["HOME"]) / ".plumb" / "feedback" / "hooks.md"
+    assert log.is_file() and "time budget" in log.read_text(encoding="utf-8")
+    allowed(run_hook(launcher, "pre_edit.py", payload("claude", "bash", CWD=str(proj), COMMAND=f"cat {GEN}"), proj,
+                     env))

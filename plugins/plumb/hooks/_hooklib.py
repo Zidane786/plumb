@@ -52,6 +52,7 @@ Python 3.9+, standard library only.
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import importlib.util
 import json
@@ -692,12 +693,16 @@ class Project:
 
     def home_root(self) -> str:
         """The project that owns the skill (a linked repo's skill lives in its home repo): the nearest folder above the
-        skill with a PLUMB.md, else this project."""
-        if self.skill_dir is not None:
-            found = find_project(str(self.skill_dir.parent))
-            if found is not None:
-                return str(found)
-        return self.root_s
+        skill with a PLUMB.md, else this project. Found once per hook run (the guard asks it for every path)."""
+        cached = getattr(self, "_home_root", None)
+        if cached is None:
+            cached = self.root_s
+            if self.skill_dir is not None:
+                found = find_project(str(self.skill_dir.parent))
+                if found is not None:
+                    cached = str(found)
+            self._home_root = cached
+        return cached
 
 
 def kiro_hooks_doc(path: str) -> Optional[list]:
@@ -1136,35 +1141,41 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 
 # ---------------------------------------------------------------- shell commands
 #
-# What a Bash or PowerShell command writes, moves away or removes. A small lexer (quotes, escapes, here-documents,
-# $( ), backticks, process substitution, subshells, comments, the operators) splits the command into simple commands;
-# only real write targets count:
-# - a redirect target (>, >>, 1>, 2>, &>, >|, <>), tee [-a], sed -i / perl -i, the destination of cp / mv / install /
-#   rsync / ln (a folder destination writes <folder>/<source name>), truncate, dd of=, curl -o / wget -O, and
-#   PowerShell's Set-Content, Add-Content, Out-File, Copy-Item, Move-Item, New-Item; rm and the other removals;
-# - a shell's own script (bash -c "…", a here-document fed to a shell, eval's words, find -exec), read as commands;
-# - an interpreter's inline code (python -c, node -e, deno eval, a here-document or an echo piped to an interpreter):
-#   open("<path>", "w" | "a" | "x" | "+"), Path("<path>").write_text / write_bytes / open("w"), shutil.copy / move,
-#   os.replace / rename, fs.writeFile / appendFile / copyFile / createWriteStream, Bun.write, Deno.writeTextFile,
-#   [IO.File]::WriteAllText …, and the removals os.remove, shutil.rmtree, Path.unlink, fs.rm … A write whose target is
-#   a name, not a literal, counts the literals that reach that name (its assignments, a for loop over it, what is
-#   appended to it, the script's own arguments); when that cannot be followed (a function parameter), every literal
-#   the code does not only read, run or import counts, as before.
-# Everything else is data: quoted strings, the body of a here-document fed to anything but a shell or an interpreter
-# (cat > Makefile <<EOF), and the text of echo, printf, git, grep … Reading, running and importing a guarded file is
-# allowed. A quoted argument of a program not known here (ssh, watch, awk …) may be a command that program runs: its
-# write targets count (writes only).
+# What a Bash or PowerShell command writes, moves away or removes, for the guard. Default deny, prove safe:
+# pre_edit.py refuses a command when this reader finds a guarded file among its write targets, and also whenever the
+# previous reader (_shell_legacy.py, the floor) would refuse it, unless this reader proves that every guarded path in
+# the command is data or a read. So a new reading only ever removes a false positive it can prove.
+#
+# A small lexer (quotes, escapes, here-documents, $( ), backticks, process substitution, subshells, comments, the
+# operators) splits the command into simple commands. Their write targets: a redirect (>, >>, 1>, 2>, &>, >|, <>),
+# tee [-a], sed -i / perl -i, the destination of cp / mv / install / rsync / ln (a folder destination writes
+# <folder>/<source name>), truncate, dd of=, curl -o / wget -O, PowerShell's Set-Content, Add-Content, Out-File,
+# New-Item, Copy-Item, Move-Item; and the removals (rm, del, Remove-Item, git rm, the sources of mv …). A shell's own
+# script (bash -c, a here-document fed to a shell, eval, find -exec) is read as commands; an interpreter's inline code
+# (python -c, node -e, a here-document or an echo piped to one) for its writes (open(…, "w"), Path(…).write_text,
+# shutil, os.replace, fs.writeFile, [IO.File]::WriteAllText …). Shell variables set in the command (OUT=…), $PWD and
+# $CLAUDE_PROJECT_DIR are followed; braces and globs in a target are expanded against the files there.
+#
+# What the reader cannot prove makes it unsure (ShellEffects.unsure), and then the previous reader decides: a program
+# it does not know, a runner (npx, poetry run, conda run …), a variable or $( ) it cannot resolve in a target or a cd,
+# code piped from a file, code that runs commands (os.system, subprocess, exec, execSync) or writes somewhere it cannot
+# follow, nesting deeper than it reads, a glob with too many matches, a parse error, or its time budget running out.
+# A guarded path in inline code outside a read (open(path) to read, json.load, importlib, Path.read_text, require,
+# readFileSync …) or print is a mention: the previous reader decides then too.
 
 
-# A cheap first look: a command with none of these cannot write or remove a file.
+# A cheap first look: a command with none of these cannot write or remove a file (this reader's forms and the
+# previous reader's).
 WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\brsync\b|\bln\b|\bdd\b|truncate|"
-                        r"write|open\(|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|::|"
-                        r"append|copyfile|\bfs\.|rename|\bcopy\b|cpSync|\bcp\(|\bcurl\b|\bwget\b|new-item|\bni\b|"
-                        r"inplace|remove|rmtree|unlink|rmdir|rmSync|"
+                        r"write|open\(|\.dump|shutil|os\.(?:replace|rename)|-content\b|out-file|copy-item|move-item|"
+                        r"::|append|copyfile|\bfs\.|rename|\bcopy\b|cpSync|\bcp\(|\bcurl\b|\bwget\b|new-item|\bni\b|"
+                        r"inplace|remove|rmtree|unlink|rmdir|rmSync|tee-object|\bsc\b|\bac\b|\bcpi\b|"
                         # removals and moves: rm, del, erase, rd, Remove-Item, ri, move, mi
                         r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b",
                         re.I)
-
+SHELL_BUDGET = 1.5  # seconds this reader may take (the hook's timeout is 10 s); past it the previous reader decides
+_MAX_TARGETS = 2000  # more targets than this: the reader is unsure (the previous reader decides on the rest)
+_MAX_GLOB = 500
 _ESCAPABLE = frozenset(" \t\n'\"\\$`;&|<>()*?[]#~{}!")  # outside quotes \x is x for these; \x stays \x for the rest
 _CONTROL = ("&&", "||", ";;", "|&", ";", "|", "&")
 _REDIRS = ("&>>", "&>", "<<<", "<<-", "<<", "<>", "<&", ">>", ">|", ">&", "<", ">")
@@ -1468,32 +1479,123 @@ def _commands(toks: List[tuple]) -> List[tuple]:
 
 # $HOME, ${HOME} (sh), %USERPROFILE% (cmd), $env:USERPROFILE / $env:HOME (PowerShell) at the start of a path: read as ~.
 _HOME_VAR = re.compile(r"^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|\$env:HOME)(?=[/\\]|$)", re.I)
+_VAR = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+_HERE_PREFIX = re.compile(r"^(?:\$PWD|\$\{PWD\}|\$\(pwd\)|`pwd`)(?=[/\\]|$)")
+_ROOT_PREFIX = re.compile(r"^(?:\$CLAUDE_PROJECT_DIR|\$\{CLAUDE_PROJECT_DIR\}|\$env:CLAUDE_PROJECT_DIR"
+                          r"|\$\(git rev-parse --show-toplevel\)|`git rev-parse --show-toplevel`)(?=[/\\]|$)")
 
 
-def _word_path(word: str, base: str) -> Optional[str]:
-    if not word or word.lower() in _NOT_FILES or word.startswith("/dev/fd/"):
-        return None
-    p = word.replace("\\", "/") if os.sep == "/" else word
-    p = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", p))
-    return os.path.normpath(p if os.path.isabs(p) else os.path.join(base, p))
+class _Budget(Exception):
+    """The reader's time budget ran out."""
 
 
-class _Effects:
-    """The files a command writes and removes (absolute, in order, once each)."""
+class _Scope:
+    """Where a command runs: its folders (more than one when a cd could not be resolved exactly), the variables set
+    earlier in the command, and pushd's stack."""
 
-    def __init__(self) -> None:
+    __slots__ = ("bases", "vars", "dirs")
+
+    def __init__(self, bases: Tuple[str, ...], variables: Dict[str, str], dirs: Optional[List[Tuple[str, ...]]] = None):
+        self.bases = bases
+        self.vars = variables
+        self.dirs = dirs if dirs is not None else []
+
+    def copy(self) -> "_Scope":
+        return _Scope(self.bases, dict(self.vars), list(self.dirs))
+
+
+def _braces(word: str, limit: int = 64) -> List[str]:
+    """{a,b} expanded (the first group, then the rest), at most limit words."""
+    m = re.search(r"\{([^{}]*,[^{}]*)\}", word)
+    if not m:
+        return [word]
+    out: List[str] = []
+    for part in m.group(1).split(","):
+        out += _braces(word[:m.start()] + part + word[m.end():], limit)
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+class ShellEffects:
+    """What a shell command writes, removes and mentions (absolute paths, in order, once each), and why the reader is
+    unsure, if it is: then the previous reader decides (see the notes above)."""
+
+    def __init__(self, root: Optional[str], deadline: float) -> None:
+        self.root = root
+        self.deadline = deadline
         self.writes: List[str] = []
         self.removals: List[str] = []
+        self.mentions: List[str] = []
+        self.unsure: List[str] = []
+        self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set()}
 
-    def write(self, word: str, base: str) -> None:
-        path = _word_path(word, base)
-        if path is not None and path not in self.writes:
-            self.writes.append(path)
+    def doubt(self, why: str) -> None:
+        if why not in self.unsure:
+            self.unsure.append(why)
 
-    def remove(self, word: str, base: str) -> None:
-        path = _word_path(word, base)
-        if path is not None and path not in self.removals:
-            self.removals.append(path)
+    def tick(self) -> None:
+        if time.monotonic() > self.deadline:
+            raise _Budget()
+
+    def _paths(self, word: str, scope: _Scope, strict: bool) -> List[str]:
+        """The absolute paths a word names: variables set in the command expanded, $PWD the folder,
+        $CLAUDE_PROJECT_DIR the project, ~ and $HOME the home folder; in a target (strict) braces and globs expanded,
+        and a part left unresolved ($X, `…`) makes the reader unsure."""
+        if not word or word.lower() in _NOT_FILES or word.startswith("/dev/fd/"):
+            return []
+        w = _VAR.sub(lambda m: scope.vars.get(m.group(1) or m.group(2), m.group(0)), word) if "$" in word else word
+        bases = scope.bases
+        m = _HERE_PREFIX.match(w)
+        if m:
+            w = w[m.end():].lstrip("/\\") or "."
+        else:
+            m = _ROOT_PREFIX.match(w)
+            if m:
+                env = os.environ.get("CLAUDE_PROJECT_DIR") if "CLAUDE_PROJECT_DIR" in m.group(0) else None
+                root = env or self.root
+                if not env and strict:
+                    self.doubt("a path under a folder the reader can only guess")
+                if root:
+                    w = w[m.end():].lstrip("/\\") or "."
+                    bases = (root,) if env else tuple(dict.fromkeys(scope.bases + (root,)))
+        if os.sep == "/":
+            w = w.replace("\\", "/")
+        w = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", w))
+        if strict and ("$" in w or "`" in w):
+            self.doubt("a variable or a command the reader cannot resolve in a path")
+        out: List[str] = []
+        for x in (_braces(w) if strict else [w]):
+            for b in bases:
+                full = os.path.normpath(x if os.path.isabs(x) else os.path.join(b, x))
+                out.append(full)
+                if strict and re.search(r"[*?\[]", x):
+                    matches = glob.glob(full)
+                    if len(matches) > _MAX_GLOB:
+                        self.doubt("a glob with more matches than the reader checks")
+                    out += [os.path.normpath(p) for p in matches[:_MAX_GLOB]]
+        return out
+
+    def _add(self, kind: int, word: str, scope: _Scope, strict: bool = True) -> None:
+        lst = (self.writes, self.removals, self.mentions)[kind]
+        seen = self._seen[kind]
+        for p in self._paths(word, scope, strict):
+            if p in seen:
+                continue
+            if len(lst) >= _MAX_TARGETS:
+                self.doubt("more paths than the reader checks")
+                return
+            seen.add(p)
+            lst.append(p)
+
+    def write(self, word: str, scope: _Scope) -> None:
+        self._add(0, word, scope)
+
+    def remove(self, word: str, scope: _Scope) -> None:
+        self._add(1, word, scope)
+
+    def mention(self, word: str, scope: _Scope) -> None:
+        self._add(2, word, scope, strict=False)
 
 
 def _command_name(word: str) -> str:
@@ -1502,19 +1604,28 @@ def _command_name(word: str) -> str:
 
 
 _RESERVED = frozenset(("if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "coproc"))
-# Commands that run the rest of their words as a command, and the flags of theirs that take a value.
+# Commands that run the rest of their words as a command (read through), and their flags that take a value.
 _WRAPPERS: Dict[str, Tuple[str, ...]] = {
     "sudo": ("-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T", "--user", "--group"), "doas": ("-u", "-C"),
-    "command": (), "builtin": (), "exec": ("-a",), "nohup": (), "time": ("-f", "-o"), "env": ("-u", "-C", "-S"),
-    "nice": ("-n",), "ionice": ("-c", "-n", "-p"), "stdbuf": ("-i", "-o", "-e"), "timeout": ("-s", "-k", "--signal",
-                                                                                            "--kill-after"),
-    "xargs": ("-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a"), "chronic": (), "unbuffer": (), "caffeinate": ("-w", "-t"),
+    "command": (), "builtin": (), "exec": ("-a",), "nohup": (), "time": ("-f", "-o"), "env": ("-u",),
+    "nice": ("-n",), "ionice": ("-c", "-n", "-p"), "stdbuf": ("-i", "-o", "-e"),
+    "timeout": ("-s", "-k", "--signal", "--kill-after"), "xargs": ("-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a"),
+    "chronic": (), "unbuffer": (), "caffeinate": ("-w", "-t"),
 }
+# Runners (read through, but the reader is unsure: what they run is resolved by another tool): name → its subcommands
+# that run a command ("" = the name itself runs one), and their flags that take a value.
+_RUNNERS: Dict[str, Tuple[str, ...]] = {
+    "poetry": ("run",), "pipenv": ("run",), "pdm": ("run",), "hatch": ("run",), "rye": ("run",), "pixi": ("run",),
+    "conda": ("run",), "mamba": ("run",), "micromamba": ("run",), "npm": ("exec", "x"), "pnpm": ("exec", "dlx"),
+    "yarn": ("exec", "dlx"), "bun": ("x",), "npx": ("",), "bunx": ("",), "uvx": ("",), "pipx": ("run",),
+}
+_RUNNER_VALUE_FLAGS = ("-n", "--name", "-p", "--prefix", "--from", "--with", "--python", "-e", "--environment",
+                       "--package", "--spec", "-c", "--call", "--env", "--cwd")
 
 
-def _command_start(words: List[str]) -> int:
-    """The index of the word that names the command: after FOO=bar, reserved words (if, then, do …) and wrappers that
-    run their words as a command (sudo, env, nice, timeout, xargs, uv run …)."""
+def _command_start(words: List[str], eff: ShellEffects) -> int:
+    """The index of the word that names the command: after FOO=bar, reserved words (if, then, do …), wrappers that run
+    their words as a command (sudo, env, nice, timeout, xargs, uv run …) and runners (npx, poetry run …)."""
     i, n = 0, len(words)
     while i < n:
         w = words[i]
@@ -1522,11 +1633,16 @@ def _command_start(words: List[str]) -> int:
         if re.match(r"^[A-Za-z_]\w*=", w) or w in _RESERVED:
             i += 1
         elif name in _WRAPPERS:
+            if name == "xargs":
+                eff.doubt("xargs adds words the reader cannot see")
             i += 1
             while i < n and words[i].startswith("-") and len(words[i]) > 1:
                 if words[i] == "--":
                     i += 1
                     break
+                if name == "env" and (words[i] in ("-C", "-S", "--chdir", "--split-string")
+                                      or words[i].startswith(("--chdir=", "--split-string="))):
+                    eff.doubt("env runs its command in another way")
                 i += 2 if words[i] in _WRAPPERS[name] else 1
             if name == "timeout" and i < n:
                 i += 1  # the duration
@@ -1534,6 +1650,14 @@ def _command_start(words: List[str]) -> int:
             i += 2
             while i < n and words[i].startswith("-"):
                 i += 2 if words[i] in _UV_VALUE_FLAGS else 1
+        elif name in _RUNNERS and ("" in _RUNNERS[name] or (i + 1 < n and words[i + 1] in _RUNNERS[name])):
+            eff.doubt(f"{name} runs a command another tool resolves")
+            i += 1 if "" in _RUNNERS[name] else 2
+            while i < n and words[i].startswith("-") and len(words[i]) > 1:
+                if words[i] == "--":
+                    i += 1
+                    break
+                i += 2 if words[i] in _RUNNER_VALUE_FLAGS else 1
         else:
             break
     return i
@@ -1606,7 +1730,7 @@ _COPY_VALUE_FLAGS = {
 }
 
 
-def _copy_writes(name: str, args: List[str], base: str, out: _Effects) -> None:
+def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -> None:
     """The destination of cp / mv / install / rsync / ln (and cmd's copy / move): the last word, or -t DIR; a folder
     destination (several sources, a trailing slash, or an existing folder) writes <folder>/<source name> too."""
     vf = _COPY_VALUE_FLAGS[name]
@@ -1616,22 +1740,25 @@ def _copy_writes(name: str, args: List[str], base: str, out: _Effects) -> None:
         pos = [p for p in pos if not re.fullmatch(r"/[A-Za-z-]+", p)]  # cmd's /y /b switches
     if into is not None:
         folder, sources = into, pos
-        out.write(folder, base)
+        eff.write(folder, scope)
     elif name == "ln" and len(pos) == 1:
         folder, sources = ".", pos  # ln -s TARGET: a link named like the target, here
     elif len(pos) >= 2:
         dest, sources = pos[-1], pos[:-1]
-        out.write(dest, base)
-        full = _word_path(dest, base)
-        if not (len(pos) > 2 or dest.endswith(("/", "\\")) or (full is not None and os.path.isdir(full))):
+        eff.write(dest, scope)
+        full = eff._paths(dest, scope, False)
+        if not (len(pos) > 2 or dest.endswith(("/", "\\")) or any(os.path.isdir(p) for p in full)):
             return
         folder = dest
     else:
         return
+    if len(sources) > _MAX_GLOB:
+        eff.doubt("more sources than the reader checks")
+        return
     for s in sources:
         leaf = re.split(r"[/\\]", s.rstrip("/\\"))[-1]
         if leaf and leaf not in (".", ".."):
-            out.write(folder.rstrip("/\\") + "/" + leaf, base)
+            eff.write(folder.rstrip("/\\") + "/" + leaf, scope)
 
 
 _REMOVERS = ("rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri")
@@ -1691,27 +1818,30 @@ def _shell_script(name: str, args: List[str]) -> Tuple[Optional[str], bool]:
             continue
         if re.match(r"^-[a-z]*c[a-z]*$", flag):
             return (args[j + 1] if j + 1 < len(args) else None), False
-        if flag in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
+        if flag in ("-o", "+o", "--rcfile", "--init-file"):
             j += 2
             continue
         if flag == "-s":
             return None, True
         if not flag.startswith(("-", "+")):
-            return None, False  # a script file: its contents are not on the line
+            return None, flag in ("/dev/stdin", "/dev/fd/0")  # a script file: its contents are not on the line
         j += 1
     return None, True
 
 
 _PY_NAME = re.compile(r"python[\d.]*|py|pypy[\d.]*")
+_NODE_NAMES = ("node", "nodejs", "bun", "deno", "tsx", "ts-node", "esno", "vite-node")
+_STDIN_FILES = ("-", "/dev/stdin", "/dev/fd/0")
 
 
-def _python_code(args: List[str], stdin: List[str]) -> Tuple[List[str], List[str]]:
-    """The code python runs from its command line (-c CODE, or stdin for `-` / no script) and the code's arguments."""
+def _python_code(args: List[str]) -> Tuple[List[str], List[str], str]:
+    """The code python runs from its command line, the code's arguments, and where the code comes from: "code"
+    (-c CODE), "stdin" (`-`, /dev/stdin or no script), "script" or "module"."""
     i = 0
     while i < len(args):
         a = args[i]
-        if a == "-":
-            return stdin, args[i + 1:]
+        if a in _STDIN_FILES:
+            return [], args[i + 1:], "stdin"
         if a.startswith("--"):
             i += 1
             continue
@@ -1720,208 +1850,267 @@ def _python_code(args: List[str], stdin: List[str]) -> Tuple[List[str], List[str
             for k, ch in enumerate(flags):
                 if ch == "c":
                     if flags[k + 1:]:
-                        return [flags[k + 1:]], args[i + 1:]
-                    return (args[i + 1:i + 2], args[i + 2:])
+                        return [flags[k + 1:]], args[i + 1:], "code"
+                    return args[i + 1:i + 2], args[i + 2:], "code"
                 if ch == "m":
-                    return [], []  # a module runs: its code is not on the line
+                    return [], [], "module"
                 if ch in "XW":
                     skip = 0 if flags[k + 1:] else 1
                     break
             i += 1 + skip
             continue
-        return [], []  # a script file
-    return stdin, []
+        return [], [], "script"
+    return [], [], "stdin"
 
 
-def _node_code(name: str, args: List[str], stdin: List[str]) -> Tuple[List[str], List[str]]:
-    """The code node / bun / deno runs from its command line (-e / --eval / -p, deno eval, or stdin) and its arguments."""
-    i = 0
+def _node_code(name: str, args: List[str]) -> Tuple[List[str], List[str], str]:
+    """The code node / bun / deno / tsx runs from its command line (-e / --eval / -p, deno eval, or stdin), its
+    arguments, and where it comes from (as _python_code)."""
     if name == "deno":
         if not args or args[0] != "eval":
-            return [], []
+            return [], [], "script"
         pos = _positional(args[1:], ("--ext", "--import-map", "--config", "-c", "--location"))
-        return pos[:1], pos[1:]
+        return pos[:1], pos[1:], "code"
+    i = 0
     while i < len(args):
         a = args[i]
         if a in ("-e", "--eval", "-p", "--print", "-pe"):
-            return args[i + 1:i + 2], args[i + 2:]
+            return args[i + 1:i + 2], args[i + 2:], "code"
         if a.startswith(("--eval=", "--print=")):
-            return [a.split("=", 1)[1]], args[i + 1:]
-        if a == "-":
-            return stdin, args[i + 1:]
+            return [a.split("=", 1)[1]], args[i + 1:], "code"
+        if a in _STDIN_FILES:
+            return [], args[i + 1:], "stdin"
         if a in ("-r", "--require", "--import", "--loader", "-C", "--conditions", "--env-file"):
             i += 2
             continue
         if a.startswith("-"):
             i += 1
             continue
-        return [], []  # a script file (or bun run …)
-    return stdin, []
+        return [], [], "script"  # a script file (or bun run …)
+    return [], [], "stdin"
 
 
-# Programs whose quoted words are data (text, patterns, messages, code read elsewhere), never a command they run.
-_DATA_PROGRAMS = frozenset((
-    "echo", "printf", "cat", "grep", "egrep", "fgrep", "rg", "ag", "ack", "git", "gh", "jq", "yq", "ls", "wc", "head",
-    "tail", "sort", "uniq", "cut", "tr", "diff", "cmp", "comm", "test", "[", "[[", "true", "false", "which", "type",
-    "file", "stat", "du", "df", "mkdir", "touch", "chmod", "chown", "sleep", "date", "basename", "dirname", "realpath",
-    "readlink", "read", "export", "local", "declare", "typeset", "set", "unset", "alias", "printenv", "sha256sum",
-    "shasum", "md5sum", "md5", "base64", "xxd", "od", "column", "less", "more", "open", "code", "npm", "pnpm", "yarn",
-    "npx", "bunx", "make", "gmake", "tsc", "eslint", "prettier", "pytest", "pip", "pip3", "uv", "uvx", "claude",
-    "copilot", "for", "case", "in", "select", "function", "return", "exit", "break", "continue", "source", ".", "cd",
-    "pushd", "popd", "perl", "ruby", "write-output", "write-host", "write-error", "get-content", "gc", "select-string",
-    "sls", "get-childitem", "gci", "dir", "test-path", "convertfrom-json", "convertto-json", "out-host", "out-null",
-    "out-string", "format-table", "format-list", "select-object", "where-object", "sort-object", "measure-object",
-    "get-item", "resolve-path", "join-path", "split-path", "cls", "clear", "curl", "wget", "find", "tee", "sed",
-    "gsed", "cp", "mv", "install", "rsync", "ln", "truncate", "dd", "copy", "move", "copy-item", "move-item", "cpi",
-    "mi", "eval",
-) + _REMOVERS + _PS_WRITERS + _SHELLS)
+# Programs whose words the reader understands fully: they only read or print what they are given (or run a script
+# file, which the guard never reads), or the reader reads their writes above. Any other program makes it unsure.
+_KNOWN = frozenset((
+    "echo", "printf", "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg", "ag", "ack", "wc", "diff",
+    "cmp", "comm", "ls", "stat", "file", "sha256sum", "sha1sum", "shasum", "md5sum", "md5", "sort", "uniq", "cut",
+    "tr", "column", "base64", "xxd", "od", "jq", "test", "[", "[[", "true", "false", ":", "which", "type", "basename",
+    "dirname", "realpath", "readlink", "date", "sleep", "pwd", "printenv", "du", "df", "tree", "mkdir", "touch",
+    "chmod", "set", "unset", "export", "declare", "local", "typeset", "readonly", "read", "alias", "for", "case", "in",
+    "select", "function", "return", "exit", "break", "continue", "done", "fi", "esac", "source", ".", "cd", "pushd",
+    "popd", "chdir", "make", "gmake", "git", "find", "eval", "tee", "sed", "gsed", "cp", "mv", "install", "rsync",
+    "ln", "truncate", "dd", "curl", "wget", "copy", "move", "copy-item", "move-item", "cpi", "mi", "write-output",
+    "write-host", "write-error", "get-content", "gc", "select-string", "sls", "get-childitem", "gci", "dir",
+    "test-path", "convertfrom-json", "convertto-json", "select-object", "where-object", "sort-object",
+    "measure-object", "format-table", "format-list", "out-string", "out-host", "out-null", "get-item", "resolve-path",
+    "join-path", "split-path", "set-location", "sl", "cls", "clear",
+) + _REMOVERS + _PS_WRITERS + _SHELLS + _NODE_NAMES)
+# git words that make it run a command or a filter.
+_GIT_RUNS = frozenset(("--exec", "-x", "--tree-filter", "--index-filter", "--msg-filter", "--env-filter",
+                       "--commit-filter", "--parent-filter", "--tag-name-filter", "filter-branch", "bisect", "foreach",
+                       "-c", "--config-env", "difftool", "mergetool", "--upload-pack", "--receive-pack"))
 
 
-def _cd(words: List[str], base: str) -> Optional[str]:
-    """The folder a cd / pushd / Set-Location moves to, or None for any other command."""
-    if not words or _command_name(words[0]) not in ("cd", "pushd", "chdir", "set-location", "sl"):
-        return None
-    pos = [w for w in _positional(words[1:], ()) if w.lower() not in ("/d",)]
-    target = _flag_value(words[1:], ("-path", "-literalpath")) or (pos[0] if pos else None)
-    if target is None or target == "-":
-        return None
-    return _word_path(target, base)
+def _cd(words: List[str], scope: _Scope, eff: ShellEffects) -> bool:
+    """Move scope for cd / pushd / popd / Set-Location; False for any other command. A folder the reader cannot resolve
+    keeps the current folders and adds the project's, and makes it unsure."""
+    name = _command_name(words[0]) if words else ""
+    if name == "popd":
+        scope.bases = scope.dirs.pop() if scope.dirs else scope.bases
+        return True
+    if name not in ("cd", "pushd", "chdir", "set-location", "sl"):
+        return False
+    pos = [w for w in _positional(words[1:], ("-path", "-literalpath")) if w.lower() != "/d"]
+    target = _flag_value(words[1:], ("-path", "-literalpath")) or (pos[0] if pos else "~")
+    if name == "pushd":
+        scope.dirs.append(scope.bases)
+    if target == "-":
+        eff.doubt("cd - goes back to a folder the reader does not track")
+        return True
+    expanded = _VAR.sub(lambda m: scope.vars.get(m.group(1) or m.group(2), m.group(0)), target)
+    if ("$" in expanded or "`" in expanded) and not (_HERE_PREFIX.match(expanded) or _ROOT_PREFIX.match(expanded)) \
+            and not _HOME_VAR.match(expanded):
+        eff.doubt("a cd into a folder the reader cannot resolve")
+        scope.bases = tuple(dict.fromkeys(scope.bases + ((eff.root,) if eff.root else ())))
+        return True
+    folders = eff._paths(target, scope, True)
+    if folders:
+        scope.bases = tuple(dict.fromkeys(folders))
+    return True
 
 
-def _simple(cmd: _Simple, base: str, out: _Effects, depth: int, before: Optional[_Simple]) -> None:
-    """The writes and removals of one simple command, run in folder base."""
+def _simple(cmd: _Simple, scope: _Scope, eff: ShellEffects, depth: int, before: Optional[_Simple]) -> None:
+    """The writes and removals of one simple command."""
+    eff.tick()
     for target in cmd.redirs:
-        out.write(target, base)
-    start = _command_start(cmd.words)
-    words, quoted = cmd.words[start:], cmd.quoted[start:]
+        eff.write(target, scope)
+    words = cmd.words[_command_start(cmd.words, eff):]
     if not words:
         return
     name, args = _command_name(words[0]), words[1:]
     stdin = list(cmd.stdin)
+    piped_unknown = False
     if not stdin and cmd.piped and before is not None:  # echo "code" | python3: the code is the echo's words
-        prev = before.words[_command_start(before.words):]
+        prev = before.words[_command_start(before.words, eff):]
         if prev and _command_name(prev[0]) in ("echo", "printf"):
             stdin = [" ".join(prev[1:]).replace("\\n", "\n")]
-        elif prev and _command_name(prev[0]) == "cat" and len(prev) == 1:
+        elif prev and _command_name(prev[0]) == "cat" and len(prev) == 1 and before.stdin:
             stdin = list(before.stdin)
+        else:
+            piped_unknown = True
     for item in _removals(name, args):
-        out.remove(item, base)
+        eff.remove(item, scope)
     if name == "tee":
         for f in _positional(args, ("--output-error",)):
-            out.write(f, base)
+            eff.write(f, scope)
     elif name in ("sed", "gsed"):
-        if any(re.match(r"^-[a-zA-Z]*i", a) or a.startswith("--in-place") for a in args):
+        if any(re.match(r"^-[a-zA-Z0-9]*i", a) or a.startswith("--in-place") for a in args):
             for f in _sed_files(args):
-                out.write(f, base)
+                eff.write(f, scope)
     elif name == "perl":
-        if any(re.match(r"^-[a-zA-Z]*i", a) for a in args):
+        eff.doubt("perl code is not read")
+        if any(re.match(r"^-[a-zA-Z0-9]*i", a) for a in args):  # -pi, -0pi, -0777 -pi, -i.bak
             for f in _sed_files(args, perl=True):
-                out.write(f, base)
+                eff.write(f, scope)
     elif name in _COPY_VALUE_FLAGS:
-        _copy_writes(name, args, base, out)
-    elif name == "git" and args[:1] == ["mv"]:
-        _copy_writes("mv", args[1:], base, out)
+        _copy_writes(name, args, scope, eff)
+    elif name == "git":
+        if args[:1] == ["mv"]:
+            _copy_writes("mv", args[1:], scope, eff)
+        if any(a in _GIT_RUNS or a.startswith(("--exec=", "-x=")) for a in args):
+            eff.doubt("git runs a command or a filter")
     elif name == "truncate":
         for f in _positional(args, ("-s", "--size", "-r", "--reference")):
-            out.write(f, base)
+            eff.write(f, scope)
     elif name == "dd":
         for a in args:
             if a.startswith("of="):
-                out.write(a[3:], base)
+                eff.write(a[3:], scope)
     elif name == "curl":
         for k, a in enumerate(args):
-            if (a in ("--output", "-o") or re.fullmatch(r"-[a-zA-Z]*o", a)) and k + 1 < len(args):
-                out.write(args[k + 1], base)
+            if (a == "--output" or re.fullmatch(r"-[a-zA-Z]*o", a)) and k + 1 < len(args):
+                eff.write(args[k + 1], scope)
             elif a.startswith("--output="):
-                out.write(a.split("=", 1)[1], base)
+                eff.write(a.split("=", 1)[1], scope)
     elif name == "wget":
-        value = _flag_value(args, ("-o", "--output-document"))
-        if value is None:
-            value = next((args[k + 1] for k, a in enumerate(args[:-1]) if a == "-O"), None)
-        if value is not None:
-            out.write(value, base)
+        for k, a in enumerate(args):
+            if (a == "--output-document" or re.fullmatch(r"-[a-zA-Z]*O", a)) and k + 1 < len(args):
+                eff.write(args[k + 1], scope)
+            elif a.startswith("--output-document="):
+                eff.write(a.split("=", 1)[1], scope)
+            elif re.fullmatch(r"-O.+", a):
+                eff.write(a[2:], scope)
     elif name in _PS_WRITERS:
         value = _flag_value(args, _PS_PATH_FLAGS)
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
         for item in ([value] if value else pos[:1]):
             for x in item.split(","):
-                out.write(x.strip(), base)
+                eff.write(x.strip(), scope)
     elif name in ("copy-item", "move-item", "cpi", "mi"):
         value = _flag_value(args, ("-destination",))
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))
         for item in ([value] if value else pos[1:2]):
-            out.write(item, base)
+            eff.write(item, scope)
     elif name in _SHELLS:
         script, reads_stdin = _shell_script(name, args)
         if script is not None:
-            _script(script, base, out, depth + 1)
+            _script(script, scope.copy(), eff, depth + 1)
         elif reads_stdin:
+            if piped_unknown:
+                eff.doubt("a shell reads commands from another command")
             for body in stdin:
-                _script(body, base, out, depth + 1)
+                _script(body, scope.copy(), eff, depth + 1)
     elif name == "eval":
-        _script(" ".join(args), base, out, depth + 1)
+        _script(" ".join(args), scope.copy(), eff, depth + 1)
     elif name == "find":
-        _find_exec(args, base, out, depth)
-    elif _PY_NAME.fullmatch(name) or name in ("node", "nodejs", "bun", "deno"):
+        _find_exec(args, scope, eff, depth)
+    elif name in ("make", "gmake"):
+        if any(a in ("-f", "--file", "--makefile", "--eval") or a.startswith("--eval") for a in args) and stdin:
+            eff.doubt("make reads its recipes from stdin")
+    elif _PY_NAME.fullmatch(name) or name in _NODE_NAMES:
         lang = "py" if _PY_NAME.fullmatch(name) else "js"
-        code, argv = _python_code(args, stdin) if lang == "py" else _node_code(name, args, stdin)
+        code, argv, kind = _python_code(args) if lang == "py" else _node_code(name, args)
+        if kind == "stdin":
+            code = stdin
+            if piped_unknown:
+                eff.doubt("code piped from another command")
         for text in code:
-            _code(text, lang, argv, base, out)
-    elif name not in _DATA_PROGRAMS:  # ssh host "…", watch "…", awk '{print > "f"}': the writes a command there makes
-        for word, was_quoted in zip(args, quoted[1:]):
-            if was_quoted and re.search(r"[\s<>|;&]", word):
-                inner = _Effects()
-                _script(word, base, inner, depth + 1)
-                for path in inner.writes:  # awk '{print > "f"}': the target as written and without the code's } ) ]
-                    for p in (path, path.rstrip(")]};")):
-                        if p and p not in out.writes:
-                            out.writes.append(p)
+            _code(text, lang, argv, scope, eff, depth)
+    elif name not in _KNOWN:
+        eff.doubt(f"{name} is a program the reader does not know")
 
 
-def _find_exec(args: List[str], base: str, out: _Effects, depth: int) -> None:
-    """find … -exec CMD … ; (or +, -execdir, -ok): CMD is a command; {} is each file found (unknown here)."""
+def _find_exec(args: List[str], scope: _Scope, eff: ShellEffects, depth: int) -> None:
+    """find … -exec CMD … ; (or +, -execdir, -ok): CMD is read as a command; {} is each file found (unknown here), so
+    the reader is unsure; so it is for -delete and -fprint."""
     k = 0
     while k < len(args):
+        if args[k] in ("-delete", "-fprint", "-fprint0", "-fprintf", "-fls"):
+            eff.doubt(f"find {args[k]} writes or removes files the reader cannot list")
         if args[k] in ("-exec", "-execdir", "-ok", "-okdir"):
+            eff.doubt("find runs a command on files the reader cannot list")
             end = next((j for j in range(k + 1, len(args)) if args[j] in (";", "+")), len(args))
             inner = _Simple()
             inner.words = args[k + 1:end]
             inner.quoted = [False] * len(inner.words)
             if depth < _MAX_DEPTH:
-                _simple(inner, base, out, depth + 1, None)
+                _simple(inner, scope, eff, depth + 1, None)
             k = end
         k += 1
 
 
-def _script(text: str, base: str, out: _Effects, depth: int = 0) -> None:
-    """Read a shell script's commands for their writes and removals. `cd DIR` moves the folder for the commands
-    after it (not past the end of a subshell); a command substitution runs in the folder of its command."""
-    if depth > _MAX_DEPTH or not text.strip():
+def _assign(words: List[str], scope: _Scope) -> bool:
+    """Record NAME=value words (alone, or after export / declare / local / readonly; PowerShell's $name = value) in
+    scope. True when the command is only that."""
+    rest = words[1:] if words and words[0] in ("export", "declare", "local", "readonly", "typeset") else words
+    if len(words) == 3 and words[0].startswith("$") and words[1] == "=" and re.fullmatch(r"\$[A-Za-z_]\w*", words[0]):
+        scope.vars[words[0][1:]] = words[2]
+        return True
+    pairs = [re.match(r"^([A-Za-z_]\w*)=(.*)$", w, re.S) for w in rest]
+    if not rest or not all(pairs):
+        return False
+    for m in pairs:
+        value = m.group(2)
+        scope.vars[m.group(1)] = _VAR.sub(lambda v: scope.vars.get(v.group(1) or v.group(2), v.group(0)), value)
+    return True
+
+
+def _script(text: str, scope: _Scope, eff: ShellEffects, depth: int = 0) -> None:
+    """Read a shell script's commands for their writes and removals. `cd DIR` moves the folder for the commands after
+    it (not past the end of a subshell); a command substitution runs in the folder of its command."""
+    if not text.strip():
+        return
+    if depth > _MAX_DEPTH:
+        eff.doubt("commands nested deeper than the reader follows")
         return
     if "]::" in text:  # PowerShell's .NET calls: [IO.File]::WriteAllText('…', …)
-        _code(text, "ps", [], base, out)
-    folders = [base]
+        _code(text, "ps", [], scope, eff, depth)
+    scopes = [scope]
     before: Optional[_Simple] = None
     for event in _commands(_lex(text)):
+        eff.tick()
         if event[0] == "push":
-            folders.append(folders[-1])
+            scopes.append(scopes[-1].copy())
             before = None
             continue
         if event[0] == "pop":
-            if len(folders) > 1:
-                folders.pop()
+            if len(scopes) > 1:
+                scopes.pop()
             before = None
             continue
         cmd = event[1]
-        here = folders[-1]
+        here = scopes[-1]
         for sub in cmd.subs:
-            _script(sub, here, out, depth + 1)
-        start = _command_start(cmd.words)
-        moved = _cd(cmd.words[start:], here)
-        if moved is not None:
-            folders[-1] = moved
-        else:
-            _simple(cmd, here, out, depth, before)
+            _script(sub, here.copy(), eff, depth + 1)
+        words = cmd.words[_command_start(cmd.words, eff):]
+        if not cmd.redirs and _assign(cmd.words, here):
+            pass
+        elif not _cd(words, here, eff):
+            _simple(cmd, here, eff, depth, before)
+        elif cmd.redirs:
+            for target in cmd.redirs:
+                eff.write(target, here)
         before = cmd
 
 
@@ -1931,22 +2120,32 @@ def _script(text: str, base: str, out: _Effects, depth: int = 0) -> None:
 _LIT = re.compile(r"\x01(\d+)\x02")
 _CALL = re.compile(r"([A-Za-z_$][\w$]*)\s*\(")
 _PATH_CALL = re.compile(r"^(?:pathlib\s*\.\s*)?(?:Pure)?(?:Posix|Windows)?Path\s*\(\s*\x01(\d+)\x02\s*\)$")
+_PATHLIKE = re.compile(r"(?:Pure)?(?:Posix|Windows)?Path")
 _MODE = re.compile(r"^[rwaxbtU+]{1,4}$")
 _FS_MODULES = ("os", "shutil", "fs", "fsp", "Deno", "Bun", "promises")
-# Calls that only read, run or import the path they are given (for the conservative reading, see _code).
+# Calls that only read, run or import the path they are given, and calls that only print what they are given: a
+# guarded literal there is not a mention.
 _READ_CALLS = frozenset((
     "read_text", "read_bytes", "exists", "is_file", "is_dir", "isfile", "isdir", "islink", "getsize", "getmtime", "stat",
-    "lstat", "listdir", "scandir", "iterdir", "glob", "iglob", "rglob", "load", "loads", "spec_from_file_location",
-    "sourcefileloader", "run_path", "import_module", "__import__", "require", "readfilesync", "readfile", "existssync",
-    "statsync", "readdirsync", "readdir", "readtextfile", "readtextfilesync", "realpath", "abspath", "relpath",
-    "basename", "dirname", "splitext", "expanduser", "print", "log", "run", "call", "check_call", "check_output",
-    "popen", "execfilesync", "spawnsync", "execsync", "spawn", "exec", "execfile", "system", "fnmatch", "readalltext",
-    "readalllines", "readallbytes", "load_module", "exec_module", "module_from_spec", "access", "accesssync",
+    "lstat", "load", "loads", "safe_load", "spec_from_file_location", "sourcefileloader", "run_path", "import_module",
+    "require", "readfilesync", "readfile", "existssync", "statsync", "readtextfile", "readtextfilesync", "readalltext",
+    "readalllines", "readallbytes", "glob", "iglob", "listdir", "scandir", "realpath", "abspath", "relpath", "basename",
+    "dirname", "splitext", "expanduser", "fnmatch", "access", "accesssync",
+))
+_DATA_CALLS = frozenset(("print", "dumps", "stringify", "len", "str", "repr"))
+_READ_METHODS = frozenset(("read_text", "read_bytes", "exists", "is_file", "is_dir", "stat", "resolve", "absolute",
+                           "iterdir", "glob", "rglob", "relative_to", "as_posix"))
+_STR_METHODS = frozenset(("endswith", "startswith", "split", "rsplit", "strip", "lower", "upper", "format", "encode"))
+# Calls that run commands or code: the reader is unsure (it reads a literal command or code given to them).
+_RUNS_CODE = frozenset((
+    "system", "popen", "execsync", "execfilesync", "execfile", "spawnsync", "spawn", "exec", "eval", "getoutput",
+    "getstatusoutput", "startfile", "execv", "execve", "execvp", "execvpe", "execl", "execle", "execlp", "execlpe",
+    "spawnv", "spawnve", "spawnvp", "spawnl", "spawnlp", "run", "call", "check_call", "check_output", "fork",
 ))
 _NOT_NAMES = frozenset((
     "True", "False", "None", "and", "or", "not", "in", "is", "if", "else", "for", "while", "lambda", "return", "with",
     "as", "import", "from", "def", "class", "await", "async", "new", "const", "let", "var", "function", "of", "typeof",
-    "this", "self", "null", "undefined", "true", "false", "os", "sys", "path", "pathlib", "Path", "json", "shutil", "re",
+    "this", "self", "null", "undefined", "true", "false", "os", "sys", "pathlib", "Path", "json", "shutil", "re",
     "io", "codecs", "fs", "fsp", "require", "process", "Deno", "Bun", "console", "Math", "JSON", "Object", "Array",
     "String", "str", "int", "len",
 ))
@@ -1954,7 +2153,8 @@ _NOT_NAMES = frozenset((
 
 def _mask(code: str, lang: str) -> Tuple[str, List[Tuple[str, bool]]]:
     """The code with comments removed and each string literal replaced by \\x01N\\x02, and the literals (value, exact:
-    not an f-string or template with a placeholder in it)."""
+    not an f-string or template with a placeholder in it). The code's own \\x01 / \\x02 are blanked first."""
+    code = code.replace("\x01", " ").replace("\x02", " ")
     out: List[str] = []
     lits: List[Tuple[str, bool]] = []
     i, n = 0, len(code)
@@ -2009,21 +2209,19 @@ def _mask(code: str, lang: str) -> Tuple[str, List[Tuple[str, bool]]]:
     return "".join(out), lits
 
 
-def _close_back(s: str, i: int) -> int:
-    """The index of the bracket that opens the one closing at s[i], or -1."""
-    pairs = {")": "(", "]": "[", "}": "{"}
-    stack = []
-    while i >= 0:
-        c = s[i]
-        if c in pairs:
-            stack.append(pairs[c])
-        elif c in "([{":
-            if not stack or stack.pop() != c:
-                return -1
-            if not stack:
-                return i
-        i -= 1
-    return -1
+def _brackets(s: str) -> Tuple[Dict[int, int], Dict[int, int]]:
+    """Matching brackets of masked code: open index → close index, and back."""
+    o2c: Dict[int, int] = {}
+    c2o: Dict[int, int] = {}
+    stack: List[int] = []
+    for i, c in enumerate(s):
+        if c in "([{":
+            stack.append(i)
+        elif c in ")]}" and stack:
+            j = stack.pop()
+            o2c[j] = i
+            c2o[i] = j
+    return o2c, c2o
 
 
 def _skip_space_back(s: str, i: int) -> int:
@@ -2038,7 +2236,7 @@ def _is_method(s: str, name_start: int) -> bool:
     return j > 0 and (s[j - 1] == "." or s[j - 2:j] == "::")
 
 
-def _receiver(s: str, end: int) -> str:
+def _receiver(s: str, end: int, c2o: Dict[int, int]) -> str:
     """The expression a method is called on: s[:end] ends with `.` or `::` before the method name."""
     j = end
     while j > 0 and s[j - 1] in ".: \t":
@@ -2047,7 +2245,7 @@ def _receiver(s: str, end: int) -> str:
     while k > 0:
         c = s[k - 1]
         if c in ")]":
-            back = _close_back(s, k - 1)
+            back = c2o.get(k - 1, -1)
             if back < 0:
                 break
             k = back
@@ -2058,19 +2256,16 @@ def _receiver(s: str, end: int) -> str:
     return re.sub(r"\s+", "", s[k:j])
 
 
-def _call_args(s: str, open_idx: int) -> List[str]:
+def _call_args(s: str, open_idx: int, o2c: Dict[int, int]) -> List[str]:
     """The top-level arguments of the call whose ( is at s[open_idx]."""
+    end = o2c.get(open_idx, len(s))
     args, depth, cur = [], 0, []
-    for c in s[open_idx:]:
+    for c in s[open_idx + 1:end]:
         if c in "([{":
             depth += 1
-            if depth == 1:
-                continue
         elif c in ")]}":
             depth -= 1
-            if depth == 0:
-                break
-        elif c == "," and depth == 1:
+        elif c == "," and depth == 0:
             args.append("".join(cur))
             cur = []
             continue
@@ -2092,13 +2287,40 @@ def _keyword(args: List[str], names: Tuple[str, ...]) -> Optional[str]:
     return None
 
 
-class _Code:
-    """Inline code being read: its masked text, literals, and the arguments it was given."""
+class _Call:
+    __slots__ = ("name", "recv", "method", "open", "args", "pos")
 
-    def __init__(self, code: str, lang: str, argv: List[str]) -> None:
+    def __init__(self, name: str, recv: str, method: bool, open_idx: int, args: List[str]) -> None:
+        self.name, self.recv, self.method, self.open, self.args = name, recv, method, open_idx, args
+        self.pos = _positional_args(args)
+
+
+class _Code:
+    """Inline code being read: its masked text, literals, calls, and the arguments it was given."""
+
+    def __init__(self, code: str, lang: str, argv: List[str], eff: ShellEffects) -> None:
         self.text, self.lits = _mask(code, lang)
+        self.lang = lang
         self.argv = argv
+        self.o2c, self.c2o = _brackets(self.text)
         self.unresolved = False
+        self.calls: List[_Call] = []
+        s = self.text
+        for m in _CALL.finditer(s):
+            if len(self.calls) % 256 == 0:
+                eff.tick()
+            method = _is_method(s, m.start())
+            before = _skip_space_back(s, m.start())
+            if not method and re.search(r"(?<![\w$])(?:def|function|class)$", s[max(0, before - 9):before]):
+                continue  # a definition, not a call
+            recv = _receiver(s, m.start(), self.c2o) if method else ""
+            self.calls.append(_Call(m.group(1), recv, method, m.end() - 1, _call_args(s, m.end() - 1, self.o2c)))
+        self._args = {call.open: call.args for call in self.calls}
+
+    def args_at(self, open_idx: int) -> List[str]:
+        if open_idx not in self._args:
+            self._args[open_idx] = _call_args(self.text, open_idx, self.o2c)
+        return self._args[open_idx]
 
     def lit(self, expr: Optional[str]) -> Optional[str]:
         """The value of an argument that is exactly one exact string literal."""
@@ -2116,28 +2338,49 @@ class _Code:
         return True  # a mode that is not a literal may write
 
     def sources(self, name: str) -> Optional[List[str]]:
-        """The expressions a name gets its value from (assignments, for loops, what is appended to it), or None when
-        it cannot be followed (a parameter, or nothing found)."""
+        """The expressions a name gets its value from (assignments, for loops, what is appended to it, a function's
+        arguments at its calls), or None when it cannot be followed."""
         n = re.escape(name)
         s = self.text
-        if re.search(rf"\bdef\s+\w+\s*\([^)]*(?<![\w$]){n}(?![\w$])|\blambda\b[^:\n]*(?<![\w$]){n}(?![\w$])[^:\n]*:"
-                     rf"|\bfunction\b[^(]*\([^)]*(?<![\w$]){n}(?![\w$])|(?<![\w$]){n}\s*=>"
-                     rf"|\([^()]*(?<![\w$]){n}(?![\w$])[^()]*\)\s*=>", s):
+        if re.search(rf"\blambda\b[^:\n]{{0,300}}(?<![\w$]){n}(?![\w$])|\bfunction\b[^(\n]{{0,80}}\([^)\n]{{0,300}}"
+                     rf"(?<![\w$]){n}(?![\w$])|(?<![\w$]){n}[ \t]*=>|\([^()\n]{{0,300}}(?<![\w$]){n}(?![\w$])"
+                     rf"[^()\n]{{0,300}}\)[ \t]*=>", s):
             return None
-        found = [m.group(1) for m in re.finditer(
-            rf"(?<![\w$.]){n}\s*(?::[^=\n;]*)?(?:\+=|:=|=)(?!=)\s*([^\n;]*)", s)]
+        found: List[str] = []
+        for m in re.finditer(r"\bdef\s+([A-Za-z_]\w*)\s*\(", s):  # a parameter: what its calls pass
+            params = [p.strip() for p in _call_args(s, m.end() - 1, self.o2c)]
+            names = [re.split(r"[:=]", p)[0].strip() for p in params]
+            if name not in names:
+                continue
+            index = names.index(name)
+            if names[0] in ("self", "cls") or any(p.startswith("*") for p in names[:index + 1]):
+                return None
+            calls = [c for c in self.calls if c.name == m.group(1) and not c.method]
+            if not calls:
+                return None
+            for c in calls:
+                arg = c.pos[index] if index < len(c.pos) else _keyword(c.args, (name,))
+                if arg is None:
+                    if "=" in params[index]:
+                        arg = params[index].split("=", 1)[1]
+                    else:
+                        return None
+                found.append(arg)
         found += [m.group(1) for m in re.finditer(
-            rf"\bfor\b\s*\(?\s*(?:const\s+|let\s+|var\s+)?[\w$,\s()\[\]]*?(?<![\w$]){n}(?![\w$])[\w$,\s()\[\]]*?"
-            rf"\s(?:in|of)\s+([^\n]*)", s)]
+            rf"(?<![\w$.]){n}[ \t]*(?::[^=\n;]{{0,120}})?(?:\+=|:=|=)(?!=)[ \t]*([^\n;]*)", s)]
         found += [m.group(1) for m in re.finditer(
-            rf"(?<![\w$.]){n}\s*\.\s*(?:append|extend|insert|add|push|unshift|update)\s*\(([^\n]*)", s)]
-        if re.search(rf"\bas\s+{n}(?![\w$])|\bimport\b[^\n]*(?<![\w$.]){n}(?![\w$])", s):
+            rf"\bfor\b[ \t]*\(?[ \t]*(?:const[ \t]+|let[ \t]+|var[ \t]+)?[\w$, \t()\[\]]{{0,200}}?(?<![\w$]){n}"
+            rf"(?![\w$])[\w$, \t()\[\]]{{0,200}}?[ \t](?:in|of)[ \t]+([^\n]*)", s)]
+        found += [m.group(1) for m in re.finditer(
+            rf"(?<![\w$.]){n}[ \t]*\.[ \t]*(?:append|extend|insert|add|push|unshift|update)[ \t]*\(([^\n]*)", s)]
+        if re.search(rf"\bas[ \t]+{n}(?![\w$])|\bimport\b[^\n]*(?<![\w$.]){n}(?![\w$])", s):
             found.append("")
         return found or None
 
     def paths(self, expr: str, depth: int = 0, seen: Optional[set] = None) -> List[str]:
-        """The paths an expression can be: its literals (the last one, and all of them joined), the code's
-        arguments when it reads argv, and, through each name in it, the expressions that name gets its value from."""
+        """The paths an expression can be: its literals (the last one, and all of them joined), the code's arguments
+        when it reads argv, and, through each name in it, the expressions that name gets its value from. A name that
+        cannot be followed sets unresolved."""
         seen = set() if seen is None else seen
         vals = [self.lits[int(i)] for i in _LIT.findall(expr)]
         out: List[str] = []
@@ -2166,14 +2409,54 @@ class _Code:
                 out += self.paths(src, depth + 1, seen)
         return out
 
-    def read_only_literals(self) -> set:
-        """The literals passed straight to a call that only reads, runs or imports them (open(…) to read,
-        json.load, spec_from_file_location, require, subprocess.run, Path(…).read_text …)."""
+    def _read_ok(self, frames: List[Tuple[str, str, int]]) -> bool:
+        """A literal (or a use of a name) inside these enclosing calls (innermost first) is only read or printed."""
         s = self.text
+        for name, recv, open_idx in frames:
+            low = name.lower()
+            if _PATHLIKE.fullmatch(name):
+                close = self.o2c.get(open_idx, -1)
+                after = re.match(r"\s*\.\s*([A-Za-z_]\w*)\s*\(", s[close + 1:close + 120]) if close >= 0 else None
+                if after:
+                    method = after.group(1)
+                    if method in _READ_METHODS:
+                        return True
+                    if method == "open":
+                        args = self.args_at(close + after.end())
+                        pos = _positional_args(args)
+                        return not self.writes_mode(_keyword(args, ("mode",)) or (pos[0] if pos else None))
+                    return False
+                continue  # Path(…) handed on: what the enclosing call does with it
+            if low == "open" and recv != "os":
+                args = self.args_at(open_idx)
+                pos = _positional_args(args)
+                return not self.writes_mode(_keyword(args, ("mode", "flags")) or (pos[1] if len(pos) > 1 else None))
+            if low in ("append", "insert"):
+                return recv == "sys.path"
+            if low == "write":
+                return recv in ("sys.stdout", "sys.stderr", "process.stdout", "process.stderr")
+            if low in ("log", "info", "warn", "error", "debug"):
+                return recv == "console"
+            return low in _READ_CALLS or low in _DATA_CALLS
+        return False
+
+    def mentions(self) -> List[str]:
+        """The literals the code does not only read or print (a guarded one makes the previous reader decide), and the
+        code's arguments. A name given one literal (or Path(literal)) and only read is a read."""
+        s = self.text
+        assigned: Dict[str, int] = {}
+        counts: Dict[str, int] = {}
+        for m in re.finditer(r"(?<![\w$.])([A-Za-z_$][\w$]*)[ \t]*(?::[^=\n;]{0,80})?(?<![=!<>])=(?!=)[ \t]*"
+                             r"(?:(?:pathlib[ \t]*\.[ \t]*)?Path[ \t]*\([ \t]*)?(\x01(\d+)\x02)?", s):
+            counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+            if m.group(3) and re.match(r"[ \t]*\)?[ \t]*(?:$|[\n;#])", s[m.end():m.end() + 20]):
+                assigned[m.group(1)] = int(m.group(3))
+        tracked = {k: v for k, v in assigned.items() if counts[k] == 1}
+        uses_ok = {k: True for k in tracked}
+        lit_ok: Dict[int, bool] = {}
         stack: List[Optional[Tuple[str, str, int]]] = []
-        found = set()
-        i = 0
-        while i < len(s):
+        i, n = 0, len(s)
+        while i < n:
             c = s[i]
             if c == "(":
                 end = _skip_space_back(s, i)
@@ -2183,7 +2466,7 @@ class _Code:
                 name = s[start:end]
                 if name and not name[0].isdigit() and name not in ("if", "for", "while", "in", "and", "or", "not",
                                                                    "return"):
-                    stack.append((name, _receiver(s, start) if _is_method(s, start) else "", i))
+                    stack.append((name, _receiver(s, start, self.c2o) if _is_method(s, start) else "", i))
                 else:
                     stack.append(None)
             elif c in "[{":
@@ -2192,42 +2475,42 @@ class _Code:
                 if stack:
                     stack.pop()
             elif c == "\x01":
-                end = s.index("\x02", i)
-                index = int(s[i + 1:end])
-                if self._read_only(s, [e for e in reversed(stack) if e is not None]):
-                    found.add(index)
+                end = s.find("\x02", i)
+                lit_ok[int(s[i + 1:end])] = self._read_ok([f for f in reversed(stack) if f is not None])
                 i = end
+            elif (c.isalpha() or c in "_$") and (i == 0 or not (s[i - 1].isalnum() or s[i - 1] in "_$.")):
+                end = i
+                while end < n and (s[end].isalnum() or s[end] in "_$"):
+                    end += 1
+                word = s[i:end]
+                if word in tracked:
+                    after = s[end:end + 40]
+                    if re.match(r"[ \t]*(?::[^=\n;]{0,30})?=(?!=)", after):
+                        pass  # its assignment
+                    else:
+                        meth = re.match(r"[ \t]*\.[ \t]*([A-Za-z_]\w*)", after)
+                        if meth and (meth.group(1) in _STR_METHODS or meth.group(1) in _READ_METHODS):
+                            pass
+                        elif not self._read_ok([f for f in reversed(stack) if f is not None]):
+                            uses_ok[word] = False
+                i = end - 1
             i += 1
-        return found
-
-    def _read_only(self, s: str, calls: List[Tuple[str, str, int]]) -> bool:
-        for name, recv, open_idx in calls:
-            low = name.lower()
-            if re.fullmatch(r"(?:Pure)?(?:Posix|Windows)?Path", name):
-                close = _balanced(s, open_idx)
-                after = re.match(r"\s*\.\s*([A-Za-z_]\w*)\s*\(", s[close + 1:])
-                if after:
-                    if after.group(1).lower() in _READ_CALLS:
-                        return True
-                    if after.group(1) == "open":
-                        args = _call_args(s, close + 1 + after.end() - 1)
-                        pos = _positional_args(args)
-                        return not self.writes_mode(_keyword(args, ("mode",)) or (pos[0] if pos else None))
-                    return False
-                continue  # Path(…) passed on: what the enclosing call does with it
-            if low == "open" and recv not in ("os",):
-                args = _call_args(s, open_idx)
-                pos = _positional_args(args)
-                return not self.writes_mode(_keyword(args, ("mode", "flags")) or (pos[1] if len(pos) > 1 else None))
-            if low == "append" or low == "insert":
-                return recv == "sys.path"
-            return low in _READ_CALLS
-        return False
+        by_name = {v: k for k, v in tracked.items()}
+        out = []
+        for index, (value, _exact) in enumerate(self.lits):
+            if lit_ok.get(index):
+                continue
+            if index in by_name and uses_ok[by_name[index]]:
+                continue
+            out.append(value)
+        return out + list(self.argv)
 
 
-def _code(code: str, lang: str, argv: List[str], base: str, out: _Effects) -> None:
-    """Read inline code (lang "py", "js" or "ps") for the files it writes and removes, run in folder base."""
-    c = _Code(code, lang, argv)
+def _code(code: str, lang: str, argv: List[str], scope: _Scope, eff: ShellEffects, depth: int) -> None:
+    """Read inline code (lang "py", "js" or "ps") for the files it writes and removes, its mentions, and what makes
+    the reader unsure (code that runs commands, a write it cannot follow)."""
+    eff.tick()
+    c = _Code(code, lang, argv, eff)
     s = c.text
     writes: List[str] = []  # destination expressions
     removals: List[str] = []
@@ -2239,21 +2522,31 @@ def _code(code: str, lang: str, argv: List[str], base: str, out: _Effects) -> No
             aliases[m.group(1) or m.group(3)] = "fs"
     bare = {n.split()[-1] for m in re.finditer(r"\bfrom\s+(?:os|shutil)\s+import\s+\(?([^\n;)]+)", s)
             for n in m.group(1).split(",") if n.strip()}  # from shutil import copy, move as mv
-    for m in _CALL.finditer(s):
-        name, open_idx = m.group(1), m.end() - 1
+    for call in c.calls:
+        name, method, args, pos = call.name, call.method, call.args, call.pos
         low = name.lower()
-        method = _is_method(s, m.start())
-        before = _skip_space_back(s, m.start())
-        if not method and re.search(r"(?<![\w$])(?:def|function)$", s[max(0, before - 9):before]):
-            continue  # a definition, not a call
-        recv = _receiver(s, m.start()) if method else ""
-        recv = aliases.get(recv, recv)
-        args = _call_args(s, open_idx)
-        pos = _positional_args(args)
+        recv = aliases.get(call.recv, call.recv)
         path_recv = _PATH_CALL.fullmatch(recv) is not None
         module = (recv in _FS_MODULES or re.search(r"(?:^|\.)(?:fs|promises)$", recv) is not None
                   or recv.startswith("require(") or (not method and name in bare))
         dotnet = re.search(r"\[(?:System\.)?IO\.(?:File|FileInfo|Directory)\]$", recv, re.I) is not None
+        if low in _RUNS_CODE or name == "Function" or re.search(r"\bshell\s*=\s*True\b", ",".join(args)):
+            eff.doubt("inline code that runs commands or code")
+            first = pos[0] if pos else None
+            value = c.lit(first)
+            if value is not None and depth < _MAX_DEPTH:
+                if low in ("exec", "eval") and not method and lang == "py":
+                    _code(value, "py", argv, scope, eff, depth + 1)  # exec("open('…', 'w')")
+                elif low not in ("exec", "eval", "run") or recv or "shell" in ",".join(args):
+                    _script(value, scope.copy(), eff, depth + 1)  # os.system("…"), execSync("…")
+            elif first and first.startswith("[") and first.endswith("]"):  # subprocess.run(["cp", "a", "b"])
+                items = [c.lit(x) for x in _call_args("(" + first[1:-1] + ")", 0, _brackets("(" + first[1:-1] + ")")[0])]
+                if items and all(x is not None for x in items) and depth < _MAX_DEPTH:
+                    inner = _Simple()
+                    inner.words = [str(x) for x in items]
+                    inner.quoted = [True] * len(items)
+                    _simple(inner, scope, eff, depth + 1, None)
+            continue
         if low == "open":
             if recv == "os":
                 flags = pos[1] if len(pos) > 1 else ""
@@ -2305,24 +2598,20 @@ def _code(code: str, lang: str, argv: List[str], base: str, out: _Effects) -> No
             files = _keyword(args, ("files",)) or (pos[0] if pos else None)
             if files:
                 writes.append(files)
-    if not writes and not removals:
-        return
-    for expr in writes:
-        for p in _expr_targets(c, expr):
-            out.write(p, base)
-    for expr in removals:  # a removal whose target cannot be followed counts only the paths followed (never guessed)
-        for p in _expr_targets(c, expr):
-            out.remove(p, base)
-    if any(_unresolved_write(c, expr) for expr in writes):  # Ruling: a write to a name that cannot be followed
-        read_only = c.read_only_literals()
-        for index, (value, _exact) in enumerate(c.lits):
-            if index not in read_only:
-                out.write(value, base)
-        for a in argv:
-            out.write(a, base)
+    for expr, add in [(e, eff.write) for e in writes] + [(e, eff.remove) for e in removals]:
+        found = _expr_targets(c, expr)
+        if not found or c.unresolved:
+            eff.doubt("inline code that writes or removes somewhere the reader cannot follow")
+        for p in found:
+            add(p, scope)
+    if lang != "ps":
+        for value in c.mentions():
+            eff.mention(value, scope)
 
 
 def _expr_targets(c: _Code, expr: str) -> List[str]:
+    """The paths a write's target expression can be (c.unresolved says whether every name in it was followed)."""
+    c.unresolved = False
     value = c.lit(expr)
     if value is not None:
         return [value]
@@ -2332,37 +2621,65 @@ def _expr_targets(c: _Code, expr: str) -> List[str]:
     return c.paths(expr)
 
 
-def _unresolved_write(c: _Code, expr: str) -> bool:
-    if c.lit(expr) is not None or _PATH_CALL.fullmatch(expr.strip()):
-        return False
-    c.unresolved = False
-    c.paths(expr)
-    return c.unresolved
+_EFFECTS_CACHE: Dict[Tuple[str, str, Optional[str]], ShellEffects] = {}
 
 
-_EFFECTS_CACHE: Dict[Tuple[str, str], _Effects] = {}
-
-
-def _effects(command: str, cwd: str) -> _Effects:
-    key = (command, cwd)
+def shell_effects(command: str, cwd: str, root: Optional[str] = None) -> ShellEffects:
+    """What a shell command (Bash or PowerShell) writes, removes and mentions, run in cwd, in the project at root (for
+    $CLAUDE_PROJECT_DIR and a cd the reader can only guess). Past its time budget, or on an internal error, the reader
+    is unsure (the previous reader decides) and one line goes to the hooks' log."""
+    key = (command, cwd, root)
     if key not in _EFFECTS_CACHE:
-        out = _Effects()
-        _script(command, cwd, out)
+        try:  # PLUMB_SHELL_BUDGET: seconds, for tests
+            budget = float(os.environ.get("PLUMB_SHELL_BUDGET") or SHELL_BUDGET)
+        except ValueError:
+            budget = SHELL_BUDGET
+        eff = ShellEffects(root, time.monotonic() + budget)
+        try:
+            _script(command, _Scope((cwd,), {}), eff)
+        except _Budget:
+            eff.doubt("the reader ran out of its time budget")
+            log_failure("the shell reader ran past its time budget", "the command read within the budget (the "
+                        "previous reader decided)", category="timeout")
+        except Exception as exc:  # noqa: BLE001 - never fail open: the previous reader decides
+            eff.doubt(f"the reader failed ({type(exc).__name__})")
+            log_failure(f"the shell reader failed ({type(exc).__name__}: {exc})",
+                        "the command read (the previous reader decided)", exc=exc)
         _EFFECTS_CACHE.clear()
-        _EFFECTS_CACHE[key] = out
+        _EFFECTS_CACHE[key] = eff
     return _EFFECTS_CACHE[key]
 
 
 def shell_targets(command: str, cwd: str) -> List[str]:
-    """The files a shell command (Bash or PowerShell) writes, as absolute paths: its real write targets only (see the
-    notes above). Running a script (build-tokens.py, build-prototype.py) counts only its redirects: what a script
-    writes itself is how generated files are meant to change. `cd DIR` moves the base for the commands after it; ~,
-    $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE are the home folder."""
-    return list(_effects(command, cwd).writes)
+    """The files a shell command writes, as absolute paths (see shell_effects). Running a script (build-tokens.py,
+    build-prototype.py) counts only its redirects: what a script writes itself is how generated files are meant to
+    change."""
+    return list(shell_effects(command, cwd).writes)
 
 
 def shell_removals(command: str, cwd: str) -> List[str]:
-    """The files or folders a shell command removes or moves away (rm, del, Remove-Item, git rm, the sources of
-    mv / Move-Item / git mv, and inline code's os.remove, shutil.rmtree, Path.unlink, fs.rm …), as absolute paths, read
-    like shell_targets."""
-    return list(_effects(command, cwd).removals)
+    """The files or folders a shell command removes or moves away, as absolute paths (see shell_effects)."""
+    return list(shell_effects(command, cwd).removals)
+
+
+_LEGACY: List[object] = []
+
+
+def _legacy():
+    """The previous shell reader (_shell_legacy.py, the plugin's own file next to this one)."""
+    if not _LEGACY:
+        spec = importlib.util.spec_from_file_location("plumb_shell_legacy", os.path.join(HOOKS_DIR, "_shell_legacy.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+        _LEGACY.append(module)
+    return _LEGACY[0]
+
+
+def legacy_targets(command: str, cwd: str) -> List[str]:
+    """What the previous shell reader counted as the command's writes (the guard's floor)."""
+    return _legacy().shell_targets(command, cwd)  # type: ignore[attr-defined]
+
+
+def legacy_removals(command: str, cwd: str) -> List[str]:
+    """What the previous shell reader counted as the command's removals (the guard's floor)."""
+    return _legacy().shell_removals(command, cwd)  # type: ignore[attr-defined]

@@ -16,7 +16,9 @@ In such a project, in this order:
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
      marked, in the project or the home folder): editing them could switch the checks off.
-   Shell commands are read for their real write targets only (_hooklib's shell reader): a redirect (>, >>, 1>, 2>,
+   Shell commands: default deny, prove safe (shell_refusal). Refused when _hooklib's shell reader finds a guarded file
+   among the real write targets, and whenever the previous reader (_shell_legacy.py) would refuse, unless the shell
+   reader proves every guarded path in the command is data or a read. Real write targets: a redirect (>, >>, 1>, 2>,
    &>, >|), tee [-a], sed -i, perl -i, the destination of cp / mv / install / rsync / ln, truncate, dd of=, Set-Content,
    Add-Content, Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell,
    eval), and in inline code (python -c, node -e, a here-document fed to an interpreter) open(<path>, "w"|"a"|"x"),
@@ -280,6 +282,37 @@ def removal_guard(proj: H.Project, path: str, cwd: str) -> Optional[str]:
     return None
 
 
+def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: str) -> Optional[str]:
+    for target in paths:
+        path = os.path.realpath(target)
+        why = removal_guard(proj, path, cwd) if removal else guard(proj, path)
+        if why and is_copy(proj, path) and _has_block(path):
+            why = _copy_shell_output(proj, copy_shown(proj, path))
+        if why:
+            return why
+    return None
+
+
+def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """The refusal for a shell command, or None. Default deny, prove safe: refused when the shell reader finds a
+    guarded file among its write or removal targets; and whenever the previous reader (_shell_legacy.py) would refuse
+    it, unless the shell reader proves every guarded path the command names is data or a read (it is not unsure, and
+    no guarded path is among its mentions)."""
+    if not H.WRITE_HINT.search(command):
+        return None
+    eff = H.shell_effects(command, base, proj.root_s)
+    why = _shell_paths_refusal(proj, eff.writes, False, cwd) or _shell_paths_refusal(proj, eff.removals, True, cwd)
+    if why:
+        return why
+    floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
+             or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
+    if floor is None:
+        return None
+    if eff.unsure or any(guard(proj, os.path.realpath(m)) for m in eff.mentions):
+        return floor
+    return None  # proven: every guarded path the previous reader counted is data or a read
+
+
 # ---------------------------------------------------------------- prototype first and the edit check
 
 
@@ -409,23 +442,8 @@ def main() -> int:
         return 0
     base = p.cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     if p.command is not None:
-        if not H.WRITE_HINT.search(p.command):
-            return 0
-        for target in H.shell_targets(p.command, base):
-            path = os.path.realpath(target)
-            why = guard(proj, path)
-            if why and is_copy(proj, path) and _has_block(path):
-                why = _copy_shell_output(proj, copy_shown(proj, path))
-            if why:
-                return H.refuse(why, p.copilot)
-        for target in H.shell_removals(p.command, base):
-            path = os.path.realpath(target)
-            why = removal_guard(proj, path, p.cwd or base)
-            if why and is_copy(proj, path) and _has_block(path):
-                why = _copy_shell_output(proj, copy_shown(proj, path))
-            if why:
-                return H.refuse(why, p.copilot)
-        return 0
+        why = shell_refusal(proj, p.command, base, p.cwd or base)
+        return H.refuse(why, p.copilot) if why else 0
     if not p.changes:
         return 0
     for c in p.changes:
