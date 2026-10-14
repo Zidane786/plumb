@@ -157,7 +157,8 @@ block above, even when it is sure, and nothing it found is used until you confir
 **Plumb's scripts read what you confirmed; they don't guess your layout.** What you confirm (the UI packages, the UI
 files, the route folders, the copies, the allowed raw paths) is recorded in `PLUMB.md` (`UI files:`, `Routes:`, …),
 and the audit and the hooks read only that. `scaffold.py --verify` checks it still holds (each route folder exists,
-each UI-file pattern matches a file). Change it later with `/plumb:update` (or `/plumb:init` again). The same holds
+each UI-file pattern matches a file; an `Allowed raw values:` pattern that matches nothing is a warning). When you give no
+allowed paths, Plumb defaults them to your UI package's primitives folder (e.g. `web/src/components/ui/**`). Change it later with `/plumb:update` (or `/plumb:init` again). The same holds
 for every script's output (the inventory, the overrides mapping, contrast fixes, audit findings): **scripts give
 evidence, not answers**, and the agent verifies it before showing it to you.
 
