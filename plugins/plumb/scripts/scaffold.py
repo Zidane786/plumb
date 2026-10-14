@@ -37,7 +37,8 @@ Ownership (spec 5.1):
       other files is a note), and that the copy targets resolve (not in a `Role: linked` repo: the home owns them). Prints `ok:` / `problem:` / `note:` lines; when the skill is found in a default place
       (.claude/skills/*-design-system, .github/skills/*-design-system) other than where PLUMB.md says, prints the
       suggested --relocate command. It also checks PLUMB.md's Routes: (each recorded path exists, each entry has a
-      kind; not recorded is a note), UI files: (matching 0 files while the project has UI code is a problem) and, in a
+      kind; not recorded is a note), UI files: (matching 0 files while the project has UI code is a problem),
+      Allowed raw values: (a pattern that matches 0 files is a `warning:` with a `fix:`, not a problem) and, in a
       repository, that the skill folder, PLUMB.md and the docs folder are not ignored (check-ignore; a problem with
       the fix). Exit 0 when there is no problem, 1 otherwise.
 
@@ -65,7 +66,10 @@ answers.json (every key optional; unknown keys are ignored with a note):
                    platforms' packages (Angular: src/** · *.component.ts ... styles.css; web next to iOS/Android: the
                    mobile folders too; a chosen platform with no package keeps *.swift / *.kt), printed as a note;
                    else the platform default)
-    "allowed_raw": "components/ui/**",
+    "allowed_raw": "web/src/components/ui/**",   (PLUMB.md `Allowed raw values:`; unanswered: the primitives folder of
+                   each detected web package from the repo root: components.json's aliases.ui resolved through the
+                   package's tsconfig paths ("@/" = src/ without one), else its components/ui folder; none without
+                   web; components/ui/** when no package is found)
     "web_copies":  ["app/globals.css"],                (project-relative files that get Plumb's marked block of the
                    generated CSS; an existing file keeps everything outside the block, and a note says so)
     "theme_switch": "both" | "system" | "class" | "data-theme",  (how the web app switches to dark: the system setting, a .dark
@@ -101,6 +105,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -530,7 +535,7 @@ def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: st
         "PROJECT": name, "SKILL_DIR": skill_dir + "/", "ROLE": base["ROLE"], "PLATFORMS": ", ".join(platforms),
         "UI_PACKAGES": answers.get("ui_packages") or (f". ({STYLING_LABEL[styling]})" if "web" in platforms else "."),
         "PYTHON": base["PYTHON"], "EDIT_CHECK": "on", "END_CHECK": "on", "THEMES": base["THEMES"],
-        "UI_FILES": ui_files, "ALLOWED_RAW": answers.get("allowed_raw") or ("components/ui/**" if "web" in platforms else "none"),
+        "UI_FILES": ui_files, "ALLOWED_RAW": answers.get("allowed_raw") or allowed_raw_default(platforms, root),
         "PROTOTYPE_MAIN": f"{docs}/prototype.html", "SCREENS_PAGE": f"{docs}/screens.html",
         "SCREENS_MAP": f"{docs}/prototype/screens.json", "PROTOTYPE_SYNC": "on",
         "DATE": base["DATE"], "DIRECTION": base["DIRECTION"],
@@ -1230,6 +1235,151 @@ def check_ui_files(keys: dict, root: Path, skill_rel: str) -> List[Tuple[str, st
     return out
 
 
+def _loose_json(path: Path) -> dict:
+    """A JSON file that may carry comments and trailing commas (tsconfig.json); {} when missing or unreadable."""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return {}
+    text = re.sub(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/',
+                  lambda m: m.group(0) if m.group(0).startswith('"') else "", text, flags=re.S)
+    text = re.sub(r",(\s*[}\]])", r"\1", text)
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _ts_config(path: Path, depth: int = 0, seen: Optional[set] = None) -> Tuple[dict, Path]:
+    """A tsconfig/jsconfig's `compilerOptions` (comments allowed) and the folder its `paths` are relative to (its
+    baseUrl, else the file's own folder), following a relative string `extends` up to 3 levels (cycle-safe)."""
+    seen = seen if seen is not None else set()
+    key = str(path.resolve())
+    if key in seen or depth > 3:
+        return {}, path.parent
+    seen.add(key)
+    data = _loose_json(path)
+    opts = data.get("compilerOptions") if isinstance(data.get("compilerOptions"), dict) else {}
+    ext = data.get("extends")
+    base_opts: dict = {}
+    base_dir = path.parent
+    if isinstance(ext, str) and ext.startswith("."):
+        target = (path.parent / ext)
+        if not target.suffix == ".json":
+            target = target.with_name(target.name + ".json")
+        base_opts, base_dir = _ts_config(target, depth + 1, seen)
+    merged = dict(base_opts)
+    merged.update(opts)
+    # paths resolve against baseUrl, else against the config that declared them
+    own_dir = path.parent if "paths" in opts or "baseUrl" in opts else base_dir
+    return merged, own_dir
+
+
+def _alias_dir(pkg: Path, alias: str) -> str:
+    """The folder (relative to the package) an import alias such as `@/components/ui` points at: through the package's
+    tsconfig/jsconfig `compilerOptions.paths` when one maps it, else `@/` (or `~/`) means `src/`."""
+    alias = alias.strip().replace("\\", "/")
+    for name in ("tsconfig.json", "jsconfig.json"):
+        opts, cfg_dir = _ts_config(pkg / name)
+        paths = opts.get("paths")
+        if not isinstance(paths, dict):
+            continue
+        base = posixpath.join(os.path.relpath(cfg_dir, pkg).replace("\\", "/"), str(opts.get("baseUrl") or "."))
+        best = None
+        for key, targets in paths.items():
+            star = key.endswith("*")
+            prefix = key[:-1] if star else key
+            if (alias.startswith(prefix) if star else alias == prefix) and (best is None or len(prefix) > len(best[0])):
+                if isinstance(targets, list) and targets and isinstance(targets[0], str):
+                    best = (prefix, targets[0], star)
+        if best:
+            prefix, target, star = best
+            rest = alias[len(prefix):]
+            joined = target[:-1] + rest if star and target.endswith("*") else target
+            norm = posixpath.normpath(posixpath.join(base, joined))
+            return "" if norm == "." else norm
+    for lead in ("@/", "~/"):
+        if alias.startswith(lead):
+            return "src/" + alias[len(lead):]
+    return alias.lstrip("./")
+
+
+def _ui_folder(pkg: Path) -> str:
+    """Where one web package's primitives live, relative to the package: components.json's `aliases.ui` (shadcn),
+    else the first components/ui folder that exists, else src/components/ui when the package has a src/ folder."""
+    conf = _loose_json(pkg / "components.json")
+    aliases = conf.get("aliases") if isinstance(conf.get("aliases"), dict) else {}
+    alias = aliases.get("ui") or (aliases["components"].rstrip("/") + "/ui" if aliases.get("components") else "")
+    if isinstance(alias, str) and alias.strip():
+        guess = _alias_dir(pkg, alias).strip("/")
+        if guess and ".." not in guess.split("/") and (pkg / guess).is_dir():
+            return guess
+    for cand in ("src/components/ui", "components/ui", "app/components/ui"):
+        if (pkg / cand).is_dir():
+            return cand
+    if isinstance(alias, str) and alias.strip():
+        guess = _alias_dir(pkg, alias).strip("/")
+        if guess and ".." not in guess.split("/"):
+            return guess
+    return "src/components/ui" if (pkg / "src").is_dir() else "components/ui"
+
+
+def allowed_raw_default(platforms: List[str], root: Optional[Path]) -> str:
+    """PLUMB.md's `Allowed raw values:` when the user gave none: `none` without a web platform; else the primitives
+    folder of each detected web UI package, from the repo root (e.g. `web/src/components/ui/**`), and
+    `components/ui/**` when no package is detected."""
+    if "web" not in platforms:
+        return "none"
+    globs: List[str] = []
+    if root is not None:
+        try:
+            ui, _ = load_detect().classify(root)
+            pkgs = [u["path"] for u in ui if "web" in u["platforms"]]
+        except Exception:  # noqa: BLE001 - the default is a convenience
+            pkgs = []
+        for path in pkgs:
+            folder = _ui_folder(root if path == "." else root / path)
+            glob = (folder if path == "." else f"{path}/{folder}") + "/**"
+            if glob not in globs:
+                globs.append(glob)
+    return ", ".join(globs) or "components/ui/**"
+
+
+def check_allowed_raw(keys: dict, root: Path, skill_rel: str) -> List[Tuple[str, str]]:
+    """PLUMB.md `Allowed raw values:` patterns that match 0 files (the audit then flags the primitives): a warning with
+    the fix. `none` and an empty value are fine; a pattern that matches is quiet."""
+    value = str(keys.get("Allowed raw values", "") or "").strip()
+    if not value or value.strip("`").lower() == "none":
+        return []
+    core = load_plumb_core()
+    globs = core.split_globs(value)
+    rxs = {g: core.glob_rx(g) for g in globs}
+    hit = {g: False for g in globs}
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in core.SKIP_DIRS and not d.startswith(".git"))
+        for fn in filenames:
+            seen += 1
+            if seen > UI_FILES_SCAN_MAX:
+                break
+            parts = (Path(dirpath) / fn).relative_to(root).as_posix().split("/")
+            for g, rx in rxs.items():  # as the audit reads it: the path or any trailing part of it
+                if not hit[g] and any(rx.match("/".join(parts[i:])) for i in range(len(parts))):
+                    hit[g] = True
+        if all(hit.values()):
+            break
+    out: List[Tuple[str, str]] = []
+    for g, found in hit.items():
+        if not found:
+            out.append(("warning", f"PLUMB.md Allowed raw values: {g} matches 0 files, so the primitives there are "
+                                   f"audited like app code (globs are read from the project root, e.g. "
+                                   f"web/src/components/ui/** for a UI package in web/)"))
+            out.append(("fix", "ask the user: correct Allowed raw values: in PLUMB.md to the folder that holds the "
+                               "UI primitives, or none"))
+    return out
+
+
 def verify(root: Path) -> int:
     problems = 0
 
@@ -1324,7 +1474,8 @@ def verify(root: Path) -> int:
                 problem(line[len("problem: "):])
             else:
                 print(line)
-    for kind, text in check_routes(keys, root) + check_ui_files(keys, root, skill_rel):
+    for kind, text in check_routes(keys, root) + check_ui_files(keys, root, skill_rel) + \
+            check_allowed_raw(keys, root, skill_rel):
         if kind == "problem":
             problem(text)
         else:

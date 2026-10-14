@@ -247,8 +247,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] **Monorepo** (UI in `frontend/`, the repo root holding `frontend/` and `backend/`): the UI files are
       `frontend/…` patterns (a root `src/**` that matches nothing is shown `(corrected: …)` with the file counts), the
       routes line names `frontend/src/app (next-app)` (the page folder with its kind; `none` in a mobile-only or
-      design-only project), and both land in `PLUMB.md` (`UI files:`, `Routes:`). `scaffold.py --verify` ends
-      `verify: ok`.
+      design-only project), and both land in `PLUMB.md` (`UI files:`, `Routes:`), and `Allowed raw values:` names the UI
+      package's primitives folder (e.g. `frontend/src/components/ui/**`), not a bare `components/ui/**`.
+      `scaffold.py --verify` ends `verify: ok` (an allowed pattern that matches no file would print a `warning:` and
+      a `fix:`).
 - [ ] **Git-ignored skill folder:** in a repo whose `.gitignore` has `.claude/`, init shows that line inside a question
       and offers to un-ignore the skill folder (`.claude/*` + `!.claude/skills/`, recommended) or another location;
       it never goes on silently, and after the change it runs `git check-ignore` again and shows the result.
