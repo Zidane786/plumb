@@ -1059,6 +1059,21 @@ Three checks, in this order:
    here-document written to another file (`cat > Makefile <<'EOF'` whose lines run `build-tokens.py`), and reading,
    running or importing a guarded file (`json.load(open("…/screens.json"))`, `importlib` on a Plumb script).
 
+   This is **default deny, prove safe**. Whatever the guard's previous, stricter reading refused stays refused, unless
+   the new reading proves every guarded path in the command is data or a read. It can't prove that, and keeps the
+   stricter answer, when the command uses any of these:
+   - a program it doesn't know, or a runner (`npx`, `poetry run`, `conda run` …), or `xargs`;
+   - a variable or `$( … )` it can't resolve in a target or a `cd` (shell variables set in the same command, `$PWD` and
+     `$CLAUDE_PROJECT_DIR` are followed);
+   - code piped from a file, or inline code that runs commands (`os.system`, `subprocess`, `exec`) or writes somewhere
+     it can't follow;
+   - very deep nesting, or a reading that would take too long.
+
+   The guard is a consistency net, not a sandbox. Script files, `xargs`, `find -exec` on the files found, `patch`,
+   `tar -x`, `prettier --write`, editors like `ed`, and commands run through other tools are not followed. Restoring a
+   file from git (`git checkout -- <file>`, `git restore`) is allowed. `build-tokens.py --check` and the end-of-turn
+   check catch the drift.
+
    ```
    error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build
    fix: change the tokens with /plumb:update, then rebuild: python3 .claude/skills/acme-design-system/scripts/build-tokens.py

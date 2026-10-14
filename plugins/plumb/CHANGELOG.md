@@ -107,13 +107,16 @@
 - **The guard reads more shell**: `bash -c "…"`, `sh -c`, `zsh -c`, `pwsh -c` and `powershell -Command` scripts are
   checked like any other command, here-documents are read as their command's input, and an arithmetic `$((a<<b))` is
   never mistaken for one.
-- **The guard refuses only real writes**: a shell command is refused when a guarded file is a real write target (a
-  redirect, `tee`, `sed -i`, `perl -i`, the destination of `cp` / `mv` / `install` / `rsync` / `ln`, `rm`, `truncate`,
-  `dd of=`, and in inline code `open("…", "w")`, `Path("…").write_text` and the like), never because its text
-  mentions one. A here-document writing a Makefile whose lines run the design system's scripts, reading
-  `screens.json` with `json.load`, importing a Plumb script with `importlib`, and quoted text with `append`, `.dump`
-  or `>` are allowed now. It also catches a few writes it missed: `eval`, `find -exec`, `curl -o`, `wget -O`, a copy
-  into the folder of a guarded file, code piped to an interpreter, and `os.remove` / `shutil.rmtree` in inline code.
+- **The guard refuses real writes, not mentions**: a shell command is refused when a guarded file is a real write
+  target (a redirect, `tee`, `sed -i`, `perl -i`, the destination of `cp` / `mv` / `install` / `rsync` / `ln`, `rm`,
+  `truncate`, `dd of=`, and in inline code `open("…", "w")`, `Path("…").write_text` and the like). A here-document
+  writing a Makefile whose lines run the design system's scripts, reading `screens.json` with `json.load`, importing
+  a Plumb script with `importlib`, and quoted text with `append`, `.dump` or `>` are allowed now. Default deny, prove
+  safe: anything the stricter earlier reading refused is still refused unless the new reading proves it is only data
+  or a read (an unknown program, a runner, an unresolved variable or `cd`, code that runs commands: still refused).
+  It also catches writes it missed: `eval`, `find -exec`, `curl -o`, `wget -O`, `perl -0pi`, a copy into the folder of
+  a guarded file, shell variables (`OUT=…; echo > "$OUT"`), `$PWD`, globs and braces, code piped to an interpreter or
+  on `/dev/stdin`, and `os.remove` / `shutil.rmtree` in inline code.
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
