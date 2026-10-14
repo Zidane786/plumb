@@ -156,6 +156,22 @@ def test_templates_are_complete_offline_documents() -> None:
         assert "data-theme" in text
 
 
+def test_app_shell_template_is_a_complete_offline_document() -> None:
+    """The app view (build-prototype.py's app.html): no chrome, so no theme toggle of its own; both themes, reduced
+    motion and focus rings, the frame a tour page's player draws over, and the slots the build fills."""
+    text = read(TEMPLATES / "app-shell.html.tmpl")
+    assert_document(text)
+    assert_offline(text)
+    assert 'id="theme-toggle"' not in text
+    assert "prefers-color-scheme: dark" in text and "prefers-reduced-motion: reduce" in text
+    assert ":focus-visible" in text and "data-theme" in text
+    assert 'id="pp-stage"' in text and 'id="pp-frame"' in text and "isolation: isolate;" in text
+    for slot in ("header", "base", "title", "theme_key", "theme_css", "screen_styles", "frame", "data", "screen_scripts",
+                 "player_css", "player"):
+        assert "{{" + slot + "}}" in text, slot
+    assert "localStorage" in text and "catch (err)" in text  # storage is a convenience: a throwing one still renders
+
+
 # ---------------------------------------------------------------- specimen
 
 

@@ -64,15 +64,15 @@ an HTML prototype only.
 ## 2. The UI folders — STOP, then the inventory
 
 Inside the question: the UI folders found (each with its file count) and anything to leave out (vendored, legacy,
-marketing). **STOP: ask, wait for the answer.** Then (it only reads): `python3 "<ROOT>/assets/skill/scripts/audit.py"
-"<root>/<UI folder>"… --inventory --json --project "<root>" [--exclude "legacy/**"]`: per kind (colour, font family,
-size, weight, line height, spacing, radius, shadow, duration, easing) every value with its count and `file:line`, and
-proposed clusters (colours below CIEDE2000 3, sizes within 1px or 6%). Check its `checked` count against the folders;
-read what it does not interpret (the sources in interview.md "Investigate first": Tailwind `theme.extend`, CSS
-variables, theme objects, asset catalogs, `themes.xml`) and list the **component variants** in use. Name tokens **by
-role** (`primary`, `on-surface-muted`, `danger`), never by hue; spacing onto Tailwind steps, sizes onto the type scale.
-Existing dark values become `$extensions.plumb.dark`; others get a proposed one. Split a cluster that merges values
-with different jobs `(corrected: …)`.
+marketing). **STOP: ask, wait for the answer.** Then (read-only): `python3 "<ROOT>/assets/skill/scripts/audit.py"
+"<root>/<UI folder>"… --inventory --json --project "<root>" [--exclude "legacy/**"]`: per kind (colour, font family, size,
+weight, line height, spacing, radius, shadow, duration, easing) every value with its count and `file:line`, and proposed
+clusters (colours below CIEDE2000 3 per source: CSS variable, palette class, literal; sizes within 1px or 6%; same hex, two
+sources: two groups, one candidate). Check its `checked` count against the folders; read what it does not interpret (the
+sources in interview.md "Investigate first": Tailwind `theme.extend`, CSS variables, theme objects, asset catalogs,
+`themes.xml`) and list the **component variants** in use. Name tokens **by role** (`primary`, `on-surface-muted`, `danger`),
+never by hue; spacing onto Tailwind steps, sizes onto the type scale. Existing dark values become `$extensions.plumb.dark`;
+others get a proposed one. Split a cluster merging values with different jobs `(corrected: …)`.
 
 ## 3. The before/after page — STOP
 

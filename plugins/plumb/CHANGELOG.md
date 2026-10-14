@@ -43,6 +43,11 @@
 - **The main prototype**: `prototype.html` (the whole product, clickable, with a state switcher, phone/desktop and
   light/dark toggles, the decisions behind each screen and a guide panel) and `screens.html` (every screen in every
   state, light and dark side by side), both built from one file per screen and kept in step with the code both ways.
+- **The app view**: `app.html`, every screen full window with no prototype panels, for a demo (prototype.html to
+  review, app.html to demo). Links `#/screen` and `#/screen/state` (the prototype's `#screen-…` links work too), the
+  screens' own scripts and theme toggle (the choice is remembered in the browser), the md breakpoint following the
+  window, a `data-app-sidebar` that stays in view, and a dialog a click opens scrolled into view. Each proposal variant
+  gets one too, linked from the proposal index next to its prototype.
 - **`/plumb:prototype`**: 2–3 variants of a new screen, flow or interaction, each as a clickable prototype and as
   every state in light and dark, side by side on one page (`build-prototype.py --proposal <name>`); the one you pick
   joins the main prototype with a default walkthrough, and your approval is recorded per screen.
@@ -136,6 +141,11 @@
   `web/src/components/ui/**` for a UI package in `web/`), read from the package's `components.json` and `tsconfig`
   instead of always `components/ui/**` from the repo root. Your own answer still wins. `scaffold.py --verify` warns
   (with a fix) when an allowed pattern matches no file.
+- `audit.py --inventory` reads a Tailwind `rounded-*` class at the project's own `@theme` radius (a base `--radius`
+  with `calc()` steps renders `rounded-lg` as that value, not 8px); Tailwind's defaults remain for sizes the project
+  does not define.
+- `audit.py --inventory` no longer merges a named CSS variable's colour (a theme or chart colour) with Tailwind
+  palette-class colours: clusters stay within one source kind and say which.
 
 ### Security
 

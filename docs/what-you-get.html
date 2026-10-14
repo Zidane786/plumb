@@ -420,11 +420,12 @@ mobile/   <span class="k">Role: linked</span>
         <li data-o="Y" class="d1"><span>references/web/ · references/mobile/</span><span class="own Y">Y</span><span class="c">Only what differs per platform.</span></li>
         <li data-o="P" class="d1"><span>scripts/build-tokens.py</span><span class="own P">P</span><span class="c">Writes every theme and the contrast evidence. --check fails when one is stale.</span></li>
         <li data-o="P" class="d1"><span>scripts/audit.py</span><span class="own P">P</span><span class="c">Every rule. Run by make design-audit, CI and the skills. The hooks use the plugin's own copy, never this one.</span></li>
-        <li data-o="P" class="d1"><span>scripts/build-prototype.py</span><span class="own P">P</span><span class="c">Screen files to prototype.html and screens.html. The only writer of screens.json.</span></li>
-        <li data-o="P" class="d1"><span>scripts/_plumb.py · templates/</span><span class="own P">P</span><span class="c">Shared code; the specimen, report, prototype shell and walkthrough player templates.</span></li>
+        <li data-o="P" class="d1"><span>scripts/build-prototype.py</span><span class="own P">P</span><span class="c">Screen files to prototype.html, app.html and screens.html. The only writer of screens.json.</span></li>
+        <li data-o="P" class="d1"><span>scripts/_plumb.py · templates/</span><span class="own P">P</span><span class="c">Shared code; the specimen, report, prototype shell, app shell and walkthrough player templates.</span></li>
         <li class="root"><span>docs/design/</span></li>
         <li data-o="Y" class="d1"><span>decisions.md</span><span class="own Y">Y</span><span class="c">Every direction, variant and screen chosen, by whom, and why.</span></li>
-        <li data-o="G" class="d1"><span>prototype.html</span><span class="own G">G</span><span class="c">The whole product, clickable, with walkthroughs.</span></li>
+        <li data-o="G" class="d1"><span>prototype.html</span><span class="own G">G</span><span class="c">The whole product, clickable, with walkthroughs. To review.</span></li>
+        <li data-o="G" class="d1"><span>app.html</span><span class="own G">G</span><span class="c">The same screens full window, no panels. To demo.</span></li>
         <li data-o="G" class="d1"><span>screens.html</span><span class="own G">G</span><span class="c">Every screen in every state, light and dark side by side, and every control state.</span></li>
         <li data-o="G" class="d1"><span>specimen.html</span><span class="own G">G</span><span class="c">Every token and component, light and dark.</span></li>
         <li data-o="Y" class="d1"><span>prototype/screens/&lt;id&gt;.html</span><span class="own Y">Y</span><span class="c">One source file per screen: its states and interactions.</span></li>
@@ -525,7 +526,7 @@ tokens `python3 …/scripts/build-tokens.py` (make tokens)
 check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
 
 ## Prototype
-Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
+Main: docs/design/prototype.html · app: docs/design/app.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
 Prototype sync: on
 
 ## Plumb updates
@@ -565,6 +566,7 @@ Prototype sync: on
       <div class="head"><span class="eyebrow">docs/design/prototype.html</span><h2>One prototype of the whole product</h2></div>
       <div class="prose">
         <p>Every screen, clickable, working the way the real UI works. Each screen has its states, a phone and desktop view, light and dark, the decisions behind it, and a guide. It is built from one source file per screen, kept in step with your frontend, and checked by the audit.</p>
+        <p>The same screens also come full window, with no panels, in <code>app.html</code>: prototype.html to review, app.html to demo.</p>
         <p><code>/plumb:prototype</code> makes the screens. The walkthrough player is part of every prototype; <code>/plumb:tour</code> only writes the script it plays (which steps, which words), for a review or a client demo.</p>
         <p>Below is a working schematic of the shell. Try the state switcher, then play the walkthrough and change its speed.</p>
       </div>

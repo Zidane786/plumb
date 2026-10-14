@@ -910,7 +910,7 @@ def mask_block(text: str) -> str:
     return text[:span[0]] + _NOT_NL.sub(" ", text[span[0]:span[1]]) + text[span[1]:]
 
 
-PROPOSAL_PAGE_GLOBS = ("*/index.html", "*/*/prototype.html", "*/*/screens.html")
+PROPOSAL_PAGE_GLOBS = ("*/index.html", "*/*/prototype.html", "*/*/app.html", "*/*/screens.html")
 
 
 def is_generated_proposal_page(text: str) -> bool:
@@ -1148,15 +1148,20 @@ class _Scan:
         own = self.named.get(scale) or {}
         return own[name] if name in own else default
 
-    def add(self, kind: str, value: str, pos: int) -> None:
+    def add(self, kind: str, value: str, pos: int, source: str = "literal") -> None:
+        """Count one use. A colour also records its source kind (COLOUR_SOURCES), so clusters never mix kinds."""
         line = bisect.bisect_right(self._nl, pos - 1) + 1 if pos > 0 else 1
         slot = self.inv[kind].get(value)
         if slot is None:
             slot = self.inv[kind][value] = {"count": 0, "where": []}
         slot["count"] += 1
         slot["where"].append(f"{self.name}:{line}")
+        if kind == "color":
+            by = slot.setdefault("sources", {}).setdefault(source, {"count": 0, "where": []})
+            by["count"] += 1
+            by["where"].append(f"{self.name}:{line}")
 
-    def colours(self, start: int, end: int, css: bool) -> None:
+    def colours(self, start: int, end: int, css: bool, source: str = "literal") -> None:
         code = self.code
         for m in _I_HEX.finditer(code, start, end):
             pos, digits = m.start(), m.group(1)
@@ -1169,16 +1174,16 @@ class _Scan:
                 before = code[max(line_start, pos - 150):pos]
                 if any(call in before for call in _I_SELECTOR_CALLS):
                     continue
-            self.add("color", _hex_value(digits), pos)
+            self.add("color", _hex_value(digits), pos, source)
         for m in _I_FN.finditer(code, start, end):
             value = _fn_colour(m.group(1).lower(), m.group(2))
             if value:
-                self.add("color", value, m.start())
+                self.add("color", value, m.start(), source)
 
     def declaration(self, prop: str, value: str, pos: int, colours: bool) -> None:
         """One CSS declaration (or a JS style property already turned into kebab-case)."""
         if colours:
-            self.colours(pos, pos + len(value), True)
+            self.colours(pos, pos + len(value), True, "variable" if prop.startswith("--") else "literal")
         prop = prop.lower()
         v = value.strip()
         if not v or v.startswith("var(") and ")" == v[-1:] and v.count("(") == 1:
@@ -1334,7 +1339,7 @@ class _Scan:
             if value:
                 self.add("easing", value, m.start())
         for m in _TW_PALETTE.finditer(code, start, end):
-            self.add("color", TAILWIND_PALETTE[m.group(1)], m.start())
+            self.add("color", TAILWIND_PALETTE[m.group(1)], m.start(), "palette")
 
     def swift(self) -> None:
         code = self.code
@@ -1442,6 +1447,128 @@ def inventory_add(inv: dict, name: str, text: str, tailwind: bool = False, code:
         scan.tailwind(pos, len(code))
 
 
+_THEME_AT = re.compile(r"@theme\b[^{};]*\{")
+_RADIUS_VAR = re.compile(r"(?<![\w-])--radius(?:-([\w.]+))?\s*:\s*([^;{}]{1,200})")
+_RADIUS_BASE_SELECTOR = re.compile(r"(?:^|[\s,>+~])(?::root|html|body|\*|@theme(?:\s+inline)?)\s*$", re.I)
+_LEN_ONLY = re.compile(r"^(\d*\.?\d+)(px|rem|em)$")
+_NUM_ONLY = re.compile(r"^\d*\.?\d+$")
+_VAR_REF = re.compile(r"^var\(\s*--radius(?:-([\w.]+))?\s*(?:,\s*(.+?))?\s*\)$", re.S)
+_CALC_RADIUS = re.compile(r"^calc\(\s*(.+?)\s+([+*/-])\s+(.+?)\s*\)$|^calc\(\s*(.+?)\s*([*/])\s*(.+?)\s*\)$", re.S)
+
+
+def _theme_blocks(code: str) -> list:
+    """The bodies of every @theme / @theme inline block (braces matched)."""
+    out = []
+    for m in _THEME_AT.finditer(code):
+        depth, i = 1, m.end()
+        while i < len(code) and depth:
+            depth += {"{": 1, "}": -1}.get(code[i], 0)
+            i += 1
+        out.append(code[m.end():i - 1 if depth == 0 else i])
+    return out
+
+
+def _selector_of(code: str, pos: int) -> str:
+    """The selector (or at-rule prelude) of the innermost block that holds position pos."""
+    depth, i = 0, pos
+    while i > 0:
+        i -= 1
+        ch = code[i]
+        if ch == "}":
+            depth += 1
+        elif ch == "{":
+            if depth == 0:
+                j = max(code.rfind("}", 0, i), code.rfind(";", 0, i), code.rfind("{", 0, i)) + 1
+                return code[j:i].strip()
+            depth -= 1
+    return ""
+
+
+def theme_radii(files, used: Optional[list] = None) -> dict:
+    """The project's own radius steps in px, {"sm": 6.0, "lg": 10.0, ...}, from CSS text (comments already masked).
+
+    files: [(path, code)]. The base is `--radius` declared on :root / html / body / * or inside @theme; a declaration
+    under any other selector (.dark, [data-theme=...]) is a theme override and is ignored. The steps are the
+    `--radius-<name>` variables inside `@theme` / `@theme inline`. A value is a length (px, rem, em = 16px),
+    var(--radius) or another radius variable (var(--radius, <fallback>) uses the base, else the fallback), or calc() of
+    one of those with +/- a length or * / a number. A step that does not resolve is left out, so the caller falls back
+    to Tailwind's default for it. Several files: the files that hold an @theme block come first, then path order; the
+    first definition of a name wins. used, when given, receives the path of every file a value was taken from.
+    Empty when the project defines no theme radius."""
+    ordered = sorted(files, key=lambda f: (0 if "@theme" in f[1] else 1, f[0]))
+    base: Optional[float] = None
+    raw: Dict[str, str] = {}
+    for path, code in ordered:
+        if "--radius" not in code:
+            continue
+        if base is None:
+            for m in _RADIUS_VAR.finditer(code):
+                m2 = _LEN_ONLY.match(m.group(2).strip()) if m.group(1) is None else None
+                if m2 and _RADIUS_BASE_SELECTOR.search(_selector_of(code, m.start())):
+                    base = _px_len(m2.group(1), m2.group(2))
+                    if used is not None:
+                        used.append(path)
+                    break
+        for block in _theme_blocks(code):
+            for m in _RADIUS_VAR.finditer(block):
+                if m.group(1) is not None and m.group(1) not in raw:
+                    raw[m.group(1)] = m.group(2).strip()
+                    if used is not None and path not in used:
+                        used.append(path)
+    out: Dict[str, float] = {}
+
+    def num(text: str, seen: tuple) -> Optional[Tuple[float, bool]]:
+        """(value, is_length) of one operand."""
+        text = text.strip()
+        m = _LEN_ONLY.match(text)
+        if m:
+            return _px_len(m.group(1), "rem" if m.group(2) == "em" else m.group(2)), True
+        if _NUM_ONLY.match(text):
+            return float(text), False
+        m = _VAR_REF.match(text)
+        if m:
+            name = m.group(1)
+            got = base if name is None else (resolve(name, seen) if name in raw else None)
+            if got is None and m.group(2):
+                fb = num(m.group(2), seen)
+                got = fb[0] if fb and fb[1] else None
+            return (got, True) if got is not None else None
+        if text.startswith("calc("):
+            got = calc(text, seen)
+            return (got, True) if got is not None else None
+        return None
+
+    def calc(text: str, seen: tuple) -> Optional[float]:
+        m = _CALC_RADIUS.match(text)
+        if not m:
+            return None
+        a, op, b = (m.group(1), m.group(2), m.group(3)) if m.group(1) else (m.group(4), m.group(5), m.group(6))
+        left, right = num(a, seen), num(b, seen)
+        if not left or not right:
+            return None
+        if op in "+-":
+            if not (left[1] and right[1]):
+                return None
+            return max(0.0, left[0] + right[0] if op == "+" else left[0] - right[0])
+        if op == "*" and left[1] != right[1]:
+            return max(0.0, left[0] * right[0])
+        if op == "/" and left[1] and not right[1] and right[0]:
+            return max(0.0, left[0] / right[0])
+        return None
+
+    def resolve(name: str, seen: tuple) -> Optional[float]:
+        if name in seen:
+            return None
+        got = num(raw[name], seen + (name,))
+        return got[0] if got and got[1] else None
+
+    for name in sorted(raw):
+        px = resolve(name, ())
+        if px is not None:
+            out[name] = px
+    return out
+
+
 def _where_key(w: str) -> Tuple[str, int]:
     file, _, line = w.rpartition(":")
     return file, int(line) if line.isdigit() else 0
@@ -1452,11 +1579,13 @@ def finish_inventory(inv: dict) -> dict:
     for values in inv.values():
         for slot in values.values():
             slot["where"] = sorted(set(slot["where"]), key=_where_key)
+            for by in (slot.get("sources") or {}).values():
+                by["where"] = sorted(set(by["where"]), key=_where_key)
     return inv
 
 
 def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Optional[bool] = None,
-                   seen: Optional[list] = None) -> dict:
+                   seen: Optional[list] = None, radius_files: Optional[list] = None) -> dict:
     """Every design value used under roots: {kind: {value: {"count": n, "where": ["file:line", ...]}}}.
 
     kinds: color (lowercase #rrggbb, #rrggbbaa when translucent), font-family (lowercase stack), font-size, spacing,
@@ -1465,7 +1594,8 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
     and style attributes, JS style objects, Tailwind classes (only when the project uses Tailwind; tailwind=None
     detects it), Swift and Kotlin. Comments, node_modules and build output, generated files, files over 5 MB and
     paths matching an exclude glob are skipped. "where" paths are relative to base (default: the folder the roots share).
-    seen, when given, receives the name of every file read (audit.py --inventory counts them)."""
+    seen, when given, receives the name of every file read (audit.py --inventory counts them). radius_files, when
+    given, receives the files the project's own theme radius came from (see theme_radii)."""
     roots = [Path(r) for r in roots]
     if base is None:
         dirs = [str((r if r.is_dir() else r.parent).resolve()) for r in roots]
@@ -1509,8 +1639,13 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
                 seen.append(name)
     inv = new_inventory()
     use_tw = detected if tailwind is None else tailwind
+    named = None
+    if use_tw:  # rounded-lg is the project's own --radius-lg when its @theme defines one, Tailwind's default otherwise
+        radii = theme_radii([(n, mask_comments(t, source_ext(n) or ".css")) for n, t in found
+                             if source_ext(n) in (".css", ".scss")], radius_files)
+        named = {"radius": radii} if radii else None
     for name, text in found:
-        inventory_add(inv, name, text, use_tw)
+        inventory_add(inv, name, text, use_tw, named=named)
     return finish_inventory(inv)
 
 
@@ -1518,6 +1653,7 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
 
 
 SIZE_KINDS = ("font-size", "line-height", "spacing", "radius", "duration")
+COLOUR_SOURCES = ("variable", "palette", "literal")  # a named CSS variable, a Tailwind palette class, any other value
 COLOUR_DELTA = 3.0  # CIEDE2000 below this: the same colour to the eye
 SIZE_PX, SIZE_RATIO = 1.0, 0.06  # sizes within 1px (1ms) or 6% are the same step
 
@@ -1540,6 +1676,21 @@ def cluster(inventory: dict, kind: str) -> list:
     not yet grouped is the canonical (the value to propose as a token) and takes every ungrouped value close to it.
     Other kinds (font-family, font-weight, shadow, easing) are never merged: each value is its own group."""
     values = inventory.get(kind) or {}
+    if kind == "color":  # never merge across source kinds: a named variable's value stays apart from palette classes
+        groups = []
+        for source in COLOUR_SOURCES:
+            part = {}
+            for v, s in values.items():
+                by = s.get("sources") or {"literal": {"count": s["count"]}}
+                if source in by:
+                    part[v] = {"count": by[source]["count"]}
+            groups += [dict(g, source=source) for g in _cluster_values(part, kind)]
+        groups.sort(key=lambda g: (-g["count"], COLOUR_SOURCES.index(g["source"])))
+        return groups
+    return _cluster_values(values, kind)
+
+
+def _cluster_values(values: dict, kind: str) -> list:
     items = sorted(values.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
     count = {v: s["count"] for v, s in items}
     order = [v for v, _ in items]

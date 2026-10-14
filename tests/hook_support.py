@@ -67,7 +67,7 @@ Allowed raw values: components/ui/**
 tokens `python3 {skill}/scripts/build-tokens.py` (make tokens)
 
 ## Prototype
-Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
+Main: docs/design/prototype.html · app: docs/design/app.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
 Prototype sync: {sync}               (end-of-turn check stops once when a built screen changed without its prototype)
 
 ## Plumb updates

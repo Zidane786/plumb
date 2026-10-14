@@ -462,7 +462,8 @@ def test_inventory_shape_and_normalisation(tmp_path: Path) -> None:
           "/* .x { color: #123456; } */\n")
     inv = P.scan_inventory([tmp_path], [])
     assert set(inv) == set(KINDS)
-    assert inv["color"]["#14857f"] == {"count": 2, "where": ["app/a.css:1", "app/a.css:2"]}
+    assert {k: inv["color"]["#14857f"][k] for k in ("count", "where")} == {"count": 2, "where": ["app/a.css:1", "app/a.css:2"]}
+    assert {k: v["count"] for k, v in inv["color"]["#14857f"]["sources"].items()} == {"variable": 1, "literal": 1}
     assert inv["color"]["#ffffff"]["count"] == 1 and "#123456" not in inv["color"]
     assert inv["font-size"]["16px"]["where"] == ["app/a.css:2"]
     assert inv["font-weight"]["600"]["count"] == 1 and inv["font-weight"]["700"]["count"] == 1
@@ -497,7 +498,7 @@ def test_inventory_skips_build_output_excludes_and_reads_crlf_and_unicode_paths(
     write(tmp_path / "legacy/a.css", ".a { color: #333333; }\n")
     write(tmp_path / "app/notes.md", "#444444\n")
     inv = P.scan_inventory([tmp_path], ["legacy/**"])
-    assert inv["color"] == {"#14857f": {"count": 1, "where": ["app/ünï/a.css:2"]}}
+    assert {v: (s["count"], s["where"]) for v, s in inv["color"].items()} == {"#14857f": (1, ["app/ünï/a.css:2"])}
 
 
 def test_inventory_html_prototype_style_blocks_and_attributes() -> None:
@@ -529,7 +530,7 @@ def test_inventory_ignores_link_targets_ids_and_issue_numbers(tmp_path: Path) ->
                                   'document.querySelector("#face");\n<div id="cafe" />\n')
     write(tmp_path / "app/x.css", "#add { color: #abcdef; }\n.a { fill: url(#bead); }\n")
     inv = P.scan_inventory([tmp_path], [])
-    assert inv["color"] == {"#abcdef": {"count": 1, "where": ["app/x.css:1"]}}
+    assert {v: (s["count"], s["where"]) for v, s in inv["color"].items()} == {"#abcdef": (1, ["app/x.css:1"])}
 
 
 def test_cluster_colours_by_delta_e_and_proposes_the_most_used() -> None:
@@ -537,7 +538,8 @@ def test_cluster_colours_by_delta_e_and_proposes_the_most_used() -> None:
     for value, n in (("#14857f", 9), ("#13867f", 2), ("#15847e", 1), ("#1b2230", 4), ("#ffffff", 7)):
         inv["color"][value] = {"count": n, "where": [f"a.css:{i}" for i in range(n)]}
     clusters = P.cluster(inv, "color")
-    assert clusters[0] == {"canonical": "#14857f", "members": ["#14857f", "#13867f", "#15847e"], "count": 12}
+    assert clusters[0] == {"canonical": "#14857f", "members": ["#14857f", "#13867f", "#15847e"], "count": 12,
+                           "source": "literal"}
     assert [c["canonical"] for c in clusters] == ["#14857f", "#ffffff", "#1b2230"]
 
 
