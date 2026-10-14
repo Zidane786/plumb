@@ -47,9 +47,11 @@ def test_inventory_json_lists_values_counts_places_and_clusters(tmp_path: Path) 
     assert out["root"] == tmp_path.resolve().as_posix() and out["files"] == 2
     assert list(out["kinds"]) == KINDS
     colours = out["kinds"]["color"]
-    assert colours["values"][0] == {"value": "#14857f", "count": 3, "where": ["app/a.css:1", "app/a.css:2", "app/b.css:1"]}
+    assert colours["values"][0] == {"value": "#14857f", "count": 3, "where": ["app/a.css:1", "app/a.css:2", "app/b.css:1"],
+                                  "sources": {"literal": 3}}
     assert [v["value"] for v in colours["values"]] == ["#14857f", "#13867f", "#ffffff"]
-    assert colours["clusters"][0] == {"canonical": "#14857f", "members": ["#14857f", "#13867f"], "count": 4}
+    assert colours["clusters"][0] == {"canonical": "#14857f", "members": ["#14857f", "#13867f"], "count": 4,
+                                 "source": "literal"}
     spacing = out["kinds"]["spacing"]["clusters"]
     assert {"canonical": "8px", "members": ["8px", "9px"], "count": 2} in spacing
     assert out["kinds"]["duration"]["values"] == [{"value": "200ms", "count": 1, "where": ["app/a.css:3"]}]
@@ -68,7 +70,7 @@ def test_inventory_terminal_summary_names_clusters_and_places(tmp_path: Path) ->
     r = run(["--inventory", "--project", str(tmp_path)], tmp_path)
     assert r.returncode == 0, r.stderr
     assert "inventory: 2 files" in r.stdout
-    assert "color: #14857f x4 (#14857f x3, #13867f x1)" in r.stdout
+    assert "color: #14857f x4 [literal] (#14857f x3, #13867f x1)" in r.stdout
     assert "app/a.css:1" in r.stdout
 
 
@@ -146,3 +148,114 @@ def test_inventory_refuses_other_modes(tmp_path: Path) -> None:
         assert r.stderr.startswith("error: ") and "--inventory" in r.stderr and "fix: " in r.stderr
     r = run(["--exclude", "legacy/**", "--project", str(tmp_path)], tmp_path)
     assert r.returncode == 2 and "--exclude" in r.stderr
+
+
+def radius_counts(tmp: Path) -> dict:
+    r = run(["--inventory", "--json", "--project", str(tmp)], tmp)
+    assert r.returncode == 0, r.stderr
+    return {v["value"]: v["count"] for v in json.loads(r.stdout)["kinds"]["radius"]["values"]}
+
+
+def tw_project(root: Path, css: str, base_name: str = "app") -> None:
+    write(root / "package.json", '{"dependencies": {"tailwindcss": "^4.0.0"}}\n')
+    write(root / f"{base_name}/globals.css", '@import "tailwindcss";\n' + css)
+    write(root / f"{base_name}/page.tsx", '<div className="rounded-sm rounded-md rounded-lg rounded-xl rounded-t-lg" />\n')
+
+
+STOCK = (":root { --radius: %s; }\n@theme inline {\n  --radius-sm: calc(var(--radius) - 4px);\n"
+         "  --radius-md: calc(var(--radius) - 2px);\n  --radius-lg: var(--radius);\n"
+         "  --radius-xl: calc(var(--radius) + 4px);\n}\n")
+
+
+def test_inventory_radius_resolves_against_the_projects_theme_variables(tmp_path: Path) -> None:
+    tw_project(tmp_path, STOCK % "0.625rem")
+    assert radius_counts(tmp_path) == {"6px": 1, "8px": 1, "10px": 2, "14px": 1}
+
+
+def test_inventory_radius_follows_another_base_radius_and_folder(tmp_path: Path) -> None:
+    tw_project(tmp_path, STOCK % "8px", base_name="src/styles")
+    assert radius_counts(tmp_path) == {"4px": 1, "6px": 1, "8px": 2, "12px": 1}
+
+
+def test_inventory_radius_reads_plain_lengths_in_a_plain_theme_block(tmp_path: Path) -> None:
+    tw_project(tmp_path, "@theme {\n  --radius-lg: 1rem;\n  --radius-xl: 20px; /* wide */\n}\n")
+    # sm and md are not defined by the project: Tailwind's defaults (4px, 6px)
+    assert radius_counts(tmp_path) == {"4px": 1, "6px": 1, "16px": 2, "20px": 1}
+
+
+def test_inventory_radius_unresolvable_steps_fall_back_to_the_default(tmp_path: Path) -> None:
+    # --radius is never defined, so the calc steps cannot resolve
+    tw_project(tmp_path, "@theme inline { --radius-lg: calc(var(--radius) + 2px); }\n")
+    assert radius_counts(tmp_path) == {"4px": 1, "6px": 1, "8px": 2, "12px": 1}
+
+
+def test_inventory_radius_without_a_theme_keeps_tailwinds_defaults(tmp_path: Path) -> None:
+    tw_project(tmp_path, ":root { --radius: 0.625rem; }\n")  # a base alone is not a theme radius
+    assert radius_counts(tmp_path) == {"4px": 1, "6px": 1, "8px": 2, "12px": 1}
+    other = tmp_path / "second"
+    tw_project(other, ".x { color: #111111; }\n")
+    assert radius_counts(other) == {"4px": 1, "6px": 1, "8px": 2, "12px": 1}
+
+
+def colour_project(root: Path) -> None:
+    write(root / "package.json", '{"dependencies": {"tailwindcss": "^4.0.0"}}\n')
+    write(root / "app/globals.css", '@import "tailwindcss";\n:root { --chart-3: #10b981; --chart-4: #11b77f; }\n')
+    write(root / "app/page.tsx", '<i className="bg-emerald-500 text-emerald-500" style={{ color: "#10b982" }} />\n')
+
+
+def test_inventory_colour_clusters_stay_within_one_source_kind(tmp_path: Path) -> None:
+    colour_project(tmp_path)
+    r = run(["--inventory", "--json", "--project", str(tmp_path)], tmp_path)
+    assert r.returncode == 0, r.stderr
+    colours = json.loads(r.stdout)["kinds"]["color"]
+    groups = {(g["source"], g["canonical"]): g["members"] for g in colours["clusters"]}
+    # the two chart variables merge with each other; the palette class and the literal stay in their own groups
+    assert groups[("variable", "#10b981")] == ["#10b981", "#11b77f"]
+    assert groups[("palette", "#10b981")] == ["#10b981"]
+    assert groups[("literal", "#10b982")] == ["#10b982"]
+    assert len(colours["clusters"]) == 3
+    emerald = next(v for v in colours["values"] if v["value"] == "#10b981")
+    assert emerald["count"] == 3 and emerald["sources"] == {"variable": 1, "palette": 2}
+    r = run(["--inventory", "--project", str(tmp_path)], tmp_path)
+    assert "[variable]" in r.stdout and "[palette]" in r.stdout and "[literal]" in r.stdout
+    assert "app/globals.css:2" in r.stdout
+
+
+def test_inventory_colour_clusters_still_merge_inside_one_kind(tmp_path: Path) -> None:
+    write(tmp_path / "app/a.css", ":root { --a: #14857f; --b: #13867f; }\n.x { color: #14857f; }\n")
+    r = run(["--inventory", "--json", "--project", str(tmp_path)], tmp_path)
+    groups = [(g["source"], g["members"]) for g in json.loads(r.stdout)["kinds"]["color"]["clusters"]]
+    assert ("variable", ["#13867f", "#14857f"]) in groups and ("literal", ["#14857f"]) in groups
+
+
+def test_inventory_radius_base_ignores_dark_overrides_and_reads_more_forms(tmp_path: Path) -> None:
+    tw_project(tmp_path, ".dark { --radius: 1rem; }\n:root { --radius: 0.5rem; }\n"
+                         "@theme inline {\n  --radius-sm: var(--radius, 3px);\n  --radius-md: calc(var(--radius) * 2);\n"
+                         "  --radius-lg: calc(var(--radius) / 2);\n  --radius-xl: 1em;\n}\n")
+    counts = radius_counts(tmp_path)
+    # sm = 8px (base), md = 16px, lg = 4px, xl = 16px; rounded-t-lg is lg again
+    assert counts == {"8px": 1, "16px": 2, "4px": 2}
+
+
+def test_inventory_radius_fallback_is_used_without_a_base(tmp_path: Path) -> None:
+    tw_project(tmp_path, "@theme { --radius-lg: var(--radius, 0.25rem); }\n")
+    assert radius_counts(tmp_path)["4px"] == 3  # sm and the default 4px, plus lg (x2 with rounded-t-lg)
+
+
+def test_inventory_radius_conflicting_files_prefer_the_theme_file_then_path_order(tmp_path: Path) -> None:
+    write(tmp_path / "package.json", '{"dependencies": {"tailwindcss": "^4.0.0"}}\n')
+    write(tmp_path / "app/a-legacy.css", ":root { --radius: 2rem; }\n@theme { --radius-lg: 2rem; --radius-xl: 3rem; }\n")
+    write(tmp_path / "app/z-main.css", '@import "tailwindcss";\n:root { --radius: 1rem; }\n@theme { --radius-lg: 1rem; }\n')
+    write(tmp_path / "app/page.tsx", '<div className="rounded-lg rounded-xl" />\n')
+    # both files hold @theme: path order wins (a-legacy first); a name only z-main defines would still come from it
+    assert radius_counts(tmp_path) == {"32px": 1, "48px": 1}
+    write(tmp_path / "app/a-legacy.css", ":root { --radius: 2rem; }\n")  # no @theme there any more: z-main wins
+    assert radius_counts(tmp_path) == {"16px": 1, "12px": 1}
+    r = run(["--inventory", "--project", str(tmp_path)], tmp_path)
+    assert "theme radius from app/z-main.css" in r.stdout
+
+
+def test_inventory_radius_note_is_absent_without_a_theme_radius(tmp_path: Path) -> None:
+    tw_project(tmp_path, ".x { color: #111111; }\n")
+    r = run(["--inventory", "--project", str(tmp_path)], tmp_path)
+    assert r.returncode == 0 and "theme radius" not in r.stdout

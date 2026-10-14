@@ -22,7 +22,7 @@ tokens `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py`
 check `{{PYTHON}} {{SKILL_DIR}}scripts/build-tokens.py --check` · audit `{{PYTHON}} {{SKILL_DIR}}scripts/audit.py`
 
 ## Prototype
-Main: {{PROTOTYPE_MAIN}} · screens: {{SCREENS_PAGE}} · map: {{SCREENS_MAP}}
+Main: {{PROTOTYPE_MAIN}} · app: {{APP_PAGE}} · screens: {{SCREENS_PAGE}} · map: {{SCREENS_MAP}}
 Prototype sync: {{PROTOTYPE_SYNC}}               (end-of-turn check stops once when a built screen changed without its prototype)
 
 ## Plumb updates

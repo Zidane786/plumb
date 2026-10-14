@@ -10,8 +10,8 @@ In such a project, in this order:
      GENERATED header), Plumb's block in the copies listed in $extensions.plumb.web.copies (an edit tool's change that
      leaves the text from /* plumb:start ... */ to /* plumb:end */ as it is passes: the rest of a copy is the
      project's; a shell write or removal of a copy is refused), <docs>/specimen.html, <docs>/prototype.html,
-     <docs>/screens.html, <docs>/prototype/screens.json and <docs>/tours/*.html (a tour page that does not carry the
-     GENERATED header is someone's own page and is left alone);
+     <docs>/app.html, <docs>/screens.html, <docs>/prototype/screens.json and <docs>/tours/*.html (a tour page that does
+     not carry the GENERATED header is someone's own page and is left alone);
    - one of Plumb's own files: the design-system skill's [P] files (scripts/*.py, templates/*,
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
@@ -136,7 +136,7 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
     docs, here = f(proj.docs_rel), f(in_project)
     if here == f"{docs}/specimen.html":
         return _tokens_output(proj, shown)
-    if here in (f"{docs}/prototype.html", f"{docs}/screens.html"):
+    if here in (f"{docs}/prototype.html", f"{docs}/app.html", f"{docs}/screens.html"):
         return _prototype_output(proj, shown)
     if here == f"{docs}/prototype/screens.json":
         return _map_output(proj, shown)
@@ -258,7 +258,7 @@ def guarded_files(proj: H.Project, cwd: str) -> List[str]:
     home = proj.home_root()
     found += [os.path.join(home, c) for c in proj.copies]
     docs = os.path.join(proj.root_s, proj.docs_rel)
-    found += [os.path.join(docs, n) for n in ("specimen.html", "prototype.html", "screens.html",
+    found += [os.path.join(docs, n) for n in ("specimen.html", "prototype.html", "app.html", "screens.html",
                                                os.path.join("prototype", "screens.json"))]
     found += [str(f) for f in Path(docs, "tours").glob("*.html")]
     for kiro_base in {proj.root_s, os.path.expanduser("~"), cwd}:

@@ -39,7 +39,14 @@ project root) skips more. The terminal shows each kind's clusters (proposed valu
 places); --json prints {"version", "mode": "inventory", "root", "files", "kinds": {kind: {"values": [{"value", "count",
 "where": ["file:line", ...]}], "clusters": [{"canonical", "members", "count"}]}}}, values most used first. Kinds: color,
 font-family, font-size, font-weight, line-height, spacing, radius, shadow, duration, easing. Exit 0, or 2 when no UI
-file was found or the input is bad.
+file was found or the input is bad. Radius: a Tailwind rounded-* class counts at the project's own @theme (or @theme
+inline) --radius-<name> value (plain length, var(--radius), calc(var(--radius) +/- N px|rem); rem = 16px), Tailwind's
+default only for a size the project does not define. Colours carry a source: variable (a named CSS variable such as a
+theme or chart colour), palette (a Tailwind palette class) or literal (anything else); a colour value lists its
+"sources" counts and a cluster has "source", and values of different sources are never merged. "variable" means a CSS
+custom property (--name); a theme object in JS or a named colour in Swift or Kotlin is "literal". Theme radius: the
+base --radius counts only on :root / html / body / * or inside @theme (a .dark or [data-theme] override is ignored); when
+several CSS files define the same name, the file holding an @theme block wins, then path order.
 
 Severity: **error** is a hard rule: raw colour, arbitrary design value, Tailwind default palette colour, off-scale type /
 radius / spacing, off-token duration or easing, outline-none, design properties in inline styles, a second icon library,
@@ -148,7 +155,7 @@ not checked.
 Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt. Never node_modules or build output
 (.next dist build out coverage Pods DerivedData ...), never files over 5 MB. A `GENERATED ... do not edit` header exempts
 a file only on the paths Plumb's generators own: <skill>/assets/platforms/** (not starter/), the copies listed in
-$extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, screens.html,
+$extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, app.html, screens.html,
 tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited.
 In a web copy only Plumb's block (/* plumb:start ... */ to /* plumb:end */) is skipped (blanked, so line numbers stay):
 the rest of the file is the project's and is audited. Tailwind's named steps (text-sm, rounded-lg, gap-4, p-0.5) count
@@ -473,9 +480,9 @@ def is_generated(text: str) -> bool:
     return P.is_generated_text(text)
 
 
-_GENERATED_PAGES = ("specimen.html", "prototype.html", "screens.html", "tours/*.html", "audit-*.html",
+_GENERATED_PAGES = ("specimen.html", "prototype.html", "app.html", "screens.html", "tours/*.html", "audit-*.html",
                     "prototype/proposals/*/index.html", "prototype/proposals/*/*/prototype.html",
-                    "prototype/proposals/*/*/screens.html")
+                    "prototype/proposals/*/*/app.html", "prototype/proposals/*/*/screens.html")
 _PLATFORM_OUTPUT = re.compile(r"(?:^|/)assets/platforms/")
 # Folder names that are build output wherever they appear; build, out, dist and coverage only count inside the project
 # (a relative path), because a project may itself live under a folder with one of those names.
@@ -1746,8 +1753,11 @@ def check_contrast(proj: Project) -> Iterator[XHit]:
             if ratio >= pair.need:
                 continue
             near = pair.fix.get(mode)
-            if near:
-                fix = (f"nearest passing {pair.fg} in {mode} mode: {near[0]} ({near[1]:.2f}:1); change {pair.fg_path} "
+            if pair.fix_bg.get(mode):  # on-X on X: step X and on-X, both ratios shown
+                paths = " or ".join(dict.fromkeys(o[1] for o in pair.options(mode)))
+                fix = f"{pair.fix_text(mode)}; change {paths} with /plumb:update, then run {proj.build_command}"
+            elif near:
+                fix = (f"{pair.fix_text(mode)}; change {pair.options(mode)[0][1]} "
                        f"with /plumb:update, then run {proj.build_command}")
             else:
                 fix = (f"no {pair.fg} of this hue reaches {num(pair.need)}:1 on {pair.bg} in {mode} mode: change "
@@ -5001,8 +5011,9 @@ def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
         raise PlumbError(f"error: {', '.join(missing)}: not found, nothing was scanned\n"
                          f"fix: pass existing folders that hold UI code, e.g. audit.py app components --inventory")
     seen: List[str] = []
+    radius_files: List[str] = []
     inv = P.scan_inventory([t.resolve() for t in targets], _inventory_excludes(args, skill_dir, root), base=root,
-                           seen=seen)
+                           seen=seen, radius_files=radius_files)
     if not seen:
         exts = " ".join(sorted(PLATFORM_OF))
         looked = ", ".join(rel(t, root) for t in targets)
@@ -5011,7 +5022,9 @@ def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
     kinds = {}
     for kind in P.INVENTORY_KINDS:
         values = sorted(inv[kind].items(), key=lambda kv: (-kv[1]["count"], kv[0]))
-        kinds[kind] = {"values": [{"value": v, "count": s["count"], "where": s["where"]} for v, s in values],
+        kinds[kind] = {"values": [dict({"value": v, "count": s["count"], "where": s["where"]},
+                                       **({"sources": {k: b["count"] for k, b in s["sources"].items()}}
+                                          if s.get("sources") else {})) for v, s in values],
                        "clusters": P.cluster(inv, kind)}
     files = len(set(seen))
     if args.json:
@@ -5026,12 +5039,24 @@ def run_inventory(args: argparse.Namespace, skill_dir: Path) -> int:
         by_value = {v["value"]: v for v in data["values"]}
         print(f"{kind}: {_plural(len(data['values']), 'value')} in {_plural(len(data['clusters']), 'group')}")
         for group in data["clusters"]:
-            members = ", ".join(f"{m} x{by_value[m]['count']}" for m in group["members"])
+            members = ", ".join(
+                f"{m} x{(inv[kind][m].get('sources') or {}).get(group.get('source'), by_value[m])['count']}"
+                for m in group["members"])
             places = by_value[group["canonical"]]["where"]
+            source = group.get("source")
+            if source:  # colours: the group's own places and its kind, never mixed across kinds
+                places = (inv[kind][group["canonical"]].get("sources") or {}).get(source, {}).get("where", places)
             more = f" +{len(places) - INVENTORY_SHOWN} more" if len(places) > INVENTORY_SHOWN else ""
-            print(f"  {kind}: {group['canonical']} x{group['count']} ({members})  at "
+            label = f" [{source}]" if source else ""
+            print(f"  {kind}: {group['canonical']} x{group['count']}{label} ({members})  at "
                   f"{', '.join(places[:INVENTORY_SHOWN])}{more}")
     print("inventory: the first value of each group is the proposed token; --json lists every value with file:line")
+    if radius_files:
+        print("inventory: radius classes counted at the project's own theme radius from " + ", ".join(radius_files)
+              + " (sizes it does not define use Tailwind's defaults)")
+    if inv["color"]:
+        print("inventory: colour groups are per source (variable = a named CSS variable, palette = a Tailwind palette "
+              "class, literal = any other value); values of different sources are never merged")
     return 0
 
 

@@ -129,6 +129,15 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    Improvements, filters, light and dark.
 4. `PY SKILL/scripts/audit.py nowhere` → exit 2 with `error:` and `fix:` (nothing checked).
 
+5. Inventory: `mkdir inv && cd inv`, write `package.json` `{"dependencies": {"tailwindcss": "^4.0.0"}}`,
+   `app/globals.css` with `@import "tailwindcss"; :root { --radius: 0.625rem; --chart-3: #10b981; }` and
+   `@theme inline { --radius-lg: var(--radius); }`, and `app/page.tsx` with
+   `<i className="rounded-lg bg-emerald-500" />`. `PY SKILL/scripts/audit.py --inventory --project .`
+   **Expect:** exit 0; `radius: 1 value in 1 group` with `10px`; a colour group `#10b981 x1 [variable]` and another
+   `#10b981 x1 [palette]` (never merged); the line `inventory: radius classes counted at the project's own theme
+   radius from app/globals.css (sizes it does not define use Tailwind's defaults)`, and the closing
+   `inventory: colour groups are per source (variable = …`.
+
 ### 3.3 The main prototype
 
 1. Write `docs/design/prototype/screens/home.html`:
@@ -141,10 +150,14 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
      <div data-state="error"><p role="alert">Bookings could not load. Try again.</p></div>
    </section>
    ```
-2. `PY SKILL/scripts/build-prototype.py` → `wrote` `prototype.html`, `screens.html` and `prototype/screens.json`; a
+2. `PY SKILL/scripts/build-prototype.py` → `wrote` `prototype.html`, `app.html`, `screens.html` and
+   `prototype/screens.json`; a
    summary line `1 screens: … 1 not approved; 1 to build`; exit 0.
 3. Open `docs/design/prototype.html` from disk: the Home screen, the state switcher (ready, empty, error), the
    phone/desktop and light/dark toggles. Open `docs/design/screens.html`: every state in light and dark side by side.
+   Open `docs/design/app.html`: the Home screen full window, with no screens list, switcher, toggles or decisions;
+   `app.html#/home/empty` shows the empty state and `app.html#/nope` the Home screen. Delete `app.html`, run
+   `PY SKILL/scripts/build-prototype.py --check` → exit 1 with `stale: docs/design/app.html (missing)`; build again.
 4. `PY SKILL/scripts/build-prototype.py --approve home` → `approved home (<your git name>, <today>)`.
 5. `PY SKILL/scripts/audit.py docs/design/prototype/screens` → no errors (warnings such as `screen-not-built` are
    expected: the screen isn't built yet).
@@ -160,16 +173,17 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    ```
    Change the heading in `b-dense/screens/home.html` so the two differ.
 2. `PY SKILL/scripts/build-prototype.py --proposal demo`
-   **Expect:** `wrote …` lines for `demo/a-calm/prototype.html`, `demo/a-calm/screens.html`, the same two for
-   `b-dense`, and `demo/index.html`, then `proposal demo: 2 variants (a-calm: 1 screen, b-dense: 1 screen)`, exit 0.
+   **Expect:** `wrote …` lines for `demo/a-calm/prototype.html`, `demo/a-calm/app.html`, `demo/a-calm/screens.html`,
+   the same three for `b-dense`, and `demo/index.html`, then `proposal demo: 2 variants (a-calm: 1 screen, b-dense: 1 screen)`, exit 0.
    `docs/design/prototype/screens.json` is unchanged.
 3. Open `docs/design/prototype/proposals/demo/index.html` from disk.
-   **Expect:** two cards side by side ("Calm" with its idea and two trade-offs, "B dense"), each with "Clickable
-   prototype" and "Every state, light and dark" links that open that variant's pages; the theme toggle switches light
+   **Expect:** two cards side by side ("Calm" with its idea and two trade-offs, "B dense"), each with "Review:
+   prototype.html", "Demo: app.html" and "Every state, light and dark" links that open that variant's pages; the theme toggle switches light
    and dark; nothing is loaded from the network.
 4. Run step 2 again. **Expect:** `ok: proposal demo: 2 variants (…): up to date` and no file changed.
 5. In `b-dense/screens/home.html`, change its heading text again (a comment alone doesn't change the pages), then `PY SKILL/scripts/build-prototype.py --check --proposal demo`.
-   **Expect:** exit 1 listing `stale: …/b-dense/prototype.html` and `…/b-dense/screens.html` and a `fix:` line with
+   **Expect:** exit 1 listing `stale: …/b-dense/prototype.html`, `…/b-dense/app.html` and `…/b-dense/screens.html` and
+   a `fix:` line with
    `--proposal demo`.
 6. Change a colour in the tokens file and run `PY SKILL/scripts/build-tokens.py`.
    **Expect:** the proposal pages are rewritten too, and `PY SKILL/scripts/build-tokens.py --check` exits 0.
@@ -247,8 +261,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] **Monorepo** (UI in `frontend/`, the repo root holding `frontend/` and `backend/`): the UI files are
       `frontend/…` patterns (a root `src/**` that matches nothing is shown `(corrected: …)` with the file counts), the
       routes line names `frontend/src/app (next-app)` (the page folder with its kind; `none` in a mobile-only or
-      design-only project), and both land in `PLUMB.md` (`UI files:`, `Routes:`). `scaffold.py --verify` ends
-      `verify: ok`.
+      design-only project), and both land in `PLUMB.md` (`UI files:`, `Routes:`), and `Allowed raw values:` names the UI
+      package's primitives folder (e.g. `frontend/src/components/ui/**`), not a bare `components/ui/**`.
+      `scaffold.py --verify` ends `verify: ok` (an allowed pattern that matches no file would print a `warning:` and
+      a `fix:`).
 - [ ] **Git-ignored skill folder:** in a repo whose `.gitignore` has `.claude/`, init shows that line inside a question
       and offers to un-ignore the skill folder (`.claude/*` + `!.claude/skills/`, recommended) or another location;
       it never goes on silently, and after the change it runs `git check-ignore` again and shows the result.
@@ -266,7 +282,13 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       covers all six namespaces and that with keep the audit still flags off-scale defaults like `text-lg`):
       `web.reset_palette` in the tokens file. Keep → `bg-emerald-500` still renders after the first build.
 - [ ] In an app whose `globals.css` has shadcn variables, the overrides question lists each mapping, and any "the look
-      changes; ask the user" note sits on its own line with the app's value and the token's.
+      changes; ask the user" note sits on its own line with the app's value and the token's. With a
+      `color.sidebar-active` token in the tokens file, `--sidebar-accent` maps onto it (not `{color.sunk}`); with
+      `Routes: app (next-app)` recorded and a layout that puts a font's `.variable` on `<body>`, the plan's `by_hand`
+      says "move `<name>.variable` to the `<html>` className in app/layout.tsx:<line>" (no `Routes:`, no such line).
+- [ ] A failing white-on-fill (or near-white, e.g. `oklch(0.985 0 0)`) pair (`on-primary` on `primary`) shows "two options in light mode": the fill stepped
+      first with its ratio, then the text, each with its ratio rounded to 2 decimals, normally at least 5.0:1 (4.5 plus the 0.5 spare; when 5.0 cannot be reached the option falls back to the 4.5:1 minimum); a non-white/black text
+      shows one "nearest passing" value as before; on a surface (`on-surface` on `surface`) the text option comes first.
 - [ ] It asks you to pick a direction, then shows the full token set (light and dark) and the `scaffold.py --dry-run`
       file list, each inside a question, and writes only after you say OK; the real scaffold runs with the
       `--confirm <token>` the dry run printed, in its own shell call. Scratch files go in `<project>/.plumb-tmp/`
@@ -458,11 +480,12 @@ with sync_playwright() as pw:
 ```
 
 ```
-uv run --with playwright python check_pages.py <repo>/docs/what-you-get.html plumb-scratch/docs/design/specimen.html plumb-scratch/docs/design/prototype.html plumb-scratch/docs/design/screens.html
+uv run --with playwright python check_pages.py <repo>/docs/what-you-get.html plumb-scratch/docs/design/specimen.html plumb-scratch/docs/design/prototype.html plumb-scratch/docs/design/app.html plumb-scratch/docs/design/screens.html
 ```
 
 **Expected:** no errors, no network requests, no horizontal scroll at 390 px, and both themes readable in the
-screenshots.
+screenshots. `app.html` fills the window at both widths with no prototype panels, and a screen's
+`@container plumb-frame (min-width: 48rem)` layout shows at 1280 but not at 390.
 
 ---
 

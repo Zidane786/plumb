@@ -13,6 +13,17 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
                                    each screen's own interactions, a "Why it looks like this" panel per screen, a
                                    Decisions page (#decisions), a guide-panel region (#plumb-guide) and the walkthrough
                                    player mount (#plumb-player) with the window.plumbPrototype API the player drives.
+  <docs>/app.html                  the app view, for a demo: every screen full window with no prototype panels (no
+                                   screens list, state switcher, toggles, decisions or player). Hash routes #/ID and
+                                   #/ID/STATE (#screen-ID[/STATE] work too, so the screens' links do); it opens on the
+                                   first screen by data-order, as does an unknown id. The same screen-script API
+                                   (plumb.catalogue false) and window.plumbPrototype (go, setState, current, screen,
+                                   setTheme, on) plus window.plumbTheme. Theme: the system's until a screen's own
+                                   toggle picks one, then remembered in localStorage (when the browser allows it). The
+                                   window is the frame (#pp-frame, container plumb-frame, isolation: isolate), so the md
+                                   breakpoint follows the window; an element with data-app-sidebar is sticky, full
+                                   height, from the md breakpoint; a dialog a change opens (a state change, plumb.go
+                                   or a link to that state) is scrolled into view, one that was showing never is.
   <docs>/screens.html              the catalogue: a sidebar, every screen in every state in light and dark side by side,
                                    the control-state sheet (buttons, input, chip, link in default, hover, focus, pressed,
                                    disabled, loading) drawn from the tokens, and the Decisions page. Each copy is its
@@ -44,8 +55,8 @@ which reads as step n of that tour in a #tour- link). Every prototype.html carri
   :nth-child(), :nth-of-type(), :not(), :is(), :checked, :disabled, :required). A bad field, an unknown screen or state,
   a selector that matches nothing or one the check cannot read exits 2 naming the tour file, line and fix, also on --check.
 
-The two pages come from templates/prototype-shell.html.tmpl and templates/screens.html.tmpl. Both inline the project's
-`build-tokens.py --css-vars` export between /* plumb:tokens */ and /* plumb:tokens:end */, a small runtime and each
+The pages come from templates/prototype-shell.html.tmpl, app-shell.html.tmpl and screens.html.tmpl. All inline the
+project's `build-tokens.py --css-vars` export between /* plumb:tokens */ and /* plumb:tokens:end */, a small runtime and each
 screen's scripts, so they open from disk with nothing loaded from the network. No timestamps: rebuilding gives the
 same bytes.
 
@@ -61,9 +72,10 @@ Screen file contract (one per screen, <id>.html):
                                                           element; plumb.setState(name), plumb.go(id, state),
                                                           plumb.state(), plumb.catalogue (true in screens.html).
   ID is the file name without .html (letters, digits, _ and -). The md breakpoint follows the frame the screen sits in
-  (phone or desktop), so responsive screen CSS uses `@container plumb-frame (min-width: 48rem)`.
+  (phone or desktop; the window in app.html), so responsive screen CSS uses `@container plumb-frame (min-width: 48rem)`.
+  data-app-sidebar on an app shell's sidebar keeps it in view in app.html (sticky, full height, from the md breakpoint).
 
-Commands (every call rebuilds the three files, so the pages always show the current map and approvals):
+Commands (every call rebuilds the generated files, so the pages always show the current map and approvals):
   --map ID --route=R --files G...   set a screen's route and source files; files_hash is the sha256 of those files
                                     (CRLF-normalised). status is "built" once every glob matches a file.
   --approve ID                      record the approval: git user.name (else $USER / %USERNAME%), today's ISO date,
@@ -79,9 +91,10 @@ Commands (every call rebuilds the three files, so the pages always show the curr
 
 Proposals (/plumb:prototype's variants): <docs>/prototype/proposals/<NAME>/<variant>/screens/*.html are the variant's screen
 files (the same contract) and <variant>/idea.md is optional (`# Title`, a paragraph with the idea, `- ` lines with the
-trade-offs). --proposal NAME writes, per variant, <variant>/prototype.html and <variant>/screens.html (both views, the
-same shell and catalogue as the main pages, light and dark, the token block inlined, no tours, no decisions) and
-<NAME>/index.html (the variants side by side with their idea, trade-offs and links to both views) from
+trade-offs). --proposal NAME writes, per variant, <variant>/prototype.html, <variant>/app.html and
+<variant>/screens.html (the same shell, app view and catalogue as the main pages, light and dark, the token block inlined, no tours, no
+decisions) and <NAME>/index.html (the variants side by side with their idea, trade-offs and links: prototype.html to
+review, app.html to demo, screens.html for every state) from
 templates/proposal-index.html.tmpl. Variants are the folders of <NAME> (letters, digits, _ and -; a folder starting with
 . or _ is skipped), in name order. All generated, byte-stable and offline; --check --proposal NAME exits 1 when one is
 stale. The main build (and build-tokens.py) refreshes the token block of every generated proposal page, so old variants
@@ -116,6 +129,7 @@ from _plumb import PlumbError  # noqa: E402
 
 SCRIPT_REL = "scripts/build-prototype.py"
 SHELL_TEMPLATE = "prototype-shell.html.tmpl"
+APP_TEMPLATE = "app-shell.html.tmpl"
 CATALOGUE_TEMPLATE = "screens.html.tmpl"
 INDEX_TEMPLATE = "proposal-index.html.tmpl"
 PLAYER_CSS = "player.css"
@@ -1613,6 +1627,32 @@ def build_prototype(ctx: dict, template: str, tour: Optional[dict] = None) -> st
     return text if text.endswith("\n") else text + "\n"
 
 
+def build_app(ctx: dict, template: str) -> str:
+    """app.html: every screen full window with no prototype panels, hash routes #/ID and #/ID/STATE (and the prototype's
+    #screen-ID[/STATE]), the same screen-script API and window.plumbPrototype. It opens on the first screen by
+    data-order. No player: a tour page in the app view adds it (the player_css / player slots)."""
+    screens: List[Screen] = ctx["screens"]
+    entries = ctx["entries"]
+    frame = [s.render(s.states[0], hide_section=bool(i)) for i, s in enumerate(screens)]
+    data = [{"id": s.id, "title": s.title, "states": s.states, "route": entries[s.id]["route"]} for s in screens]
+    first = screens[0]
+    values = {
+        "header": f"<!-- {_e(ctx.get('app_header') or ctx['header'])} -->",
+        "base": "",
+        "title": _e(f"{first.title} · {ctx['project']}"),
+        "theme_key": json_script(f"plumb-app-theme:{ctx.get('base_project') or ctx['project']}"),
+        "theme_css": ctx["theme_css"],
+        "screen_styles": ctx["styles"],
+        "frame": "\n".join(frame),
+        "data": json_script({"project": ctx["project"], "screens": data}),
+        "screen_scripts": ctx["scripts"],
+        "player_css": "",
+        "player": "",
+    }
+    text = P.fill_template(template, values, APP_TEMPLATE)
+    return text if text.endswith("\n") else text + "\n"
+
+
 def tour_header(ctx: dict, tour: dict) -> str:
     return (f"GENERATED by {ctx['script_rel']} from {ctx['tours_rel']}{tour['id']}.json, {ctx['screens_rel']}*.html, "
             f"{ctx['decisions_rel']} and {ctx['tokens_rel']}. Do not edit: edit the tour file or the screen files, then run "
@@ -1791,7 +1831,8 @@ def variant_card(name: str, title: str, paras: List[str], trade: List[str], scre
     return (f'    <li class="variant" data-variant="{_e(name)}"><p class="letter">{_e(name)}</p><h2>{_e(title)}</h2>'
             f'{idea}{tradeoffs}<p class="screens">{len(screens)} screen{"s" if len(screens) != 1 else ""}, {states} '
             f'state{"s" if states != 1 else ""}: {_e(listed)}</p><p class="views">'
-            f'<a class="view primary" href="{_e(name)}/prototype.html">Clickable prototype</a>'
+            f'<a class="view primary" href="{_e(name)}/prototype.html">Review: prototype.html</a>'
+            f'<a class="view" href="{_e(name)}/app.html">Demo: app.html</a>'
             f'<a class="view" href="{_e(name)}/screens.html">Every state, light and dark</a></p></li>')
 
 
@@ -1814,6 +1855,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     tokens_rel = rel(tokens_file, root)
     script_rel = rel(skill_dir / SCRIPT_REL, root)
     shell = read_template(skill_dir, SHELL_TEMPLATE)
+    app_tpl = read_template(skill_dir, APP_TEMPLATE)
     catalogue_tpl = read_template(skill_dir, CATALOGUE_TEMPLATE)
     player_css, player_js = read_template(skill_dir, PLAYER_CSS), read_template(skill_dir, PLAYER_JS)
     files: Dict[Path, str] = {}
@@ -1838,10 +1880,11 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             "header": header, "project": f"{project_name} · {title}", "screens_rel": rel(screens_dir, root) + "/",
             "decisions_rel": rel(docs / "decisions.md", root), "styles": screen_styles(screens),
             "scripts": screen_scripts(screens), "tours": [], "tours_rel": "", "tokens_rel": tokens_rel,
-            "script_rel": script_rel, "player_css": player_css, "player_js": player_js,
+            "script_rel": script_rel, "player_css": player_css, "player_js": player_js, "base_project": project_name,
         }
         ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
         files[folder / "prototype.html"] = build_prototype(ctx, shell)
+        files[folder / "app.html"] = build_app(ctx, app_tpl)
         ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=True)
         files[folder / "screens.html"] = build_catalogue(ctx, catalogue_tpl, bt)
         cards.append(variant_card(folder.name, title, paras, trade, screens))
@@ -1914,7 +1957,8 @@ class _Parser(argparse.ArgumentParser):
 
 def main(argv: Optional[List[str]] = None) -> int:
     P.utf8_stdio()
-    parser = _Parser(prog="build-prototype.py", description="Assemble prototype.html, screens.html and screens.json.")
+    parser = _Parser(prog="build-prototype.py",
+                     description="Assemble prototype.html, app.html, screens.html and screens.json.")
     parser.add_argument("--check", action="store_true", help="write nothing; exit 1 when an output is stale or missing")
     parser.add_argument("--map", metavar="ID", help="set the route and source files of a screen")
     parser.add_argument("--route", metavar="ROUTE", help="the screen's route, e.g. /billing (with --map)")
@@ -1963,6 +2007,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     docs = bt.safe_copy_path(root, docs_setting, "$extensions.plumb.docs_dir")
     folder = docs / "prototype" / "screens"
     proto_path, cat_path, map_path = docs / "prototype.html", docs / "screens.html", docs / "prototype" / "screens.json"
+    app_path = docs / "app.html"
     decisions_path = docs / "decisions.md"
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
     if args.proposal is not None:
@@ -2053,18 +2098,22 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     project_name = str(settings.get("project") or "").strip() or "Product"
     ctx = {
         "screens": screens, "entries": entries, "decisions": decisions, "header": header, "project": project_name,
+        "base_project": project_name,
         "screens_rel": rel(folder, root) + "/", "decisions_rel": rel(decisions_path, root),
         "styles": screen_styles(screens), "scripts": screen_scripts(screens), "tours": tours,
         "tours_rel": rel(tours_folder, root) + "/", "tokens_rel": tokens_rel, "script_rel": rel(skill_dir / SCRIPT_REL, root),
         "player_css": read_template(skill_dir, PLAYER_CSS), "player_js": read_template(skill_dir, PLAYER_JS),
+        "app_header": (f"GENERATED by {rel(skill_dir / SCRIPT_REL, root)} from {rel(folder, root)}/*.html and "
+                       f"{tokens_rel}. Do not edit: edit the screen files, then run build-prototype.py."),
     }
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
     shell = read_template(skill_dir, SHELL_TEMPLATE)
     proto = build_prototype(ctx, shell)
+    app = build_app(ctx, read_template(skill_dir, APP_TEMPLATE))
     tour_pages = {pages_folder / f"{t['id']}.html": build_prototype(ctx, shell, t) for t in tours}
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=True)
     catalogue = build_catalogue(ctx, read_template(skill_dir, CATALOGUE_TEMPLATE), bt)
-    files = {proto_path: proto, cat_path: catalogue,
+    files = {proto_path: proto, app_path: app, cat_path: catalogue,
              map_path: map_text([entries[s.id] for s in screens], header)}
     files.update(tour_pages)
     files.update(proposal_refresh(docs, doc, bt))
@@ -2143,7 +2192,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     to_build = sum(1 for s in screens if entries[s.id]["status"] == "to-build")
     if not wrote:
         extra = f" and {len(tour_pages)} tour page{'s' if len(tour_pages) != 1 else ''}" if tour_pages else ""
-        print(f"ok: {rel(proto_path, root)}, {rel(cat_path, root)} and {rel(map_path, root)}{extra} are up to date")
+        print(f"ok: {rel(proto_path, root)}, {rel(app_path, root)}, {rel(cat_path, root)} and "
+              f"{rel(map_path, root)}{extra} are up to date")
     if tours:
         print(f"{len(tours)} tour{'s' if len(tours) != 1 else ''}: "
               + ", ".join(f"{t['id']} ({len(t['steps'])} steps, {t['mode']} mode)" for t in tours))

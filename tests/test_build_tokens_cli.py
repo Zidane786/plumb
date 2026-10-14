@@ -162,7 +162,7 @@ def test_failures_list_nearest_passing_value(tmp_path: Path) -> None:
     table = block(dark_md(p))
     row = next(l for l in table.splitlines() if l.startswith("| on-primary on primary "))
     assert "fail" in row
-    m = re.search(r"on-primary on primary \(light\): nearest passing #([0-9a-f]{6}) \(([\d.]+):1\)", table)
+    m = re.search(r"on-primary on primary \(light\): .*\(2\) step on-primary to #([0-9a-f]{6}) \(([\d.]+):1\)", table)
     assert m, table
     sys.path.insert(0, str(SCRIPTS))
     import _plumb as P
@@ -170,6 +170,158 @@ def test_failures_list_nearest_passing_value(tmp_path: Path) -> None:
     assert float(m.group(2)) >= 4.5
     # light mode darkens the foreground: the suggestion is darker than white (white is the foreground here)
     assert m.group(1) != "ffffff"
+
+
+def _line(table: str, pair: str, mode: str) -> str:
+    return next(l for l in table.splitlines() if l.startswith(f"- {pair} ({mode}):"))
+
+
+def test_white_on_a_fill_lists_the_fill_option_first_with_both_ratios(tmp_path: Path) -> None:
+    """on-X white over X: X stepped (same hue, on-X unchanged) first, then on-X; each with its computed ratio."""
+    sys.path.insert(0, str(SCRIPTS))
+    import _plumb as P
+    p = make_project(tmp_path, fail_mutation)
+    assert run(p, "--contrast").returncode == 0
+    line = _line(block(dark_md(p)), "on-primary on primary", "light")
+    m = re.search(r"two options in light mode: \(1\) step primary to #([0-9a-f]{6}) \(([\d.]+):1, on-primary stays #ffffff\); "
+                  r"\(2\) step on-primary to #([0-9a-f]{6}) \(([\d.]+):1\)",
+                  line)
+    assert m, line
+    fill, fill_ratio, text, text_ratio = m.groups()
+    assert P.contrast("#ffffff", "#" + fill) == pytest.approx(float(fill_ratio), abs=0.006) and float(fill_ratio) >= 5.0
+    assert P.contrast("#" + text, "#7fd6d0") == pytest.approx(float(text_ratio), abs=0.006) and float(text_ratio) >= 5.0
+    # same hue, darker: red/green/blue keep their order and every channel went down
+    old, new = (int("7fd6d0"[i:i + 2], 16) for i in (0, 2, 4)), [int(fill[i:i + 2], 16) for i in (0, 2, 4)]
+    assert all(n < o for n, o in zip(new, old)) and new[0] < new[2] < new[1]
+    # the dark theme passes, so it has no line; --check agrees the block is current
+    assert "on-primary on primary (dark)" not in block(dark_md(p))
+    assert run(p).returncode == 0 and run(p, "--check").returncode == 0
+
+
+def test_black_on_a_fill_lightens_the_fill_in_dark(tmp_path: Path) -> None:
+    sys.path.insert(0, str(SCRIPTS))
+    import _plumb as P
+
+    def mut(doc: dict) -> None:
+        doc["color"]["primary"]["$extensions"]["plumb"]["dark"] = "#1a3a3c"
+        doc["color"]["on-primary"] = {"$value": "#ffffff", "$extensions": {"plumb": {"dark": "#000000"}}}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    line = _line(block(dark_md(p)), "on-primary on primary", "dark")
+    m = re.search(r"\(1\) step primary to #([0-9a-f]{6}) \(([\d.]+):1, on-primary stays #000000\); "
+                  r"\(2\) step on-primary to #([0-9a-f]{6})", line)
+    assert m, line
+    assert P.contrast("#000000", "#" + m.group(1)) >= 4.5 and int(m.group(1)[2:4], 16) > 0x3a  # the fill went lighter
+
+
+def test_a_foreground_that_is_not_white_or_black_keeps_the_single_suggestion(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["primary"]["$value"] = "#7fd6d0"
+        doc["color"]["on-primary"] = {"$value": "#9a9a9a"}  # grey text on a pale fill: fails, but is neither white nor black
+        doc["color"]["on-primary"]["$extensions"] = {"plumb": {"dark": "#9a9a9a"}}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    line = _line(block(dark_md(p)), "on-primary on primary", "light")
+    assert re.fullmatch(r"- on-primary on primary \(light\): nearest passing #[0-9a-f]{6} \([\d.]+:1\)", line), line
+    bt = _bt()
+    doc = json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+    pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+    assert pair.fix_bg == {} and len(pair.options("light")) == 1
+
+
+def test_only_on_x_on_x_pairs_step_the_fill(tmp_path: Path) -> None:
+    """White text over a surface that is not its on-X partner (on-surface-style pairs) keeps the single suggestion:
+    stepping a surface would change many pairs, so the fill option is for a control's own on-X only."""
+    bt = _bt()
+    p = make_project(tmp_path, fail_mutation)
+    doc = json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+    doc["color"]["on-surface"]["$value"] = "#ffffff"
+    pairs = bt.measure_pairs(doc)
+    pair = next(x for x in pairs if (x.fg, x.bg) == ("on-surface", "background"))
+    assert pair.failed and pair.fix_bg == {}
+
+
+@pytest.mark.parametrize("value,end", [
+    ("#ffffff", "white"), ("#fafafa", "white"), ("oklch(0.985 0 0)", "white"), ("#000000", "black"),
+    ("#0a0a0a", "black"), ("#0f1217", "black"),
+    ("#d0d0d0", None),      # a light grey: neutral but not near white (luminance 0.63)
+    ("#9a9a9a", None), ("#4d4d4d", None),
+    ("#f7e9ff", None),      # near white but tinted (chroma above the neutral limit)
+])
+def test_which_text_colours_count_as_white_or_black(value: str, end) -> None:
+    bt = _bt()
+    sys.path.insert(0, str(SCRIPTS))
+    import _plumb as P
+    hexv = P.parse_color(value)[0]
+    assert bt.neutral_end(hexv) == end
+
+
+def _fill_doc(tmp_path: Path, fg: str, fill: str, dark_fill: str, bg_name: str = "primary", dark_fg: str = None):
+    def mut(doc: dict) -> None:
+        on = "on-" + bg_name
+        doc["color"][bg_name] = {"$value": fill, "$extensions": {"plumb": {"dark": dark_fill}}}
+        doc["color"][on] = {"$value": fg, "$extensions": {"plumb": {"dark": dark_fg or fg}}}
+    p = make_project(tmp_path, mut)
+    return p, json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+
+
+def test_stock_shadcn_near_white_on_primary_gets_the_fill_option(tmp_path: Path) -> None:
+    """oklch(0.985 0 0) text on a mid blue is the stock shadcn pair: the fill option exists and keeps the text value."""
+    bt = _bt()
+    for fg in ("oklch(0.985 0 0)", "#fafafa"):
+        p, doc = _fill_doc(tmp_path / fg[1:4], fg, "#3b82f6", "#60a5fa")
+        pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+        assert pair.light < 4.5 and pair.fix_bg["light"] and pair.options("light")[0][0] == "primary"
+        text = pair.fix_text("light")
+        assert text.startswith("two options in light mode: (1) step primary to #") and "on-primary stays #fafafa" in text
+
+
+def test_a_light_grey_on_a_fill_keeps_the_single_suggestion(tmp_path: Path) -> None:
+    bt = _bt()
+    _p, doc = _fill_doc(tmp_path, "#d0d0d0", "#8fb8ff", "#8fb8ff")
+    pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+    assert pair.light < 4.5 and pair.fix_bg == {} and len(pair.options("light")) == 1
+
+
+def test_the_fill_stays_within_a_degree_of_hue(tmp_path: Path) -> None:
+    """Stepping a saturated green (where clipping channels used to rotate the hue by ~7 degrees) keeps its OKLCH hue."""
+    bt = _bt()
+    sys.path.insert(0, str(SCRIPTS))
+    _p, doc = _fill_doc(tmp_path, "#ffffff", "#22c55e", "#22c55e")
+    pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+    value = pair.fix_bg["light"][0]
+    old, new = bt._oklch("#22c55e")[2], bt._oklch(value)[2]
+    assert abs((new - old + 180) % 360 - 180) <= 1.0, (old, new, value)
+    assert pair.fix_bg["light"][1] >= 4.5
+
+
+def test_a_surface_lists_the_text_option_first_and_a_control_the_fill_first(tmp_path: Path) -> None:
+    bt = _bt()
+    for surface in ("surface", "background", "sunk", "raised", "card", "popover"):
+        _p, doc = _fill_doc(tmp_path / surface, "#ffffff", "#9ca3af", "#9ca3af", bg_name=surface)
+        pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-" + surface, surface))
+        assert pair.fix_bg["light"] and pair.fix["light"], surface
+        assert [o[0] for o in pair.options("light")] == ["on-" + surface, surface], surface
+    for control in ("primary", "danger", "success", "accent"):
+        _p, doc = _fill_doc(tmp_path / control, "#ffffff", "#9ca3af", "#9ca3af", bg_name=control)
+        pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-" + control, control))
+        assert [o[0] for o in pair.options("light")] == [control, "on-" + control], control
+
+
+def test_an_alias_fill_names_the_source_token(tmp_path: Path) -> None:
+    bt = _bt()
+
+    def mut(doc: dict) -> None:
+        doc["color"]["brand"] = {"$value": "#7fd6d0", "$extensions": {"plumb": {"dark": "#7fd6d0"}}}
+        doc["color"]["primary"] = {"$value": "{color.brand}"}
+        doc["color"]["on-primary"] = {"$value": "#ffffff"}
+    p = make_project(tmp_path, mut)
+    doc = json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+    pair = next(x for x in bt.measure_pairs(doc) if (x.fg, x.bg) == ("on-primary", "primary"))
+    assert pair.options("light")[0][1] == "color.brand"
+    assert "(it is an alias: change it at the source token color.brand)" in pair.fix_text("light")
+    assert run(p, "--contrast").returncode == 0
+    assert "source token color.brand" in block(dark_md(p))
 
 
 def test_dark_failure_lightens(tmp_path: Path) -> None:

@@ -54,8 +54,8 @@ def test_builds_both_views_per_variant_and_the_index(proposal: Path) -> None:
     r = run(proposal, "--proposal", NAME)
     assert r.returncode == 0, r.stdout + r.stderr
     built = pages(proposal)
-    assert sorted(built) == ["a-calm/prototype.html", "a-calm/screens.html", "b-dense/prototype.html",
-                             "b-dense/screens.html", "index.html"]
+    assert sorted(built) == ["a-calm/app.html", "a-calm/prototype.html", "a-calm/screens.html", "b-dense/app.html",
+                             "b-dense/prototype.html", "b-dense/screens.html", "index.html"]
     doc = json.loads(read(proposal / TOKENS_REL))
     block = BT.token_block(doc)
     for rel, path in built.items():
@@ -71,11 +71,17 @@ def test_builds_both_views_per_variant_and_the_index(proposal: Path) -> None:
     cat = read(built["a-calm/screens.html"])
     assert 'data-copy="booking/error/dark"' in cat and 'data-copy="booking/error/light"' in cat
     assert 'data-nav="booking"' not in read(built["b-dense/prototype.html"])
+    app = read(built["a-calm/app.html"])
+    assert '<section data-screen="home"' in app and 'data-screen="booking"' in app and "data-states-for" not in app
+    assert P.is_generated_proposal_page(app)
     index = read(built["index.html"])
     for text in ("Calm list", "One list of tonight", "Fast for regulars", "Busy on a phone", "B dense"):
         assert text in index, text
-    for href in ("a-calm/prototype.html", "a-calm/screens.html", "b-dense/prototype.html", "b-dense/screens.html"):
+    for href in ("a-calm/prototype.html", "a-calm/app.html", "a-calm/screens.html", "b-dense/prototype.html",
+                 "b-dense/app.html", "b-dense/screens.html"):
         assert f'href="{href}"' in index, href
+    card = index[index.index('data-variant="a-calm"'):index.index('data-variant="b-dense"')]
+    assert card.index("Review: prototype.html") < card.index("Demo: app.html")  # review, then demo
     assert read(proposal / JSON_REL) == main_map and read(proposal / PROTO_REL) == main_proto  # main untouched
     assert "variant" in r.stdout and "billing" in r.stdout
 
@@ -92,8 +98,15 @@ def test_byte_stable_and_check(proposal: Path) -> None:
     r = run(proposal, "--check", "--proposal", NAME)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "b-dense/prototype.html" in r.stdout and "b-dense/screens.html" in r.stdout
+    assert "b-dense/app.html" in r.stdout
     assert "a-calm" not in r.stdout and "--proposal billing" in r.stdout
     assert {k: p.read_bytes() for k, p in pages(proposal).items()} == before  # --check writes nothing
+    assert run(proposal, "--proposal", NAME).returncode == 0
+    app = proposal / PROPOSALS / NAME / "a-calm/app.html"
+    app.unlink()
+    r = run(proposal, "--check", "--proposal", NAME)
+    assert r.returncode == 1 and "a-calm/app.html (missing)" in r.stdout, r.stdout
+    assert not app.exists()
 
 
 def _retoken(project: Path) -> str:
@@ -203,7 +216,7 @@ def test_audit_skips_the_generated_pages_and_checks_the_screen_files(proposal: P
                        cwd=str(proposal), capture_output=True, text=True, encoding="utf-8")
     data = json.loads(r.stdout)
     files = {f["file"] for f in data["findings"]}
-    assert not any(f.endswith(("index.html", "/prototype.html", "/screens.html")) for f in files), files
+    assert not any(f.endswith(("index.html", "/prototype.html", "/app.html", "/screens.html")) for f in files), files
     assert data["checked"] == 3  # the three variant screen files, not the generated pages
 
 
@@ -263,12 +276,17 @@ def test_index_shows_every_variant(browser, built: Path, width: int, scheme: str
         page.click('[data-variant="a-calm"] a[href="a-calm/prototype.html"]')
         page.wait_for_load_state("load")
         assert page.url.endswith("a-calm/prototype.html")
+        page.go_back()
+        page.click('[data-variant="a-calm"] a[href="a-calm/app.html"]')
+        page.wait_for_load_state("load")
+        assert page.url.endswith("a-calm/app.html")
+        assert page.locator("#pp-frame > [data-screen]:not([hidden])").count() == 1
         assert errors == [] and requests == [], (errors, requests)
     finally:
         ctx.close()
 
 
-@pytest.mark.parametrize("view", ["prototype.html", "screens.html"])
+@pytest.mark.parametrize("view", ["prototype.html", "app.html", "screens.html"])
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_each_view_renders_in_both_themes(browser, built: Path, view: str, scheme: str) -> None:
     for variant in ("a-calm", "b-dense"):
@@ -283,7 +301,11 @@ def test_each_view_renders_in_both_themes(browser, built: Path, view: str, schem
             else:
                 assert page.locator("#pp-frame > [data-screen]").count() >= 1
             before = page.evaluate("getComputedStyle(document.body).backgroundColor")
-            page.click("#theme-toggle")
+            if view == "app.html":  # no chrome: the screens' own toggle (none here) or the API switches the theme
+                assert page.locator("#theme-toggle").count() == 0
+                page.evaluate("window.plumbTheme.toggle()")
+            else:
+                page.click("#theme-toggle")
             assert page.evaluate("getComputedStyle(document.body).backgroundColor") != before
             assert errors == [] and requests == [], (variant, errors, requests)
         finally:

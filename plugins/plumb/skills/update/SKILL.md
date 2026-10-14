@@ -110,7 +110,7 @@ recommendation. Apply what the user approves (step 2).
 ## Step 3: regenerate
 
 1. `PY SKILL/scripts/build-tokens.py`: every web theme and copy, the iOS/Android themes, the contrast evidence in
-   `dark-mode.md`, `<docs>/specimen.html`, and the token region of `prototype.html`, `screens.html`, `tours/*.html` and
+   `dark-mode.md`, `<docs>/specimen.html`, and the token region of `prototype.html`, `app.html`, `screens.html`, `tours/*.html` and
    every proposal page built by `build-prototype.py --proposal`. Exit 2 → fix the token it names (ask first).
 2. Contrast: `PY SKILL/scripts/audit.py` — any `contrast` or `missing-dark-value` error → show the pair and the nearest
    passing value it suggests, ask, change the token, build again.
@@ -118,7 +118,7 @@ recommendation. Apply what the user approves (step 2).
    block of every proposal (`<docs>/prototype/proposals/*/`), so old variants still render; their screen files are never
    touched. A proposal folder whose pages were written by hand (before `--proposal` existed) is not refreshed: when its
    variants have `screens/` folders, offer `PY SKILL/scripts/build-prototype.py --proposal <name>`, saying that it
-   **replaces** the hand-written `index.html` and each variant's `prototype.html` and `screens.html` in that folder
+   **replaces** the hand-written `index.html` and each variant's `prototype.html`, `app.html` and `screens.html` in that folder
    with generated ones (the screen files stay); run it only on a yes.
 4. A spec or rule change that changes what screens show → propose the screen-file edits, ask, edit, rebuild, show the
    user and ask for approval again (`--approve <id>`); built screens then follow in code.
