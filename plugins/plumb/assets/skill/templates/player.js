@@ -227,10 +227,10 @@
     return null;
   }
   function rectOf(node) { return (shape(node) || node).getBoundingClientRect(); }
-  /* A node the viewer can see: laid out, not visibility: hidden (computed, so also inside a hidden parent), and on the
-     frame (rect f) rather than pushed off it (an off-canvas drawer moved aside with a transform). A node an inner
-     scroller has scrolled away (a wide table's far column, a lower item of a fixed-height list) is scrolled into view
-     there first, then judged. */
+  /* A node the viewer can see, or could once its scrollers bring it in: laid out, not visibility: hidden (computed, so
+     also inside a hidden parent), and on the frame (rect f) rather than pushed off it (an off-canvas drawer moved aside
+     with a transform). A node an inner scroller has scrolled away (a wide table's far column, a lower item of a
+     fixed-height list) counts when that scroller's range reaches it. Judging never scrolls anything. */
   function seen(node, f) {
     var s = shape(node);
     if (!s || !s.getClientRects().length) return false;
@@ -238,30 +238,92 @@
     if (!(r.width > 0 || r.height > 0)) return false;
     var vis = getComputedStyle(s).visibility;
     if (vis === "hidden" || vis === "collapse") return false;
-    if (reveal(s)) r = s.getBoundingClientRect();
-    return r.right > f.left && r.left < f.right && r.bottom > f.top && r.top < f.bottom;
+    var q = reach(s, r);
+    return q.right > f.left && q.left < f.right && q.bottom > f.top && q.top < f.bottom;
   }
-  /* Scrolls a node into view, nearest edge and at once, inside every scroll container (overflow auto or scroll, either
-     axis) between it and the frame; the window is left alone. True when anything moved. */
-  function reveal(node) {
-    var moved = false;
-    for (var a = node.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
-      var cs = getComputedStyle(a);
-      var sx = /auto|scroll/.test(cs.overflowX), sy = /auto|scroll/.test(cs.overflowY);
-      if (!sx && !sy) continue;
-      var r = node.getBoundingClientRect(), ar = a.getBoundingClientRect();
-      var left = ar.left + a.clientLeft, top = ar.top + a.clientTop;
-      var right = left + a.clientWidth, bottom = top + a.clientHeight;
-      var dx = !sx ? 0 : r.left < left ? r.left - left : r.right > right ? Math.min(r.right - right, r.left - left) : 0;
-      var dy = !sy ? 0 : r.top < top ? r.top - top : r.bottom > bottom ? Math.min(r.bottom - bottom, r.top - top) : 0;
-      if (dx || dy) {
-        var x0 = a.scrollLeft, y0 = a.scrollTop;
-        a.scrollLeft = x0 + dx;
-        a.scrollTop = y0 + dy;
-        if (a.scrollLeft !== x0 || a.scrollTop !== y0) moved = true;
+  function scrolls(cs) {
+    return { x: /auto|scroll/.test(cs.overflowX), y: /auto|scroll/.test(cs.overflowY) };
+  }
+  /* True when an element holds absolutely (abs) or fixed positioned descendants as their containing block. */
+  function holds(cs, fixed) {
+    var other = (cs.transform && cs.transform !== "none") || (cs.filter && cs.filter !== "none") ||
+      (cs.perspective && cs.perspective !== "none") || /layout|paint|strict|content/.test(cs.contain || "") ||
+      /transform|perspective|filter/.test(cs.willChange || "");
+    return fixed ? !!other : cs.position !== "static" || !!other;
+  }
+  /* True when node moves as scroller a scrolls: a is on its containing-block chain (a fixed toast, or an absolute drawer
+     placed against something outside a, does not move with it). */
+  function movesWith(node, a) {
+    var n = node;
+    while (n && n !== a) {
+      var pos = getComputedStyle(n).position, p = n.parentElement;
+      if (pos === "absolute" || pos === "fixed") {
+        while (p && p !== a && !holds(getComputedStyle(p), pos === "fixed")) p = p.parentElement;
+        if (p === a) return holds(getComputedStyle(a), pos === "fixed");
       }
+      n = p;
     }
-    return moved;
+    return n === a;
+  }
+  /* The nearest-edge scroll (dx, dy) of scroller a that brings rect r into its view, within its scroll range. */
+  function nudge(a, cs, r) {
+    var sc = scrolls(cs), ar = a.getBoundingClientRect();
+    var left = ar.left + a.clientLeft, top = ar.top + a.clientTop, right = left + a.clientWidth, bottom = top + a.clientHeight;
+    function want(lo, hi, from, to) { return lo < from ? lo - from : hi > to ? Math.min(hi - to, lo - from) : 0; }
+    function range(v, d, max, rtl) {
+      var lo = rtl ? -max : 0, hi = rtl ? 0 : max;
+      return clamp(v + d, lo, hi) - v;
+    }
+    var rtl = cs.direction === "rtl";
+    var dx = sc.x ? range(a.scrollLeft, want(r.left, r.right, left, right), Math.max(0, a.scrollWidth - a.clientWidth), rtl) : 0;
+    var dy = sc.y ? range(a.scrollTop, want(r.top, r.bottom, top, bottom), Math.max(0, a.scrollHeight - a.clientHeight), false) : 0;
+    return { dx: dx, dy: dy };
+  }
+  /* Where a node's rect would be once every scroller between it and the frame brought it in (no scrolling). */
+  function reach(s, r) {
+    var q = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a), sc = scrolls(cs);
+      if ((!sc.x && !sc.y) || !movesWith(s, a)) continue;
+      var d = nudge(a, cs, q);
+      q = { left: q.left - d.dx, top: q.top - d.dy, right: q.right - d.dx, bottom: q.bottom - d.dy };
+    }
+    return q;
+  }
+  /* True when a node is scrolled or clipped out of view by a box between it and the frame (drawn only when in view). */
+  function clipped(node) {
+    var s = shape(node);
+    if (!s) return true;
+    var r = s.getBoundingClientRect();
+    for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a);
+      if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+      if (!movesWith(s, a)) continue;
+      var ar = a.getBoundingClientRect(), left = ar.left + a.clientLeft, top = ar.top + a.clientTop;
+      if (r.right <= left || r.left >= left + a.clientWidth || r.bottom <= top || r.top >= top + a.clientHeight) return true;
+    }
+    return false;
+  }
+  /* Scrolls a node into view, nearest edge and at once, inside every scroller it moves with between it and the frame;
+     the window is left alone. A scroller that moved without moving the node is put back. Only decorate() calls this,
+     once per step. */
+  function reveal(node) {
+    var s = shape(node);
+    if (!s) return;
+    for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a), sc = scrolls(cs);
+      if ((!sc.x && !sc.y) || !movesWith(s, a)) continue;
+      var before = s.getBoundingClientRect(), d = nudge(a, cs, before);
+      if (!d.dx && !d.dy) continue;
+      var x0 = a.scrollLeft, y0 = a.scrollTop;
+      scrollBox(a, x0 + d.dx, y0 + d.dy);
+      var after = s.getBoundingClientRect();
+      if (after.left === before.left && after.top === before.top) scrollBox(a, x0, y0);
+    }
+  }
+  function scrollBox(a, left, top) {
+    try { a.scrollTo({ left: left, top: top, behavior: "instant" }); }
+    catch (err) { a.scrollLeft = left; a.scrollTop = top; }
   }
   /* Every scroll the player makes is instant, whatever scroll-behavior a screen sets (it reads positions right after). */
   function scrollToNode(node, opts) {
@@ -345,7 +407,8 @@
   function draw(step) {
     clearOverlays();
     if (!onStepScreen(step)) { unzoom(); return; }  /* a played or real click moved on: the step's marks go with it */
-    var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
+    /* drawn where things are now: nothing here scrolls, and what a scroller holds out of view is left out */
+    var targets = step.targets.map(function (s) { return find(step, s); }).filter(function (n) { return n && !clipped(n); });
     var boxes = targets.map(box);
     var W = stage.clientWidth, H = stage.clientHeight;
     if (step.point === "spotlight" && boxes.length) {
@@ -384,7 +447,7 @@
     }
     step.labels.forEach(function (lab) {
       var t = find(step, lab.target);
-      if (!t) return;
+      if (!t || clipped(t)) return;
       var b = box(t), tag = addOverlay(el("span", "pl-label", lab.text));
       placeClear(tag, clamp(b.x - 6, 4, Math.max(4, W - tag.offsetWidth - 4)), Math.max(4, b.y - 12), W, H);
     });
@@ -484,9 +547,13 @@
     if (want[0] >= top + margin && want[1] <= bottom - 2 * margin) return;  /* in view already */
     scrollWindowBy(want[0] - (top + margin));
   }
+  /* The one place a step scrolls, once, when it opens: its first target into view inside its scrollers, then the
+     window (with its topmost label in view too, when it has labels in view); then everything is measured. */
   function decorate(step) {
     var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
-    var labelled = step.labels.map(function (lab) { return find(step, lab.target); }).filter(Boolean);
+    if (targets.length) reveal(targets[0]);
+    var labelled = step.labels.map(function (lab) { return find(step, lab.target); })
+      .filter(function (n) { return n && !clipped(n); });
     if (targets.length) bringIntoView(targets[0], labelled);
     T.redraw = function () { draw(step); };
     if (step.point === "zoom" && targets.length && zoom(targets)) {
@@ -700,6 +767,7 @@
     pillTitle.textContent = guide ? itemTitle(item) : "";
     pillTitle.hidden = !guide;
     pillDo.hidden = !(guide && item.kind === "step" && item.step.yourTurn);
+    hideBtn.hidden = T.ended;
     dCaption.textContent = item.kind === "card" ? (item.text || "") : (item.step.caption || "");
     var turn = guide && item.kind === "step" && item.step.yourTurn;
     navGroup.hidden = !guide;
@@ -940,7 +1008,7 @@
     if (T.redraw) T.redraw();
   }
   function setPanel(hide) {
-    if (!T.tour) return;
+    if (!T.tour || T.ended) return;  /* at the end of play the panel stays, with Play again */
     var had = inChrome(document.activeElement);
     T.reveal = false;
     T.panelHidden = !!hide;

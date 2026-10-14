@@ -29,7 +29,8 @@ to the walkthrough.
   the "Show panel" button (the subtitle keeps narrating). `H` again, or the pill's button, brings the panel back. The
   arrow keys, Space and Esc still work while it is hidden. On a "your turn" step the pill also offers "Do it for me";
   a wrong click brings the panel back for that step, with the hint shown and announced; at the end of play the panel
-  comes back with "Play again". Neither changes your choice: the next step hides it again. `H` does nothing while you
+  comes back with "Play again" (and no Hide panel until you play again or leave). Neither changes your choice: the
+  next step hides it again. `H` does nothing while you
   type in a field (also a `role=textbox`, `combobox`, `searchbox` or `spinbutton` widget), with Shift, Ctrl, Alt or Cmd
   held, or as a held key repeats. The choice is remembered in this browser (`localStorage`; with storage off it lasts
   for the page).
@@ -39,8 +40,10 @@ to the walkthrough.
   frame, as on a device of that width, and never cover the toolbar or the screens list.
 - **What it points at:** the first element of a selector that is visible: an element hidden with `visibility: hidden`
   (also inside a hidden parent) or pushed off the frame (an off-canvas drawer) is skipped. One that an inner scroller
-  has scrolled away (a wide table's far column, a lower item of a fixed-height list) is scrolled into view there first.
-  A `display: contents` element is pointed at through its first child that has a box.
+  has scrolled away (a wide table's far column, a lower item of a fixed-height list) still counts: when the step
+  opens, its first element is scrolled into view inside that scroller, once. Nothing else scrolls: other elements and
+  labels that a scroller holds out of view are left out, and a redraw never undoes your own scrolling. A
+  `display: contents` element is pointed at through its first child that has a box.
 - **Long pages:** a step scrolls its element into the room between the top bar and the panel, at once (whatever
   `scroll-behavior` the page sets). For an element taller than that room, its top edge and its topmost label come into
   view together when they fit, else the topmost label; with no labels it scrolls only when none of it is in view.

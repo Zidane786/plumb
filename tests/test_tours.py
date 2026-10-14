@@ -1251,6 +1251,7 @@ def test_player_colours_are_tokens_or_named_video_colours() -> None:
 
 LAYERS_REL = f"{DOCS}/prototype/screens/layers.html"
 LONG_REL = f"{DOCS}/prototype/screens/long.html"
+BOXES_REL = f"{DOCS}/prototype/screens/boxes.html"
 # A screen with its own stacking (a fixed scrim at z-index 60, a dialog at 9999); a target selector that matches an
 # element hidden by visibility (itself, or through its parent) and one pushed off the frame before the one shown;
 # targets an inner scroller has scrolled away (a wide table's far column, the last item of a fixed-height list); a
@@ -1318,6 +1319,34 @@ LONG = """<style>
 </section>
 """
 
+# Targets and labels that share a scroller: a wide table, a 120 px list, a tall area inside a scrolling main, and a
+# fixed drawer pushed off the frame inside a box that scrolls sideways (the box must never move for it).
+BOX_ITEMS = "".join(f'<li class="i{i}">Item {i}</li>' for i in range(1, 41))
+BOXES = """<style>
+[data-screen="boxes"] { padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="boxes"] .wide2 { overflow-x: auto; max-width: 100%; }
+[data-screen="boxes"] .wide2 table { width: 3000px; }
+[data-screen="boxes"] .list2 { height: 120px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+[data-screen="boxes"] .list2 li { padding: var(--spacing-2); }
+[data-screen="boxes"] .main { height: 500px; overflow-y: auto; }
+[data-screen="boxes"] .tallin { min-height: 4000px; }
+[data-screen="boxes"] .midin { margin-top: 2000px; }
+[data-screen="boxes"] .box { height: 100px; overflow: auto; }
+[data-screen="boxes"] .box .roomy { width: 2000px; }
+[data-screen="boxes"] .drawer { position: fixed; right: 0; top: 0; transform: translateX(110%); }
+</style>
+<section data-screen="boxes" data-title="Boxes" data-order="6">
+  <h2>Boxes</h2>
+  <div data-state="ready">
+    <div class="wide2"><table><tr><td class="c1">One</td><td class="c2">Two</td><td class="c3">Far</td></tr></table></div>
+    <ul class="list2">""" + BOX_ITEMS + """</ul>
+    <div class="main"><div class="tallin"><p class="topin">Top</p><p class="midin">Halfway</p></div></div>
+    <div class="box"><nav class="drawer slide">Drawer</nav><p class="roomy">Wide content</p></div>
+    <p><span class="slide">The visible one</span></p>
+  </div>
+</section>
+"""
+
 
 def staged_tour() -> dict:
     return {"title": "Layers and lengths", "audience": "review",
@@ -1343,6 +1372,16 @@ def staged_tour() -> dict:
                  "point": "zoom"},
                 {"screen": "long", "title": "A label in the middle", "caption": "Halfway down.", "target": ".long",
                  "point": "ring", "labels": [{"target": ".long .mid", "text": "Middle"}]},
+                {"screen": "boxes", "title": "Two columns", "caption": "Labels on the first and the far column.",
+                 "target": ".wide2", "point": "ring",
+                 "labels": [{"target": ".wide2 .c1", "text": "One"}, {"target": ".wide2 .c3", "text": "Far"}]},
+                {"screen": "boxes", "title": "A short list", "caption": "The first item and the last.",
+                 "target": ".list2 .i1", "point": "ring",
+                 "labels": [{"target": ".list2 .i1", "text": "A"}, {"target": ".list2 .i40", "text": "B"}]},
+                {"screen": "boxes", "title": "A scrolling main", "caption": "Tall, with a label halfway.",
+                 "target": ".tallin", "point": "ring", "labels": [{"target": ".tallin .midin", "text": "Mid"}]},
+                {"screen": "boxes", "title": "A drawer", "caption": "The drawer is off the frame.",
+                 "target": ".slide", "point": "ring"},
             ]}
 
 
@@ -1352,6 +1391,7 @@ def staged(tmp_path_factory) -> Path:
                           {"demo": demo(), "staged": staged_tour()}, build=False)
     write(p / LAYERS_REL, LAYERS)
     write(p / LONG_REL, LONG)
+    write(p / BOXES_REL, BOXES)
     r = run(p)
     assert r.returncode == 0, r.stdout + r.stderr
     return p
@@ -1683,7 +1723,7 @@ RECT = """(sel) => { var r = document.querySelector(sel).getBoundingClientRect()
     return [r.left, r.top, r.width, r.height]; }"""
 IN_WINDOW = """(sel) => { var r = document.querySelector(sel).getBoundingClientRect();
     var f = document.getElementById('pp-frame').getBoundingClientRect();
-    return r.left >= f.left - 1 && r.right <= f.right + 1 && r.top >= 0 && r.bottom <= window.innerHeight; }"""
+    return r.left >= f.left - 1 && r.left < f.right && r.top >= 0 && r.bottom <= window.innerHeight; }"""
 
 
 def _ringed(page, sel: str) -> None:
@@ -1691,10 +1731,15 @@ def _ringed(page, sel: str) -> None:
     assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want)), (sel, rings, want)
 
 
-@pytest.mark.parametrize("step, sel", [(5, "#pp-frame .wide .far"), (6, "#pp-frame .list .last")])
-def test_a_target_scrolled_away_inside_an_inner_scroller_is_brought_in(browser, staged, step: int, sel: str) -> None:
-    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+@pytest.mark.parametrize("step, sel, width, smooth", [
+    (5, "#pp-frame .wide .far", 1280, False), (6, "#pp-frame .list .last", 1280, False),
+    (5, "#pp-frame .wide .far", 390, True), (6, "#pp-frame .list .last", 390, True)])
+def test_a_target_scrolled_away_inside_an_inner_scroller_is_brought_in(browser, staged, step: int, sel: str, width: int,
+                                                                        smooth: bool) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, width=width)
     try:
+        if smooth:  # a reset's smooth scrolling on every box: the player's own scrolls stay instant
+            page.add_style_tag(content="* { scroll-behavior: smooth !important; }")
         _start(page, "staged", "guide", step=step)
         _ringed(page, sel)
         assert page.evaluate(IN_WINDOW, sel), f"{sel} is not in view"
@@ -1847,6 +1892,125 @@ def test_holding_h_toggles_once_and_custom_text_widgets_count_as_typing(browser,
         page.keyboard.press("h")
         page.keyboard.press("ArrowRight")
         assert _dock_shown(page) and _state(page)["step"] == 2, "a role=textbox widget is typing"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------------- review round 2: judging never scrolls
+
+
+def _label_on(page, text: str, sel: str) -> bool:
+    """The label sits over the element it names (its left edge between the element's left edge, less the 6 px nudge,
+    and its right edge)."""
+    return page.evaluate("""([text, sel]) => { var l = [...document.querySelectorAll('.pl-label')]
+        .find(function (n) { return n.textContent === text; });
+      if (!l) return false;
+      var r = l.getBoundingClientRect(), t = document.querySelector(sel).getBoundingClientRect();
+      return r.left >= t.left - 8 && r.left <= t.right; }""", [text, sel])
+
+
+def _labels(page) -> list:
+    return page.evaluate("[...document.querySelectorAll('.pl-label')].map(n => n.textContent)")
+
+
+def test_labels_sharing_a_wide_table_sit_on_their_own_column_or_are_left_out(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=11)
+        assert page.evaluate("document.querySelector('#pp-frame .wide2').scrollLeft") == 0
+        assert _labels(page) == ["One"], "the far column's label is left out while its column is scrolled away"
+        assert _label_on(page, "One", "#pp-frame .wide2 .c1")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_ring_and_label_in_a_short_list_stay_on_the_first_item(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=12)
+        assert page.evaluate("document.querySelector('#pp-frame .list2').scrollTop") == 0
+        _ringed(page, "#pp-frame .list2 .i1")
+        assert _labels(page) == ["A"] and _label_on(page, "A", "#pp-frame .list2 .i1")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_tall_target_in_a_scrolling_main_is_ringed_where_it_is(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=13)
+        _ringed(page, "#pp-frame .tallin")
+        # main brings the target's top edge in (its nearest edge), never on to the label halfway down
+        assert page.evaluate("document.querySelector('#pp-frame .main').scrollTop") < 100
+        assert _labels(page) == [], "the label is scrolled away inside main, so it is left out"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_fixed_drawer_off_the_frame_does_not_scroll_the_box_it_sits_in(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=14)
+        _ringed(page, '#pp-frame [data-screen="boxes"] p > .slide')
+        assert page.evaluate("document.querySelector('#pp-frame .box').scrollLeft") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_redraw_never_undoes_the_viewers_own_scrolling(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=6)
+        assert page.evaluate("document.querySelector('#pp-frame .list').scrollTop") > 0
+        page.evaluate("document.querySelector('#pp-frame .list').scrollTop = 0")
+        page.set_viewport_size({"width": 1270, "height": 900})
+        page.wait_for_timeout(100)
+        assert page.evaluate("document.querySelector('#pp-frame .list').scrollTop") == 0
+        assert page.evaluate("document.querySelectorAll('.pl-ring').length") == 0, "the scrolled-away item is not ringed"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+STORED = "(() => { try { return localStorage.getItem('plumb.player.panel'); } catch (e) { return 'x'; } })()"
+
+
+def test_at_the_end_of_play_the_panel_stays_with_play_again(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "lesson", "play", speed=2)
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=15000)
+        assert _shown(page, ".pl-dock [data-pl=hide]") == 0, "no Hide panel at the end"
+        page.evaluate("document.activeElement.blur()")
+        page.keyboard.press("h")
+        assert _dock_shown(page) and "Panel hidden" not in page.inner_text(".pl-live")
+        assert page.evaluate(STORED) is None
+        page.click(".pl-dock [data-pl=play]")
+        assert _shown(page, ".pl-dock [data-pl=hide]") == 1
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+FORM_TRACKS = ("getComputedStyle(document.querySelector('#pp-frame .booking-form'))"
+               ".gridTemplateColumns.split(' ').length")
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_the_md_container_query_still_follows_the_frame_with_containment(browser, built, width: int) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=width, hash_="#screen-booking")
+    try:
+        assert page.evaluate("getComputedStyle(document.getElementById('pp-frame')).contain").startswith("layout")
+        assert page.evaluate(FORM_TRACKS) == 1, "the frame is under 48rem beside the side columns"
+        _start(page, "training", "guide", step=1)
+        wide = page.evaluate("document.getElementById('pp-frame').getBoundingClientRect().width") >= 768
+        assert wide == (width == 1280)
+        assert page.evaluate(FORM_TRACKS) == (2 if wide else 1), "the md layout follows the frame's width"
         assert errors == []
     finally:
         ctx.close()
