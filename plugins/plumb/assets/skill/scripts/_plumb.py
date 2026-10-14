@@ -910,7 +910,7 @@ def mask_block(text: str) -> str:
     return text[:span[0]] + _NOT_NL.sub(" ", text[span[0]:span[1]]) + text[span[1]:]
 
 
-PROPOSAL_PAGE_GLOBS = ("*/index.html", "*/*/prototype.html", "*/*/screens.html")
+PROPOSAL_PAGE_GLOBS = ("*/index.html", "*/*/prototype.html", "*/*/app.html", "*/*/screens.html")
 
 
 def is_generated_proposal_page(text: str) -> bool:

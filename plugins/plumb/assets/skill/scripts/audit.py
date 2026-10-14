@@ -155,7 +155,7 @@ not checked.
 Files: .tsx .jsx .ts .js .vue .svelte .astro .html .css .scss (web), .swift, .kt. Never node_modules or build output
 (.next dist build out coverage Pods DerivedData ...), never files over 5 MB. A `GENERATED ... do not edit` header exempts
 a file only on the paths Plumb's generators own: <skill>/assets/platforms/** (not starter/), the copies listed in
-$extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, screens.html,
+$extensions.plumb.web.copies, and the generated pages in the docs folder (specimen.html, prototype.html, app.html, screens.html,
 tours/*.html, audit-*.html, the proposal pages of build-prototype.py --proposal); anywhere else the header is just a comment and the file is audited.
 In a web copy only Plumb's block (/* plumb:start ... */ to /* plumb:end */) is skipped (blanked, so line numbers stay):
 the rest of the file is the project's and is audited. Tailwind's named steps (text-sm, rounded-lg, gap-4, p-0.5) count
@@ -480,9 +480,9 @@ def is_generated(text: str) -> bool:
     return P.is_generated_text(text)
 
 
-_GENERATED_PAGES = ("specimen.html", "prototype.html", "screens.html", "tours/*.html", "audit-*.html",
+_GENERATED_PAGES = ("specimen.html", "prototype.html", "app.html", "screens.html", "tours/*.html", "audit-*.html",
                     "prototype/proposals/*/index.html", "prototype/proposals/*/*/prototype.html",
-                    "prototype/proposals/*/*/screens.html")
+                    "prototype/proposals/*/*/app.html", "prototype/proposals/*/*/screens.html")
 _PLATFORM_OUTPUT = re.compile(r"(?:^|/)assets/platforms/")
 # Folder names that are build output wherever they appear; build, out, dist and coverage only count inside the project
 # (a relative path), because a project may itself live under a folder with one of those names.

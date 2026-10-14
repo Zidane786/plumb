@@ -34,6 +34,7 @@ SKILL_REL = ".claude/skills/demo-design-system"
 TOKENS_REL = f"{SKILL_REL}/assets/tokens/demo.tokens.json"
 DOCS = "docs/design"
 PROTO_REL = f"{DOCS}/prototype.html"
+APP_REL = f"{DOCS}/app.html"
 CATALOGUE_REL = f"{DOCS}/screens.html"
 JSON_REL = f"{DOCS}/prototype/screens.json"
 SCREENS_REL = f"{DOCS}/prototype/screens"
@@ -244,7 +245,7 @@ def test_unicode_titles_are_escaped_and_shown(project: Path) -> None:
 
 
 def test_pages_load_nothing_from_the_network(project: Path) -> None:
-    for rel in (PROTO_REL, CATALOGUE_REL):
+    for rel in (PROTO_REL, APP_REL, CATALOGUE_REL):
         page = read(project / rel)
         assert not NETWORK.search(page), (rel, NETWORK.search(page).group(0))
         assert not re.search(r"<link\b", page, re.I), rel
@@ -260,7 +261,7 @@ def test_docs_dir_setting_moves_everything(tmp_path: Path) -> None:
     shutil.rmtree(p / DOCS)
     r = run(p)
     assert r.returncode == 0, r.stderr
-    for name in ("prototype.html", "screens.html", "prototype/screens.json"):
+    for name in ("prototype.html", "app.html", "screens.html", "prototype/screens.json"):
         assert (p / "design-docs" / name).is_file(), name
 
 
@@ -488,7 +489,7 @@ def test_check_missing_outputs(tmp_path: Path) -> None:
 
 
 def test_idempotent(project: Path) -> None:
-    before = {rel: (project / rel).read_bytes() for rel in (PROTO_REL, CATALOGUE_REL, JSON_REL)}
+    before = {rel: (project / rel).read_bytes() for rel in (PROTO_REL, APP_REL, CATALOGUE_REL, JSON_REL)}
     r = run(project)
     assert r.returncode == 0
     assert "wrote" not in r.stdout
@@ -584,10 +585,11 @@ def test_build_tokens_refreshes_the_prototype_token_blocks(project: Path) -> Non
     assert r.returncode == 1
     assert f"stale: {PROTO_REL} (prototype token block)" in r.stdout
     assert f"stale: {CATALOGUE_REL} (prototype token block)" in r.stdout
+    assert f"stale: {APP_REL} (prototype token block)" in r.stdout
     r = build_tokens(project)
     assert r.returncode == 0, r.stderr
-    assert f"wrote {PROTO_REL}" in r.stdout and f"wrote {CATALOGUE_REL}" in r.stdout
-    for rel in (PROTO_REL, CATALOGUE_REL):
+    assert f"wrote {PROTO_REL}" in r.stdout and f"wrote {CATALOGUE_REL}" in r.stdout and f"wrote {APP_REL}" in r.stdout
+    for rel in (PROTO_REL, APP_REL, CATALOGUE_REL):
         page = read(project / rel)
         assert "--color-primary: #0b5a56;" in page
         container = page[page.index("@container plumb-frame (min-width: 48rem)"):]
@@ -595,7 +597,7 @@ def test_build_tokens_refreshes_the_prototype_token_blocks(project: Path) -> Non
     # one tokens build leaves nothing for build-prototype to do, and both checks agree
     assert run(project, "--check").returncode == 0, run(project, "--check").stdout
     assert build_tokens(project, "--check").returncode == 0
-    before = {rel: (project / rel).read_bytes() for rel in (PROTO_REL, CATALOGUE_REL)}
+    before = {rel: (project / rel).read_bytes() for rel in (PROTO_REL, APP_REL, CATALOGUE_REL)}
     assert "wrote" not in run(project).stdout
     assert {rel: (project / rel).read_bytes() for rel in before} == before
 
@@ -715,6 +717,161 @@ def test_catalogue_says_it_needs_javascript(project: Path) -> None:
     page = read(project / CATALOGUE_REL)
     notice = page[page.index("<noscript>"): page.index("</noscript>")]
     assert "JavaScript" in notice and 'href="prototype.html"' in notice
+
+
+# ---------------------------------------------------------------- the app view (app.html)
+
+APP_DOCS = "product/design"  # a variation: another docs folder and screens shaped like an app shell
+APP_SCREENS = {
+    "overview": """<style>
+[data-screen="overview"] { font-family: var(--font-sans); color: var(--color-on-surface); background: var(--color-background); padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="overview"] .grid { display: grid; gap: var(--spacing-3); }
+@container plumb-frame (min-width: 48rem) {
+  [data-screen="overview"] .grid { grid-template-columns: 1fr 1fr; }
+}
+</style>
+<section data-screen="overview" data-title="Overview" data-order="2">
+  <h2>Overview</h2>
+  <div data-state="ready"><div class="grid"><p>Open items: 12</p><p>Closed this week: 4</p></div>
+    <a href="#/people" data-test="to-people">People</a>
+    <button type="button" data-test="invite-person">Invite a person</button></div>
+  <div data-state="empty"><p>Nothing to show yet.</p></div>
+</section>
+<script data-screen-script>
+screen.querySelector("[data-test=invite-person]").addEventListener("click", function () { plumb.go("people", "invite"); });
+</script>
+""",
+    "people": """<style>
+[data-screen="people"] { font-family: var(--font-sans); color: var(--color-on-surface); background: var(--color-background); }
+[data-screen="people"] .layout { display: flex; }
+[data-screen="people"] .side { flex: none; width: 14rem; padding: var(--spacing-4); background: var(--color-surface); }
+[data-screen="people"] .body { flex: 1; min-width: 0; padding: var(--spacing-4); }
+[data-screen="people"] .tall { height: 2600px; }
+[data-screen="people"] .layer { position: relative; z-index: 60; }
+[data-screen="people"] .toast { position: fixed; right: 0; bottom: 0; margin: 0; }
+[data-screen="people"] .bar { position: fixed; right: 0; top: 0; margin: 0; }
+@container plumb-frame (max-width: 47.99rem) {
+  [data-screen="people"] .layout { flex-direction: column; }
+  [data-screen="people"] .side { width: auto; }
+}
+</style>
+<section data-screen="people" data-title="People" data-order="1">
+  <div class="layout">
+    <nav class="side" data-app-sidebar aria-label="Sections"><a href="#/overview" data-test="to-overview">Overview</a></nav>
+    <div class="body">
+      <h2>People</h2>
+      <button type="button" data-test="invite">Invite someone</button>
+      <button type="button" data-test="theme">Switch theme</button>
+      <button type="button" data-test="go">See the empty overview</button>
+      <button type="button" data-test="filter">Only admins</button>
+      <div class="tall"></div>
+      <div data-state="ready"><p>Three people.</p></div>
+      <div data-state="invite"><div class="layer" role="dialog" aria-modal="true" aria-label="Invite" data-test="dialog">
+        <p>Invite by email</p></div></div>
+      <div data-state="filtered"><p>One admin.</p></div>
+      <aside role="dialog" aria-label="Help" data-test="help"><p>Need a hand? Ask the team.</p></aside>
+      <p class="toast" role="status" data-test="toast">Saved</p>
+      <p class="bar" data-test="bar">Signed in</p>
+    </div>
+  </div>
+</section>
+<script data-screen-script>
+screen.setAttribute("data-catalogue", String(plumb.catalogue));
+screen.querySelector("[data-test=invite]").addEventListener("click", function () { plumb.setState("invite"); });
+screen.querySelector("[data-test=theme]").addEventListener("click", function () { window.plumbTheme.toggle(); });
+screen.querySelector("[data-test=go]").addEventListener("click", function () { plumb.go("overview", "empty"); });
+screen.querySelector("[data-test=filter]").addEventListener("click", function () { plumb.setState("filtered"); });
+</script>
+""",
+}
+
+
+def make_app_project(dest: Path) -> Path:
+    def mutate(doc):
+        doc["$extensions"]["plumb"]["docs_dir"] = APP_DOCS
+
+    p = make_project(dest, screens=False, decisions=False, build=False, mutate=mutate)
+    for sid, text in APP_SCREENS.items():
+        write(p / APP_DOCS / "prototype/screens" / f"{sid}.html", text)
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return p
+
+
+def visible_sections(page: str) -> list:
+    return re.findall(r'<section data-screen="([^"]+)"', page)  # a hidden one is <section hidden data-screen=...>
+
+
+def test_app_is_written_with_every_screen_and_no_prototype_panels(project: Path) -> None:
+    page = read(project / APP_REL)
+    assert page.startswith("<!doctype html>")
+    assert P.is_generated_text(page) and "build-prototype.py" in "\n".join(page.splitlines()[:3])
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in page[:3000]
+    for sid in SCREENS:
+        assert len(re.findall(f'<section(?: hidden)? data-screen="{sid}"', page)) == 1, sid
+    for panel in ('class="pp-nav"', "data-states-for", 'id="pp-why"', 'id="decisions"', 'id="theme-toggle"',
+                  "data-viewport", 'id="plumb-tours"', 'id="plumb-player"', ".pl-dock", 'class="pp-bar'):
+        assert panel not in page, panel
+    assert 'id="pp-stage"' in page and 'id="pp-frame"' in page  # where a tour page's player draws
+    frame_css = page[page.index(".pa-frame {"):]
+    frame_css = frame_css[:frame_css.index("}")]
+    assert "container: plumb-frame / inline-size;" in frame_css and "isolation: isolate;" in frame_css
+    assert "[data-app-sidebar] { position: sticky; top: 0; height: 100vh; height: 100dvh; }" in page
+    assert page.count('screen.setAttribute("data-script-ran", "yes");') == 1
+    assert "window.plumbPrototype" in page and "window.plumbTheme" in page and "catalogue: false" in page
+    inner = page.split("/* plumb:tokens */", 1)[1].split("/* plumb:tokens:end */", 1)[0]
+    assert inner.strip("\n") == BT.css_vars(P.load_tokens(project / TOKENS_REL)).strip("\n")
+    assert visible_sections(page) == ["home"]
+
+
+def test_app_opens_on_the_first_screen_by_data_order(tmp_path: Path) -> None:
+    p = make_app_project(tmp_path / "Other App")
+    page = read(p / APP_DOCS / "app.html")
+    assert visible_sections(page) == ["people"]  # data-order 1, though "overview" sorts first by name
+    assert "<title>People · " in page
+    data = json.loads(page.split('id="plumb-data">', 1)[1].split("</script>", 1)[0])
+    assert [s["id"] for s in data["screens"]] == ["people", "overview"]
+    path = p / APP_DOCS / "prototype/screens/overview.html"
+    write(path, read(path).replace('data-order="2"', 'data-order="0"'))
+    assert run(p).returncode == 0
+    assert visible_sections(read(p / APP_DOCS / "app.html")) == ["overview"]
+
+
+def test_check_names_a_stale_or_missing_app(project: Path) -> None:
+    app = project / APP_REL
+    write(app, read(app).replace("<title>", "<title>x"))
+    r = run(project, "--check")
+    assert r.returncode == 1 and f"stale: {APP_REL}\n" in r.stdout and PROTO_REL not in r.stdout, r.stdout
+    assert "fix: " in r.stdout
+    app.unlink()
+    r = run(project, "--check")
+    assert r.returncode == 1 and f"stale: {APP_REL} (missing)" in r.stdout, r.stdout
+    assert not app.exists()  # --check writes nothing
+    r = run(project)
+    assert r.returncode == 0 and f"wrote {APP_REL}" in r.stdout
+    assert run(project, "--check").returncode == 0
+
+
+def test_build_tokens_leaves_a_missing_app_to_build_prototype(project: Path) -> None:
+    """A project built before the app view has no app.html: the tokens build never writes one; build-prototype.py does."""
+    assert build_tokens(project).returncode == 0
+    (project / APP_REL).unlink()
+    r = build_tokens(project, "--check")
+    assert r.returncode == 0 and "app.html" not in r.stdout, r.stdout
+    assert build_tokens(project).returncode == 0 and not (project / APP_REL).exists()
+    assert run(project).returncode == 0 and (project / APP_REL).is_file()
+
+
+def test_app_bytes_are_deterministic(project: Path, tmp_path: Path) -> None:
+    other = make_project(tmp_path / "second" / "Café Ünïcode")  # another place on disk, the same bytes
+    assert (other / APP_REL).read_bytes() == (project / APP_REL).read_bytes()
+
+
+def test_missing_app_template_is_refused(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", build=False)
+    (p / SKILL_REL / "templates/app-shell.html.tmpl").unlink()
+    assert_refusal(run(p), "app-shell.html.tmpl", "/plumb:upgrade")
+    assert not (p / APP_REL).exists() and not (p / PROTO_REL).exists()
 
 
 # ---------------------------------------------------------------- browser (headless)
@@ -1082,11 +1239,294 @@ def test_relative_images_load_in_every_copy(browser, tmp_path: Path) -> None:
         assert errors == [] and requests == [], (errors, requests)
     finally:
         ctx.close()
-    ctx, page, errors, _ = _open(browser, p / PROTO_REL, hash_="#screen-pic")
+    for rel, hash_ in ((PROTO_REL, "#screen-pic"), (APP_REL, "#/pic")):
+        ctx, page, errors, _ = _open(browser, p / rel, hash_=hash_)
+        try:
+            img = page.locator('#pp-frame [data-test="dot"]')
+            img.evaluate("el => el.complete ? null : new Promise(r => { el.onload = el.onerror = r; })")
+            assert img.evaluate("el => el.naturalWidth") == 2, rel
+            assert errors == []
+        finally:
+            ctx.close()
+
+
+# ---------------------------------------------------------------- the app view in the browser (headless)
+
+
+@pytest.fixture(scope="module")
+def app_built(tmp_path_factory) -> Path:
+    return make_app_project(tmp_path_factory.mktemp("app") / "Other App")
+
+
+def _state_of(page) -> str:
+    return page.evaluate("(() => { var c = window.plumbPrototype.current(); return c.screen + '/' + c.state; })()")
+
+
+THROWING_STORAGE = """Object.defineProperty(window, 'localStorage', { configurable: true,
+    get: function () { throw new DOMException('denied', 'SecurityError'); } });"""
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_app_renders_cleanly_full_window(browser, built, width: int, scheme: str) -> None:
+    ctx, page, errors, requests = _open(browser, built / APP_REL, width, scheme)
     try:
-        img = page.locator('#pp-frame [data-test="dot"]')
-        img.evaluate("el => el.complete ? null : new Promise(r => { el.onload = el.onerror = r; })")
-        assert img.evaluate("el => el.naturalWidth") == 2
+        assert page.evaluate("document.documentElement.dataset.theme") == scheme
+        assert _visible_screen(page) == "home"
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        frame = page.evaluate("""(() => { var f = document.getElementById('pp-frame'), r = f.getBoundingClientRect();
+            return { left: r.left, width: r.width, iso: getComputedStyle(f).isolation,
+                     type: getComputedStyle(f).containerType, name: getComputedStyle(f).containerName }; })()""")
+        assert frame["left"] == 0 and frame["width"] == page.evaluate("document.documentElement.clientWidth")
+        assert frame["iso"] == "isolate" and frame["type"] == "inline-size" and frame["name"] == "plumb-frame"
+        assert page.evaluate("document.querySelector('.pp-nav, #pp-rail, [data-states-for], #plumb-player, "
+                             "#theme-toggle')") is None
+        bg = "getComputedStyle(document.querySelector('#pp-frame > [data-screen=\"home\"]')).backgroundColor"
+        before = page.evaluate(bg)
+        page.evaluate("window.plumbTheme.toggle()")
+        assert page.evaluate("document.documentElement.dataset.theme") == ("dark" if scheme == "light" else "light")
+        assert page.evaluate(bg) != before
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("hash_, expected", [
+    ("", "home/ready"), ("#/booking", "booking/ready"), ("#/menu/empty", "menu/empty"),
+    ("#screen-menu/empty", "menu/empty"), ("#screen-booking", "booking/ready"), ("#/nope", "home/ready"),
+    ("#screen-nope", "home/ready"), ("#/menu/nope", "menu/ready"), ("#elsewhere", "home/ready"),
+])
+def test_app_routes(browser, built, hash_: str, expected: str) -> None:
+    ctx, page, errors, _ = _open(browser, built / APP_REL, hash_=hash_)
+    try:
+        sid, state = expected.split("/")
+        assert _visible_screen(page) == sid and _visible_states(page, sid) == [state]
+        assert _state_of(page) == expected
+        assert page.evaluate("document.title").startswith(TITLES[sid])
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_links_history_and_the_api(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / APP_REL)
+    try:
+        page.click('#pp-frame [data-screen="home"] [data-test="new-booking"]')  # a prototype link: href="#screen-booking"
+        assert _visible_screen(page) == "booking" and page.evaluate("location.hash") == "#/booking"
+        assert page.get_attribute('#pp-frame [data-screen="booking"]', "data-script-ran") == "yes"
+        page.click('#pp-frame [data-test="save"]')
+        assert page.is_visible('#pp-frame [data-test="guest-error"]')
+        page.fill('#pp-frame [data-test="guest"]', "Zoë")
+        page.click('#pp-frame [data-test="save"]')
+        assert _visible_states(page, "booking") == ["success"]
+        assert page.evaluate("location.hash") == "#/booking/success"  # plumb.setState replaces the entry
+        page.go_back()
+        assert _visible_screen(page) == "home" and _state_of(page) == "home/ready"
+        api = page.evaluate("Object.keys(window.plumbPrototype).sort()")
+        for name in ("go", "setState", "current", "screen", "setTheme", "on", "screens", "project"):
+            assert name in api, name
+        assert page.evaluate("window.plumbPrototype.screens.map(s => s.id)") == list(SCREENS)
+        seen = page.evaluate("""() => { var got = []; window.plumbPrototype.on(e => got.push(e.screen + '/' + e.state));
+            window.plumbPrototype.go('menu', 'empty'); window.plumbPrototype.setState('ready'); return got; }""")
+        assert seen == ["menu/empty", "menu/ready"]
+        assert page.evaluate("location.hash") == "#/menu"
+        assert page.evaluate("window.plumbPrototype.screen('menu') === "
+                             "document.querySelector('#pp-frame > [data-screen=menu]')")
+        length = page.evaluate("history.length")
+        page.evaluate("window.plumbPrototype.go('home', null, { history: null })")
+        assert _visible_screen(page) == "home" and page.evaluate("history.length") == length
+        assert page.evaluate("window.plumbPrototype.setTheme('dark')") == "dark"
+        assert page.evaluate("document.documentElement.classList.contains('dark')")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_screen_scripts_get_the_same_api(browser, app_built) -> None:
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html")
+    try:
+        assert _visible_screen(page) == "people"
+        assert page.get_attribute('#pp-frame [data-screen="people"]', "data-catalogue") == "false"
+        assert page.evaluate("window.scrollY") == 0
+        page.click('#pp-frame [data-test="invite"]')  # plumb.setState("invite"): the dialog sits below the window
+        assert _state_of(page) == "people/invite"
+        box = page.evaluate("document.querySelector('[data-test=dialog]').getBoundingClientRect().toJSON()")
+        assert page.evaluate("window.scrollY") > 0
+        assert box["top"] >= 0 and box["bottom"] <= 900, box  # scrolled into view
+        page.click('#pp-frame [data-test="go"]')  # plumb.go("overview", "empty")
+        assert _state_of(page) == "overview/empty" and page.evaluate("location.hash") == "#/overview/empty"
+        assert page.evaluate("window.scrollY") == 0  # another screen opens at its top
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_theme_follows_the_system_until_chosen_then_remembers(browser, app_built) -> None:
+    path = app_built / APP_DOCS / "app.html"
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="dark")
+    try:
+        page = ctx.new_page()
+        page.goto(path.resolve().as_uri())
+        assert page.evaluate("document.documentElement.dataset.theme") == "dark"
+        assert page.evaluate("document.documentElement.className") == ""  # the system's, nothing chosen
+        page.click('#pp-frame [data-test="theme"]')  # the screen's own toggle
+        assert page.evaluate("document.documentElement.dataset.theme") == "light"
+        page.reload()
+        assert page.evaluate("document.documentElement.dataset.theme") == "light"
+        assert page.evaluate("document.documentElement.classList.contains('light')")
+        other = ctx.new_page()
+        other.goto(path.resolve().as_uri() + "#/overview")
+        assert other.evaluate("document.documentElement.dataset.theme") == "light"
+    finally:
+        ctx.close()
+    fresh = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="light")
+    try:
+        page = fresh.new_page()
+        page.goto(path.resolve().as_uri())
+        assert page.evaluate("document.documentElement.dataset.theme") == "light"
+    finally:
+        fresh.close()
+
+
+def test_app_works_when_storage_throws(browser, app_built) -> None:
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900}, color_scheme="dark")
+    try:
+        ctx.add_init_script(THROWING_STORAGE)
+        page = ctx.new_page()
+        errors: list = []
+        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto((app_built / APP_DOCS / "app.html").resolve().as_uri())
+        assert _visible_screen(page) == "people"
+        assert page.evaluate("document.documentElement.dataset.theme") == "dark"
+        page.click('#pp-frame [data-test="theme"]')
+        assert page.evaluate("document.documentElement.dataset.theme") == "light"
+        page.click('#pp-frame [data-test="to-overview"]')
+        assert _visible_screen(page) == "overview"
+        assert errors == [], errors
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width, columns", [(1280, 2), (390, 1)])
+def test_app_md_breakpoint_follows_the_window(browser, app_built, width: int, columns: int) -> None:
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", width, hash_="#/overview")
+    try:
+        cols = page.evaluate("getComputedStyle(document.querySelector('[data-screen=overview] .grid')).gridTemplateColumns")
+        assert len(cols.split()) == columns, cols
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_sidebar_hook_is_sticky_from_md(browser, app_built) -> None:
+    side = "document.querySelector('[data-screen=people] [data-app-sidebar]')"
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        assert page.evaluate(f"getComputedStyle({side}).position") == "sticky"
+        assert page.evaluate(f"{side}.getBoundingClientRect().height") == 900
+        page.evaluate("window.scrollTo(0, 1500)")
+        assert page.evaluate("window.scrollY") == 1500
+        assert page.evaluate(f"{side}.getBoundingClientRect().top") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 390)
+    try:
+        assert page.evaluate(f"getComputedStyle({side}).position") == "static"  # below md: the screen's own layout
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_frame_keeps_screen_layers_inside(browser, app_built) -> None:
+    """A screen's z-index 60 layer stays inside the frame's stacking context: what is drawn over the stage wins."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280, hash_="#/people/invite")
+    try:
+        on_top = page.evaluate("""(() => {
+            var d = document.querySelector('[data-test=dialog]'); d.scrollIntoView({ block: 'center' });
+            var over = document.createElement('div');
+            over.style.cssText = 'position:fixed;inset:0;z-index:1';
+            document.getElementById('pp-stage').appendChild(over);
+            var r = d.getBoundingClientRect();
+            return document.elementFromPoint(r.left + 5, r.top + 5) === over; })()""")
+        assert on_top
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+DIALOG_IN_VIEW = """(() => { var r = document.querySelector('[data-test=dialog]').getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= window.innerHeight; })()"""
+
+
+def test_app_a_dialog_that_was_showing_never_moves_the_page(browser, app_built) -> None:
+    """The help panel (role=dialog, always shown, far down) is not opened by a state change: no jump to it."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        assert page.is_visible('[data-test="help"]') and page.evaluate("window.scrollY") == 0  # none at load either
+        page.click('#pp-frame [data-test="filter"]')
+        assert _state_of(page) == "people/filtered" and page.evaluate("window.scrollY") == 0
+        page.evaluate("window.plumbPrototype.setState('ready')")
+        assert page.evaluate("window.scrollY") == 0
+        page.click('#pp-frame [data-test="to-overview"]')
+        page.click('#pp-frame [data-test="to-people"]')  # another screen, its first state: the help panel stays put
+        assert _state_of(page) == "people/ready" and page.evaluate("window.scrollY") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_reveals_a_dialog_opened_from_another_screen(browser, app_built) -> None:
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280, hash_="#/overview")
+    try:
+        page.click('#pp-frame [data-test="invite-person"]')  # plumb.go("people", "invite")
+        assert _state_of(page) == "people/invite"
+        assert page.evaluate("window.scrollY") > 0 and page.evaluate(DIALOG_IN_VIEW)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_reveals_a_dialog_opened_by_a_link(browser, app_built) -> None:
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280, hash_="#/people/invite")
+    try:
+        assert _state_of(page) == "people/invite"
+        assert page.evaluate("window.scrollY") > 0 and page.evaluate(DIALOG_IN_VIEW)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_fixed_elements_sit_on_the_window(browser, app_built) -> None:
+    """The frame is an inline-size container (no containing block for position: fixed): a screen's fixed toast and bar
+    stay at the window's edges on a long page, as in the product. Adding transform, filter, contain: layout and the
+    like to the frame or the stage would pin them to the page and fail this."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        page.evaluate("window.scrollTo(0, 1500)")
+        assert page.evaluate("window.scrollY") == 1500
+        assert page.evaluate("document.querySelector('[data-test=toast]').getBoundingClientRect().bottom") == 900
+        assert page.evaluate("document.querySelector('[data-test=bar]').getBoundingClientRect().top") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_announces_each_screen_change(browser, app_built) -> None:
+    """The live region is cleared, then set, so the same title twice in a row is announced again."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        page.evaluate("""() => { window.seen = [];
+            new MutationObserver(() => window.seen.push(document.getElementById('pa-announce').textContent))
+                .observe(document.getElementById('pa-announce'), { childList: true, characterData: true, subtree: true }); }""")
+        page.click('#pp-frame [data-test="to-overview"]')
+        page.wait_for_function("window.seen.indexOf('Overview') >= 0")
+        page.go_back()
+        page.click('#pp-frame [data-test="to-overview"]')
+        page.wait_for_function("window.seen.filter(t => t === 'Overview').length === 2")
+        assert page.evaluate("window.seen") == ["Overview", "", "Overview"]  # emptied before the repeat
         assert errors == []
     finally:
         ctx.close()
