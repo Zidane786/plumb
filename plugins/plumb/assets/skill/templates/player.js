@@ -64,12 +64,13 @@
   if (stage) { stage.appendChild(layer); stage.appendChild(card); }
   var live = el("div", "pl-live", null, { "aria-live": "polite", role: "status" });
 
-  var dock = el("section", "pl-dock pp-ui", null, { "aria-label": "Walkthrough" });
+  var dock = el("section", "pl-dock pp-ui", null, { "aria-label": "Walkthrough", id: "pl-dock" });
   dock.hidden = true;
   var dockTop = el("div", "pl-dock-top");
   var eyebrow = el("p", "pl-eyebrow");
   var leaveBtn = button("pl-btn", "Leave", { "data-pl": "leave", "aria-keyshortcuts": "Escape" });
-  var hideBtn = button("pl-btn", "Hide panel", { "data-pl": "hide", "aria-keyshortcuts": "H" });
+  var hideBtn = button("pl-btn", "Hide panel", { "data-pl": "hide", "aria-keyshortcuts": "H", "aria-controls": "pl-dock",
+    "aria-expanded": "true" });
   var topActs = el("div", "pl-group");
   topActs.appendChild(hideBtn); topActs.appendChild(leaveBtn);
   dockTop.appendChild(eyebrow); dockTop.appendChild(topActs);
@@ -100,12 +101,16 @@
   controls.appendChild(el("span", "pl-spacer"));
   controls.appendChild(restartBtn); controls.appendChild(modeBtn);
   [dockTop, dTitle, dCaption, hint, progress, controls].forEach(function (n) { dock.appendChild(n); });
-  /* Hide panel: the dock steps aside and this pill is what is left (the step's title in guide mode; play mode keeps
-     narrating in the subtitle). H or the pill's button brings the dock back; the choice is remembered per viewer. */
-  var pill = el("div", "pl-pill pp-ui", null, { role: "group", "aria-label": "Walkthrough" });
+  /* Hide panel: the dock steps aside and this pill is what is left (the step's title in guide mode, with "Do it for me"
+     on a your-turn step; play mode keeps narrating in the subtitle). H or the pill's button brings the dock back; the
+     choice is remembered per viewer. A hint after a wrong click, and the end of play, bring the dock back for that
+     moment without changing the choice. */
+  var pill = el("div", "pl-pill pp-ui", null, { role: "group", "aria-label": "Walkthrough (panel hidden)" });
   var pillTitle = el("span", "pl-pill-title");
-  var showBtn = button("pl-btn pl-primary", "Show panel", { "data-pl": "show", "aria-keyshortcuts": "H" });
-  pill.appendChild(pillTitle); pill.appendChild(showBtn);
+  var pillDo = button("pl-btn", "Do it for me", { "data-pl": "do" });
+  var showBtn = button("pl-btn pl-primary", "Show panel", { "data-pl": "show", "aria-keyshortcuts": "H",
+    "aria-controls": "pl-dock", "aria-expanded": "false" });
+  pill.appendChild(pillTitle); pill.appendChild(pillDo); pill.appendChild(showBtn);
   pill.hidden = true;
   [dock, pill, live].forEach(function (n) { (mount || document.body).appendChild(n); });
   var PANEL_KEY = "plumb.player.panel";
@@ -119,6 +124,11 @@
     } catch (err) { /* storage off (private window, blocked site data): the choice lasts for this page only */ }
   }
   function inChrome(node) { return !!node && (dock.contains(node) || pill.contains(node)); }
+  /* Focus that was on a control the panel change just hid (or that fell back to the page). */
+  function focusLost() {
+    var a = document.activeElement;
+    return !a || a === document.body || !a.getClientRects().length;
+  }
   /* While a tour runs, the first stop in the tab order jumps to its controls (the dock is last in the page). */
   var skip = el("a", "pp-skip pp-ui pl-skip", "Skip to the walkthrough", { href: "#plumb-player" });
   skip.hidden = true;
@@ -128,7 +138,7 @@
   /* ------------------------------------------------------------ the player's state */
   var T = { tour: null, mode: null, seq: [], scenes: [], pos: 0, speed: 1, paused: false, ended: false, run: 0, timer: null,
             wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, zoomTimer: null,
-            panelHidden: storedHidden() };
+            panelHidden: storedHidden(), reveal: false };
 
   function sequence(tour) {
     var seq = [];
@@ -202,18 +212,64 @@
     if (!section || !sel) return null;
     var list;
     try { list = section.querySelectorAll(sel); } catch (err) { return null; }
-    for (var i = 0; i < list.length; i++) if (seen(list[i])) return list[i];
+    var f = frame.getBoundingClientRect();
+    for (var i = 0; i < list.length; i++) if (seen(list[i], f)) return list[i];
     return null;  /* nothing of it is on screen (another state, or the screen moved on): point at nothing */
   }
+  /* The element whose box stands for a node: the node itself, or for display: contents (no box of its own) its first
+     child that has one. */
+  function shape(node) {
+    if (getComputedStyle(node).display !== "contents") return node;
+    for (var c = node.firstElementChild; c; c = c.nextElementSibling) {
+      var s = shape(c);
+      if (s && s.getClientRects().length) return s;
+    }
+    return null;
+  }
+  function rectOf(node) { return (shape(node) || node).getBoundingClientRect(); }
   /* A node the viewer can see: laid out, not visibility: hidden (computed, so also inside a hidden parent), and on the
-     frame rather than pushed off it (an off-canvas drawer moved aside with a transform). */
-  function seen(node) {
-    var r = node.getBoundingClientRect();
-    if (!node.getClientRects().length || !(r.width > 0 || r.height > 0)) return false;
-    var vis = getComputedStyle(node).visibility;
+     frame (rect f) rather than pushed off it (an off-canvas drawer moved aside with a transform). A node an inner
+     scroller has scrolled away (a wide table's far column, a lower item of a fixed-height list) is scrolled into view
+     there first, then judged. */
+  function seen(node, f) {
+    var s = shape(node);
+    if (!s || !s.getClientRects().length) return false;
+    var r = s.getBoundingClientRect();
+    if (!(r.width > 0 || r.height > 0)) return false;
+    var vis = getComputedStyle(s).visibility;
     if (vis === "hidden" || vis === "collapse") return false;
-    var f = frame.getBoundingClientRect();
+    if (reveal(s)) r = s.getBoundingClientRect();
     return r.right > f.left && r.left < f.right && r.bottom > f.top && r.top < f.bottom;
+  }
+  /* Scrolls a node into view, nearest edge and at once, inside every scroll container (overflow auto or scroll, either
+     axis) between it and the frame; the window is left alone. True when anything moved. */
+  function reveal(node) {
+    var moved = false;
+    for (var a = node.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a);
+      var sx = /auto|scroll/.test(cs.overflowX), sy = /auto|scroll/.test(cs.overflowY);
+      if (!sx && !sy) continue;
+      var r = node.getBoundingClientRect(), ar = a.getBoundingClientRect();
+      var left = ar.left + a.clientLeft, top = ar.top + a.clientTop;
+      var right = left + a.clientWidth, bottom = top + a.clientHeight;
+      var dx = !sx ? 0 : r.left < left ? r.left - left : r.right > right ? Math.min(r.right - right, r.left - left) : 0;
+      var dy = !sy ? 0 : r.top < top ? r.top - top : r.bottom > bottom ? Math.min(r.bottom - bottom, r.top - top) : 0;
+      if (dx || dy) {
+        var x0 = a.scrollLeft, y0 = a.scrollTop;
+        a.scrollLeft = x0 + dx;
+        a.scrollTop = y0 + dy;
+        if (a.scrollLeft !== x0 || a.scrollTop !== y0) moved = true;
+      }
+    }
+    return moved;
+  }
+  /* Every scroll the player makes is instant, whatever scroll-behavior a screen sets (it reads positions right after). */
+  function scrollToNode(node, opts) {
+    opts.behavior = "instant";
+    try { node.scrollIntoView(opts); } catch (err) { delete opts.behavior; node.scrollIntoView(opts); }
+  }
+  function scrollWindowBy(dy) {
+    try { window.scrollBy({ top: dy, left: 0, behavior: "instant" }); } catch (err) { window.scrollBy(0, dy); }
   }
   /* The window's top edge below the shell's sticky bar, and the room the dock (or its pill) takes at the bottom. */
   function topInset() {
@@ -231,7 +287,7 @@
     return cur.page === "screen" && cur.screen === step.screen;
   }
   function box(node) {
-    var s = stage.getBoundingClientRect(), r = node.getBoundingClientRect();
+    var s = stage.getBoundingClientRect(), r = rectOf(node);
     return { x: r.left - s.left, y: r.top - s.top, w: r.width, h: r.height };
   }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -270,7 +326,7 @@
     var f = frame.getBoundingClientRect();
     var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
     nodes.forEach(function (n) {
-      var r = n.getBoundingClientRect();
+      var r = rectOf(n);
       x1 = Math.min(x1, r.left); y1 = Math.min(y1, r.top); x2 = Math.max(x2, r.right); y2 = Math.max(y2, r.bottom);
     });
     var w = Math.max(1, x2 - x1), h = Math.max(1, y2 - y1), s = stage.getBoundingClientRect();
@@ -405,29 +461,33 @@
     else { x = b.x - w - gap; y = b.y + b.h / 2 - h / 2; }
     put(n, clamp(x, 8, Math.max(8, W - w - 8)), clamp(y, 4, Math.max(4, H - h - 4)));
   }
-  /* Scrolls the step's first target into the room between the sticky bar and the dock. One taller than that room goes
-     to its top edge when the step has labels (they sit at the top of what they mark, so the first stays in view),
-     else to its nearest edge, and not at all while part of it is in view, so a tall area already filling the window does
-     not jump. */
-  function bringIntoView(node, labelled) {
-    var r = node.getBoundingClientRect(), top = topInset(), bottom = window.innerHeight - chromeHeight();
+  /* Scrolls the step's first target into the room between the sticky bar and the dock. One taller than that room:
+     with labels, its top edge and its topmost label come into view together when they fit, else the topmost label;
+     without labels, it goes to its nearest edge, and not at all while part of it is in view, so a tall area already
+     filling the window does not jump. */
+  function bringIntoView(node, labels) {
+    var el0 = shape(node) || node;
+    var r = el0.getBoundingClientRect(), top = topInset(), bottom = window.innerHeight - chromeHeight();
     var margin = 32;
     if (r.height <= bottom - top) {
-      if (r.top < top || r.bottom > bottom) node.scrollIntoView({ block: "center" });
+      if (r.top < top || r.bottom > bottom) scrollToNode(el0, { block: "center", inline: "nearest" });
       return;
     }
-    if (!labelled) {
-      if (r.bottom <= top || r.top >= bottom) node.scrollIntoView({ block: "nearest" });
+    if (!labels.length) {
+      if (r.bottom <= top || r.top >= bottom) scrollToNode(el0, { block: "nearest", inline: "nearest" });
       return;
     }
-    if (r.top >= top + margin && r.top <= bottom - 3 * margin) return;  /* its top edge is in view already */
-    node.scrollIntoView({ block: "start" });
-    var gap = top + margin - node.getBoundingClientRect().top;
-    if (gap > 0) window.scrollBy(0, -gap);
+    var label = Infinity;
+    labels.forEach(function (n) { label = Math.min(label, rectOf(n).top); });
+    var hi = Math.min(r.top, label), lo = Math.max(r.top, label);
+    var want = lo - hi <= bottom - top - 3 * margin ? [hi, lo] : [label, label];
+    if (want[0] >= top + margin && want[1] <= bottom - 2 * margin) return;  /* in view already */
+    scrollWindowBy(want[0] - (top + margin));
   }
   function decorate(step) {
     var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
-    if (targets.length) bringIntoView(targets[0], step.labels.length > 0);
+    var labelled = step.labels.map(function (lab) { return find(step, lab.target); }).filter(Boolean);
+    if (targets.length) bringIntoView(targets[0], labelled);
     T.redraw = function () { draw(step); };
     if (step.point === "zoom" && targets.length && zoom(targets)) {
       T.zoomTimer = setTimeout(function () { if (T.redraw) T.redraw(); }, calm() ? 0 : 400);
@@ -546,6 +606,14 @@
       : "Choose “" + a.value + "” in " + what) + where + ".");
     hint.textContent = text;
     hint.hidden = false;
+    if (dock.hidden && T.tour) {
+      /* the panel is hidden: bring it back for this step (the choice stays), and say the hint */
+      var had = inChrome(document.activeElement);
+      T.reveal = true;
+      showPanel();
+      if (had && focusLost()) focusPrimary();
+      live.textContent = text;
+    }
     layer.classList.remove("pl-flash");
     void layer.offsetWidth;
     layer.classList.add("pl-flash");
@@ -631,6 +699,7 @@
     dTitle.textContent = itemTitle(item);
     pillTitle.textContent = guide ? itemTitle(item) : "";
     pillTitle.hidden = !guide;
+    pillDo.hidden = !(guide && item.kind === "step" && item.step.yourTurn);
     dCaption.textContent = item.kind === "card" ? (item.text || "") : (item.step.caption || "");
     var turn = guide && item.kind === "step" && item.step.yourTurn;
     navGroup.hidden = !guide;
@@ -680,6 +749,8 @@
     T.pos = clamp(pos, 0, T.seq.length - 1);
     T.ended = false;
     T.spent = 0;
+    T.reveal = false;
+    if (T.panelHidden && !dock.hidden) showPanel();  /* back to the viewer's choice after a hint or the end of play */
     var item = T.seq[T.pos];
     T.plan = planOf(item);
     if (item.kind === "step") api.go(item.step.screen, item.step.state, { history: null });
@@ -731,6 +802,9 @@
     T.paused = true;
     subtitle.hidden = true;
     paintDock();
+    var had = inChrome(document.activeElement);
+    showPanel();  /* Play again and Leave are in the panel: it comes back at the end, the choice stays */
+    if (had && focusLost()) focusPrimary();
     fill.style.width = "100%";
     live.textContent = "Played to the end. Press Play again to watch it again, or Leave to look around.";
     emit();
@@ -857,7 +931,7 @@
   /* Shows the dock, or the pill in its place while the viewer keeps the panel hidden, and re-places what sits above
      them (subtitle, title card, labels). */
   function showPanel() {
-    var hide = !!T.tour && T.panelHidden;
+    var hide = !!T.tour && T.panelHidden && !T.reveal && !T.ended;
     dock.hidden = !T.tour || hide;
     pill.hidden = !hide;
     sizeDock();
@@ -868,6 +942,7 @@
   function setPanel(hide) {
     if (!T.tour) return;
     var had = inChrome(document.activeElement);
+    T.reveal = false;
     T.panelHidden = !!hide;
     storeHidden(T.panelHidden);
     showPanel();
@@ -883,13 +958,15 @@
   showBtn.addEventListener("click", function () { setPanel(false); });
   backBtn.addEventListener("click", back);
   nextBtn.addEventListener("click", next);
-  doBtn.addEventListener("click", function () {
+  function doItForMe() {
     var item = T.seq[T.pos];
     if (!item || item.kind !== "step") return;
     var run = T.run;
     actNow(item.step);
     setTimeout(function () { advance(run); }, 60);
-  });
+  }
+  doBtn.addEventListener("click", doItForMe);
+  pillDo.addEventListener("click", doItForMe);
   playBtn.addEventListener("click", function () { setPaused(!T.paused); });
   restartBtn.addEventListener("click", function () { if (T.tour) { T.paused = false; render(0, { focus: true }); } });
   modeBtn.addEventListener("click", function () { setMode(T.mode === "guide" ? "play" : "guide"); });
@@ -898,12 +975,16 @@
   document.addEventListener("keydown", function (e) {
     if (!T.tour || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     var t = e.target;
-    var typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""));
+    var typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") ||
+      /^(textbox|combobox|searchbox|spinbutton)$/.test((t.getAttribute && t.getAttribute("role")) || ""));
     if (e.key === "Escape") { e.preventDefault(); leave(); return; }
     if (typing) return;
     if (e.key === "ArrowRight") { e.preventDefault(); next(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); back(); }
-    else if ((e.key === "h" || e.key === "H") && !e.shiftKey) { e.preventDefault(); setPanel(!T.panelHidden); }
+    else if ((e.key === "h" || e.key === "H") && !e.shiftKey) {
+      e.preventDefault();
+      if (!e.repeat) setPanel(!dock.hidden);  /* holding H toggles once */
+    }
     else if ((e.key === " " || e.key === "Spacebar") && T.mode === "play") {
       if (t && t.closest && t.closest("button, a[href], [role=button], summary")) return;
       e.preventDefault();
@@ -1019,7 +1100,7 @@
   function flash(node) {
     if (T.tour || !node) return;
     clearOverlays();
-    node.scrollIntoView({ block: "nearest" });
+    scrollToNode(shape(node) || node, { block: "nearest" });
     ring("pl-ring", box(node));
     setTimeout(function () { if (!T.tour) clearOverlays(); }, 1600);
   }

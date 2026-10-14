@@ -120,7 +120,7 @@ body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
   color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong); border-radius: 999px;
   box-shadow: var(--pl-chrome-shadow);
 }
-.pl-pill[hidden] { display: none; }
+.pl-pill[hidden], .pl-pill [hidden] { display: none; }
 .pl-pill-title { min-width: 0; padding-left: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .pl-pill .pl-btn { flex: none; }
 .pl-dock .pl-title { margin: 0; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }

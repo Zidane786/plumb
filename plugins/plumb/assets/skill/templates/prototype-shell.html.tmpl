@@ -180,11 +180,16 @@ body {
   background-image: radial-gradient(color-mix(in srgb, var(--pl-text) 14%, transparent) 1px, transparent 1.4px);
   background-size: 18px 18px;
 }
-/* The frame is the screen's world: a container (so its md breakpoint follows the frame) and the containing block for
-   anything the screen fixes in place (toasts, sheets). */
+/* The frame is the screen's world:
+   - a size container, so its md breakpoint follows the frame (container-type alone makes no containing block);
+   - contain: layout makes it the containing block for anything the screen fixes in place (scrims, dialogs, toasts,
+     sheets): they sit inside the frame, as on a device of that width, never over the shell's toolbar or screens list,
+     and a zoom step's transform does not move them. A dialog that a state change opens is scrolled into view;
+   - isolation: a screen's own z-index stays inside the frame, under the walkthrough player. */
 .pp-frame {
   container: plumb-frame / inline-size;
-  isolation: isolate; /* a screen's own z-index (dialogs, toasts) stays inside the frame, under the walkthrough */
+  contain: layout;
+  isolation: isolate;
   width: 100%; min-height: 34rem; overflow: hidden;
   background: var(--pl-bg); color: var(--pl-text);
   border: 1px solid var(--pl-border); border-radius: 12px; box-shadow: var(--pl-shadow-lg);
@@ -432,15 +437,37 @@ body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
     }
     else { screensLink.setAttribute("aria-current", "page"); decisionsLink.removeAttribute("aria-current"); }
   }
+  /* Dialogs on show in a screen: dialog[open], role dialog / alertdialog, aria-modal. */
+  function openDialogs(section) {
+    return Array.prototype.filter.call(
+      section.querySelectorAll("dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]"),
+      function (el) {
+        var vis = getComputedStyle(el).visibility;
+        return el.getClientRects().length > 0 && vis !== "hidden" && vis !== "collapse";
+      });
+  }
+  /* A same-screen state change that opens a dialog scrolls it into view (the frame holds a fixed dialog, so on a tall
+     screen it can sit below the window); a dialog that was already on show never moves the page. */
+  function showOpened(section, before) {
+    var fresh = openDialogs(section).filter(function (el) { return before.indexOf(el) < 0; })[0];
+    if (!fresh) return;
+    var bar = document.querySelector(".pp-bar"), r = fresh.getBoundingClientRect();
+    var top = bar && /sticky|fixed/.test(getComputedStyle(bar).position) ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+    if (r.top >= top && r.bottom <= window.innerHeight) return;
+    var opts = { block: r.height <= window.innerHeight - top ? "center" : "start", inline: "nearest", behavior: "instant" };
+    try { fresh.scrollIntoView(opts); } catch (err) { delete opts.behavior; fresh.scrollIntoView(opts); }
+  }
   function show(id, state, opts) {
     opts = opts || {};
     var s = byId[id];
     if (!s) return false;
     if (!state || s.states.indexOf(state) < 0) state = s.states[0];
     var same = current.page === "screen" && current.screen === id && current.state === state;
+    var opened = !same && current.page === "screen" && current.screen === id ? openDialogs(sections[id]) : null;
     if (!same) {
       Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
       outerStates(sections[id]).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+      if (opened) showOpened(sections[id], opened);
       each("[data-states-for]", function (group) {
         var mine = group.getAttribute("data-states-for") === id;
         group.hidden = !mine;

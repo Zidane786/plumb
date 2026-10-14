@@ -84,6 +84,10 @@ any system exists: each direction is a candidate system, so there Effective HTML
 - **Every state** the screen can be in, designed, not improvised: loading, empty, error, success, disabled, long text,
   zero, offline where relevant; every control state (default, hover, focus, pressed, disabled, loading).
 - **Working interactions:** links, tabs, dialogs, menus, form validation and toasts work as they will in the product.
+  In `prototype.html` the frame is the containing block for anything a screen fixes in place (a `position: fixed`
+  scrim, dialog or toast sits inside the frame, as on a device of that width); a state change that opens a dialog
+  (`dialog[open]`, `role="dialog"` / `"alertdialog"`, `aria-modal="true"`) scrolls it into view, and a dialog that was
+  already on show never moves the page.
 - **Keyboard and focus:** every control reachable by Tab in a sensible order, a visible focus ring (the focus token),
   Esc closes what opened, labels on every field and icon-only button.
 - **Both themes:** check light and dark; nothing disappears or loses contrast in dark.

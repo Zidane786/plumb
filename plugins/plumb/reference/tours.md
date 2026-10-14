@@ -27,15 +27,23 @@ to the walkthrough.
 - **Hide panel** (the button at the top of the walkthrough's panel, or the `H` key) moves the panel out of the way of
   the screen. A small pill stays at the bottom of the window: in guide mode it names the step, in play mode it is only
   the "Show panel" button (the subtitle keeps narrating). `H` again, or the pill's button, brings the panel back. The
-  arrow keys, Space and Esc still work while it is hidden. `H` does nothing while you type in a field or with Shift,
-  Ctrl, Alt or Cmd held. The choice is remembered in this browser (`localStorage`; with storage off it lasts for the
-  page).
+  arrow keys, Space and Esc still work while it is hidden. On a "your turn" step the pill also offers "Do it for me";
+  a wrong click brings the panel back for that step, with the hint shown and announced; at the end of play the panel
+  comes back with "Play again". Neither changes your choice: the next step hides it again. `H` does nothing while you
+  type in a field (also a `role=textbox`, `combobox`, `searchbox` or `spinbutton` widget), with Shift, Ctrl, Alt or Cmd
+  held, or as a held key repeats. The choice is remembered in this browser (`localStorage`; with storage off it lasts
+  for the page).
 - **On top, always:** the screen frame is its own stacking context, so a screen's own dialogs, toasts and sheets
-  (whatever their `z-index`) stay under the panel, the subtitle, the cursor and the labels.
+  (whatever their `z-index`) stay under the panel, the subtitle, the cursor and the labels. In `prototype.html` the
+  frame is also the containing block for what a screen fixes in place (scrims, dialogs, toasts), so they sit inside the
+  frame, as on a device of that width, and never cover the toolbar or the screens list.
 - **What it points at:** the first element of a selector that is visible: an element hidden with `visibility: hidden`
-  (also inside a hidden parent) or pushed off the frame (an off-canvas drawer) is skipped.
-- **Long pages:** a step scrolls its element into the room between the top bar and the panel. An element taller than
-  that room scrolls to its top edge when the step has labels (so the first label shows), else only as far as needed.
+  (also inside a hidden parent) or pushed off the frame (an off-canvas drawer) is skipped. One that an inner scroller
+  has scrolled away (a wide table's far column, a lower item of a fixed-height list) is scrolled into view there first.
+  A `display: contents` element is pointed at through its first child that has a box.
+- **Long pages:** a step scrolls its element into the room between the top bar and the panel, at once (whatever
+  `scroll-behavior` the page sets). For an element taller than that room, its top edge and its topmost label come into
+  view together when they fit, else the topmost label; with no labels it scrolls only when none of it is in view.
   Title cards stay pinned in the window.
 - **Room for the screen:** while a tour runs, the screens list and the "Why it looks like this" / Guide rail fold away,
   so the frame keeps the width the screens' desktop layout needs (their `@container plumb-frame (min-width: 48rem)`

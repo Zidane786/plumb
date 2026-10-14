@@ -1251,8 +1251,11 @@ def test_player_colours_are_tokens_or_named_video_colours() -> None:
 
 LAYERS_REL = f"{DOCS}/prototype/screens/layers.html"
 LONG_REL = f"{DOCS}/prototype/screens/long.html"
-# A screen with its own stacking (a fixed scrim at z-index 60, a dialog at 9999), and a target selector that matches
-# an element hidden by visibility (itself, or through its parent) and one pushed off the frame before the one shown.
+# A screen with its own stacking (a fixed scrim at z-index 60, a dialog at 9999); a target selector that matches an
+# element hidden by visibility (itself, or through its parent) and one pushed off the frame before the one shown;
+# targets an inner scroller has scrolled away (a wide table's far column, the last item of a fixed-height list); a
+# display: contents wrapper; a custom text widget (role=textbox); and a state with a fixed toast.
+LIST_ITEMS = "".join(f"<li>Item {i}</li>" for i in range(1, 40)) + '<li class="last">The last item</li>'
 LAYERS = """<style>
 [data-screen="layers"] { position: relative; padding: var(--spacing-6) var(--spacing-4); }
 [data-screen="layers"] .scrim { position: fixed; inset: 0; z-index: 60; background: var(--color-scrim); }
@@ -1260,6 +1263,13 @@ LAYERS = """<style>
   top: var(--spacing-6); z-index: 9999; padding: var(--spacing-6); background: var(--color-surface); }
 [data-screen="layers"] .gone { visibility: hidden; }
 [data-screen="layers"] .away { position: absolute; left: 0; top: 0; transform: translateX(-200%); }
+[data-screen="layers"] .wide { overflow-x: auto; max-width: 100%; }
+[data-screen="layers"] .wide table { width: 3000px; }
+[data-screen="layers"] .list { height: 120px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+[data-screen="layers"] .list li { padding: var(--spacing-2); }
+[data-screen="layers"] .contents-wrap { display: contents; }
+[data-screen="layers"] .toast { position: fixed; right: var(--spacing-4); bottom: var(--spacing-4);
+  padding: var(--spacing-3); background: var(--color-surface); }
 </style>
 <section data-screen="layers" data-title="Layers" data-order="4">
   <h2>Layers</h2>
@@ -1268,22 +1278,43 @@ LAYERS = """<style>
     <div class="gone"><a href="#screen-home" class="go" data-test="hidden-parent-go">Inside hidden</a></div>
     <a href="#screen-home" class="go away" data-test="away-go">Away</a>
     <p><a href="#screen-home" class="go" data-test="shown-go">Shown</a></p>
+    <div class="wide"><table><tr><td>First column</td><td>Middle column</td><td class="far">Far column</td></tr></table></div>
+    <ul class="list">""" + LIST_ITEMS + """</ul>
+    <div class="contents-wrap"><p class="inside">Inside a display: contents wrapper</p></div>
+    <div class="rtb" role="textbox" tabindex="0" aria-label="Notes">Notes</div>
   </div>
   <div data-state="dialog">
     <div class="scrim"></div>
     <div class="dialog-box" role="dialog" aria-label="A dialog"><p>The dialog</p></div>
   </div>
+  <div data-state="toast">
+    <p><span class="zoom-me">Zoom</span></p>
+    <div class="toast" role="status">Saved</div>
+  </div>
 </section>
 """
+# A tall screen: a label at its top and one in its middle, a centred fixed dialog in one state, and a dialog that is on
+# show in every state.
 LONG = """<style>
 [data-screen="long"] { padding: var(--spacing-6) var(--spacing-4); }
 [data-screen="long"] .long { min-height: 4000px; }
+[data-screen="long"] .mid { margin-top: 1800px; }
+[data-screen="long"] .modal { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: var(--spacing-6); background: var(--color-surface); }
 </style>
 <section data-screen="long" data-title="Long page" data-order="5">
   <h2>Long page</h2>
   <div data-state="ready">
-    <div class="long"><p class="first">The first thing</p><p>More below</p></div>
+    <div class="long"><p class="first">The first thing</p><p class="mid">In the middle</p><p>More below</p></div>
   </div>
+  <div data-state="dialog">
+    <div class="long"><p class="first">Under the dialog</p></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Confirm"><p>Are you sure?</p></div>
+  </div>
+  <div data-state="plain">
+    <div class="long"><p class="first">Nothing opens here</p></div>
+  </div>
+  <aside class="always" role="dialog" aria-label="Always on show"><p>Always here</p></aside>
 </section>
 """
 
@@ -1300,6 +1331,18 @@ def staged_tour() -> dict:
                  "point": "ring", "labels": [{"target": ".long .first", "text": "First"}]},
                 {"screen": "long", "title": "A tall area, no labels", "caption": "Nearest.", "target": ".long",
                  "point": "ring"},
+                {"screen": "layers", "state": "ready", "title": "The far column", "caption": "Scrolled sideways.",
+                 "target": ".wide .far", "point": "ring"},
+                {"screen": "layers", "state": "ready", "title": "The last item", "caption": "Scrolled down the list.",
+                 "target": ".list .last", "point": "ring"},
+                {"screen": "layers", "state": "ready", "title": "A wrapper", "caption": "It has no box of its own.",
+                 "target": ".contents-wrap", "point": "ring"},
+                {"screen": "layers", "state": "toast", "title": "The toast", "caption": "A fixed toast.",
+                 "target": ".toast", "point": "ring"},
+                {"screen": "layers", "state": "toast", "title": "Zoom", "caption": "Closer.", "target": ".zoom-me",
+                 "point": "zoom"},
+                {"screen": "long", "title": "A label in the middle", "caption": "Halfway down.", "target": ".long",
+                 "point": "ring", "labels": [{"target": ".long .mid", "text": "Middle"}]},
             ]}
 
 
@@ -1354,23 +1397,31 @@ def test_find_skips_hidden_and_off_frame_targets(browser, staged) -> None:
         ctx.close()
 
 
-@pytest.mark.parametrize("width", [1280, 390])
-def test_a_tall_labelled_target_keeps_its_first_label_in_view(browser, staged, width: int) -> None:
+LABEL_IN_VIEW = """() => { var r = document.querySelector('.pl-label').getBoundingClientRect();
+    var d = document.querySelector('.pl-dock').getBoundingClientRect();
+    return {top: r.top, bottom: r.bottom, dock: d.top}; }"""
+
+
+@pytest.mark.parametrize("width, smooth", [(1280, False), (390, False), (1280, True)])
+def test_a_tall_labelled_target_keeps_its_first_label_in_view(browser, staged, width: int, smooth: bool) -> None:
     ctx, page, errors, _ = _open(browser, staged / PROTO_REL, width=width)
     try:
-        page.evaluate("window.plumbPrototype.go('long'); window.scrollTo(0, 2500)")
+        if smooth:  # every scroll the player makes is instant, whatever the page's scroll-behavior
+            page.evaluate("document.documentElement.style.scrollBehavior = 'smooth'")
+        page.evaluate("window.plumbPrototype.go('long'); window.scrollTo({top: 2500, behavior: 'instant'})")
         _start(page, "staged", "guide", step=3)
-        page.wait_for_timeout(150)
-        label = page.evaluate("""() => { var r = document.querySelector('.pl-label').getBoundingClientRect();
-            var d = document.querySelector('.pl-dock').getBoundingClientRect();
-            return {top: r.top, bottom: r.bottom, dock: d.top}; }""")
+        label = page.evaluate(LABEL_IN_VIEW)
         assert label["top"] >= 0 and label["bottom"] <= label["dock"], label
         assert page.evaluate(ON_TOP, ".pl-label"), "the first label is covered"
         # no labels: the nearest edge, so a tall area that already fills the view does not jump
         before = page.evaluate("window.scrollY")
         page.click(".pl-dock [data-pl=next]")
-        page.wait_for_timeout(100)
         assert page.evaluate("window.scrollY") == before
+        # a label halfway down a tall target comes into view (it cannot share the window with the target's top)
+        _start(page, "staged", "guide", step=10)
+        label = page.evaluate(LABEL_IN_VIEW)
+        assert label["top"] >= 0 and label["bottom"] <= label["dock"], label
+        assert page.inner_text(".pl-label") == "Middle"
         assert errors == []
     finally:
         ctx.close()
@@ -1617,5 +1668,185 @@ def test_the_shell_maps_the_player_roles_to_format_names_with_todays_fallbacks()
                  "--pl-radius: var(--radius-md, 8px);", "--pl-shadow-lg: var(--shadow-popover, "):
         assert line in shell, line
     assert re.search(r"\.pp-frame \{[^}]*isolation: isolate", shell)
+    assert re.search(r"\.pp-frame \{[^}]*contain: layout", shell)
     css = read(REPO_TEMPLATES / "player.css")
     assert "isolation: isolate" in css and "var(--radius-lg, 14px)" in css
+    # the window is the app view's frame: the player must not make #pp-frame a containing block there
+    assert "contain:" not in css
+
+
+# ---------------------------------------------------------------- review round 1: scrollers, fixed layers, hidden panel
+
+RINGS = """() => [...document.querySelectorAll('.pl-ring')].map(function (n) {
+    var r = n.getBoundingClientRect(); return [r.left + 4, r.top + 4, r.width - 8, r.height - 8]; })"""
+RECT = """(sel) => { var r = document.querySelector(sel).getBoundingClientRect();
+    return [r.left, r.top, r.width, r.height]; }"""
+IN_WINDOW = """(sel) => { var r = document.querySelector(sel).getBoundingClientRect();
+    var f = document.getElementById('pp-frame').getBoundingClientRect();
+    return r.left >= f.left - 1 && r.right <= f.right + 1 && r.top >= 0 && r.bottom <= window.innerHeight; }"""
+
+
+def _ringed(page, sel: str) -> None:
+    rings, want = page.evaluate(RINGS), page.evaluate(RECT, sel)
+    assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want)), (sel, rings, want)
+
+
+@pytest.mark.parametrize("step, sel", [(5, "#pp-frame .wide .far"), (6, "#pp-frame .list .last")])
+def test_a_target_scrolled_away_inside_an_inner_scroller_is_brought_in(browser, staged, step: int, sel: str) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=step)
+        _ringed(page, sel)
+        assert page.evaluate(IN_WINDOW, sel), f"{sel} is not in view"
+        _start(page, "staged", "guide", step=2)
+        _ringed(page, "#pp-frame [data-test=shown-go]")  # an off-canvas drawer is still skipped
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_display_contents_target_uses_its_first_rendered_child(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=7)
+        _ringed(page, "#pp-frame .contents-wrap .inside")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_fixed_scrim_stays_inside_the_frame(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, hash_="#screen-layers/dialog")
+    try:
+        scrim = page.evaluate(RECT, '#pp-frame [data-screen="layers"] .scrim')
+        frame = page.evaluate(RECT, "#pp-frame")
+        assert all(abs(a - b) <= 2 for a, b in zip(scrim, frame)), (scrim, frame)
+        for sel in ("#pp-viewport [data-viewport=phone]", '#pp-toolbar [data-states-for="layers"] [data-set-state="ready"]',
+                    ".pp-side [data-nav]"):
+            assert page.evaluate(ON_TOP, sel), f"{sel} is covered by the screen's scrim"
+        page.click('.pp-side [data-nav="home"]')
+        assert _visible_screen(page) == "home"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_fixed_toast_in_the_phone_frame_is_pointed_at_and_zoom_keeps_it_in_place(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        page.evaluate("window.plumbPrototype.setViewport('phone')")
+        _start(page, "staged", "guide", step=8)
+        _ringed(page, "#pp-frame .toast")
+        inside = """() => { var t = document.querySelector('#pp-frame .toast').getBoundingClientRect();
+            var f = document.getElementById('pp-frame').getBoundingClientRect();
+            return t.left >= f.left && t.right <= f.right && t.top >= f.top && t.bottom <= f.bottom; }"""
+        assert page.evaluate(inside), "the toast sits inside the phone frame"
+        _start(page, "staged", "guide", step=9)
+        page.wait_for_timeout(500)
+        assert page.evaluate("getComputedStyle(document.getElementById('pp-frame')).transform") not in ("none", "")
+        assert page.evaluate(inside), "a zoom step's transform does not move a fixed toast out of the frame"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_state_change_that_opens_a_dialog_scrolls_it_into_view(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, hash_="#screen-long")
+    try:
+        switch = '#pp-toolbar [data-states-for="long"] [data-set-state="{}"]'
+        assert page.evaluate("window.scrollY") == 0
+        page.click(switch.format("dialog"))
+        box = page.evaluate(RECT, '#pp-frame [data-screen="long"] .modal')
+        assert box[1] >= 0 and box[1] + box[3] <= 900, box
+        # a dialog that was already on show (the aside in every state) never moves the page
+        page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
+        page.click(switch.format("ready"))
+        page.click(switch.format("plain"))
+        assert page.evaluate("window.scrollY") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_with_the_panel_hidden_a_your_turn_hint_brings_it_back_for_that_step(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "lesson", "guide", step=1)
+        page.click(".pl-dock [data-pl=hide]")
+        assert not _dock_shown(page) and _shown(page, ".pl-pill [data-pl=do]") == 1, "Do it for me stays reachable"
+        page.click('#pp-frame [data-screen="booking"] h2')
+        assert _dock_shown(page) and _shown(page, ".pl-hint") == 1
+        hint = page.inner_text(".pl-hint")
+        assert "Book the table" in hint and hint in page.inner_text(".pl-live"), "the hint is shown and announced"
+        page.click(".pl-dock [data-pl=do]")
+        _wait_pos(page, 1)
+        assert not _dock_shown(page) and _pill(page)["shown"], "the next step keeps the viewer's choice"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_pills_do_it_for_me_advances_a_your_turn_step(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "lesson", "guide", step=1)
+        page.keyboard.press("h")
+        page.click(".pl-pill [data-pl=do]")
+        _wait_pos(page, 1)
+        assert _shown(page, ".pl-pill [data-pl=do]") == 0, "only a your-turn step offers it"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_end_of_play_brings_the_panel_back_for_play_again(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "lesson", "play", speed=2)
+        page.click(".pl-dock [data-pl=hide]")
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=15000)
+        assert _dock_shown(page) and page.inner_text(".pl-dock [data-pl=play]") == "Play again"
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "play"
+        page.click(".pl-dock [data-pl=play]")
+        assert not _dock_shown(page) and _pill(page)["shown"], "playing again keeps the viewer's choice"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_hide_and_show_say_what_they_control(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "demo", "guide", step=1)
+        attrs = """(sel) => { var b = document.querySelector(sel);
+            return [b.getAttribute('aria-controls'), b.getAttribute('aria-expanded')]; }"""
+        assert page.evaluate(attrs, ".pl-dock [data-pl=hide]") == ["pl-dock", "true"]
+        assert page.evaluate(attrs, ".pl-pill [data-pl=show]") == ["pl-dock", "false"]
+        assert page.evaluate("document.getElementById('pl-dock') === document.querySelector('.pl-dock')")
+        labels = page.evaluate("[document.querySelector('.pl-dock').getAttribute('aria-label'), "
+                               "document.querySelector('.pl-pill').getAttribute('aria-label')]")
+        assert labels[0] != labels[1] and "hidden" in labels[1], labels
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_holding_h_toggles_once_and_custom_text_widgets_count_as_typing(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=2)
+        page.evaluate("document.activeElement.blur()")
+        page.keyboard.down("h")
+        page.keyboard.down("h")  # a held key repeats
+        page.keyboard.down("h")
+        page.keyboard.up("h")
+        assert not _dock_shown(page), "holding H hides the panel once"
+        page.keyboard.press("h")
+        assert _dock_shown(page)
+        page.focus("#pp-frame .rtb")
+        page.keyboard.press("h")
+        page.keyboard.press("ArrowRight")
+        assert _dock_shown(page) and _state(page)["step"] == 2, "a role=textbox widget is typing"
+        assert errors == []
+    finally:
+        ctx.close()

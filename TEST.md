@@ -473,7 +473,8 @@ print("frame", frame, "| side columns shown", cols, "| pill", pill, "| dock hidd
 **Expected:** `frame` at least 768 at both widths (the screens list and the rail fold away while the tour runs),
 `side columns shown 0`, `pill Show panel` (play mode: only the button; the subtitle keeps playing), `dock hidden True`.
 Press `h` again: the panel is back. Reload: a panel you hid stays hidden until you show it. Press Esc: the screens
-list and the rail come back.
+list and the rail come back. In guide mode on a "your turn" step with the panel hidden, the pill offers "Do it for
+me", and a wrong click brings the panel back with the hint.
 
 ---
 
