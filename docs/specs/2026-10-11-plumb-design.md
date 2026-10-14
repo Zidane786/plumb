@@ -234,6 +234,21 @@ screen's id, title, states, its route and the source files that implement it. Ed
 file updates both pages, so they cannot disagree. The token block in every page comes from
 `build-tokens.py --css-vars`, so prototypes are token-true, and `audit.py` must exit 0 on them.
 
+**Shared files.** CSS and scripts several screens use live once in `<screens folder>/_shared/*.css` and `*.js` (the
+main `prototype/screens/` and each variant's `screens/`; a file starting with `_` or `.` is never a screen). The CSS
+is inlined once per page in name order, selectors scoped by the author (`[data-screen]`; anything else is a warning);
+each JS file runs for every screen, before the screen's own script, as `function (screen, plumb)` with the same API, in
+name order, in every page (the catalogue's copies and the tour pages included). They are part of every screen's
+approval hash (with none, it is the screen file's own hash, so approvals recorded before stand): editing one makes
+those approvals stale, and the build names the file. The same contract as a screen file: no `</script>` /
+`</style>` inside, nothing loaded from the network or another file.
+
+**Change ids.** A change may mark each element it touched `data-guide="<ID> · what changed and why"`, `<ID>` a letter
+and digits (`F01`). A proposal lists its ids in `proposals/<name>/changes.md` (`- **F01** title: what and why`);
+`--proposal` refuses an id used but not listed (naming the screen and the id), warns about a listed id no screen uses,
+and the index lists the changes. The main screens' ids are checked only when `docs/design/prototype/changes.md`
+exists. The Guide panel shows the id as a chip; data-guide text without an id is never checked.
+
 **Decisions are visible in the prototype.** `build-prototype.py` reads `docs/design/decisions.md`
 and shows, on every screen, a "Why it looks like this" panel with the decisions that affect it
 (id, date, who, the options considered, links to the proposals), and adds a Decisions page to both
@@ -784,7 +799,8 @@ them.
 It is the **only writer of `screens.json`** (as Slate's `board.py` is of `tickets.json`): skills
 change it through commands, never by editing it. `--map <id> --route=<route> --files <globs>`
 sets a screen's route and source files (confirmed with you); `--approve <id>` records your
-approval (git `user.name`, date, hash of the screen file); `--synced <id>` marks a screen updated
+approval (git `user.name`, date, hash of the screen file and of its folder's `_shared/` files, whose own
+hashes are kept so a stale approval names the shared file that changed); `--synced <id>` marks a screen updated
 from already-built code. `--check` exits 1 when a page (`app.html` included) is stale or missing,
 the token blocks are stale, or a
 walkthrough step names a screen, state or element that does not exist. Same exit-code and error conventions as §6.1.
@@ -796,7 +812,10 @@ inlined) and `proposals/<name>/index.html` with the variants side by side, each 
 app.html to demo. The pages are generated (never edited) and
 byte-stable; `--check --proposal <name>` exits 1 when one is stale; `screens.json` is not touched. A variant or
 proposal folder that leads outside the proposals folder is refused. When tokens change, the main build and
-`build-tokens.py` refresh the token block of every generated proposal page, so old variants keep rendering.
+`build-tokens.py` refresh the token block of every generated proposal page, so old variants keep rendering. With
+`--proposal` (and `--check`) every change id a variant's screens use must be listed in `proposals/<name>/changes.md`
+(exit 2 naming the screen file and the id; a listed id no screen uses is a warning; §3.4 "Change ids"); shared files
+(§3.4 "Shared files") are read from each variant's `screens/_shared/` and inlined into that variant's pages only.
 
 ## 7. UX layer
 

@@ -170,7 +170,17 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    data: images …; or git-ignore the pages …` line. `PY SKILL/scripts/build-prototype.py --check` prints the same
    warning and still exits 0. Delete `big.html`, build again: no warning.
 5. `PY SKILL/scripts/build-prototype.py --approve home` → `approved home (<your git name>, <today>)`.
-6. `PY SKILL/scripts/audit.py docs/design/prototype/screens` → no errors (warnings such as `screen-not-built` are
+6. A shared file: `mkdir -p docs/design/prototype/screens/_shared` and
+   `printf '[data-screen] h2 { letter-spacing: 0.01em; }\n' > docs/design/prototype/screens/_shared/base.css`, then
+   `PY SKILL/scripts/build-prototype.py`.
+   **Expect:** exit 0, `note: screen home changed since <your git name> approved it on <today> (the shared file:
+   docs/design/prototype/screens/_shared/base.css was added; shared files reach every screen)` and an `ask the user:`
+   line; `grep -c 'data-shared-style="_shared/base.css"' docs/design/prototype.html` → `1`; the screens list still
+   shows one screen. Approve home again (step 5): the next build has no note. Then
+   `printf 'fetch("/x");\n' > docs/design/prototype/screens/_shared/x.js` and build: exit 2 with `error:
+   docs/design/prototype/screens/_shared/x.js:1: "fetch(" loads from the network or another file; a shared file must
+   not` and a `fix:` line. Delete `x.js`.
+7. `PY SKILL/scripts/audit.py docs/design/prototype/screens` → no errors (warnings such as `screen-not-built` are
    expected: the screen isn't built yet).
 
 ### 3.4 Prototype variants (`build-prototype.py --proposal`)
@@ -200,6 +210,17 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    **Expect:** the proposal pages are rewritten too, and `PY SKILL/scripts/build-tokens.py --check` exits 0.
 7. `PY SKILL/scripts/build-prototype.py --proposal ../x` and `--proposal missing`.
    **Expect:** exit 2 with an `error:` line and a `fix:` line each; nothing written.
+8. Change ids: mark the heading of variant A,
+   `sed -i.bak 's|<h2>Today</h2>|<h2 data-guide="F01 · Shorter heading">Today</h2>|' docs/design/prototype/proposals/demo/a-calm/screens/home.html`
+   (then delete the `.bak` file), and run step 2.
+   **Expect:** exit 2, `error: change id not listed in docs/design/prototype/proposals/demo/changes.md (no such file):
+   docs/design/prototype/proposals/demo/a-calm/screens/home.html uses F01` and a `fix:` line with
+   `"- **F01** title: what changed and why"`. Now
+   `printf -- '- **F01** Shorter heading: one word reads faster\n- **F02** Spare: not used yet\n' > docs/design/prototype/proposals/demo/changes.md`
+   and run step 2 again.
+   **Expect:** exit 0 with `warning: docs/design/prototype/proposals/demo/changes.md: F02 is listed but no screen of
+   proposal demo uses it`; `demo/index.html` has a Changes list: an `F01` chip with "In a-calm: Home" and `F02` with
+   "No screen uses it yet"; in `a-calm/prototype.html` the Guide panel lists "Shorter heading" with an `F01` chip.
 
 ### 3.5 A walkthrough
 

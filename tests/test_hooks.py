@@ -581,6 +581,17 @@ def test_screen_changed_after_approval_does_not_cover_a_new_route(launcher, tmp_
     assert "is not approved yet" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
 
 
+def test_an_approval_covers_the_shared_files_it_saw(launcher, tmp_path, proj):
+    """The screens folder's _shared/*.css and *.js are part of every screen's approval: approved with them, the route
+    is allowed; a shared file changed since, it is not."""
+    write(proj / SCREENS / "billing.html", BILLING_SCREEN)
+    write(proj / SCREENS / "_shared/base.css", "[data-screen] { color: inherit; }\n")
+    assert run_script(proj, "build-prototype.py", "--approve", "billing").returncode == 0
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+    write(proj / SCREENS / "_shared/base.css", "[data-screen] { color: red; }\n")
+    assert "is not approved yet" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+
+
 def test_new_route_in_a_monorepo_frontend_is_refused(launcher, tmp_path, proj):
     """The live-test monorepo: Next.js only in frontend/ (no next.config or next dependency at the repo root, where
     the design system is), Python in backend/. PLUMB.md's Routes: names frontend/src/app; nothing else is read."""

@@ -14,9 +14,12 @@ the pages committed). Splitting a screen into several files does not shrink anyt
 
 ```
 <docs>/prototype/screens/<id>.html     [Y] one source per screen: states + interactions   (you write these)
+<docs>/prototype/screens/_shared/*.css, *.js   [Y] optional: CSS and scripts every screen uses (below)
+<docs>/prototype/changes.md            [Y] optional: change ids for the main screens (below)
 <docs>/prototype/screens.json          [G] screen → route, files, states, approval, status (build-prototype.py only)
 <docs>/prototype/tours/<flow>.json     [Y] walkthrough scripts                              (tours.md)
-<docs>/prototype/proposals/<name>/<variant>/screens/<id>.html   [Y] a variant's screen files (+ idea.md)
+<docs>/prototype/proposals/<name>/<variant>/screens/<id>.html   [Y] a variant's screen files (+ idea.md, _shared/)
+<docs>/prototype/proposals/<name>/changes.md   [Y] the proposal's change ids (below)
 <docs>/prototype/proposals/<name>/…/*.html   [G] both views per variant + index.html (build-prototype.py --proposal)
 <docs>/prototype.html · app.html · screens.html   [G] rebuilt by build-prototype.py, never edited
 <docs>/decisions.md                    [Y] the decision log; shown per screen in the prototype
@@ -25,7 +28,7 @@ the pages committed). Splitting a screen into several files does not shrink anyt
 ## The screen file contract
 
 One file per screen, `<docs>/prototype/screens/<id>.html`. `<id>` is the file name (letters, digits, `_`, `-`) and the
-`data-screen` value.
+`data-screen` value. A file whose name starts with `_` or `.` is never a screen (keep drafts as `_draft.html`).
 
 ```html
 <style>
@@ -76,6 +79,40 @@ form.addEventListener("submit", function (event) {
 - **Fidelity hooks** (optional, they make the audit sharper): `data-component="BookingCard"` names the component an
   element is built from; headings, button text, labels and legends are compared with the code's copy.
 - **Tour targets** must exist in this file's markup (they may be hidden in a state); see [tours.md](tours.md).
+- **Guide text** (optional): `data-guide="Start a new booking here"` lists an element under "What you can do" in the
+  prototype's Guide panel. A change id in front, `data-guide="F01 · what changed and why"`, shows as a chip (below).
+
+## Shared files (`_shared/`)
+
+CSS and scripts several screens use (an app shell's layout, a toast helper) live once in `<screens folder>/_shared/`:
+the main `prototype/screens/_shared/` and each variant's `screens/_shared/`. Only `*.css` and `*.js` there are read,
+in name order (prefix them `10-base.css`, `20-shell.css` to choose the order). No copy script: nothing else to run.
+
+- **CSS** is inlined once per page, before the screens' own styles (a screen can override it). Scope it yourself:
+  start each selector with `[data-screen]` (every screen) or `[data-screen="id"]`; any other selector is a warning,
+  because it also styles the prototype's own panels. Tokens only, as in a screen file.
+- **JS** files run for **each** screen (each copy in `screens.html`), before the screen's own script, as
+  `function (screen, plumb) { … }` with the same API (`plumb.screen` says which screen). A shared script that throws is
+  logged with its file name; the others still run.
+- **Same contract as a screen file:** inlined as written, so `</script` in a JS file or `</style` in a CSS file, and
+  anything that loads from the network or another file (`fetch(`, `new XMLHttpRequest`, `WebSocket`, `EventSource`,
+  `sendBeacon(`, `import`, CSS `@import`, `url(https://…)` or `url(//…)`) exits 2 naming the file and line.
+- **Approvals:** the shared files are part of every screen's approval. Editing one makes the approval of every screen in
+  that folder stale, and the build's note names the shared file ("… changed since Ana approved it on 2026-10-14 (the
+  shared file: docs/design/prototype/screens/_shared/base.css changed; shared files reach every screen)"). Show the
+  change and ask again. A project with no shared files keeps the hashes it had: earlier approvals stand.
+
+## Change ids
+
+Mark each element a change touched with an id: `data-guide="F01 · Moved the list to the left: regulars scan it first"`.
+An id is a letter and digits (`F01`, `P2`), then `·`; anything else is plain guide text and never checked.
+
+- **Proposals:** list the ids in `<docs>/prototype/proposals/<name>/changes.md`, one line each:
+  `- **F01** title: what changed and why` (other lines are free text). `build-prototype.py --proposal <name>` (and
+  `--check`) exits 2 when a screen uses an id that is not listed, or there is no `changes.md`, naming the screen file and
+  the id; it warns about a listed id no screen uses; the index lists the changes with where each is used.
+- **Main prototype:** ids are checked the same way only when `<docs>/prototype/changes.md` exists.
+- The Guide panel shows the id as a chip next to the text, so a reviewer can say "F01 is right, F02 is not".
 
 ## The app view (`app.html`)
 
@@ -156,7 +193,8 @@ system. Each variant comes as **both views**, so states are compared, not only t
   and are not otherwise kept in step with code.
 - A variant's pages sit in its own folder, so a relative image path in a variant's screen file resolves from that
   folder; check such paths when the screen is copied to `<docs>/prototype/screens/`.
-- The chosen variant's screen files are copied to `<docs>/prototype/screens/` (the main prototype); the others stay.
+- The chosen variant's screen files (and its `_shared/` files) are copied to `<docs>/prototype/screens/` (the main
+  prototype); the others stay.
 
 ## Approvals and the map
 

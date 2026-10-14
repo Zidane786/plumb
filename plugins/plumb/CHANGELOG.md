@@ -51,6 +51,13 @@
 - **`/plumb:prototype`**: 2–3 variants of a new screen, flow or interaction, each as a clickable prototype and as
   every state in light and dark, side by side on one page (`build-prototype.py --proposal <name>`); the one you pick
   joins the main prototype with a default walkthrough, and your approval is recorded per screen.
+- **Change ids and shared screen files**: mark what a proposal changed with `data-guide="F01 · what changed and why"`
+  and list the ids in the proposal's `changes.md` (`- **F01** title: what and why`); `--proposal` refuses an id that
+  is not listed, warns about one no screen uses, and the proposal index lists the changes; the Guide panel shows each id
+  as a chip (main screens are checked only when `<docs>/prototype/changes.md` exists). CSS and scripts several screens
+  use go once in `screens/_shared/*.css` and `*.js` (main and each variant): the CSS is in every page once, each
+  script runs for every screen before its own, and editing one makes those screens' approvals stale, named in the
+  build output. A file starting with `_` is never a screen.
 - **Walkthroughs and `/plumb:tour`**: guide mode (step by step) and play mode (plays like a video, with speeds 0.5×
   to 2×, pause and scene markers), captions, callouts, labels, notes, title cards, spotlight, ring, arrow, beacon,
   zoom and a cursor, chapters, and "your turn" steps for training. Every tour is also a standalone page that opens
