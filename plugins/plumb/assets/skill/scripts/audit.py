@@ -1746,7 +1746,9 @@ def check_contrast(proj: Project) -> Iterator[XHit]:
             if ratio >= pair.need:
                 continue
             near = pair.fix.get(mode)
-            if near:
+            if getattr(pair, "fix_bg", {}).get(mode) and near:  # on-X on X: step X first, or on-X (both ratios shown)
+                fix = f"{pair.fix_text(mode)}; change {pair.bg_path} or {pair.fg_path} with /plumb:update, then run {proj.build_command}"
+            elif near:
                 fix = (f"nearest passing {pair.fg} in {mode} mode: {near[0]} ({near[1]:.2f}:1); change {pair.fg_path} "
                        f"with /plumb:update, then run {proj.build_command}")
             else:

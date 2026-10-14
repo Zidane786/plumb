@@ -199,6 +199,21 @@ def test_contrast_reports_mode_ratio_and_nearest_passing_value(tmp_path: Path) -
     assert any("text-muted on background" in f["message"] and "dark" in f["message"] for f in found)
 
 
+def test_contrast_fix_for_white_on_a_fill_lists_the_fill_option_first(tmp_path: Path) -> None:
+    """on-X is white over X: the fix names both options with their ratios, X stepped first (the text stays white)."""
+    project = make_project(tmp_path / "p", CROSS / "contrast/bad")
+    found = [f for f in audit_json(project)["findings"] if f["rule"] == "contrast"]
+    light = next(f for f in found if "on-primary on primary" in f["message"] and "light" in f["message"])
+    fix = light["fix"]
+    assert fix.startswith("two options in light mode") and "keeps on-primary as it is (#ffffff)" in fix
+    assert fix.index("(1) step primary to #") < fix.index("(2) step on-primary to #070707")
+    first = fix.split("(1) step primary to ")[1][:7]
+    assert P.contrast("#ffffff", first) >= 4.5 + BT.FIX_SPARE - 0.05  # the pale-teal fill darkened enough
+    # dark mode: on-primary is #0f1217 (not black): only the on-primary option, worded as before
+    dark = next(f for f in found if "on-primary on primary" in f["message"] and "dark" in f["message"])
+    assert dark["fix"].startswith("nearest passing on-primary in dark mode:") and "two options" not in dark["fix"]
+
+
 def test_contrast_uses_the_build_tokens_pair_logic() -> None:
     doc = P.load_tokens(CROSS / "contrast/bad/tokens.json")
     pairs = BT.measure_pairs(doc)

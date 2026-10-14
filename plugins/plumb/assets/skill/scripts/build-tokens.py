@@ -1353,12 +1353,37 @@ class Pair:
         self.light = 0.0
         self.dark = 0.0
         self.fix: Dict[str, Optional[Tuple[str, float]]] = {}
+        # on-X on X where on-X is white or black: the X stepped (same hue) until on-X passes unchanged, per failing mode
+        self.fix_bg: Dict[str, Optional[Tuple[str, float]]] = {}
         self.fg_path = self.bg_path = ""
         self.hex: Dict[str, Tuple[str, str]] = {}
 
     @property
     def failed(self) -> List[str]:
         return [m for m, v in (("light", self.light), ("dark", self.dark)) if v < self.need]
+
+    def options(self, mode: str) -> List[Tuple[str, str, str, float]]:
+        """The fixes for a failing mode, best first, as (token name, token path, proposed value, ratio): when on-X is
+        white or black over X, X stepped (the foreground stays, the look of the text stays) comes before on-X moved."""
+        out: List[Tuple[str, str, str, float]] = []
+        bg_fix, fg_fix = self.fix_bg.get(mode), self.fix.get(mode)
+        if bg_fix:
+            out.append((self.bg, self.bg_path, bg_fix[0], bg_fix[1]))
+        if fg_fix:
+            out.append((self.fg, self.fg_path, fg_fix[0], fg_fix[1]))
+        return out
+
+    def fix_text(self, mode: str) -> str:
+        """The failing mode's fixes in words (no trailing 'with /plumb:update'): one nearest value, or both options."""
+        opts = self.options(mode)
+        if len(opts) == 2 and self.fix_bg.get(mode):
+            (bn, _bp, bv, br), (fn, _fp, fv, fr) = opts
+            keep = self.hex[mode][0]
+            return (f"two options in {mode} mode, the first keeps {fn} as it is ({keep}): "
+                    f"(1) step {bn} to {bv} ({br:.2f}:1); (2) step {fn} to {fv} ({fr:.2f}:1)")
+        if opts:
+            return f"nearest passing {opts[0][0]} in {mode} mode: {opts[0][2]} ({opts[0][3]:.2f}:1)"
+        return ""
 
 
 def _contrast_settings(doc: dict) -> dict:
@@ -1539,6 +1564,9 @@ def measure_pairs(doc: dict) -> List[Pair]:
                 pair.dark = ratio
             if ratio < pair.need:
                 pair.fix[mode] = proposed_value(fg, bg, pair.need, lighten=(mode == "dark"))
+                if pair.fg == "on-" + pair.bg and fg in ("#ffffff", "#000000") and fa >= 1:
+                    # text on a filled control: the fill moves away from the text colour, same hue
+                    pair.fix_bg[mode] = proposed_value(bg, fg, pair.need, lighten=(fg == "#000000"))
     return pairs
 
 
@@ -1562,9 +1590,9 @@ def contrast_block(doc: dict) -> str:
         L += ["", "Nearest passing values with 0.5 to spare (the foreground nudged in L*, lighter in dark mode, darker in light mode):", ""]
         for p in failing:
             for mode in p.failed:
-                fix = p.fix.get(mode)
-                if fix:
-                    L.append(f"- {p.fg} on {p.bg} ({mode}): nearest passing {fix[0]} ({fix[1]:.2f}:1)")
+                if p.options(mode):
+                    L.append(f"- {p.fg} on {p.bg} ({mode}): " + (p.fix_text(mode) if p.fix_bg.get(mode) else
+                             f"nearest passing {p.fix[mode][0]} ({p.fix[mode][1]:.2f}:1)"))
                 else:
                     L.append(f"- {p.fg} on {p.bg} ({mode}): no value of this hue passes; change the background")
     return "\n".join(L)
@@ -1636,6 +1664,8 @@ _ROLE_NAMES = {"background": ("background", "surface"), "bg": ("background", "su
                "destructive": ("danger",), "error": ("danger",)}
 # Prefixes whose names map like the name without them (shadcn's sidebar-primary is primary, sidebar-border is border).
 _ROLE_PREFIXES = ("sidebar-",)
+# Words a project's tokens may use for a sidebar role (shadcn's sidebar-accent is often a color.sidebar-active token).
+_SIDEBAR_SYNONYMS = {"accent": ("active",), "active": ("accent",)}
 _FONT_STACKS = {"mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
                 "serif": ["Georgia", "serif"],
                 "sans": ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]}
@@ -1643,9 +1673,29 @@ _DARK_PRELUDE = re.compile(r"prefers-color-scheme\s*:\s*dark|\.dark\b|data-theme
 _VAR_ONLY = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,[^()]*)?\)")
 
 
+def _prefixed_token(colors: dict, name: str) -> Optional[str]:
+    """The tokens' own role for a sidebar-<x> / sidebar-<x>-foreground name: color.sidebar-<role> /
+    color.on-sidebar-<role>, <role> being <x> or its known synonym (accent <-> active). None when there is none."""
+    for prefix in _ROLE_PREFIXES:
+        if not name.startswith(prefix) or len(name) <= len(prefix):
+            continue
+        group = prefix[:-1]
+        rest = name[len(prefix):]
+        foreground = rest.endswith("-foreground")
+        base = rest[:-len("-foreground")] if foreground else rest
+        for role in (base,) + _SIDEBAR_SYNONYMS.get(base, ()):
+            cand = f"on-{group}-{role}" if foreground else f"{group}-{role}"
+            if P.is_token(colors.get(cand)):
+                return cand
+    return None
+
+
 def _role_token(colors: dict, name: str) -> Optional[str]:
-    """The colour token a project's colour name means: its own role table, on-X for X-foreground, and a sidebar-<x>
-    name as <x> (sidebar-primary -> primary)."""
+    """The colour token a project's colour name means: a sidebar-specific token first, then its own role table, on-X
+    for X-foreground, and a sidebar-<x> name as <x> (sidebar-primary -> primary)."""
+    specific = _prefixed_token(colors, name)
+    if specific:
+        return specific
     for cand in _ROLE_NAMES.get(name, ()):
         if P.is_token(colors.get(cand)):
             return cand
@@ -1833,6 +1883,63 @@ def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict], docs_rel: 
                     used.append(f"{rel(path, root)}:{text.count(chr(10), 0, m.start()) + 1}")
 
 
+def _jsx_tag(text: str, name: str) -> Optional[Tuple[int, int]]:
+    """(start, end) of the opening <name ...> tag in JSX text (braces balanced, so an arrow's > does not end it)."""
+    m = re.search(r"<" + name + r"(?=[\s>])", text)
+    if not m:
+        return None
+    depth = 0
+    for i in range(m.end(), len(text)):
+        c = text[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+        elif c == ">" and depth <= 0:
+            return m.start(), i + 1
+    return None
+
+
+def _next_font_body_notes(root: Path, fontvars: Dict[str, str]) -> List[str]:
+    """by_hand items for next/font variables the app applies on <body> instead of <html>: the tokens' font stack reads
+    var(--font-x) on :root, where it is undefined, so the whole stack is invalid. Reads the root layout of each
+    `next-app` entry of PLUMB.md's `Routes:` only; no Routes, another kind or no layout file: nothing."""
+    if not fontvars:
+        return []
+    try:
+        routes, _problems = P.parse_routes(P.read_plumb_md(root / "PLUMB.md").get("Routes"))
+    except PlumbError:
+        return []
+    notes: List[str] = []
+    for route, kind in routes or []:
+        if kind != "next-app":
+            continue
+        layout = next((root / route / f"layout.{e}" for e in ("tsx", "jsx", "js", "ts")
+                       if (root / route / f"layout.{e}").is_file()), None)
+        if layout is None:
+            continue
+        try:
+            text = layout.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        body, html = _jsx_tag(text, "body"), _jsx_tag(text, "html")
+        if body is None:
+            continue
+        for var in fontvars:
+            idents = re.findall(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*=\s*[\w$.]+\s*\(\s*\{[^{}]*?\bvariable\s*:\s*[\"']"
+                                + re.escape(var) + r"[\"']", text, flags=re.S)
+            for ident in idents:
+                use = re.compile(r"(?<![\w$])" + re.escape(ident) + r"\.variable\b")
+                on_body = use.search(text, body[0], body[1])
+                if on_body and not (html and use.search(text, html[0], html[1])):
+                    line = text.count("\n", 0, on_body.start()) + 1
+                    notes.append(f"{rel(layout, root)}:{line}: {ident}.variable (the font behind var({var})) is applied "
+                                 f"on <body>, but the tokens' font stack reads var({var}) on :root, where it is "
+                                 f"undefined: move `{ident}.variable` to the `<html>` className in "
+                                 f"{rel(layout, root)}:{line}")
+    return notes
+
+
 def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     """What moves where for one web copy: each override (line, name, value, kind token | new-name | namespace |
     dark-variant, the token it is or becomes, the project's values, the token change), the lines to remove, the
@@ -1851,6 +1958,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     by_hand: List[str] = []
     notes: List[str] = []  # what the plan decided for the person to know (not to decide)
     feeds: Dict[str, str] = {}  # project variable -> the token variable it fed
+    fontvars: Dict[str, str] = {}  # a font variable the app defines elsewhere (next/font) -> the token variable that reads it
     def project_values(name: str, value: str) -> Tuple[Optional[str], list, Dict[str, str]]:
         """(the project variable it reads, its declarations outside @theme, its light and dark values)."""
         src_m = _VAR_ONLY.fullmatch(value)
@@ -1883,6 +1991,13 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         decided[rest] = ("own", None)  # a guard against a loop
         mine = app.get(rest)
         out: Tuple[str, Optional[str]] = ("own", None)
+        specific = _prefixed_token(colors, rest)
+        if specific:  # the tokens have this sidebar role: it wins over the generic role and over a value match
+            cols = _token_colours(doc, f"color.{specific}")
+            if mine is not None and cols is not None and not (_same_colour(mine[0], cols[0]) and _same_colour(mine[1], cols[1])):
+                looks.append(rest)
+            decided[rest] = ("alias", specific)
+            return decided[rest]
         for prefix in _ROLE_PREFIXES:
             base = rest[len(prefix):] if rest.startswith(prefix) else ""
             if base and (mine is None or (app.get(base) and _same_colour(mine[0], app[base][0])
@@ -1942,10 +2057,11 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                 fams = fams if isinstance(fams, list) else [fams]
                 first = next((str(f) for f in fams if str(f).lower() not in SYSTEM_FAMILIES), "")
                 if f"var({src})" in [str(f) for f in fams]:
-                    pass
+                    fontvars.setdefault(src, name)
                 elif not first or _squash(first) in _squash(src[2:].replace("font-", "", 1)):
                     # the tokens name only a system stack (or this very font): the app's own font goes first
                     change = {"prepend": token, "family": f"var({src})"}
+                    fontvars.setdefault(src, name)
                 else:
                     note = (f"line {line}: the app loads its font through var({src}), but {token} is {first!r}: "
                             f"ask the user which font to keep; to keep the app's, put var({src}) first in {token} "
@@ -1990,6 +2106,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             elif ns == "font" and rest:
                 if src and not decls:
                     change = {"add": token, "$value": [f"var({src})"] + _font_stack(rest)}
+                    fontvars.setdefault(src, name)
                 elif not src and value and "var(" not in value:
                     change = {"add": token, "$value": [f.strip().strip("\"'") for f in value.split(",") if f.strip()]}
             if change is None:
@@ -2009,6 +2126,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         remove.update(L.lines(pos, end))
         if src and decls:
             feeds.setdefault(src, name)
+    by_hand.extend(_next_font_body_notes(root, fontvars))
     # the project variables that only fed the overrides: their declarations go, their uses point at the token
     replace: List[dict] = []
     project_vars: List[dict] = []
