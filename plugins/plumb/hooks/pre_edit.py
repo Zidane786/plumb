@@ -16,18 +16,22 @@ In such a project, in this order:
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
      marked, in the project or the home folder): editing them could switch the checks off.
-   Shell commands: default deny, prove safe (shell_refusal). Refused when _hooklib's shell reader finds a guarded file
-   among the real write targets, and whenever the previous reader (_shell_legacy.py) would refuse, unless the shell
-   reader proves every guarded path in the command is data or a read. Real write targets: a redirect (>, >>, 1>, 2>,
-   &>, >|), tee [-a], sed -i, perl -i, the destination of cp / mv / install / rsync / ln, truncate, dd of=, Set-Content,
-   Add-Content, Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell,
-   eval), and in inline code (python -c, node -e, a here-document fed to an interpreter) open(<path>, "w"|"a"|"x"),
-   Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like. A command that only mentions a
-   guarded path is allowed: quoted text, a here-document written to another file (a Makefile whose lines run the
-   scripts), reading, running and importing (json.load, importlib); so are build-tokens.py and build-prototype.py runs,
-   git, and anything that writes elsewhere. Removing or moving away a guarded file (rm, rmdir, unlink, del,
-   Remove-Item, git rm, the sources of mv / Move-Item / git mv, os.remove, shutil.rmtree), or a folder that holds one,
-   is refused the same way; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder.
+   Shell commands (shell_refusal): the earlier reader (_shell_legacy.py) decides, and _hooklib's shell reader adds what
+   it finds. Refused when the shell reader finds a guarded file among the real write targets: a redirect (>, >>, 1>,
+   2>, &>, >|), tee [-a], sed -i / w FILE, perl -i, sort -o, the destination of cp / mv / install / rsync / ln (a
+   recursive copy or a move into a folder that holds a guarded file), truncate, dd of=, Set-Content, Add-Content,
+   Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell, eval), a file
+   the command wrote and then runs, and in inline code (python -c, node -e, a here-document fed to an interpreter)
+   open(<path>, "w"|"a"|"x"), Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like, with
+   targets put together from the code's constants. A refusal of the earlier reader becomes an allow only when the
+   shell reader proves it (_proven): (a) a here-document / echo / printf / tee text written to a file the same
+   command does not run or use again (a Makefile whose lines run the scripts), (b) a read-only program's words, (c)
+   inline code that only reads its guarded literals (json.load, importlib, Path.read_text) and writes only to plain
+   literals away from them. Running build-tokens.py or build-prototype.py, and anything that writes elsewhere, is
+   allowed. Removing or moving away a guarded file (rm, rmdir, unlink, del, Remove-Item, git rm, the sources of mv /
+   Move-Item / git mv, os.remove, shutil.rmtree), or a folder that holds one, is refused the same way; ~, $HOME,
+   ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder. A command longer than SHELL_HUGE is
+   not read: refused when it names a guarded file.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
    start note says the routes are not recorded) unless a screen in screens.json
@@ -293,24 +297,77 @@ def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: 
     return None
 
 
+SHELL_HUGE = 64 * 1024  # characters: a longer command is not read; it is refused when it names a guarded file
+_FIXED_NAMES = ("specimen.html", "prototype.html", "app.html", "screens.html", "screens.json", "build-tokens.py",
+                "build-prototype.py")
+
+
+def _guarded_names(proj: H.Project, cwd: str, files: List[str]) -> List[str]:
+    """The strings that name a guarded file: its path (absolute, from the project, from cwd) and its file name; and
+    the generated files' and builders' names even before they exist."""
+    names = set(_FIXED_NAMES)
+    for f in files:
+        names.add(f)
+        names.add(os.path.basename(f))
+        for base in (os.path.realpath(proj.root_s), os.path.realpath(cwd)):
+            rel = H.under(f, base)
+            if rel:
+                names.add(rel)
+    return sorted(n for n in names if n)
+
+
+def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str) -> bool:
+    """The shell reader proves the command's guarded paths are data or reads: (a) a here-document / echo / printf / tee
+    text written to a file the command does not use again, (b) a read-only program's words, (c) inline code that gives
+    each guarded literal straight to a read sink and writes only to plain literals away from the guarded files."""
+    if eff.unsure:
+        return False
+    files = [f for f in guarded_files(proj, cwd) if os.path.isfile(f)]
+    names = _guarded_names(proj, cwd, files)
+    if any(n in text for text in eff.other for n in names):
+        return False
+    for target in eff.code_writes:
+        real = os.path.realpath(target)
+        if guard(proj, real) or any(os.path.dirname(f) == os.path.dirname(real) for f in files):
+            return False
+    return True
+
+
+def _huge_refusal(proj: H.Project, command: str, cwd: str) -> Optional[str]:
+    """A command too long to read within the hook's time: refused when it names a guarded file at all."""
+    files = [f for f in guarded_files(proj, cwd) if os.path.isfile(f)]
+    hit = next((n for n in _guarded_names(proj, cwd, files) if n in command), None)
+    size = len(command) // 1024
+    H.log_failure(f"a shell command of {size} KB, too long to read", "the command read (a guarded name in it refuses it)",
+                  category="timeout", outcome=f"{'refused' if hit else 'allowed'} without reading it")
+    if hit is None:
+        return None
+    return (f"error: this shell command is too long for Plumb to check ({size} KB) and it names {hit}, a file Plumb "
+            f"guards\nfix: split it into shorter commands (and change {hit} the way Plumb's own message for it says)")
+
+
 def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
-    """The refusal for a shell command, or None. Default deny, prove safe: refused when the shell reader finds a
-    guarded file among its write or removal targets; and whenever the previous reader (_shell_legacy.py) would refuse
-    it, unless the shell reader proves every guarded path the command names is data or a read (it is not unsure, and
-    no guarded path is among its mentions)."""
+    """The refusal for a shell command, or None. The earlier reader (_shell_legacy.py) decides, and the shell reader
+    adds what it finds: refused when the shell reader finds a guarded file among its write, removal or folder write
+    targets; and whenever the earlier reader would refuse it, unless the shell reader proves the guarded paths are only
+    data or reads (_proven). A reader that ran out of time or failed is logged with the real outcome."""
     if not H.WRITE_HINT.search(command):
         return None
+    if len(command) > SHELL_HUGE:
+        return _huge_refusal(proj, command, cwd)
     eff = H.shell_effects(command, base, proj.root_s)
-    why = _shell_paths_refusal(proj, eff.writes, False, cwd) or _shell_paths_refusal(proj, eff.removals, True, cwd)
-    if why:
-        return why
-    floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
-             or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
-    if floor is None:
-        return None
-    if eff.unsure or any(guard(proj, os.path.realpath(m)) for m in eff.mentions):
-        return floor
-    return None  # proven: every guarded path the previous reader counted is data or a read
+    why = (_shell_paths_refusal(proj, eff.writes, False, cwd) or _shell_paths_refusal(proj, eff.removals, True, cwd)
+           or _shell_paths_refusal(proj, eff.folder_writes, True, cwd))
+    if why is None:
+        floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
+                 or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
+        if floor is not None and not _proven(proj, eff, cwd):
+            why = floor
+    if eff.trouble is not None:
+        given, category, exc = eff.trouble
+        H.log_failure(given, "the command read within the budget", category=category, exc=exc,
+                      outcome=f"{'refused' if why else 'allowed'}: the earlier reader decided")
+    return why
 
 
 # ---------------------------------------------------------------- prototype first and the edit check

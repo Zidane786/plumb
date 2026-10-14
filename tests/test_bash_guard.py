@@ -79,7 +79,6 @@ READS = [
     f"cat > Makefile <<'EOF'\ntokens:\n\tpython3 {S}/scripts/build-tokens.py > {GEN}\ntokens-check:\n"
     f"\tpython3 {S}/scripts/build-tokens.py --check && cp a {OWN}\nEOF",
     f"tee -a GNUmakefile <<EOF > /dev/null\nprototype:\n\tpython3 {S}/scripts/build-prototype.py | tee {GEN}\nEOF",
-    f"python3 - <<'EOF'\nfrom pathlib import Path\nPath('Makefile').write_text('tokens:\\n\\tpython3 {OWN} > {GEN}\\n')\nEOF",
     f"printf 'tokens:\\n\\tpython3 {OWN} --check\\n' >> Makefile",
     # reading screens.json
     f"python3 -c \"import json; d = json.load(open('{MAP}')); print(json.dumps(d, indent=2))\"",
@@ -95,8 +94,6 @@ READS = [
     f"python3 -I -c \"import importlib.machinery as m; m.SourceFileLoader('b', '{OWN}').load_module()\"",
     # quoted code and text with append, .dump or >
     f"python3 -c \"ids = []; [ids.append(i) for i in range(3)]; print(len(ids) > 0, '{GEN}')\"",
-    f"python3 -c \"import json; print(json.dumps({{'out': '{GEN}'}}))\" > /tmp/plan.json",
-    f"git commit -m 'docs: never write > {GEN} by hand, run tee {OWN}'",
     f"echo 'append to {GEN} with: cat x >> {GEN}'",
     f"grep -n '> {GEN}' notes.md",
     f"node -e \"const a = []; a.push(1); console.log(a.length > 0 ? '{GEN}' : '')\"",
@@ -106,6 +103,16 @@ READS = [
     f"cp {GEN} /tmp/backup.html",
     f"diff {OWN} /tmp/x.py 2>&1 | tee /tmp/diff.txt",
 ]
+# Ruling (round 2): the earlier reader decides; only (a) a data text written to a file the command doesn't use again,
+# (b) a read-only program's words and (c) inline code giving each guarded literal straight to a read sink can turn its
+# refusal into an allow. These mention a guarded file outside those positions, and the earlier reader refused them, so
+# they stay refused.
+RULED_REFUSED = [
+    f"python3 - <<'EOF'\nfrom pathlib import Path\nPath('Makefile').write_text('tokens:\\n\\tpython3 {OWN} > {GEN}\\n')\nEOF",
+    f"python3 -c \"import json; print(json.dumps({{'out': '{GEN}'}}))\" > /tmp/plan.json",
+    f"git commit -m 'docs: never write > {GEN} by hand, run tee {OWN}'",
+]
+REVIEW_RULED_REFUSED = {"git commit heredoc msg", "python write elsewhere via var", "python write func param elsewhere"}
 
 
 @pytest.fixture(params=LAUNCHERS)
@@ -248,7 +255,18 @@ def test_reads_name_no_guarded_target(H, tmp_path, command):
     ("python3 -c \"import os; os.replace('a', 'r.txt')\"", ["r.txt"]),
     ("python3 -c \"import os; os.open('o.txt', os.O_WRONLY | os.O_CREAT)\"", ["o.txt"]),
     ("python3 -c \"from pathlib import Path; Path('p.txt').open('w')\"", ["p.txt"]),
-    ("python3 -c \"import os; open(os.path.join('docs', 'j.txt'), 'w')\"", ["j.txt", "docs/j.txt"]),
+    ("python3 -c \"import os; open(os.path.join('docs', 'j.txt'), 'w')\"", ["docs/j.txt"]),
+    ("python3 -c \"import os; d='docs/design'; open(os.path.join(d, 'k.txt'), 'w')\"", ["docs/design/k.txt"]),
+    ("python3 -c \"d='out'; open(f'{d}/f.txt', 'w')\"", ["out/f.txt"]),
+    ("python3 -c \"open('%s/p.txt' % 'out', 'w')\"", ["out/p.txt"]),
+    ("python3 -c \"open('out/{}.txt'.format('q'), 'w')\"", ["out/q.txt"]),
+    ("python3 -c \"from pathlib import Path\nd = Path('out')\n(d / 'r.txt').write_text('x')\"", ["out/r.txt"]),
+    ("node -e 'const d=\"out\"; require(\"fs\").writeFileSync(`${d}/t.txt`, \"x\")'", ["out/t.txt"]),
+    ("python3 -c \"import os; open(os.path.join(os.path.dirname('a/b.html'), 'c.html'), 'w')\"", ["a/c.html"]),
+    ("sort -o so.txt in.txt", ["so.txt"]),
+    ("uniq in.txt un.txt", ["un.txt"]),
+    ("sed -n 'w sw.txt' in.txt", ["sw.txt"]),
+    ("echo x > $'e\\x2etxt'", ["e.txt"]),
     ("python3 -c \"print(open('r.txt').read())\"", []),
     ("python3 -c \"open('rb.txt', 'rb')\"", []),
     ("node -e \"require('fs').copyFileSync('a', 'n.txt')\"", ["n.txt"]),
@@ -302,21 +320,24 @@ UNSURE = [
     "npx tsx -e \"1\"", "poetry run python -c \"1\"", "xargs sed -i s/a/b/", "cat fix.py | python3",
     "find . -name x -delete", "git rebase --exec 'make' HEAD~2", "cd $(git rev-parse --show-toplevel)",
     "echo x > $OUT", "python3 -c \"import os; os.system('ls')\"", "python3 -c \"def f(): return 'x'\nopen(f(), 'w')\"",
-    "perl -ne 'print' a.txt", "env -C sub tee x",
+    "perl -ne 'print' a.txt", "env -C sub tee x", "python3 x.py --flag > /tmp/o",
+    "cat > f.py <<'EOF'\nprint(1)\nEOF\npython3 f.py", "python3 -c \"open(f'{x}.txt', 'w')\"",
+    "python3 -c \"p = 'x.txt'; open(p, 'w')\"", "source x.sh", "bash x.sh", "make -f x.mk",
 ]
 SURE = [
-    "git log --format='%h > %s'", "echo 'a > b' > /tmp/x", "grep -n '>' a.txt", "OUT=/tmp/o.txt; echo x > \"$OUT\"",
-    "python3 -c \"open('/tmp/o.txt', 'w')\"", "cd sub && echo x > y", "python3 x.py --flag > /tmp/o",
-    "cat <<'EOF' > notes.md\n$(rm -rf /) `x`\nEOF",
+    "echo 'a > b' > /tmp/x", "grep -n '>' a.txt", "OUT=/tmp/o.txt; echo x > \"$OUT\"",
+    "python3 -c \"open('/tmp/o.txt', 'w')\"", "cd sub && echo x > y",
+    "cat <<'EOF' > notes.md\n$(rm -rf /) `x`\nEOF", "git log --format='%h > %s'",
 ]
 
 
 @pytest.mark.parametrize("command", UNSURE)
-def test_what_the_reader_cannot_follow_makes_it_unsure(H, tmp_path, command):
-    """A program the reader doesn't know (ssh, watch, awk, ruby, a runner), xargs, code piped from a file, a variable or
-    $( ) it cannot resolve in a target or a cd, code that runs commands or writes where the reader cannot follow: the
-    reader is unsure, so the previous reader decides."""
-    assert H.shell_effects(command, str(tmp_path)).unsure, command
+def test_what_the_reader_cannot_follow_keeps_the_earlier_decision(H, tmp_path, command):
+    """A program the reader doesn't know (ssh, watch, awk, ruby: its words are "other" text), a runner, xargs, a script
+    run, code piped from a file, a variable or $( ) it cannot resolve in a target or a cd, code that runs commands,
+    builds its write target or uses an f-string: the earlier reader decides."""
+    eff = H.shell_effects(command, str(tmp_path))
+    assert eff.unsure or eff.other, command
 
 
 @pytest.mark.parametrize("command", SURE)
@@ -358,7 +379,7 @@ def test_windows_style_paths_are_read_as_paths(H, tmp_path):
 
 import bash_guard_cases as CASES  # noqa: E402
 
-SANCTIONED = {"heredoc script then run (ruling: data)"}  # the plan rules a here-document written to a file is data
+SANCTIONED: set = set()  # no exemptions: a here-document written to a file the command then runs is code (round 2)
 
 
 class Decider:
@@ -408,6 +429,7 @@ def test_the_guard_refuses_everything_the_previous_reader_refused(decide):
     commands = [(label, cmd, rest[0] if rest else "") for label, cmd, *rest in CASES.writes(SKILL_REL, str(decide.proj))]
     commands += [("shape", cmd, "") for cmd in CASES.shapes()]
     commands += [("form", form.format(t=t), "") for form in WRITE_FORMS for t in (OWN, GEN)]
+    commands += [(label, cmd, "") for label, cmd in CASES.rr_writes(SKILL_REL, str(decide.proj))]
     misses = [(label, cmd) for label, cmd, sub in commands
               if label not in SANCTIONED and decide.old(cmd, sub) and not decide.new(cmd, sub)]
     assert not misses, misses
@@ -461,8 +483,49 @@ def test_the_forms_the_review_found_are_refused(decide, command):
     assert decide.new(command), command
 
 
+def test_the_second_reviews_writes_are_all_refused(decide):
+    """Including what the earlier reader allowed: a script the command writes and runs, folders written into, write
+    targets put together from names, sort -o / uniq / sed w, $1 in sh -c, source <(echo …), $'\\x2e'."""
+    allowed_now = [(label, cmd) for label, cmd in CASES.rr_writes(SKILL_REL, str(decide.proj)) if not decide.new(cmd)]
+    assert not allowed_now, allowed_now
+
+
+@pytest.mark.parametrize("command", RULED_REFUSED)
+def test_a_guarded_path_outside_the_provable_positions_stays_refused(decide, command):
+    assert decide.old(command) and decide.new(command), command
+
+
+FUZZ = {
+    "id": lambda c, p: c, "( )": lambda c, p: "(" + c + "\n)", "{ }": lambda c, p: "{ " + c + "\n}",
+    "if": lambda c, p: "if true; then\n" + c + "\nfi", "sudo": lambda c, p: "sudo " + c,
+    "func": lambda c, p: "f() {\n" + c + "\n}\nf", "cd abs": lambda c, p: f"cd '{p}' && " + c,
+    "for": lambda c, p: "for i in 1; do\n" + c + "\ndone",
+}
+
+
+def test_wrapped_writes_never_slip_past_the_earlier_reader(decide):
+    """A reduced form of the second review's mutation fuzz: every write command, wrapped eight ways."""
+    base = [(cmd, rest[0] if rest else "") for _label, cmd, *rest in CASES.writes(SKILL_REL, str(decide.proj))]
+    base += [(cmd, "") for _label, cmd in CASES.rr_writes(SKILL_REL, str(decide.proj))]
+    misses = [(name, cmd) for cmd, sub in base for name, wrap in FUZZ.items()
+              if decide.old(wrap(cmd, decide.proj), sub) and not decide.new(wrap(cmd, decide.proj), sub)]
+    assert not misses, misses[:10]
+
+
+def test_a_command_too_long_to_read_is_refused_when_it_names_a_guarded_file(decide):
+    import time
+    filler = "; ".join(f"echo x > /tmp/f{i}" for i in range(6000))
+    t = time.perf_counter()
+    reason = decide.pe.shell_refusal(decide.project, filler + f"; cat {GEN}", str(decide.proj), str(decide.proj))
+    assert reason and "too long for Plumb to check" in reason and "screens.html" in reason, reason
+    actionable(reason)
+    assert decide.pe.shell_refusal(decide.project, filler, str(decide.proj), str(decide.proj)) is None
+    assert time.perf_counter() - t < 1.0
+
+
 def test_the_reviews_reads_and_ours_are_allowed(decide):
-    reads = list(CASES.reads(SKILL_REL, str(decide.proj))) + [("ours", c) for c in READS]
+    reads = [(label, cmd) for label, cmd in CASES.reads(SKILL_REL, str(decide.proj)) if label not in REVIEW_RULED_REFUSED]
+    reads += [("ours", c) for c in READS]
     refused_now = [(label, cmd) for label, cmd in reads if decide.new(cmd)]
     assert not refused_now, refused_now
 
@@ -495,6 +558,7 @@ def test_past_its_time_budget_the_previous_reader_decides_and_one_line_is_logged
     assert " is generated" in refused(run_hook(launcher, "pre_edit.py", payload("claude", "bash", CWD=str(proj),
                                                                                COMMAND=command), proj, env))
     log = Path(env["HOME"]) / ".plumb" / "feedback" / "hooks.md"
-    assert log.is_file() and "time budget" in log.read_text(encoding="utf-8")
+    text = log.read_text(encoding="utf-8")
+    assert "time budget" in text and "refused: the earlier reader decided" in text and "(failed open) · Given: the shell" not in text
     allowed(run_hook(launcher, "pre_edit.py", payload("claude", "bash", CWD=str(proj), COMMAND=f"cat {GEN}"), proj,
                      env))
