@@ -1217,19 +1217,6 @@ def test_labels_keep_clear_of_the_badge(browser, built) -> None:
         ctx.close()
 
 
-def test_the_side_rail_ends_above_the_dock(browser, built) -> None:
-    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=1280)
-    try:
-        _start(page, "demo", "guide", step=1)
-        page.wait_for_timeout(100)
-        rail = page.evaluate("document.getElementById('pp-rail').getBoundingClientRect().bottom")
-        dock = page.evaluate("document.querySelector('.pl-dock').getBoundingClientRect().top")
-        assert rail <= dock + 1, (rail, dock)
-        assert errors == []
-    finally:
-        ctx.close()
-
-
 def test_a_broken_tour_does_not_block_map_approve_or_synced(tmp_path: Path) -> None:
     p = make_tour_project(tmp_path / "p")
     page_before = (p / PROTO_REL).read_bytes()
@@ -1258,3 +1245,377 @@ def test_player_colours_are_tokens_or_named_video_colours() -> None:
     raw = re.findall(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(|(?<![\w-])(?:white|black)(?![\w-])", body)
     assert raw == [], raw
     assert "--pl-video-ink" in head and "--pl-video-scrim" in head and "--pl-video-dim" in head
+
+
+# ---------------------------------------------------------------- the player stays on top and can get out of the way
+
+LAYERS_REL = f"{DOCS}/prototype/screens/layers.html"
+LONG_REL = f"{DOCS}/prototype/screens/long.html"
+# A screen with its own stacking (a fixed scrim at z-index 60, a dialog at 9999), and a target selector that matches
+# an element hidden by visibility (itself, or through its parent) and one pushed off the frame before the one shown.
+LAYERS = """<style>
+[data-screen="layers"] { position: relative; padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="layers"] .scrim { position: fixed; inset: 0; z-index: 60; background: var(--color-scrim); }
+[data-screen="layers"] .dialog-box { position: absolute; left: var(--spacing-4); right: var(--spacing-4);
+  top: var(--spacing-6); z-index: 9999; padding: var(--spacing-6); background: var(--color-surface); }
+[data-screen="layers"] .gone { visibility: hidden; }
+[data-screen="layers"] .away { position: absolute; left: 0; top: 0; transform: translateX(-200%); }
+</style>
+<section data-screen="layers" data-title="Layers" data-order="4">
+  <h2>Layers</h2>
+  <div data-state="ready">
+    <a href="#screen-home" class="go gone" data-test="hidden-go">Hidden</a>
+    <div class="gone"><a href="#screen-home" class="go" data-test="hidden-parent-go">Inside hidden</a></div>
+    <a href="#screen-home" class="go away" data-test="away-go">Away</a>
+    <p><a href="#screen-home" class="go" data-test="shown-go">Shown</a></p>
+  </div>
+  <div data-state="dialog">
+    <div class="scrim"></div>
+    <div class="dialog-box" role="dialog" aria-label="A dialog"><p>The dialog</p></div>
+  </div>
+</section>
+"""
+LONG = """<style>
+[data-screen="long"] { padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="long"] .long { min-height: 4000px; }
+</style>
+<section data-screen="long" data-title="Long page" data-order="5">
+  <h2>Long page</h2>
+  <div data-state="ready">
+    <div class="long"><p class="first">The first thing</p><p>More below</p></div>
+  </div>
+</section>
+"""
+
+
+def staged_tour() -> dict:
+    return {"title": "Layers and lengths", "audience": "review",
+            "intro": {"title": "Stacking", "text": "A card that stays in view."},
+            "steps": [
+                {"screen": "layers", "state": "dialog", "title": "Over the dialog",
+                 "caption": "The dialog sits under the player.", "target": ".dialog-box", "point": "ring"},
+                {"screen": "layers", "state": "ready", "title": "The shown link", "caption": "Only the visible one.",
+                 "target": ".go", "point": "ring"},
+                {"screen": "long", "title": "A tall area", "caption": "Taller than the window.", "target": ".long",
+                 "point": "ring", "labels": [{"target": ".long .first", "text": "First"}]},
+                {"screen": "long", "title": "A tall area, no labels", "caption": "Nearest.", "target": ".long",
+                 "point": "ring"},
+            ]}
+
+
+@pytest.fixture(scope="module")
+def staged(tmp_path_factory) -> Path:
+    p = make_tour_project(tmp_path_factory.mktemp("staged") / "Stage Ünïcode",
+                          {"demo": demo(), "staged": staged_tour()}, build=False)
+    write(p / LAYERS_REL, LAYERS)
+    write(p / LONG_REL, LONG)
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return p
+
+
+# What paints on top at the node's centre (the overlay layer takes no clicks, so it is made hit-testable for the probe).
+ON_TOP = """(sel) => { var n = document.querySelector(sel); var r = n.getBoundingClientRect();
+  var layer = n.closest('.pl-layer'); if (layer) layer.style.pointerEvents = 'auto';
+  var hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 6));
+  if (layer) layer.style.pointerEvents = '';
+  return !!hit && (hit === n || n.contains(hit)); }"""
+
+
+def test_a_screens_own_layers_never_cover_the_player(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=1)
+        page.wait_for_timeout(100)
+        assert _shown(page, '#pp-frame [data-screen="layers"] .scrim') == 1
+        assert page.evaluate(ON_TOP, ".pl-dock [data-pl=next]"), "the dock is under the screen's z-index 60 layer"
+        assert page.evaluate(ON_TOP, ".pl-dock-top [data-pl=hide]")
+        _start(page, "staged", "play", step=1)
+        page.evaluate("window.plumbPlayer.pause()")
+        assert page.evaluate(ON_TOP, ".pl-subtitle"), "the subtitle is under the screen's layer"
+        assert page.evaluate(ON_TOP, ".pl-badge")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_find_skips_hidden_and_off_frame_targets(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        _start(page, "staged", "guide", step=2)
+        page.wait_for_timeout(100)
+        rings = page.evaluate("""() => [...document.querySelectorAll('.pl-ring')].map(function (n) {
+            var r = n.getBoundingClientRect(); return [r.left + 4, r.top + 4, r.width - 8, r.height - 8]; })""")
+        shown = page.evaluate("""() => { var r = document.querySelector('#pp-frame [data-test=shown-go]')
+            .getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; }""")
+        assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], shown)), (rings, shown)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_tall_labelled_target_keeps_its_first_label_in_view(browser, staged, width: int) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, width=width)
+    try:
+        page.evaluate("window.plumbPrototype.go('long'); window.scrollTo(0, 2500)")
+        _start(page, "staged", "guide", step=3)
+        page.wait_for_timeout(150)
+        label = page.evaluate("""() => { var r = document.querySelector('.pl-label').getBoundingClientRect();
+            var d = document.querySelector('.pl-dock').getBoundingClientRect();
+            return {top: r.top, bottom: r.bottom, dock: d.top}; }""")
+        assert label["top"] >= 0 and label["bottom"] <= label["dock"], label
+        assert page.evaluate(ON_TOP, ".pl-label"), "the first label is covered"
+        # no labels: the nearest edge, so a tall area that already fills the view does not jump
+        before = page.evaluate("window.scrollY")
+        page.click(".pl-dock [data-pl=next]")
+        page.wait_for_timeout(100)
+        assert page.evaluate("window.scrollY") == before
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+CARD_IN_VIEW = """() => { var r = document.querySelector('.pl-card-box').getBoundingClientRect();
+    var d = document.querySelector('.pl-dock').getBoundingClientRect();
+    return r.height > 0 && r.top >= 0 && r.bottom <= d.top; }"""
+
+
+def test_a_title_card_stays_in_the_viewport_on_a_long_page(browser, staged) -> None:
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL)
+    try:
+        page.evaluate("window.plumbPrototype.go('long'); window.scrollTo(0, 3000)")
+        _start(page, "staged", "guide")
+        assert _state(page)["card"] == "intro"
+        assert page.evaluate(CARD_IN_VIEW), "the card is off screen when the tour starts scrolled down"
+        for y in (0, 2000):
+            page.evaluate("(y) => window.scrollTo(0, y)", y)
+            page.wait_for_timeout(50)
+            assert page.evaluate(CARD_IN_VIEW), f"the card scrolled away with the page (scrolled to {y})"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def _dock_shown(page) -> bool:
+    return _shown(page, ".pl-dock") == 1
+
+
+def _pill(page) -> dict:
+    return page.evaluate("""() => { var p = document.querySelector('.pl-pill'); var t = p.querySelector('.pl-pill-title');
+        return {shown: !p.hidden && p.getClientRects().length > 0,
+                title: t && !t.hidden && t.getClientRects().length ? t.textContent : '',
+                button: p.querySelector('[data-pl=show]').textContent}; }""")
+
+
+def test_hide_panel_button_and_pill_in_guide_mode(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "demo", "guide", step=1)
+        assert _dock_shown(page) and not _pill(page)["shown"]
+        assert page.inner_text(".pl-dock-top [data-pl=hide]") == "Hide panel"
+        page.click(".pl-dock [data-pl=hide]")
+        assert not _dock_shown(page)
+        pill = _pill(page)
+        assert pill["shown"] and pill["title"] == "Tonight's tables" and pill["button"] == "Show panel", pill
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "show"
+        page.keyboard.press("ArrowRight")
+        assert _state(page)["step"] == 2 and _pill(page)["title"] == "Start a booking", "the pill follows the step"
+        page.click(".pl-pill [data-pl=show]")
+        assert _dock_shown(page) and not _pill(page)["shown"]
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "hide"
+        page.click(".pl-dock [data-pl=hide]")
+        page.keyboard.press("Escape")
+        assert not _dock_shown(page) and not _pill(page)["shown"], "leaving takes the pill with it"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_hide_panel_in_play_mode_keeps_the_subtitle(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "demo", "play", step=1)
+        page.evaluate("window.plumbPlayer.pause()")
+        page.evaluate("document.activeElement.blur()")
+        page.keyboard.press("h")
+        assert not _dock_shown(page)
+        pill = _pill(page)
+        assert pill["shown"] and pill["title"] == "" and pill["button"] == "Show panel", pill
+        assert _shown(page, ".pl-subtitle") == 1
+        place = page.evaluate("""() => { var s = document.querySelector('.pl-subtitle').getBoundingClientRect();
+            var p = document.querySelector('.pl-pill').getBoundingClientRect(); return {sub: s.bottom, pill: p.top}; }""")
+        assert place["sub"] <= place["pill"], place
+        page.evaluate("window.plumbPlayer.resume()")
+        _wait_pos(page, 2)
+        assert _shown(page, ".pl-subtitle") == 1 and not _dock_shown(page), "play keeps narrating with the panel hidden"
+        page.keyboard.press("h")
+        assert _dock_shown(page)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_h_key_is_ignored_while_typing_or_with_modifiers(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "training", "guide", step=2)
+        page.click("#pp-frame [data-test=guest]")
+        page.keyboard.press("h")
+        assert _dock_shown(page), "typing an h in a field does not hide the panel"
+        assert "h" in page.evaluate("document.querySelector('#pp-frame [data-test=guest]').value")
+        page.evaluate("document.activeElement.blur()")
+        for combo in ("Shift+H", "Alt+h", "Control+h", "Meta+h"):
+            page.keyboard.press(combo)
+            assert _dock_shown(page), combo
+        page.keyboard.press("h")
+        assert not _dock_shown(page)
+        page.keyboard.press("h")
+        assert _dock_shown(page)
+        page.keyboard.press("Escape")
+        page.keyboard.press("h")
+        assert not _dock_shown(page) and not _pill(page)["shown"], "no tour, no panel to hide"
+        _start(page, "training", "guide", step=2)
+        assert _dock_shown(page), "an h with no tour running changes nothing"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_hide_panel_is_remembered_across_reloads(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+    try:
+        _start(page, "demo", "guide", step=1)
+        page.click(".pl-dock [data-pl=hide]")
+        page.reload()
+        page.wait_for_load_state("load")
+        _start(page, "demo", "guide", step=1)
+        assert not _dock_shown(page) and _pill(page)["shown"], "the hidden panel stays hidden"
+        page.click(".pl-pill [data-pl=show]")
+        page.reload()
+        page.wait_for_load_state("load")
+        _start(page, "demo", "guide", step=1)
+        assert _dock_shown(page) and not _pill(page)["shown"]
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+THROWING_STORAGE = """
+Object.defineProperty(window, 'localStorage', { configurable: true,
+  get: function () { throw new Error('storage is off'); } });
+"""
+
+
+def test_hide_panel_works_when_storage_throws(browser, built) -> None:
+    ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+    page = ctx.new_page()
+    errors: list = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.add_init_script(THROWING_STORAGE)
+    try:
+        page.goto((built / PROTO_REL).resolve().as_uri())
+        page.wait_for_load_state("load")
+        _start(page, "demo", "guide", step=1)
+        assert _dock_shown(page)
+        page.click(".pl-dock [data-pl=hide]")
+        assert not _dock_shown(page) and _pill(page)["shown"]
+        page.click(".pl-pill [data-pl=show]")
+        assert _dock_shown(page)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def _frame_width(page) -> float:
+    return page.evaluate("document.getElementById('pp-frame').getBoundingClientRect().width")
+
+
+@pytest.mark.parametrize("width", [1440, 1280])
+def test_the_side_columns_collapse_while_a_tour_runs(browser, built, width: int) -> None:
+    ctx, page, errors, _ = _open(browser, built / PROTO_REL, width=width)
+    try:
+        before = _frame_width(page)
+        assert _shown(page, ".pp-side") == 1 and _shown(page, "#pp-rail") == 1
+        _start(page, "demo", "guide", step=1)
+        page.wait_for_timeout(50)
+        assert _shown(page, ".pp-side") == 0 and _shown(page, "#pp-rail") == 0
+        assert _frame_width(page) >= 768, _frame_width(page)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(50)
+        assert _shown(page, ".pp-side") == 1 and _shown(page, "#pp-rail") == 1, "they come back when the tour ends"
+        assert abs(_frame_width(page) - before) <= 1
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_standalone_tour_page_collapses_the_columns_too(browser, built) -> None:
+    ctx, page, errors, _ = _open(browser, built / DEMO_PAGE, width=1440)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        assert _shown(page, ".pp-side") == 0 and _shown(page, "#pp-rail") == 0 and _frame_width(page) >= 768
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+CHROME = """() => { var probe = document.createElement('span');
+  probe.style.color = 'var(--color-primary, rgb(1, 2, 3))'; document.body.appendChild(probe);
+  var want = getComputedStyle(probe).color; probe.remove();
+  var dock = getComputedStyle(document.querySelector('.pl-dock'));
+  return {button: getComputedStyle(document.querySelector('.pl-dock [data-pl=next]')).backgroundColor, primary: want,
+          radius: dock.borderTopLeftRadius, font: dock.fontFamily}; }"""
+
+
+def _chrome(browser, project: Path, scheme: str) -> dict:
+    ctx, page, errors, _ = _open(browser, project / PROTO_REL, scheme=scheme)
+    try:
+        _start(page, "demo", "guide", step=1)
+        out = page.evaluate(CHROME)
+        assert errors == []
+        return out
+    finally:
+        ctx.close()
+
+
+def _tour_project(dest: Path, mutate) -> Path:
+    p = make_project(dest, build=False, mutate=mutate)
+    put_tour(p, "demo", demo())
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return p
+
+
+def _with_lg(doc: dict) -> None:
+    doc["radius"]["lg"] = {"$value": "20px"}
+
+
+def _no_accent(doc: dict) -> None:
+    for name in ("primary", "on-primary", "link"):
+        doc["color"].pop(name, None)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_player_chrome_takes_the_projects_tokens(browser, tmp_path: Path, scheme: str) -> None:
+    got = _chrome(browser, _tour_project(tmp_path / "with", _with_lg), scheme)
+    assert got["button"] == got["primary"] and got["primary"] != "rgb(1, 2, 3)", got
+    assert got["radius"] == "20px", got
+    got = _chrome(browser, _tour_project(tmp_path / "without", _no_accent), scheme)
+    assert got["primary"] == "rgb(1, 2, 3)", "this project has no primary colour"
+    assert got["button"] == ("rgb(47, 93, 138)" if scheme == "light" else "rgb(141, 184, 227)"), got
+    assert got["radius"] == "14px", got
+
+
+def test_the_shell_maps_the_player_roles_to_format_names_with_todays_fallbacks() -> None:
+    shell = read(REPO_TEMPLATES / "prototype-shell.html.tmpl")
+    for line in ("--pl-accent: var(--color-primary, #2f5d8a);", "--pl-accent: var(--color-primary, #8db8e3);",
+                 "--pl-on-accent: var(--color-on-primary, #ffffff);", "--pl-surface: var(--color-surface, #ffffff);",
+                 "--pl-surface: var(--color-surface, #1a1c1f);", "--pl-border: var(--color-outline, #dcdcd6);",
+                 "--pl-font: var(--font-sans, system-ui", "--pl-mono: var(--font-mono, ui-monospace",
+                 "--pl-radius: var(--radius-md, 8px);", "--pl-shadow-lg: var(--shadow-popover, "):
+        assert line in shell, line
+    assert re.search(r"\.pp-frame \{[^}]*isolation: isolate", shell)
+    css = read(REPO_TEMPLATES / "player.css")
+    assert "isolation: isolate" in css and "var(--radius-lg, 14px)" in css
