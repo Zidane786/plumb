@@ -670,6 +670,20 @@ def test_execute_bash_reads_and_builds_are_allowed(tmp_path, proj, command):
 
 
 @needs_sh
+@pytest.mark.parametrize("command", [
+    f"cat > Makefile <<'EOF'\ntokens:\n\tpython3 {SKILL_REL}/scripts/build-tokens.py > docs/design/screens.html\nEOF",
+    "python3 -c \"import json; print(json.dumps(json.load(open('docs/design/prototype/screens.json'))))\"",
+    "git commit -m 'never > docs/design/screens.html by hand'",
+])
+def test_execute_bash_that_only_mentions_a_guarded_file_is_allowed(tmp_path, proj, command):
+    """Only real write targets count (tests/test_bash_guard.py has every form); Kiro's payload is read the same way."""
+    kiro_allowed(pre(tmp_path, proj, "execute_bash", COMMAND=command))
+    target = f"{SKILL_REL}/scripts/build-tokens.py"
+    assert "is Plumb's file" in kiro_refused(pre(tmp_path, proj, "execute_bash",
+                                                 COMMAND=f"python3 -c \"open('{target}', 'w')\""))
+
+
+@needs_sh
 def test_execute_cmd_on_windows_is_a_shell_too(tmp_path, proj):
     reason = kiro_refused(pre(tmp_path, proj, "execute_bash", COMMAND="echo x > docs/design/screens.html",
                               edit_json=lambda d: d.update(tool_name="execute_cmd")))

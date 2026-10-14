@@ -16,11 +16,16 @@ In such a project, in this order:
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
      marked, in the project or the home folder): editing them could switch the checks off.
-   Shell commands are read for writes (>, >>, tee, sed -i, perl -i, cp / mv / install / rsync onto, Set-Content,
-   Add-Content, Out-File, Copy-Item / Move-Item onto, Python writes); running build-tokens.py or build-prototype.py is
-   allowed, as are reads, git and anything that writes elsewhere. Removing or moving away a guarded file (rm, rmdir,
-   unlink, del, Remove-Item, git rm, the sources of mv / Move-Item / git mv), or a folder that holds one, is refused
-   the same way; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder.
+   Shell commands are read for their real write targets only (_hooklib's shell reader): a redirect (>, >>, 1>, 2>,
+   &>, >|), tee [-a], sed -i, perl -i, the destination of cp / mv / install / rsync / ln, truncate, dd of=, Set-Content,
+   Add-Content, Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell,
+   eval), and in inline code (python -c, node -e, a here-document fed to an interpreter) open(<path>, "w"|"a"|"x"),
+   Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like. A command that only mentions a
+   guarded path is allowed: quoted text, a here-document written to another file (a Makefile whose lines run the
+   scripts), reading, running and importing (json.load, importlib); so are build-tokens.py and build-prototype.py runs,
+   git, and anything that writes elsewhere. Removing or moving away a guarded file (rm, rmdir, unlink, del,
+   Remove-Item, git rm, the sources of mv / Move-Item / git mv, os.remove, shutil.rmtree), or a folder that holds one,
+   is refused the same way; ~, $HOME, ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
    start note says the routes are not recorded) unless a screen in screens.json
