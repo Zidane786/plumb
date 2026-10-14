@@ -7,82 +7,7 @@
 {{base}}
 <title>{{title}}</title>
 <style>
-/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
-   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. Where
-   Plumb's format names a token for a role (--color-primary, --color-surface, --color-outline, --font-sans,
-   --radius-md, --shadow-popover ...), the role takes it when the page defines it, and today's neutral otherwise.
-   Text and muted text keep the neutral here: the mapping gives them the project's colour only when it reaches 4.5:1. */
-:where(:root), :where(.pl-light) {
-  --pl-bg: var(--color-background, #fbfbfa);
-  --pl-surface: var(--color-surface, #ffffff);
-  --pl-sunk: var(--color-sunk, #f0f0ed);
-  --pl-text: #1d1f23;
-  --pl-muted: #5b616b;
-  --pl-border: var(--color-outline, #dcdcd6);
-  --pl-border-strong: var(--color-outline-input, #858a93);
-  --pl-accent: var(--color-primary, #2f5d8a);
-  --pl-on-accent: var(--color-on-primary, #ffffff);
-  --pl-focus: var(--color-primary, #2f5d8a);
-  --pl-bad: var(--color-danger, #b42318);
-  --pl-on-bad: var(--color-on-danger, #ffffff);
-  --pl-warn: var(--color-warning, #8a5a00);
-  --pl-good: var(--color-success, #067647);
-  color-scheme: light;
-}
-:where(:root[data-theme="dark"]), :where(.pl-dark) {
-  --pl-bg: var(--color-background, #121315);
-  --pl-surface: var(--color-surface, #1a1c1f);
-  --pl-sunk: var(--color-sunk, #0c0d0f);
-  --pl-text: #e8e9eb;
-  --pl-muted: #a2a7af;
-  --pl-border: var(--color-outline, #2e3136);
-  --pl-border-strong: var(--color-outline-input, #6f747d);
-  --pl-accent: var(--color-primary, #8db8e3);
-  --pl-on-accent: var(--color-on-primary, #0d1117);
-  --pl-focus: var(--color-primary, #8db8e3);
-  --pl-bad: var(--color-danger, #f97066);
-  --pl-on-bad: var(--color-on-danger, #1a0b0a);
-  --pl-warn: var(--color-warning, #fdb022);
-  --pl-good: var(--color-success, #47cd89);
-  color-scheme: dark;
-}
-@media (prefers-color-scheme: dark) {
-  :where(:root:not([data-theme="light"])) {
-    --pl-bg: var(--color-background, #121315);
-    --pl-surface: var(--color-surface, #1a1c1f);
-    --pl-sunk: var(--color-sunk, #0c0d0f);
-    --pl-text: #e8e9eb;
-    --pl-muted: #a2a7af;
-    --pl-border: var(--color-outline, #2e3136);
-    --pl-border-strong: var(--color-outline-input, #6f747d);
-    --pl-accent: var(--color-primary, #8db8e3);
-    --pl-on-accent: var(--color-on-primary, #0d1117);
-    --pl-focus: var(--color-primary, #8db8e3);
-    --pl-bad: var(--color-danger, #f97066);
-    --pl-on-bad: var(--color-on-danger, #1a0b0a);
-    --pl-warn: var(--color-warning, #fdb022);
-    --pl-good: var(--color-success, #47cd89);
-    color-scheme: dark;
-  }
-}
-:where(:root) {
-  --pl-font: var(--font-sans, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
-  --pl-mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
-  --pl-radius: var(--radius-md, 8px);
-  --pl-radius-sm: var(--radius-sm, 4px);
-  --pl-space-1: 4px;
-  --pl-space-2: 8px;
-  --pl-space-3: 12px;
-  --pl-space-4: 16px;
-  --pl-space-6: 24px;
-  --pl-shadow: var(--shadow-card, 0 1px 3px rgb(0 0 0 / 0.12));
-  --pl-shadow-lg: var(--shadow-popover, 0 8px 24px -4px rgb(0 0 0 / 0.18));
-  --pl-duration: 150ms;
-  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --pl-text-control: 15px;
-  --pl-text-small: 13px;
-  --pl-text-title: 22px;
-}
+{{chrome_roles}}
 </style>
 <style>
 {{theme_css}}
@@ -320,6 +245,7 @@ body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
       <li><a id="pp-screens-link" href="{{first_screen_href}}" aria-current="page">Screens</a></li>
       <li><a id="pp-decisions-link" href="#decisions">Decisions</a></li>
       <li><a href="screens.html">Catalogue</a></li>
+      <li><a id="pp-app-link" href="{{first_app_href}}" title="The same screen full window, for a demo">Open as app</a></li>
     </ul>
   </nav>
   <button type="button" id="theme-toggle" class="pp-btn"><span class="theme-icon" aria-hidden="true"></span><span class="theme-label">Dark theme</span></button>
@@ -391,7 +317,7 @@ body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
   function $(id) { return document.getElementById(id); }
   var frame = $("pp-frame"), stage = $("pp-stage"), workspace = $("pp-workspace"), toolbar = $("pp-toolbar");
   var decisions = $("decisions"), title = $("pp-title"), meta = $("pp-meta");
-  var screensLink = $("pp-screens-link"), decisionsLink = $("pp-decisions-link");
+  var screensLink = $("pp-screens-link"), decisionsLink = $("pp-decisions-link"), appLink = $("pp-app-link");
   var sections = {};
   Array.prototype.forEach.call(frame.children, function (el) {
     var id = el.getAttribute("data-screen");
@@ -412,6 +338,8 @@ body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
   }
   function writeHash(mode, hash) {
     if (!mode || decode(location.hash) === hash) return;
+    /* while a walkthrough runs (body.pl-touring) its own clicks move between screens without adding history entries */
+    if (mode === "push" && document.body.classList.contains("pl-touring")) mode = "replace";
     try {
       /* the document's own URL plus the hash: a tour page has a <base> one folder up, so a bare "#..." would leave it */
       history[mode === "push" ? "pushState" : "replaceState"](null, "", location.href.split("#")[0] + hash);
@@ -489,6 +417,9 @@ body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
     }
     setPage("screen");
     current = { page: "screen", screen: id, state: state };
+    /* "Open as app" opens app.html on this screen and state */
+    appLink.setAttribute("href", "app.html#/" + encodeURIComponent(id) +
+      (state !== s.states[0] ? "/" + encodeURIComponent(state) : ""));
     writeHash(opts.history, "#screen-" + id + (state !== s.states[0] ? "/" + state : ""));
     if (opts.focus) {
       title.focus({ preventScroll: true });

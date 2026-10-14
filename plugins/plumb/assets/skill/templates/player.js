@@ -46,6 +46,9 @@
     return null;
   }
   var stage = $("pp-stage"), frame = $("pp-frame"), mount = api.player || $("plumb-player");
+  /* In the app view (a tour page whose tour plays full window) there is no screens list or rail, the page itself
+     scrolls, and links back to the screens use its #/ID routes. */
+  var appView = api.view === "app";
 
   /* ------------------------------------------------------------ overlay, card, dock, live region */
   var layer = el("div", "pl-layer", null, { "aria-hidden": "true" });
@@ -59,6 +62,10 @@
   var cardBox = el("div", "pl-card-box", null, { role: "group", "aria-roledescription": "title card" });
   var cardEyebrow = el("p", "pl-eyebrow"), cardTitle = el("h2"), cardText = el("p");
   cardBox.appendChild(cardEyebrow); cardBox.appendChild(cardTitle); cardBox.appendChild(cardText);
+  /* The app view has no panels: its closing card offers the prototype (the screens list, states, decisions). */
+  var cardLink = el("a", "pl-card-link", "Open the prototype", { href: "prototype.html" });
+  cardLink.hidden = true;
+  cardBox.appendChild(cardLink);
   card.appendChild(cardBox);
   card.hidden = true;
   if (stage) { stage.appendChild(layer); stage.appendChild(card); }
@@ -356,6 +363,52 @@
     var pos = getComputedStyle(bar).position;
     return pos === "sticky" || pos === "fixed" ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
   }
+  /* True when nothing between n and the page makes a containing block for position: fixed (so a fixed layer of n is
+     placed against the window: the app view, where the window is the frame). */
+  function fixedToWindow(n) {
+    for (var p = n.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+      if (holds(getComputedStyle(p), true)) return false;
+    }
+    return true;
+  }
+  /* True when a sticky element sticks to the window: no box between it and the page clips or scrolls (a sticky table
+     head inside a scrolling list sticks to that list instead). */
+  function sticksToWindow(n) {
+    for (var p = n.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+      var cs = getComputedStyle(p);
+      if (cs.overflowX !== "visible" || cs.overflowY !== "visible") return false;
+    }
+    return true;
+  }
+  /* The window's top edge below whatever the screen itself keeps at the top of the window while the page scrolls: its
+     own fixed or sticky headers, bars and banners (in the app view the page scrolls, so one of them can cover a
+     target). Only layers that sit across the target's columns count, never one holding the target or inside it, nor
+     a tall one (a full-height sidebar or a scrim). Measured once per step, before the page moves: a sticky element is
+     taken at the top it sticks to. Several stacked bars add up. */
+  function screenTop(node, top) {
+    var target = shape(node) || node, section = target.closest ? target.closest("[data-screen]") : null;
+    if (!section) return top;
+    var r = target.getBoundingClientRect(), vh = window.innerHeight, bands = [];
+    Array.prototype.forEach.call(section.querySelectorAll("*"), function (n) {
+      var cs = getComputedStyle(n), pos = cs.position;
+      if ((pos !== "fixed" && pos !== "sticky") || n.contains(target) || target.contains(n)) return;
+      if (!n.getClientRects().length || cs.visibility === "hidden" || cs.visibility === "collapse") return;
+      var b = n.getBoundingClientRect();
+      if (!(b.height > 0) || b.height > vh / 2 || b.right <= r.left || b.left >= r.right) return;
+      var from;
+      if (pos === "fixed") {
+        if (!fixedToWindow(n)) return;
+        from = b.top;
+      } else {
+        from = parseFloat(cs.top);
+        if (isNaN(from) || !sticksToWindow(n)) return;
+      }
+      bands.push([from, from + b.height]);
+    });
+    bands.sort(function (a, b) { return a[0] - b[0]; });
+    bands.forEach(function (b) { if (b[0] <= top + 24 && b[1] > top) top = b[1]; });
+    return top;
+  }
   function chromeHeight() {
     if (!dock.hidden) return dock.offsetHeight + 16;
     return pill.hidden ? 0 : pill.offsetHeight + 16;
@@ -399,6 +452,19 @@
     frame.style.transformOrigin = "";
     stage.classList.remove("pl-zooming");
   }
+  /* A zoom scales the frame with a transform, which makes the frame the containing block of everything the screen fixes
+     in place. In prototype.html the frame is that already (contain: layout), so nothing moves. Where the window is the
+     frame (the app view), a fixed header, toast or dialog would jump to the top of the page for as long as the zoom
+     lasts: there a screen showing a fixed layer is not zoomed, and the step points with a spotlight instead. */
+  function zoomMovesFixed(step) {
+    if (!fixedToWindow(frame) || holds(getComputedStyle(frame), true)) return false;
+    var section = api.screen(step.screen);
+    if (!section) return false;
+    return Array.prototype.some.call(section.querySelectorAll("*"), function (n) {
+      var cs = getComputedStyle(n);
+      return cs.position === "fixed" && n.getClientRects().length > 0 && cs.visibility !== "hidden";
+    });
+  }
   function zoom(nodes) {
     unzoom();
     var f = frame.getBoundingClientRect();
@@ -420,14 +486,14 @@
     return true;
   }
   /* Draws the step's pointing and text on the stage; called again on resize and after a zoom settles. */
-  function draw(step) {
+  function draw(step, point) {
     clearOverlays();
     if (!onStepScreen(step)) { unzoom(); return; }  /* a played or real click moved on: the step's marks go with it */
     /* drawn where things are now: nothing here scrolls, and what a scroller holds out of view is left out */
     var targets = step.targets.map(function (s) { return find(step, s); }).filter(function (n) { return n && !clipped(n); });
     var boxes = targets.map(box);
     var W = stage.clientWidth, H = stage.clientHeight;
-    if (step.point === "spotlight" && boxes.length) {
+    if (point === "spotlight" && boxes.length) {
       var svg = document.createElementNS(SVG, "svg");
       svg.setAttribute("class", "pl-dim");
       svg.setAttribute("width", W); svg.setAttribute("height", H);
@@ -444,11 +510,11 @@
       addOverlay(svg);
       boxes.forEach(function (b) { ring("pl-edge", b); });
     }
-    if (step.point === "ring") boxes.forEach(function (b) { ring("pl-ring", b); });
-    if (step.point === "zoom" && frame.style.transform) boxes.forEach(function (b) { ring("pl-edge", b); });
-    if (step.point === "beacon") boxes.forEach(function (b) { put(addOverlay(el("span", "pl-beacon")), b.x + b.w - 2, b.y + 2); });
+    if (point === "ring") boxes.forEach(function (b) { ring("pl-ring", b); });
+    if (point === "zoom" && frame.style.transform) boxes.forEach(function (b) { ring("pl-edge", b); });
+    if (point === "beacon") boxes.forEach(function (b) { put(addOverlay(el("span", "pl-beacon")), b.x + b.w - 2, b.y + 2); });
     var reserved = { top: 0, bottom: 0 };
-    if (step.point === "arrow" && boxes.length) {
+    if (point === "arrow" && boxes.length) {
       var b0 = boxes[0], up = b0.y < 72;
       var arrow = addOverlay(el("div", "pl-arrow" + (up ? " pl-arrow-up" : "")));
       var label = el("span", "pl-arrow-label", step.pointLabel || step.title || "Here");
@@ -474,7 +540,7 @@
       put(note, clamp(f.x + f.w * step.note.x / 100 - nw / 2, 8, Math.max(8, W - nw - 8)),
           clamp(f.y + f.h * step.note.y / 100 - nh / 2, 8, Math.max(8, H - nh - 8)));
     }
-    if (step.point === "cursor" && targets.length) moveCursor(targets[0], T.mode === "play" && !calm());
+    if (point === "cursor" && targets.length) moveCursor(targets[0], T.mode === "play" && !calm());
   }
   /* Puts a tag at (x, y), or nudged left or down when it would sit under the play badge or the dock. */
   function placeClear(tag, x, y, W, H) {
@@ -540,16 +606,21 @@
     else { x = b.x - w - gap; y = b.y + b.h / 2 - h / 2; }
     put(n, clamp(x, 8, Math.max(8, W - w - 8)), clamp(y, 4, Math.max(4, H - h - 4)));
   }
-  /* Scrolls the step's first target into the room between the sticky bar and the dock. One taller than that room:
+  /* Scrolls the step's first target into the room between the sticky bar (and the screen's own fixed or sticky
+     header) and the dock. One that fits is centred in that room. One taller than that room:
      with labels, its top edge and its topmost label come into view together when they fit, else the topmost label;
      without labels, it goes to its nearest edge, and not at all while part of it is in view, so a tall area already
      filling the window does not jump. */
   function bringIntoView(node, labels) {
     var el0 = shape(node) || node;
-    var r = el0.getBoundingClientRect(), top = topInset(), bottom = window.innerHeight - chromeHeight();
-    var margin = 32;
+    var top = screenTop(el0, topInset()), bottom = window.innerHeight - chromeHeight();
+    var r = el0.getBoundingClientRect(), margin = 32;
     if (r.height <= bottom - top) {
-      if (r.top < top || r.bottom > bottom) scrollToNode(el0, { block: "center", inline: "nearest" });
+      if (r.top < top || r.bottom > bottom) {
+        scrollToNode(el0, { block: "nearest", inline: "nearest" });  /* the window and any box between, as before */
+        r = el0.getBoundingClientRect();
+        scrollWindowBy((r.top + r.bottom) / 2 - (top + bottom) / 2);
+      }
       return;
     }
     if (!labels.length) {
@@ -571,12 +642,13 @@
     var labelled = step.labels.map(function (lab) { return find(step, lab.target); })
       .filter(function (n) { return n && !clipped(n); });
     if (targets.length) bringIntoView(targets[0], labelled);
-    T.redraw = function () { draw(step); };
+    var point = step.point === "zoom" && zoomMovesFixed(step) ? "spotlight" : step.point;
+    T.redraw = function () { draw(step, point); };
     var shown = targets.filter(function (n) { return !clipped(n); });
-    if (step.point === "zoom" && shown.length && zoom(shown)) {
+    if (point === "zoom" && shown.length && zoom(shown)) {
       T.zoomTimer = setTimeout(function () { if (T.redraw) T.redraw(); }, calm() ? 0 : 400);
     }
-    draw(step);
+    draw(step, point);
   }
   function clearStep() {
     clearOverlays();
@@ -848,6 +920,12 @@
       cardTitle.textContent = item.title;
       cardText.textContent = item.text || "";
       cardText.hidden = !item.text;
+      cardLink.hidden = !(appView && item.card === "closing");
+      if (!cardLink.hidden) {
+        var cur = api.current(), info = cur.screen ? screenInfo(cur.screen) : null;
+        cardLink.setAttribute("href", "prototype.html" + (info ? "#screen-" + encodeURIComponent(cur.screen) +
+          (cur.state && cur.state !== info.states[0] ? "/" + encodeURIComponent(cur.state) : "") : ""));
+      }
       card.hidden = false;
       placeCard();
     } else {
@@ -957,7 +1035,7 @@
     var cur = api.current();
     if (cur.page === "screen" && cur.screen) {
       var info = screenInfo(cur.screen);
-      var hash = "#screen-" + cur.screen + (info && cur.state !== info.states[0] ? "/" + cur.state : "");
+      var hash = (appView ? "#/" : "#screen-") + cur.screen + (info && cur.state !== info.states[0] ? "/" + cur.state : "");
       try { history.replaceState(null, "", location.href.split("#")[0] + hash); } catch (err) { /* ignore */ }
     }
     live.textContent = message || "Left the walkthrough. The prototype is yours to click around.";

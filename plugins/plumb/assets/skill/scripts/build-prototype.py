@@ -35,15 +35,18 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
                                    (globs relative to the project root), files_hash, approved {by, at, hash} | null,
                                    synced_from_code, status (to-build | built).
 
-  <docs>/tours/<tour>.html          one per tour file: the whole prototype plus that tour, opening straight into it (play
-                                   mode for a client or whats-new audience, guide mode otherwise). It sits one folder
+  <docs>/tours/<tour>.html          one per tour file: every screen plus that tour, opening straight into it (play
+                                   mode for a client or whats-new audience, guide mode otherwise), in the tour's
+                                   "view": app (the default) is the app view with the player on top, its closing card
+                                   linking to prototype.html; prototype is the prototype page. It sits one folder
                                    down, so a <base href="../"> keeps links and images resolving from the docs folder.
                                    A page whose tour file is gone is removed (only pages this script generated).
 
 Walkthroughs: <docs>/prototype/tours/<id>.json, one tour per file (id: letters, digits, _ and -, and not "<other tour>-<n>",
 which reads as step n of that tour in a #tour- link). Every prototype.html carries the walkthrough player
 (templates/player.js and player.css) with every tour; #tour-<id> and #tour-<id>-<n> open a tour or one of its steps.
-  {"title", "audience": client|training|review|team|whats-new (default review), "purpose", "speed": 0.5|1|1.5|2,
+  {"title", "audience": client|training|review|team|whats-new (default review), "view": app|prototype (default app:
+   where tours/<id>.html plays it), "purpose", "speed": 0.5|1|1.5|2,
    "intro": {"title", "text", "hold"}, "closing": {...}, "chapters": [{"title", "text", "hold", "steps": [...]}] | "steps": [...]}
   step: {"screen", "state" (default: the screen's first), "title", "caption", "target": SEL | "targets": [SEL, ...],
          "point": spotlight|ring|arrow|beacon|zoom|cursor|none | {"style", "label"}, "callout": {"text", "side"},
@@ -55,7 +58,9 @@ which reads as step n of that tour in a #tour- link). Every prototype.html carri
   :nth-child(), :nth-of-type(), :not(), :is(), :checked, :disabled, :required). A bad field, an unknown screen or state,
   a selector that matches nothing or one the check cannot read exits 2 naming the tour file, line and fix, also on --check.
 
-The pages come from templates/prototype-shell.html.tmpl, app-shell.html.tmpl and screens.html.tmpl. All inline the
+The pages come from templates/prototype-shell.html.tmpl, app-shell.html.tmpl and screens.html.tmpl (the two shells
+share templates/chrome-roles.css, the --pl-* roles of Plumb's own chrome; prototype.html's "Open as app" link opens
+app.html#/ID[/STATE] on the screen on show). All inline the
 project's `build-tokens.py --css-vars` export between /* plumb:tokens */ and /* plumb:tokens:end */, a small runtime and each
 screen's scripts, so they open from disk with nothing loaded from the network. No timestamps: rebuilding gives the
 same bytes.
@@ -134,6 +139,7 @@ CATALOGUE_TEMPLATE = "screens.html.tmpl"
 INDEX_TEMPLATE = "proposal-index.html.tmpl"
 PLAYER_CSS = "player.css"
 PLAYER_JS = "player.js"
+ROLES_CSS = "chrome-roles.css"
 SCHEMA = 1
 USAGE = ("[--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
          "[--project PATH]")
@@ -1022,7 +1028,8 @@ POINTS = ("spotlight", "ring", "arrow", "beacon", "zoom", "cursor", "none")
 SIDES = ("top", "right", "bottom", "left")
 ACTIONS = ("click", "type", "choose", "wait")
 MAX_MS = 60000
-TOUR_FIELDS = ("title", "audience", "purpose", "speed", "intro", "closing", "chapters", "steps")
+TOUR_FIELDS = ("title", "audience", "view", "purpose", "speed", "intro", "closing", "chapters", "steps")
+VIEWS = ("app", "prototype")
 CARD_FIELDS = ("title", "text", "hold")
 CHAPTER_FIELDS = ("title", "text", "hold", "steps")
 STEP_FIELDS = ("screen", "state", "title", "caption", "target", "targets", "point", "callout", "labels", "note", "action",
@@ -1208,6 +1215,11 @@ class _TourReader:
             raise self.fail(("audience",), f"audience {_show(audience)} is not one of {', '.join(AUDIENCES)}",
                             "use client or whats-new for a demo that plays by itself; training, review or team for a "
                             "step-by-step guide")
+        view = doc.get("view", "app")
+        if not isinstance(view, str) or view not in VIEWS:
+            raise self.fail(("view",), f"view {_show(view)} is not one of {', '.join(VIEWS)}",
+                            'set "view": "app" (the full-window app, the default) or "view": "prototype" (the prototype '
+                            'page with its screens list and decisions rail), or remove the line')
         speed = doc.get("speed", 1)
         if isinstance(speed, bool) or speed not in SPEEDS:
             raise self.fail(("speed",), f"speed {_show(speed)} is not one of 0.5, 1, 1.5, 2", "set \"speed\": 1")
@@ -1243,7 +1255,7 @@ class _TourReader:
             raise self.fail(("steps",), "the tour has no steps",
                             "add \"steps\": [{\"screen\": \"...\", \"title\": \"...\", \"caption\": \"...\"}]")
         steps = [self.step(path, s, chapter, n) for n, (path, s, chapter) in enumerate(raw, 1)]
-        return {"id": self.id, "title": title, "audience": audience, "purpose": purpose,
+        return {"id": self.id, "title": title, "audience": audience, "view": view, "purpose": purpose,
                 "mode": "play" if audience in PLAY_AUDIENCES else "guide", "speed": speed, "intro": intro,
                 "closing": closing, "chapters": chapters, "steps": steps}
 
@@ -1605,6 +1617,7 @@ def build_prototype(ctx: dict, template: str, tour: Optional[dict] = None) -> st
     values = {
         "header": f"<!-- {_e(tour_header(ctx, tour) if tour else ctx['header'])} -->",
         "base": '<base href="../">' if tour else "",
+        "chrome_roles": ctx["chrome_roles"].strip(),
         "title": _e(f"{tour['title']} · {ctx['project']} walkthrough" if tour else f"{first.title} · {ctx['project']} prototype"),
         "project": _e(ctx["project"]),
         "plumb_version": _e(P.PLUMB_VERSION),
@@ -1614,6 +1627,7 @@ def build_prototype(ctx: dict, template: str, tour: Optional[dict] = None) -> st
         "nav": "\n".join(nav),
         "screen_title": _e(first.title),
         "first_screen_href": f"#screen-{_e(first.id)}",
+        "first_app_href": f"app.html#/{_e(first.id)}",
         "screen_meta": _meta_line(entries[first.id], approval_state(entries[first.id], first)),
         "state_groups": "\n".join(groups),
         "frame": "\n".join(frame),
@@ -1627,19 +1641,22 @@ def build_prototype(ctx: dict, template: str, tour: Optional[dict] = None) -> st
     return text if text.endswith("\n") else text + "\n"
 
 
-def build_app(ctx: dict, template: str) -> str:
+def build_app(ctx: dict, template: str, tour: Optional[dict] = None) -> str:
     """app.html: every screen full window with no prototype panels, hash routes #/ID and #/ID/STATE (and the prototype's
     #screen-ID[/STATE]), the same screen-script API and window.plumbPrototype. It opens on the first screen by
-    data-order. No player: a tour page in the app view adds it (the player_css / player slots)."""
+    data-order. No player. With `tour` (a tour whose view is app, the default) it is the tour page docs/tours/<id>.html:
+    the same app one folder down (a <base> keeps links and images resolving from the docs folder) with the walkthrough
+    player on top, opening straight into that tour."""
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
     frame = [s.render(s.states[0], hide_section=bool(i)) for i, s in enumerate(screens)]
     data = [{"id": s.id, "title": s.title, "states": s.states, "route": entries[s.id]["route"]} for s in screens]
     first = screens[0]
     values = {
-        "header": f"<!-- {_e(ctx.get('app_header') or ctx['header'])} -->",
-        "base": "",
-        "title": _e(f"{first.title} · {ctx['project']}"),
+        "header": f"<!-- {_e(tour_header(ctx, tour) if tour else (ctx.get('app_header') or ctx['header']))} -->",
+        "base": '<base href="../">' if tour else "",
+        "title": _e(f"{tour['title']} · {ctx['project']} walkthrough" if tour else f"{first.title} · {ctx['project']}"),
+        "chrome_roles": ctx["chrome_roles"].strip(),
         "theme_key": json_script(f"plumb-app-theme:{ctx.get('base_project') or ctx['project']}"),
         "theme_css": ctx["theme_css"],
         "screen_styles": ctx["styles"],
@@ -1649,6 +1666,8 @@ def build_app(ctx: dict, template: str) -> str:
         "player_css": "",
         "player": "",
     }
+    if tour:
+        values.update(player_slots(ctx, tour))
     text = P.fill_template(template, values, APP_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
 
@@ -1858,6 +1877,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     app_tpl = read_template(skill_dir, APP_TEMPLATE)
     catalogue_tpl = read_template(skill_dir, CATALOGUE_TEMPLATE)
     player_css, player_js = read_template(skill_dir, PLAYER_CSS), read_template(skill_dir, PLAYER_JS)
+    chrome_roles = read_template(skill_dir, ROLES_CSS)
     files: Dict[Path, str] = {}
     cards, summary = [], []
     for folder in folders:
@@ -1881,6 +1901,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             "decisions_rel": rel(docs / "decisions.md", root), "styles": screen_styles(screens),
             "scripts": screen_scripts(screens), "tours": [], "tours_rel": "", "tokens_rel": tokens_rel,
             "script_rel": script_rel, "player_css": player_css, "player_js": player_js, "base_project": project_name,
+            "chrome_roles": chrome_roles,
         }
         ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
         files[folder / "prototype.html"] = build_prototype(ctx, shell)
@@ -2103,14 +2124,18 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         "styles": screen_styles(screens), "scripts": screen_scripts(screens), "tours": tours,
         "tours_rel": rel(tours_folder, root) + "/", "tokens_rel": tokens_rel, "script_rel": rel(skill_dir / SCRIPT_REL, root),
         "player_css": read_template(skill_dir, PLAYER_CSS), "player_js": read_template(skill_dir, PLAYER_JS),
+        "chrome_roles": read_template(skill_dir, ROLES_CSS),
         "app_header": (f"GENERATED by {rel(skill_dir / SCRIPT_REL, root)} from {rel(folder, root)}/*.html and "
                        f"{tokens_rel}. Do not edit: edit the screen files, then run build-prototype.py."),
     }
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
     shell = read_template(skill_dir, SHELL_TEMPLATE)
     proto = build_prototype(ctx, shell)
-    app = build_app(ctx, read_template(skill_dir, APP_TEMPLATE))
-    tour_pages = {pages_folder / f"{t['id']}.html": build_prototype(ctx, shell, t) for t in tours}
+    app_tpl = read_template(skill_dir, APP_TEMPLATE)
+    app = build_app(ctx, app_tpl)
+    # a tour page follows its tour's view: the app view with the player on top (the default), or the prototype page
+    tour_pages = {pages_folder / f"{t['id']}.html": build_app(ctx, app_tpl, t) if t["view"] == "app"
+                  else build_prototype(ctx, shell, t) for t in tours}
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=True)
     catalogue = build_catalogue(ctx, read_template(skill_dir, CATALOGUE_TEMPLATE), bt)
     files = {proto_path: proto, app_path: app, cat_path: catalogue,

@@ -7,79 +7,7 @@
 {{base}}
 <title>{{title}}</title>
 <style>
-/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
-   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
-:where(:root), :where(.pl-light) {
-  --pl-bg: #fbfbfa;
-  --pl-surface: #ffffff;
-  --pl-sunk: #f0f0ed;
-  --pl-text: #1d1f23;
-  --pl-muted: #5b616b;
-  --pl-border: #dcdcd6;
-  --pl-border-strong: #858a93;
-  --pl-accent: #2f5d8a;
-  --pl-on-accent: #ffffff;
-  --pl-focus: #2f5d8a;
-  --pl-bad: #b42318;
-  --pl-on-bad: #ffffff;
-  --pl-warn: #8a5a00;
-  --pl-good: #067647;
-  color-scheme: light;
-}
-:where(:root[data-theme="dark"]), :where(.pl-dark) {
-  --pl-bg: #121315;
-  --pl-surface: #1a1c1f;
-  --pl-sunk: #0c0d0f;
-  --pl-text: #e8e9eb;
-  --pl-muted: #a2a7af;
-  --pl-border: #2e3136;
-  --pl-border-strong: #6f747d;
-  --pl-accent: #8db8e3;
-  --pl-on-accent: #0d1117;
-  --pl-focus: #8db8e3;
-  --pl-bad: #f97066;
-  --pl-on-bad: #1a0b0a;
-  --pl-warn: #fdb022;
-  --pl-good: #47cd89;
-  color-scheme: dark;
-}
-@media (prefers-color-scheme: dark) {
-  :where(:root:not([data-theme="light"])) {
-    --pl-bg: #121315;
-    --pl-surface: #1a1c1f;
-    --pl-sunk: #0c0d0f;
-    --pl-text: #e8e9eb;
-    --pl-muted: #a2a7af;
-    --pl-border: #2e3136;
-    --pl-border-strong: #6f747d;
-    --pl-accent: #8db8e3;
-    --pl-on-accent: #0d1117;
-    --pl-focus: #8db8e3;
-    --pl-bad: #f97066;
-    --pl-on-bad: #1a0b0a;
-    --pl-warn: #fdb022;
-    --pl-good: #47cd89;
-    color-scheme: dark;
-  }
-}
-:where(:root) {
-  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --pl-radius: 8px;
-  --pl-radius-sm: 4px;
-  --pl-space-1: 4px;
-  --pl-space-2: 8px;
-  --pl-space-3: 12px;
-  --pl-space-4: 16px;
-  --pl-space-6: 24px;
-  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
-  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
-  --pl-duration: 150ms;
-  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
-  --pl-text-control: 15px;
-  --pl-text-small: 13px;
-  --pl-text-title: 22px;
-}
+{{chrome_roles}}
 </style>
 <style>
 {{theme_css}}
@@ -113,6 +41,8 @@ body {
 @container plumb-frame (min-width: 48rem) {
   #pp-frame [data-app-sidebar] { position: sticky; top: 0; height: 100vh; height: 100dvh; }
 }
+/* On a tour page the walkthrough's overlay and title cards span the window: no rounded frame corners here. */
+#pp-stage > .pl-layer, #pp-stage > .pl-card { border-radius: 0; }
 .pa-announce { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -205,6 +135,8 @@ body {
   }
   function writeHash(mode, hash) {
     if (!mode || decode(location.hash) === hash) return;
+    /* while a walkthrough runs (body.pl-touring) its own clicks move between screens without adding history entries */
+    if (mode === "push" && document.body.classList.contains("pl-touring")) mode = "replace";
     try {
       /* the document's own URL plus the hash: a page with a <base> elsewhere would leave it on a bare "#..." */
       history[mode === "push" ? "pushState" : "replaceState"](null, "", location.href.split("#")[0] + hash);
@@ -260,10 +192,10 @@ body {
     }
     current = { page: "screen", screen: id, state: state };
     writeHash(opts.history, "#/" + id + (state !== s.states[0] ? "/" + state : ""));
-    if (!sameScreen && opts.history) {
-      window.scrollTo(0, 0);
-      say(s.title);
-    }
+    /* a new page starts at its top: a link, plumb.go, or a walkthrough moving on (opts.top, no history entry);
+       back and forward leave the browser's own scroll restoring alone */
+    if (!sameScreen && (opts.history || opts.top)) window.scrollTo(0, 0);
+    if (!sameScreen && opts.history) say(s.title);
     if (opts.focus && !sameScreen) {
       if (!section.hasAttribute("tabindex")) section.setAttribute("tabindex", "-1");
       section.focus({ preventScroll: true });
@@ -329,7 +261,7 @@ body {
     screens: screens.map(function (s) { return { id: s.id, title: s.title, states: s.states.slice(), route: s.route }; }),
     go: function (id, state, opts) {
       var mode = opts && Object.prototype.hasOwnProperty.call(opts, "history") ? opts.history : "push";
-      return show(id, state || null, { history: mode });
+      return show(id, state || null, { history: mode, top: true });
     },
     setState: function (state) { return current.screen ? show(current.screen, state, { history: "replace" }) : false; },
     current: function () { return { page: current.page, screen: current.screen, state: current.state }; },
