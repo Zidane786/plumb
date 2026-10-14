@@ -6,8 +6,11 @@ Every Plumb project has **one main prototype of the whole product**, always matc
 `build-prototype.py` from one source file per screen, so they cannot disagree. **prototype.html to review, app.html to
 demo.** `<docs>` is the docs folder (default `docs/design`). Commands: [scripts.md](scripts.md#build-prototypepy-the-main-prototype-and-its-map).
 `screens.html` stores each screen once and draws every state from it, so it grows with the screens, not their states.
-A page over 10 MB builds with a `warning:` and a `fix:` (git-ignore it, or split the screens): tell the user and ask
-which they prefer.
+Every page holds each screen file once. A page over 10 MB builds with a `warning:`, a `note:` naming the heaviest screen
+files and a `fix:`: put both options to the user and ask which they prefer: smaller screen files (inline `data:` images
+and large SVG moved into image files with a relative `src`, very long sample content cut), or git-ignoring the pages,
+which makes `--check` fail on a fresh clone, so the project then runs the build in CI instead of `--check` (or keeps
+the pages committed). Splitting a screen into several files does not shrink anything.
 
 ```
 <docs>/prototype/screens/<id>.html     [Y] one source per screen: states + interactions   (you write these)

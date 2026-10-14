@@ -163,10 +163,12 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
 4. Page size: write one very large screen, then build:
    `PY -c "open('docs/design/prototype/screens/big.html','w',encoding='utf-8').write('<section data-screen=\"big\" data-title=\"Big\"><div data-state=\"ready\">' + '<p>filler text for the size check</p>' * 300000 + '</div></section>\n')"`
    and `PY SKILL/scripts/build-prototype.py`.
-   **Expect:** exit 0 and, for `docs/design/app.html`, `docs/design/prototype.html` and `docs/design/screens.html`,
-   `warning: <page> is <N> MB, over the 10 MB a generated page should stay under (slow to open, heavy in the
-   repository)` (N about 10.7) and a `fix: git-ignore <page> …, or split the screens …` line. Delete `big.html`, build
-   again: no warning.
+   **Expect:** exit 0 and one line naming the three pages: `warning: docs/design/app.html is 10.7 MB,
+   docs/design/prototype.html is 10.7 MB, docs/design/screens.html is 10.7 MB: over the 10 MB a generated page should
+   stay under (slow to open, heavy in the repository)`, then `note: every page holds each screen file once; the
+   largest: docs/design/prototype/screens/big.html (10.6 MB)` and one `fix: make the screen files smaller: move inline
+   data: images …; or git-ignore the pages …` line. `PY SKILL/scripts/build-prototype.py --check` prints the same
+   warning and still exits 0. Delete `big.html`, build again: no warning.
 5. `PY SKILL/scripts/build-prototype.py --approve home` → `approved home (<your git name>, <today>)`.
 6. `PY SKILL/scripts/audit.py docs/design/prototype/screens` → no errors (warnings such as `screen-not-built` are
    expected: the screen isn't built yet).

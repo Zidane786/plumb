@@ -103,8 +103,10 @@ stale. The main build (and build-tokens.py) refreshes the token block of every g
 keep rendering; their screen files are never touched. screens.json is not read or written.
 
 Exit codes: 0 ok, 1 stale (--check), 2 bad input (error: ... then fix: ...). An unreadable decisions.md is a warning:
-the build carries on with empty decision panels. A page it builds over PAGE_WARN_BYTES (10 MB) is a warning too
-(`warning: <page> is <N> MB ...` and a fix: git-ignore it or split the screens); the page is still written.
+the build carries on with empty decision panels. Pages it builds over PAGE_WARN_BYTES (10 MB) are a warning too, also
+on --check (one `warning: <page> is <N> MB, ...` line naming every such page, a note naming the heaviest screen files
+and a fix: smaller screen files, e.g. inline data: images moved to image files, or git-ignore the pages and build in
+CI); the pages are still written and the exit code does not change.
 
 Python 3.9+, standard library only. Imports _plumb.py and build-tokens.py from its own directory.
 """
@@ -1721,25 +1723,53 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     return text if text.endswith("\n") else text + "\n"
 
 
-def size_warnings(files: Dict[Path, str], root: Path, rel, command: str) -> List[str]:
-    """A `warning:` + `fix:` pair for each generated page (.html) over PAGE_WARN_BYTES: big pages open slowly and weigh
-    on the repository. Data files (screens.json) are not pages."""
+_DATA_URI = re.compile(r"\bdata:[^\s\"'()<>]+", re.I)
+MIB = 1024 * 1024
+
+
+def screen_weight(s: Screen) -> Tuple[int, int]:
+    """(bytes the screen adds to each page, bytes of those in inline data: URIs): its markup, styles and scripts."""
+    text = s.section + "".join(s.styles) + "".join(s.scripts)
+    return len(text.encode("utf-8")), sum(len(m.group(0)) for m in _DATA_URI.finditer(text))
+
+
+def size_warnings(files: Dict[Path, str], root: Path, rel, command: str, screens: List[Screen]) -> str:
+    """One warning for every generated page (.html) over PAGE_WARN_BYTES (big pages open slowly and weigh on the
+    repository; data files such as screens.json are not pages), the screen files that weigh most, and a fix. Every
+    page holds each screen file once, so smaller screen files are what make the pages smaller."""
+    big = [(rel(path, root), len(text.encode("utf-8"))) for path, text in sorted(files.items())
+           if path.suffix == ".html" and len(text.encode("utf-8")) > PAGE_WARN_BYTES]
+    if not big:
+        return ""
+    pages = ", ".join(f"{page} is {_mb(size)} MB" for page, size in big)
     why = "a generated page should stay under (slow to open, heavy in the repository)"
-    out = []
-    for path in sorted(files):
-        size = len(files[path].encode("utf-8"))
-        if path.suffix != ".html" or size <= PAGE_WARN_BYTES:
-            continue
-        page = rel(path, root)
-        out.append(f"warning: {page} is {_mb(size)} MB, over the {_mb(PAGE_WARN_BYTES)} MB {why}\n"
-                   f"fix: git-ignore {page} (it is generated: {command} rebuilds it), or split the screens: fewer "
-                   f"states per screen file, or a large screen as several screen files")
-    return out
+    lines = [f"warning: {pages}: over the {_limit()} MB {why}"]
+    heavy = sorted(((screen_weight(s), s.rel) for s in screens), key=lambda x: (-x[0][0], x[1]))[:3]
+    heavy = [h for h in heavy if h[0][0] * 10 >= heavy[0][0][0]]  # up to three, none under a tenth of the heaviest
+    if heavy:
+        parts = []
+        for (size, data), name in heavy:
+            extra = f", {_mb(data)} MB of it inline data: URIs" if data * 10 >= size else ""
+            parts.append(f"{name} ({_mb(size)} MB{extra})")
+        lines.append(f"note: every page holds each screen file once; the largest: {', '.join(parts)}")
+    lines.append(f"fix: make the screen files smaller: move inline data: images and large inline SVG into image files "
+                 f"in the docs folder and point at them with a relative src (screens load relative images), and cut "
+                 f"very long sample content; or git-ignore the pages (they are generated: {command} rebuilds them), "
+                 f"but a git-ignored page is missing on a fresh clone, so --check then fails: run the build in CI "
+                 f"instead of --check, or keep the pages committed")
+    return "\n".join(lines)
 
 
 def _mb(size: int) -> str:
-    text = f"{size / (1024 * 1024):.1f}"
-    return text[:-2] if text.endswith(".0") else text
+    """Megabytes (MiB, as ls -lh and the hosting limits count them), rounded up to one decimal: a page just over the
+    limit never reads as the limit itself."""
+    tenths = -(-size * 10 // MIB)
+    return f"{tenths // 10}.{tenths % 10}"
+
+
+def _limit() -> str:
+    whole, rest = divmod(PAGE_WARN_BYTES, MIB)
+    return str(whole) if not rest else f"{PAGE_WARN_BYTES / MIB:.3g}"
 
 
 def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
@@ -1889,6 +1919,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     catalogue_tpl = read_template(skill_dir, CATALOGUE_TEMPLATE)
     player_css, player_js = read_template(skill_dir, PLAYER_CSS), read_template(skill_dir, PLAYER_JS)
     files: Dict[Path, str] = {}
+    variant_screens: List[Screen] = []
     cards, summary = [], []
     for folder in folders:
         if not _ID.match(folder.name):
@@ -1901,6 +1932,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             raise _err(f"{rel(folder, root)}: variant {folder.name} has no screen files in screens/",
                        f"write its screens as {rel(screens_dir, root)}/<id>.html (or remove the folder), then run {again}")
         screens = load_screens(screens_dir, root, rel)
+        variant_screens += screens
         title, paras, trade = read_idea(folder / "idea.md")
         title = title or state_label(folder.name)
         header = (f"GENERATED by {script_rel} --proposal {name} from {rel(screens_dir, root)}/*.html and {tokens_rel}. "
@@ -1935,6 +1967,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     files[base / "index.html"] = index if index.endswith("\n") else index + "\n"
     line = f"proposal {name}: {len(folders)} variant{'s' if len(folders) != 1 else ''} ({', '.join(summary)})"
 
+    warning = size_warnings(files, root, rel, again, variant_screens)
     if args.check:
         stale = []
         for path, text in files.items():
@@ -1944,6 +1977,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
                 current = None
             if current != text:
                 stale.append(f"stale: {rel(path, root)}" + (" (missing)" if current is None else ""))
+        if warning:  # --check builds every page in memory: a page over the limit is said here too (exit code unchanged)
+            print(warning, file=sys.stderr)
         if stale:
             print("\n".join(stale))
             print(f"fix: {again}")
@@ -1962,7 +1997,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             return 2
         wrote += 1
         print(f"wrote {rel(path, root)}")
-    for warning in size_warnings(files, root, rel, again):
+    if warning:
         print(warning, file=sys.stderr)
     print(line if wrote else f"ok: {line}: up to date")
     print(f"open {rel(base / 'index.html', root)} to compare them")
@@ -2151,6 +2186,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     files.update(proposal_refresh(docs, doc, bt))
     orphans = orphan_tour_pages(pages_folder, tour_pages)
     count = f"{len(screens)} screens, {len(tours)} tour{'s' if len(tours) != 1 else ''}"
+    size_warning = size_warnings(files, root, rel, command, screens)
 
     if args.check:
         stale = []
@@ -2168,6 +2204,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             else:
                 stale.append(f"stale: {rel(path, root)}")
         stale += [f"stale: {rel(path, root)} (its tour file is gone)" for path in orphans]
+        if size_warning:  # --check builds every page in memory: a page over the limit is said here too (exit code unchanged)
+            print(size_warning, file=sys.stderr)
         if stale:
             print("\n".join(stale))
             print(f"fix: {command}")
@@ -2211,8 +2249,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             pages_folder.rmdir()
         except OSError:
             pass
-    for warning in size_warnings(files, root, rel, command):
-        print(warning, file=sys.stderr)
+    if size_warning:
+        print(size_warning, file=sys.stderr)
     for line in done:
         print(line)
     states = {s.id: approval_state(entries[s.id], s) for s in screens}

@@ -426,7 +426,7 @@ body {
     if (section) {
       Array.prototype.forEach.call(section.querySelectorAll("[data-state]"), function (el) {
         var outer = el.parentElement && el.parentElement.closest("[data-state], [data-screen]") === section;
-        if (outer && el.getAttribute("data-state") !== state) el.setAttribute("hidden", "");
+        if (outer && (el.getAttribute("data-state") || "").trim() !== state) el.setAttribute("hidden", "");
       });
     }
     return holder.innerHTML;

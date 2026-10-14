@@ -432,7 +432,7 @@ body {
     var same = current.page === "screen" && current.screen === id && current.state === state;
     if (!same) {
       Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
-      outerStates(sections[id]).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+      outerStates(sections[id]).forEach(function (el) { el.hidden = (el.getAttribute("data-state") || "").trim() !== state; });
       each("[data-states-for]", function (group) {
         var mine = group.getAttribute("data-states-for") === id;
         group.hidden = !mine;

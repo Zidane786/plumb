@@ -147,7 +147,11 @@
   themes by the page, instead of one full copy per screen × state × theme (a 20-screen × 10-state prototype went from
   several MB to under half a MB). Every copy still shows its own state, in its own theme, with its own scripts.
 - Any page `build-prototype.py` writes (`prototype.html`, `app.html`, `screens.html`, the tour pages, the proposal
-  pages) over 10 MB prints `warning: <page> is <N> MB …` with what to do: git-ignore it or split the screens.
+  pages) over 10 MB prints one `warning: <page> is <N> MB …` line naming every such page, also on `--check`, with
+  the heaviest screen files and what helps: smaller screen files (inline `data:` images moved into image files), or
+  git-ignoring the pages and running the build in CI instead of `--check`.
+- A state name written with spaces around it (`data-state=" ready "`) now shows in prototype.html, app.html and
+  every catalogue copy, as the build already read it.
 
 ### Security
 

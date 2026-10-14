@@ -1593,7 +1593,17 @@ def test_large_catalogue_is_deterministic(tmp_path: Path) -> None:
 
 
 def _size_warnings(err: str) -> list:
-    return re.findall(r"^warning: (\S+) is [0-9.]+ MB, over the [0-9.]+ MB", err, re.M)
+    """The pages the size warning names: one `warning:` line for all of them, then a note and one fix."""
+    lines = [ln for ln in err.splitlines() if ln.startswith("warning: ") and "a generated page should stay under" in ln]
+    assert len(lines) <= 1, err  # never one warning per page
+    if not lines:
+        return []
+    head = lines[0][len("warning: "):].split(": over the ", 1)[0]
+    return re.findall(r"(\S+) is [0-9]+\.[0-9] MB", head)
+
+
+def _size_fix(err: str) -> str:
+    return next(ln for ln in err.splitlines() if ln.startswith("fix: make the screen files smaller"))
 
 
 def test_every_page_over_the_limit_warns(project: Path, monkeypatch, capsys) -> None:
@@ -1604,22 +1614,56 @@ def test_every_page_over_the_limit_warns(project: Path, monkeypatch, capsys) -> 
     _out, err = capsys.readouterr()
     assert code == 0, err
     named = _size_warnings(err)
-    assert sorted(named) == sorted([PROTO_REL, APP_REL, CATALOGUE_REL, f"{DOCS}/tours/demo.html"]), err
+    assert named == sorted([PROTO_REL, APP_REL, CATALOGUE_REL, f"{DOCS}/tours/demo.html"]), err
     assert JSON_REL not in err  # the map is data, not a page
-    for page in named:
-        assert f"\nfix: git-ignore {page} (it is generated" in err and "split the screens" in err
+    fix = _size_fix(err)  # what actually shrinks a page, and the honest cost of git-ignoring it
+    assert "move inline data: images and large inline SVG into image files" in fix and "split" not in fix
+    assert "or git-ignore the pages (they are generated:" in fix and "build-prototype.py rebuilds them" in fix
+    assert "a git-ignored page is missing on a fresh clone, so --check then fails: run the build in CI" in fix
+    assert "keep the pages committed" in fix
+    assert err.count("\nfix: make the screen files smaller") + err.startswith("fix: make") == 1
+    note = next(ln for ln in err.splitlines() if ln.startswith("note: every page holds each screen file once"))
+    assert f"{SCREENS_REL}/booking.html (" in note  # the heaviest screen files, named so the user knows where to look
     code = BP.main(["--root", str(project / SKILL_REL)])  # nothing rewritten: the pages are still too big
     _out, err = capsys.readouterr()
     assert code == 0 and len(_size_warnings(err)) == 4, err
+    code = BP.main(["--root", str(project / SKILL_REL), "--check"])  # --check says it too, exit code unchanged
+    out, err = capsys.readouterr()
+    assert code == 0 and "up to date" in out and len(_size_warnings(err)) == 4, err
+    write(project / SCREENS_REL / "menu.html", read(project / SCREENS_REL / "menu.html").replace("</section>", "<p>more</p></section>"))
+    code = BP.main(["--root", str(project / SKILL_REL), "--check"])
+    out, err = capsys.readouterr()
+    assert code == 1 and "stale: " in out and len(_size_warnings(err)) == 4, (out, err)
     code = BP.main(["--root", str(project / SKILL_REL), "--proposal", "pick"])
     _out, err = capsys.readouterr()
     assert code == 0, err
     base = f"{DOCS}/prototype/proposals/pick"
-    assert sorted(_size_warnings(err)) == sorted([f"{base}/a-one/prototype.html", f"{base}/a-one/app.html",
-                                                  f"{base}/a-one/screens.html", f"{base}/index.html"]), err
-    code = BP.main(["--root", str(project / SKILL_REL), "--check"])  # --check writes nothing and reports staleness only
+    assert _size_warnings(err) == sorted([f"{base}/a-one/app.html", f"{base}/a-one/prototype.html",
+                                          f"{base}/a-one/screens.html", f"{base}/index.html"]), err
+    assert f"{base}/a-one/screens/home.html (" in err  # the variant's own screen files are the ones named
+    code = BP.main(["--root", str(project / SKILL_REL), "--check", "--proposal", "pick"])
     _out, err = capsys.readouterr()
-    assert code == 0 and _size_warnings(err) == [], err
+    assert code == 0 and len(_size_warnings(err)) == 4, err
+
+
+def test_size_warning_names_inline_data_uris(project: Path, monkeypatch, capsys) -> None:
+    pixel = "data:image/png;base64," + "A" * 40000
+    write(project / SCREENS_REL / "photo.html", '<section data-screen="photo" data-title="Photo"><div data-state="ready">'
+          f'<img src="{pixel}" alt="A photo"></div></section>\n')
+    monkeypatch.setattr(BP, "PAGE_WARN_BYTES", 30000)
+    assert BP.main(["--root", str(project / SKILL_REL)]) == 0
+    err = capsys.readouterr()[1]
+    note = next(ln for ln in err.splitlines() if ln.startswith("note: "))
+    assert note.split("the largest: ", 1)[1].startswith(f"{SCREENS_REL}/photo.html (0.1 MB, 0.1 MB of it inline data: URIs)")
+
+
+def test_size_figures_round_up_and_never_read_as_the_limit(monkeypatch) -> None:
+    mib = 1024 * 1024
+    assert BP._mb(10 * mib + 1) == "10.1" and BP._mb(10 * mib) == "10.0" and BP._mb(12 * mib + mib // 3) == "12.4"
+    assert BP._mb(1) == "0.1"
+    assert BP._limit() == "10"
+    monkeypatch.setattr(BP, "PAGE_WARN_BYTES", 2000)
+    assert BP._limit() == "0.00191"
 
 
 def test_pages_under_the_limit_do_not_warn(project: Path, monkeypatch, capsys) -> None:
@@ -1676,5 +1720,39 @@ def test_catalogue_copies_pick_their_state_from_the_shared_template(browser, tmp
         assert page.evaluate("""document.querySelector('template[data-screen-markup="nest"]').content
             .querySelectorAll('[hidden]').length""") == 0
         assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+PADDED = ('<section data-screen="pad" data-title="Padded" data-order="0">\n'
+          '  <div data-state=" ready " data-test="ready">Ready</div>\n'
+          '  <div data-state="\n  empty\t" data-test="empty">Empty</div>\n'
+          '</section>\n')
+
+
+def test_padded_state_names_are_read_the_same_everywhere(browser, tmp_path: Path) -> None:
+    """data-state=" ready " is the state "ready" in the build (screens.json, the switcher, the copies' keys), in
+    prototype.html, in app.html and in every catalogue copy."""
+    p = make_project(tmp_path / "p", build=False)
+    write(p / SCREENS_REL / "pad.html", PADDED)
+    assert run(p).returncode == 0
+    assert entry(p, "pad")["states"] == ["ready", "empty"]
+    assert 'data-copy="pad/ready/light"' in read(p / CATALOGUE_REL) and 'data-copy="pad/empty/dark"' in read(p / CATALOGUE_REL)
+    shown = "els => els.filter(e => e.offsetParent !== null).map(e => e.dataset.test)"
+    for rel, hash_, want in ((PROTO_REL, "#screen-pad", "ready"), (PROTO_REL, "#screen-pad/empty", "empty"),
+                             (APP_REL, "#/pad", "ready"), (APP_REL, "#/pad/empty", "empty")):
+        ctx, page, errors, _ = _open(browser, p / rel, hash_=hash_)
+        try:
+            assert page.locator('#pp-frame [data-screen="pad"] [data-test]').evaluate_all(shown) == [want], (rel, hash_)
+            assert errors == []
+        finally:
+            ctx.close()
+    ctx, page, errors, _ = _open(browser, p / CATALOGUE_REL)
+    try:
+        _copies_ready(page)
+        for state in ("ready", "empty"):
+            for theme in ("light", "dark"):
+                assert _copy(page, f"pad/{state}/{theme}").locator("[data-test]").evaluate_all(shown) == [state]
+        assert errors == []
     finally:
         ctx.close()
