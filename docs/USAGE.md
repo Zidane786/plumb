@@ -413,7 +413,9 @@ plumb Done. Commit these files, start a new session here so the hooks load. UI w
   only that; the rest stays yours); when that stylesheet sets its own theme variables (a stock create-next-app sets
   `--color-background`, `--color-foreground`, `--font-sans` and `--font-mono` in an `@theme inline` block, which would
   override the tokens), the token each maps onto and the lines that go, asked once with "move them into the tokens"
-  recommended (`build-tokens.py --overrides`, then `--overrides --apply` on your yes); each contrast fix; which
+  recommended (`build-tokens.py --overrides`, then `--overrides --apply` on your yes; a `--sidebar-<x>` name goes to the
+  project's own sidebar token when it has one, and a next/font variable applied on `<body>` is listed as something to
+  move to `<html>` by hand, read from the recorded `Routes:`); each contrast fix; which
   starter components, in which framework, where. If you choose keep fades for reduced motion in a plain-CSS app, add
   the class `motion-fade` to elements whose transition is only a fade.
 - **F. Prototypes** of the key screens (or later, with `/plumb:prototype`).
@@ -955,7 +957,13 @@ generated from it. To change a value, change the token (`/plumb:update`), then r
 
 **Contrast is computed, never guessed.** `build-tokens.py` measures every pair in light and dark (WCAG 2.2: 4.5:1 for
 text, 3:1 for large text and UI boundaries) and writes the evidence table into `references/dark-mode.md`. A failing pair
-is an audit error whose fix names the nearest passing value; Plumb never changes a colour without your OK.
+is an audit error whose fix names the nearest passing value; Plumb never changes a colour without your OK. When white
+or black text (near-white and near-black count, e.g. `#fafafa`; a light grey does not) sits on its own fill
+(`on-primary` on `primary`) and fails, the fix lists two options, each with its computed ratio per theme: step the
+fill (same hue, the text stays as it is) first, or step the text (a bigger change in look). For a surface
+(`on-surface` on `surface`, `background`, `card` …) the text option comes first, because stepping a whole surface is a
+big change. When the token is an alias (`{color.brand}`) the fix says so and names the source token to change.
+Stepping a fill changes every use of it, so look at the preview before you choose.
 
 **Light and dark, everywhere.** Every colour token has a dark value; a missing one is an audit error unless the token is
 marked `"same-in-dark": true`. Pages never write `dark:` overrides: the tokens switch. A light-only project is an

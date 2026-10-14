@@ -122,7 +122,9 @@ def test_a_stock_create_next_app_stylesheet_ends_with_audit_exit_0(tmp_path):
     assert kinds["--color-foreground"][:2] == ("new-name", "color.foreground")
     assert kinds["--font-sans"][2] == {"prepend": "font.sans", "family": "var(--font-geist-sans)"}
     assert kinds["--font-mono"][2] == {"prepend": "font.mono", "family": "var(--font-geist-mono)"}
-    assert copy["by_hand"] == []
+    # the stock layout puts each font's .variable on <body>: the only by-hand items are the two moves to <html>
+    assert [n.split(": ")[0] for n in copy["by_hand"]] == ["app/layout.tsx:20", "app/layout.tsx:20"]
+    assert all("move `" in n and "` to the `<html>` className in app/layout.tsx:20" in n for n in copy["by_hand"])
 
     out = ok(skill_script(proj, app, "build-tokens.py", "--overrides", "--apply")).stdout
     assert "wrote app/globals.css" in out
@@ -156,7 +158,7 @@ def test_a_stock_shadcn_stylesheet_leaves_only_real_findings_after_one_ok(tmp_pa
     assert code == 1
     assert any(f["rule"] == "block-override" for f in errors(report))
     data = json.loads(ok(skill_script(proj, app, "build-tokens.py", "--overrides")).stdout)
-    assert len(data["copies"][0]["overrides"]) == 38 and data["copies"][0]["by_hand"] == []
+    assert len(data["copies"][0]["overrides"]) == 38 and len(data["copies"][0]["by_hand"]) == 2  # the two next/font moves
     ok(skill_script(proj, app, "build-tokens.py", "--overrides", "--apply"))
     ok(skill_script(proj, app, "build-tokens.py"))
     code, report = audit(proj, app)

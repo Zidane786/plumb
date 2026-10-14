@@ -48,7 +48,7 @@ Contrast pairs (WCAG 2.x, light and dark):
       ["on-primary-fill", "primary-fill", "text"]            [fg, bg, kind], kind text (4.5) | large (3) | ui (3)
       {"fg": token, "bg": token, "need": 4.5, "note": "..."}  "need" defaults to 4.5 (3 for large text)
 --contrast exits 0 even when pairs fail: it writes the evidence, the audit is the gate.
-A failing pair lists the nearest passing foreground: its L* is stepped darker (light mode) or lighter (dark mode) until it
+A failing pair lists the nearest passing foreground: its OKLCH lightness (hue kept) is stepped darker (light mode) or lighter (dark mode) until it
 passes with FIX_SPARE (0.5) to spare, so the audit's contrast-headroom suggestion (under HEADROOM, 0.3) never flags it.
 
 Python 3.9+, standard library only. Declarations follow the order of the tokens file
@@ -61,6 +61,7 @@ import argparse
 import difflib
 import html as _html
 import json
+import math
 import os
 import re
 import sys
@@ -1353,12 +1354,56 @@ class Pair:
         self.light = 0.0
         self.dark = 0.0
         self.fix: Dict[str, Optional[Tuple[str, float]]] = {}
+        # on-X on X where on-X is (near) white or black: the X stepped (same hue) until on-X passes unchanged, per mode
+        self.fix_bg: Dict[str, Optional[Tuple[str, float]]] = {}
         self.fg_path = self.bg_path = ""
         self.hex: Dict[str, Tuple[str, str]] = {}
+        self.surface = False  # X is a surface-family role: stepping it is a big change, so on-X is listed first
+        self.source: Dict[str, Dict[str, str]] = {}  # mode -> token name -> the token that holds its value (alias chain end)
 
     @property
     def failed(self) -> List[str]:
         return [m for m, v in (("light", self.light), ("dark", self.dark)) if v < self.need]
+
+    def options(self, mode: str) -> List[Tuple[str, str, str, float]]:
+        """The fixes for a failing mode, best first, as (token name, token to change, proposed value, ratio). Text on a
+        filled control (on-X near white or black over X): X stepped (the text stays) first; when X is a surface, on-X
+        first. The token to change is where the value lives (the end of an alias chain)."""
+        out: List[Tuple[str, str, str, float]] = []
+        src = self.source.get(mode, {})
+        bg_fix, fg_fix = self.fix_bg.get(mode), self.fix.get(mode)
+        if bg_fix:
+            out.append((self.bg, src.get(self.bg, self.bg_path), bg_fix[0], bg_fix[1]))
+        if fg_fix:
+            out.append((self.fg, src.get(self.fg, self.fg_path), fg_fix[0], fg_fix[1]))
+        if bg_fix and fg_fix and self.surface:
+            out.reverse()
+        return out
+
+    def _step(self, opt: Tuple[str, str, str, float], mode: str) -> str:
+        name, path, value, ratio = opt
+        own = self.bg_path if name == self.bg else self.fg_path
+        text = f"step {name} to {value} ({ratio:.2f}:1"
+        if name == self.bg and self.fix_bg.get(mode):
+            text += f", {self.fg} stays {self.hex[mode][0]}"
+        text += ")"
+        if path != own:
+            text += f" (it is an alias: change it at the source token {path})"
+        return text
+
+    def fix_text(self, mode: str, short: bool = False) -> str:
+        """The failing mode's fixes in words (no trailing 'with /plumb:update'): one nearest value, or both options.
+        `short` leaves the token name out of the single-value form (the contrast block names the pair already)."""
+        opts = self.options(mode)
+        if len(opts) == 2:
+            return f"two options in {mode} mode: (1) {self._step(opts[0], mode)}; (2) {self._step(opts[1], mode)}"
+        if opts:
+            name, path, value, ratio = opts[0]
+            own = self.bg_path if name == self.bg else self.fg_path
+            alias = f" (it is an alias: change it at the source token {path})" if path != own else ""
+            head = "nearest passing" if short and name == self.fg else f"nearest passing {name} in {mode} mode:"
+            return f"{head} {value} ({ratio:.2f}:1){alias}"
+        return ""
 
 
 def _contrast_settings(doc: dict) -> dict:
@@ -1380,32 +1425,56 @@ def _blend(fg: str, alpha: float, bg: str) -> str:
     return "#" + "".join(f"{c:02x}" for c in mix)
 
 
-def _lab_to_hex(lightness: float, a: float, b: float) -> str:
-    fy = (lightness + 16) / 116
-    fx, fz = fy + a / 500, fy - b / 200
+def _oklch(hexv: str) -> Tuple[float, float, float]:
+    """(L, C, hue in degrees) in OKLCH of an sRGB colour."""
+    r, g, b = (P._linear(c) for c in P._rgb(hexv))
+    l_ = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3)
+    m_ = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3)
+    s_ = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+    lightness = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+    a = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+    b2 = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+    return lightness, math.hypot(a, b2), math.degrees(math.atan2(b2, a)) % 360
 
-    def inv(t: float) -> float:
-        return t ** 3 if t > 6 / 29 else 3 * (6 / 29) ** 2 * (t - 4 / 29)
 
-    x, y, z = 0.95047 * inv(fx), 1.0 * inv(fy), 1.08883 * inv(fz)
-    lin = (3.2404542 * x - 1.5371385 * y - 0.4985314 * z,
-           -0.9692660 * x + 1.8760108 * y + 0.0415560 * z,
-           0.0556434 * x - 0.2040259 * y + 1.0572252 * z)
+def _oklch_rgb(lightness: float, chroma: float, hue: float) -> Tuple[float, float, float]:
+    a, b = chroma * math.cos(math.radians(hue)), chroma * math.sin(math.radians(hue))
+    l_, m_, s_ = ((lightness + k) ** 3 for k in (0.3963377774 * a + 0.2158037573 * b,
+                                                 -0.1055613458 * a - 0.0638541728 * b,
+                                                 -0.0894841775 * a - 1.2914855480 * b))
+    return (4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
+            -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
+            -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_)
+
+
+def _oklch_to_hex(lightness: float, chroma: float, hue: float) -> str:
+    """sRGB hex of an OKLCH colour; when it is outside sRGB the chroma is reduced (hue and lightness kept), never the
+    channels clipped, so the hue stays within about a degree."""
+    def inside(c: float) -> bool:
+        return all(-0.0005 <= v <= 1.0005 for v in _oklch_rgb(lightness, c, hue))
+    if not inside(chroma):
+        lo, hi = 0.0, chroma
+        for _ in range(24):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if inside(mid) else (lo, mid)
+        chroma = lo
 
     def enc(c: float) -> int:
         c = min(1.0, max(0.0, c))
         return round(255 * (12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055))
 
-    return "#" + "".join(f"{enc(c):02x}" for c in lin)
+    return "#" + "".join(f"{enc(c):02x}" for c in _oklch_rgb(lightness, chroma, hue))
+
+
+OKLCH_STEP = 0.002  # lightness step of the walk (about half a CIE L* point)
 
 
 def _walk_lightness(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tuple[str, float]]:
-    lightness, a, b = P._lab(fg)
-    lightness = min(100.0, max(0.0, lightness))
-    step = 0.5 if lighten else -0.5
-    while (lightness < 100) if lighten else (lightness > 0):
-        lightness = min(100.0, max(0.0, lightness + step))
-        cand = _lab_to_hex(lightness, a, b)
+    lightness, chroma, hue = _oklch(fg)
+    step = OKLCH_STEP if lighten else -OKLCH_STEP
+    while (lightness < 1) if lighten else (lightness > 0):
+        lightness = min(1.0, max(0.0, lightness + step))
+        cand = _oklch_to_hex(lightness, chroma, hue)
         ratio = P.contrast(cand, bg)
         if ratio >= need:
             return cand, ratio
@@ -1413,7 +1482,7 @@ def _walk_lightness(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tu
 
 
 def nearest_passing(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tuple[str, float]]:
-    """The fg colour moved in small L* steps (hue kept) until it reaches `need` on bg: lighter when `lighten`, else
+    """The fg colour moved in small OKLCH lightness steps (hue kept; chroma reduced when the colour leaves sRGB) until it reaches `need` on bg: lighter when `lighten`, else
     darker; when that direction cannot reach it (white text on a light fill), the other direction is tried."""
     return _walk_lightness(fg, bg, need, lighten) or _walk_lightness(fg, bg, need, not lighten)
 
@@ -1432,6 +1501,49 @@ def proposed_value(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tup
         if found:
             return found
     return None
+
+
+# Text on a filled control is "white or black" when its colour is near-neutral and near an end of the lightness range
+# (stock shadcn's primary-foreground is oklch(0.985 0 0), not #ffffff): OKLCH chroma at most NEUTRAL_CHROMA and WCAG
+# relative luminance at least NEAR_WHITE_LUMINANCE (near white) or at most NEAR_BLACK_LUMINANCE (near black).
+NEUTRAL_CHROMA = 0.02
+NEAR_WHITE_LUMINANCE = 0.85
+NEAR_BLACK_LUMINANCE = 0.03
+# Roles that are surfaces besides SURFACE_NAMES, surface* and *-container (and the contrast.surfaces setting).
+SURFACE_ROLES = frozenset(("raised", "card", "popover", "background", "page"))
+
+
+def neutral_end(hexv: str) -> Optional[str]:
+    """"white" or "black" for a near-neutral colour near either end of the lightness range, else None."""
+    if _oklch(hexv)[1] > NEUTRAL_CHROMA:
+        return None
+    lum = P._luminance(hexv)
+    return "white" if lum >= NEAR_WHITE_LUMINANCE else "black" if lum <= NEAR_BLACK_LUMINANCE else None
+
+
+def is_surface_role(name: str, listed: "set" = frozenset()) -> bool:
+    """X is a surface-family role (background, surface*, sunk, raised, card, popover, sidebar, *-container, or named in
+    contrast.surfaces): stepping it changes every screen, so the on-X option is listed first for it."""
+    return (name in listed or _is_surface_name(name) or name in SURFACE_ROLES or name.endswith("-raised")
+            or name.endswith("-surface"))
+
+
+def _source_path(doc: dict, path: str, mode: str) -> str:
+    """The token that holds the value of `path` in a mode: follows {alias} references to the end of the chain."""
+    seen = set()
+    while path not in seen:
+        seen.add(path)
+        try:
+            token, _rest, _ty = P._find(doc, path)
+        except PlumbError:
+            break
+        ext = _token_ext(token)
+        raw = ext["dark"] if mode == "dark" and "dark" in ext else token.get("$value")
+        target = _alias_target(raw)
+        if not target:
+            break
+        path = target
+    return path
 
 
 def contrast_pairs(doc: dict) -> List[Pair]:
@@ -1522,8 +1634,12 @@ def measure_pairs(doc: dict) -> List[Pair]:
         if ttype == "color":
             parts = P.path_parts(path)
             paths["-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)] = path
+    listed = set(_contrast_settings(doc).get("surfaces") or [])
     for pair in pairs:
         pair.fg_path, pair.bg_path = paths[pair.fg], paths[pair.bg]
+        pair.surface = is_surface_role(pair.bg, listed)
+        for mode in ("light", "dark"):
+            pair.source[mode] = {pair.fg: _source_path(doc, pair.fg_path, mode), pair.bg: _source_path(doc, pair.bg_path, mode)}
         for mode in ("light", "dark"):
             fg, fa = _hex_in(doc, paths[pair.fg], mode)
             bg, ba = _hex_in(doc, paths[pair.bg], mode)
@@ -1539,6 +1655,9 @@ def measure_pairs(doc: dict) -> List[Pair]:
                 pair.dark = ratio
             if ratio < pair.need:
                 pair.fix[mode] = proposed_value(fg, bg, pair.need, lighten=(mode == "dark"))
+                end = neutral_end(fg) if fa >= 1 and pair.fg == "on-" + pair.bg else None
+                if end:  # text on a filled control: the fill moves away from the text colour, same hue
+                    pair.fix_bg[mode] = proposed_value(bg, fg, pair.need, lighten=(end == "black"))
     return pairs
 
 
@@ -1559,12 +1678,11 @@ def contrast_block(doc: dict) -> str:
         result = "pass" if not p.failed else "fail (" + ", ".join(p.failed) + ")"
         L.append(f"| {p.fg} on {p.bg} | {p.light:.2f} | {p.dark:.2f} | {num(p.need)} | {result} |")
     if failing:
-        L += ["", "Nearest passing values with 0.5 to spare (the foreground nudged in L*, lighter in dark mode, darker in light mode):", ""]
+        L += ["", "Nearest passing values with 0.5 to spare (the colour nudged in OKLCH lightness, hue kept: the text lighter in dark mode, darker in light mode; for text on a filled control, the fill is the first option, away from the text colour, unless the fill is a surface):", ""]
         for p in failing:
             for mode in p.failed:
-                fix = p.fix.get(mode)
-                if fix:
-                    L.append(f"- {p.fg} on {p.bg} ({mode}): nearest passing {fix[0]} ({fix[1]:.2f}:1)")
+                if p.options(mode):
+                    L.append(f"- {p.fg} on {p.bg} ({mode}): " + p.fix_text(mode, short=True))
                 else:
                     L.append(f"- {p.fg} on {p.bg} ({mode}): no value of this hue passes; change the background")
     return "\n".join(L)
@@ -1636,6 +1754,8 @@ _ROLE_NAMES = {"background": ("background", "surface"), "bg": ("background", "su
                "destructive": ("danger",), "error": ("danger",)}
 # Prefixes whose names map like the name without them (shadcn's sidebar-primary is primary, sidebar-border is border).
 _ROLE_PREFIXES = ("sidebar-",)
+# Words a project's tokens may use for a sidebar role (shadcn's sidebar-accent is often a color.sidebar-active token).
+_SIDEBAR_SYNONYMS = {"accent": ("active",), "active": ("accent",)}
 _FONT_STACKS = {"mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
                 "serif": ["Georgia", "serif"],
                 "sans": ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]}
@@ -1643,9 +1763,29 @@ _DARK_PRELUDE = re.compile(r"prefers-color-scheme\s*:\s*dark|\.dark\b|data-theme
 _VAR_ONLY = re.compile(r"var\(\s*(--[\w-]+)\s*(?:,[^()]*)?\)")
 
 
+def _prefixed_token(colors: dict, name: str) -> Optional[str]:
+    """The tokens' own role for a sidebar-<x> / sidebar-<x>-foreground name: color.sidebar-<role> /
+    color.on-sidebar-<role>, <role> being <x> or its known synonym (accent <-> active). None when there is none."""
+    for prefix in _ROLE_PREFIXES:
+        if not name.startswith(prefix) or len(name) <= len(prefix):
+            continue
+        group = prefix[:-1]
+        rest = name[len(prefix):]
+        foreground = rest.endswith("-foreground")
+        base = rest[:-len("-foreground")] if foreground else rest
+        for role in (base,) + _SIDEBAR_SYNONYMS.get(base, ()):
+            cand = f"on-{group}-{role}" if foreground else f"{group}-{role}"
+            if P.is_token(colors.get(cand)):
+                return cand
+    return None
+
+
 def _role_token(colors: dict, name: str) -> Optional[str]:
-    """The colour token a project's colour name means: its own role table, on-X for X-foreground, and a sidebar-<x>
-    name as <x> (sidebar-primary -> primary)."""
+    """The colour token a project's colour name means: a sidebar-specific token first, then its own role table, on-X
+    for X-foreground, and a sidebar-<x> name as <x> (sidebar-primary -> primary)."""
+    specific = _prefixed_token(colors, name)
+    if specific:
+        return specific
     for cand in _ROLE_NAMES.get(name, ()):
         if P.is_token(colors.get(cand)):
             return cand
@@ -1833,6 +1973,125 @@ def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict], docs_rel: 
                     used.append(f"{rel(path, root)}:{text.count(chr(10), 0, m.start()) + 1}")
 
 
+def _jsx_tags(text: str, name: str) -> List[Tuple[int, int]]:
+    """(start, end) of every opening <name ...> tag in JSX text (braces balanced, so an arrow's > does not end it)."""
+    out: List[Tuple[int, int]] = []
+    for m in re.finditer(r"<" + name + r"(?=[\s>])", text):
+        depth = 0
+        for i in range(m.end(), len(text)):
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+            elif c == ">" and depth <= 0:
+                out.append((m.start(), i + 1))
+                break
+    return out
+
+
+_FONT_CALL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*=\s*[\w$.]+\s*\(")
+_FONT_VARIABLE = re.compile(r"\bvariable\s*:\s*[\"'](--[\w-]+)[\"']")
+_IMPORT_NAMES = re.compile(r"import\s*\{([^}]*)\}\s*from\s*[\"'](\.{1,2}/[^\"']+)[\"']")
+_VARIABLE_USE = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*)\.variable\b")
+
+
+def _font_variables(code: str) -> Dict[str, str]:
+    """identifier -> the CSS variable its `ident = Font({ ..., variable: "--font-x" })` call declares (any options, a
+    nested src array included: the call's arguments are read up to the matching parenthesis)."""
+    out: Dict[str, str] = {}
+    for m in _FONT_CALL.finditer(code):
+        depth, i = 1, m.end()
+        while i < len(code) and depth:
+            depth += {"(": 1, ")": -1}.get(code[i], 0)
+            i += 1
+        found = _FONT_VARIABLE.search(code, m.end(), i)
+        if found:
+            out[m.group(1)] = found.group(1)
+    return out
+
+
+def _local_module(root: Path, base: Path, spec: str) -> Optional[Path]:
+    """The project file a relative import names (one hop, inside the project), or None."""
+    target = base / spec
+    exts = (".ts", ".tsx", ".js", ".jsx")
+    for cand in [target] + [target.with_name(target.name + e) for e in exts] + [target / f"index{e}" for e in exts]:
+        try:
+            cand = cand.resolve()
+            if cand.is_file() and root.resolve() in cand.parents:
+                return cand
+        except OSError:
+            continue
+    return None
+
+
+def _tag_uses(code: str, tag: str) -> Dict[str, int]:
+    """`ident.variable` uses inside the opening <tag ...> tags of a JSX file: ident -> offset of its first use."""
+    found: Dict[str, int] = {}
+    for start, end in _jsx_tags(code, tag):
+        for m in _VARIABLE_USE.finditer(code, start, end):
+            found.setdefault(m.group(1), m.start())
+    return found
+
+
+def _next_font_body_notes(root: Path, fontvars: Dict[str, str]) -> List[str]:
+    """by_hand items for next/font variables the app applies on <body> instead of <html>: the tokens' font stack reads
+    var(--font-x) on :root, where it is undefined, so the whole stack is invalid. Reads the root layout of each
+    `next-app` entry of PLUMB.md's `Routes:` only (no Routes, another kind or no layout file: nothing); a font defined
+    in the layout or in a local file it imports from (one relative hop) is checked, any other is named as unchecked."""
+    if not fontvars:
+        return []
+    try:
+        routes, _problems = P.parse_routes(P.read_plumb_md(root / "PLUMB.md").get("Routes"))
+    except PlumbError:
+        return []
+    layouts: Dict[Path, None] = {}
+    for route, kind in routes or []:
+        if kind == "next-app":
+            found = next((root / route / f"layout.{e}" for e in ("tsx", "jsx", "js", "ts")
+                          if (root / route / f"layout.{e}").is_file()), None)
+            if found:
+                layouts[found] = None
+    notes: List[str] = []
+    for layout in layouts:
+        try:
+            text = layout.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        code = P.mask_comments(text, ".tsx")  # same offsets: a <body> in a comment is not the tag
+        on_body, on_html = _tag_uses(code, "body"), _tag_uses(code, "html")
+        defs = _font_variables(code)
+        imports: Dict[str, Tuple[str, str]] = {}  # local name -> (imported name, module specifier)
+        for m in _IMPORT_NAMES.finditer(code):
+            for item in m.group(1).split(","):
+                names = item.strip().split(" as ")
+                if names[0].strip():
+                    imports[names[-1].strip()] = (names[0].strip(), m.group(2))
+        for ident, pos in on_body.items():
+            if ident in on_html:
+                continue
+            where = f"{rel(layout, root)}:{text.count(chr(10), 0, pos) + 1}"
+            var = defs.get(ident)
+            if var is None and ident in imports:
+                imported, spec = imports[ident]
+                module = _local_module(root, layout.parent, spec)
+                try:
+                    var = _font_variables(module.read_bytes().decode("utf-8")).get(imported) if module else None
+                except (OSError, UnicodeDecodeError):
+                    var = None
+            if var in fontvars:
+                notes.append(f"{where}: {ident}.variable (the font behind var({var})) is applied on <body>, but the "
+                             f"tokens' font stack reads var({var}) on :root, where it is undefined: move "
+                             f"`{ident}.variable` to the `<html>` className in {where}")
+            elif var is None:
+                names = " or ".join(f"var({v})" for v in fontvars)
+                notes.append(f"{where}: {ident}.variable is applied on <body> and Plumb could not see where {ident} is "
+                             f"defined (only the layout and the local file it imports it from are read): if it is the "
+                             f"font behind {names}, move it to the `<html>` className, because on :root that "
+                             f"variable is undefined and the whole font stack is invalid")
+    return notes
+
+
 def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     """What moves where for one web copy: each override (line, name, value, kind token | new-name | namespace |
     dark-variant, the token it is or becomes, the project's values, the token change), the lines to remove, the
@@ -1845,12 +2104,21 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     themes = [(s, s + len(body)) for s, body in P.theme_bodies(code)]
     in_theme = lambda pos: any(a <= pos < b for a, b in themes)  # noqa: E731
     tokvars = {varname(p): (p, ty) for p, _t, ty in P.iter_tokens(doc)}
-    colors = doc.get("color") if isinstance(doc.get("color"), dict) else {}
+    # the colour tokens by the name their variable has (color.sidebar.active -> sidebar-active) and where each lives
+    colors: Dict[str, dict] = {}
+    cpaths: Dict[str, str] = {}
+    for tpath, tok, ttype in P.iter_tokens(doc):
+        parts = P.path_parts(tpath)
+        if ttype == "color" and parts[0] == "color" and len(parts) > 1:
+            colors.setdefault("-".join(parts[1:]), tok)
+            cpaths.setdefault("-".join(parts[1:]), tpath)
+    cpath = lambda name: cpaths.get(name, f"color.{name}")  # noqa: E731
     overrides: List[dict] = []
     remove: set = set()
     by_hand: List[str] = []
     notes: List[str] = []  # what the plan decided for the person to know (not to decide)
     feeds: Dict[str, str] = {}  # project variable -> the token variable it fed
+    fontvars: Dict[str, str] = {}  # a font variable the app defines elsewhere (next/font) -> the token variable that reads it
     def project_values(name: str, value: str) -> Tuple[Optional[str], list, Dict[str, str]]:
         """(the project variable it reads, its declarations outside @theme, its light and dark values)."""
         src_m = _VAR_ONLY.fullmatch(value)
@@ -1883,6 +2151,13 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         decided[rest] = ("own", None)  # a guard against a loop
         mine = app.get(rest)
         out: Tuple[str, Optional[str]] = ("own", None)
+        specific = _prefixed_token(colors, rest)
+        if specific:  # the tokens have this sidebar role: it wins over the generic role and over a value match
+            cols = _token_colours(doc, cpath(specific))
+            if mine is not None and cols is not None and not (_same_colour(mine[0], cols[0]) and _same_colour(mine[1], cols[1])):
+                looks.append(rest)
+            decided[rest] = ("alias", specific)
+            return decided[rest]
         for prefix in _ROLE_PREFIXES:
             base = rest[len(prefix):] if rest.startswith(prefix) else ""
             if base and (mine is None or (app.get(base) and _same_colour(mine[0], app[base][0])
@@ -1894,7 +2169,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                         looks.append(rest)
                     return decided[rest]
         role = _role_token(colors, rest)
-        role_cols = _token_colours(doc, f"color.{role}") if role else None
+        role_cols = _token_colours(doc, cpath(role)) if role else None
         if role and (mine is None or role_cols is None or
                      (_same_colour(mine[0], role_cols[0]) and _same_colour(mine[1], role_cols[1]))):
             out = ("alias", role)
@@ -1903,7 +2178,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             same = [k for k in colors if mine is not None and not k.startswith("$") and P.is_token(colors.get(k))
                     and _colour_family(k) == family  # never across roles: a background never becomes a border
                     and (lambda c: c is not None and _same_colour(mine[0], c[0]) and _same_colour(mine[1], c[1]))(
-                        _token_colours(doc, f"color.{k}"))]
+                        _token_colours(doc, cpath(k)))]
             if same:  # a token already has the app's exact colours (extract recorded them): keep the look
                 out = ("alias", same[0])
             elif role:  # the role token (create: the new design replaces the stock colours; extract: say so)
@@ -1942,10 +2217,11 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                 fams = fams if isinstance(fams, list) else [fams]
                 first = next((str(f) for f in fams if str(f).lower() not in SYSTEM_FAMILIES), "")
                 if f"var({src})" in [str(f) for f in fams]:
-                    pass
+                    fontvars.setdefault(src, name)
                 elif not first or _squash(first) in _squash(src[2:].replace("font-", "", 1)):
                     # the tokens name only a system stack (or this very font): the app's own font goes first
                     change = {"prepend": token, "family": f"var({src})"}
+                    fontvars.setdefault(src, name)
                 else:
                     note = (f"line {line}: the app loads its font through var({src}), but {token} is {first!r}: "
                             f"ask the user which font to keep; to keep the app's, put var({src}) first in {token} "
@@ -1955,10 +2231,10 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             if ns == "color" and rest:
                 how, what = decide(rest)
                 if how == "alias":
-                    change = {"add": token, "$value": f"{{color.{what}}}"}
+                    change = {"add": token, "$value": f"{{{cpath(what)}}}"}
                     if rest in looks:
-                        notes.append(f"line {line}: {name} becomes {{color.{what}}} (its role), whose colours differ "
-                                     f"from the app's ({_show(app.get(rest))} today, {_show(_token_colours(doc, f'color.{what}'))} "
+                        notes.append(f"line {line}: {name} becomes {{{cpath(what)}}} (its role), whose colours differ "
+                                     f"from the app's ({_show(app.get(rest))} today, {_show(_token_colours(doc, cpath(what)))} "
                                      f"in the tokens): the look changes; ask the user, or keep the app's colours as a "
                                      f"token of its own with /plumb:update")
                 else:
@@ -1990,6 +2266,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             elif ns == "font" and rest:
                 if src and not decls:
                     change = {"add": token, "$value": [f"var({src})"] + _font_stack(rest)}
+                    fontvars.setdefault(src, name)
                 elif not src and value and "var(" not in value:
                     change = {"add": token, "$value": [f.strip().strip("\"'") for f in value.split(",") if f.strip()]}
             if change is None:
@@ -2009,6 +2286,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
         remove.update(L.lines(pos, end))
         if src and decls:
             feeds.setdefault(src, name)
+    by_hand.extend(_next_font_body_notes(root, fontvars))
     # the project variables that only fed the overrides: their declarations go, their uses point at the token
     replace: List[dict] = []
     project_vars: List[dict] = []
