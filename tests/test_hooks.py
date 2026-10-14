@@ -225,6 +225,7 @@ GENERATED = [
     f"{SKILL_REL}/assets/platforms/mobile/android/DemoTheme.kt",
     "docs/design/specimen.html",
     "docs/design/prototype.html",
+    "docs/design/app.html",
     "docs/design/screens.html",
     MAP,
     "docs/design/tours/onboarding.html",

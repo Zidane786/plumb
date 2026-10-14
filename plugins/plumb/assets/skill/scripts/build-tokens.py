@@ -20,9 +20,9 @@ templates/specimen.html.tmpl: every token (colours light and dark side by side w
 radii, shadows in both themes, motion, the rest) and the basic controls in every state in both themes, styled with the
 project's own tokens, offline, no timestamps. --check covers it; with no template the build notes it and skips the page.
 It also refreshes the token-derived region (between /* plumb:theme */ and /* plumb:theme:end */: the --css-vars token
-block, the page roles, the frame breakpoint) inside <docs_dir>/prototype.html and screens.html when build-prototype.py
-has written them (and in the proposal pages build-prototype.py --proposal wrote), so one tokens build keeps every page
-in step; --check names a stale one as a prototype token block.
+block, the page roles, the frame breakpoint) inside <docs_dir>/prototype.html, app.html and screens.html when
+build-prototype.py has written them (and in the proposal pages build-prototype.py --proposal wrote), so one tokens build
+keeps every page in step; --check names a stale one as a prototype token block.
 
   --check      write nothing; exit 1 naming every stale or missing file.
   --contrast   rewrite only the contrast block of references/dark-mode.md (exit 2 if the file or the markers are missing).
@@ -2442,7 +2442,7 @@ def page_theme_css(doc: Optional[dict], scopes: bool = False, markers: bool = Fa
 THEME_START = "/* plumb:theme */"
 THEME_START_SCOPED = "/* plumb:theme scoped */"
 THEME_END = "/* plumb:theme:end */"
-PROTOTYPE_PAGES = ("prototype.html", "screens.html")
+PROTOTYPE_PAGES = ("prototype.html", "app.html", "screens.html")
 _THEME_REGION = re.compile(r"/\* plumb:theme( scoped)? \*/.*?/\* plumb:theme:end \*/", re.S)
 
 
@@ -2479,8 +2479,8 @@ def refresh_prototype_theme(text: str, doc: dict) -> Optional[str]:
 
 
 def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
-    """prototype.html, screens.html and the tour pages in tours/ (when build-prototype.py has written them) with their
-    theme refreshed."""
+    """prototype.html, app.html, screens.html and the tour pages in tours/ (when build-prototype.py has written them)
+    with their theme refreshed."""
     docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
     out: Dict[Path, str] = {}
     paths = [safe_copy_path(root, f"{str(docs).rstrip('/')}/{name}", "$extensions.plumb.docs_dir") for name in PROTOTYPE_PAGES]

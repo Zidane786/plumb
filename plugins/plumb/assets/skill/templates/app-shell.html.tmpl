@@ -1,0 +1,346 @@
+<!doctype html>
+{{header}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{base}}
+<title>{{title}}</title>
+<style>
+/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
+   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
+:where(:root), :where(.pl-light) {
+  --pl-bg: #fbfbfa;
+  --pl-surface: #ffffff;
+  --pl-sunk: #f0f0ed;
+  --pl-text: #1d1f23;
+  --pl-muted: #5b616b;
+  --pl-border: #dcdcd6;
+  --pl-border-strong: #858a93;
+  --pl-accent: #2f5d8a;
+  --pl-on-accent: #ffffff;
+  --pl-focus: #2f5d8a;
+  --pl-bad: #b42318;
+  --pl-on-bad: #ffffff;
+  --pl-warn: #8a5a00;
+  --pl-good: #067647;
+  color-scheme: light;
+}
+:where(:root[data-theme="dark"]), :where(.pl-dark) {
+  --pl-bg: #121315;
+  --pl-surface: #1a1c1f;
+  --pl-sunk: #0c0d0f;
+  --pl-text: #e8e9eb;
+  --pl-muted: #a2a7af;
+  --pl-border: #2e3136;
+  --pl-border-strong: #6f747d;
+  --pl-accent: #8db8e3;
+  --pl-on-accent: #0d1117;
+  --pl-focus: #8db8e3;
+  --pl-bad: #f97066;
+  --pl-on-bad: #1a0b0a;
+  --pl-warn: #fdb022;
+  --pl-good: #47cd89;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme="light"])) {
+    --pl-bg: #121315;
+    --pl-surface: #1a1c1f;
+    --pl-sunk: #0c0d0f;
+    --pl-text: #e8e9eb;
+    --pl-muted: #a2a7af;
+    --pl-border: #2e3136;
+    --pl-border-strong: #6f747d;
+    --pl-accent: #8db8e3;
+    --pl-on-accent: #0d1117;
+    --pl-focus: #8db8e3;
+    --pl-bad: #f97066;
+    --pl-on-bad: #1a0b0a;
+    --pl-warn: #fdb022;
+    --pl-good: #47cd89;
+    color-scheme: dark;
+  }
+}
+:where(:root) {
+  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --pl-radius: 8px;
+  --pl-radius-sm: 4px;
+  --pl-space-1: 4px;
+  --pl-space-2: 8px;
+  --pl-space-3: 12px;
+  --pl-space-4: 16px;
+  --pl-space-6: 24px;
+  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
+  --pl-duration: 150ms;
+  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --pl-text-control: 15px;
+  --pl-text-small: 13px;
+  --pl-text-title: 22px;
+}
+</style>
+<style>
+{{theme_css}}
+</style>
+<style>
+/* Plumb's app view: every screen full window, no prototype panels. The window is the frame: #pp-frame spans it and is
+   the plumb-frame container, so a screen's @container plumb-frame (min-width: 48rem) rules follow the window. The stage
+   (#pp-stage) wraps the frame; a walkthrough player draws over it on a tour page. */
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--pl-bg);
+  color: var(--pl-text);
+  font-family: var(--pl-font);
+  font-size: 15px;
+  line-height: 1.5;
+}
+:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.pa-stage { position: relative; min-height: 100vh; min-height: 100dvh; }
+/* isolation: a screen's z-indexes stay inside the frame, so nothing a screen stacks can cover what is drawn over it. */
+.pa-frame {
+  container: plumb-frame / inline-size;
+  isolation: isolate;
+  min-height: 100vh; min-height: 100dvh;
+  background: var(--pl-bg); color: var(--pl-text);
+}
+.pa-frame > [data-screen]:focus { outline: none; }
+/* The documented hook for an app shell's sidebar: from the md breakpoint it stays in view while the page scrolls. */
+@container plumb-frame (min-width: 48rem) {
+  #pp-frame [data-app-sidebar] { position: sticky; top: 0; height: 100vh; height: 100dvh; }
+}
+.pa-announce { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+</style>
+{{screen_styles}}
+{{player_css}}
+<script>
+/* Theme: follows the system until a screen's own toggle (window.plumbTheme, plumbPrototype.setTheme) picks one; the
+   choice is remembered in this browser (when storage is allowed). data-theme always says which theme is showing; the
+   .dark / .light class (what the project's --css-vars export switches on) is set once chosen. */
+(function () {
+  var root = document.documentElement;
+  var key = {{theme_key}};
+  var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var chosen = null;
+  try {
+    var saved = window.localStorage.getItem(key);
+    if (saved === "dark" || saved === "light") chosen = saved;
+  } catch (err) { chosen = null; }
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    if (chosen) {
+      root.classList.toggle("dark", theme === "dark");
+      root.classList.toggle("light", theme === "light");
+    }
+  }
+  apply(chosen || (media && media.matches ? "dark" : "light"));
+  if (media && media.addEventListener) {
+    media.addEventListener("change", function (e) { if (!chosen) apply(e.matches ? "dark" : "light"); });
+  }
+  window.plumbTheme = {
+    set: function (theme) {
+      chosen = theme === "dark" ? "dark" : "light";
+      try { window.localStorage.setItem(key, chosen); } catch (err) { /* storage off: the choice lasts this visit */ }
+      apply(chosen);
+      return chosen;
+    },
+    toggle: function () { return window.plumbTheme.set(root.getAttribute("data-theme") === "dark" ? "light" : "dark"); },
+    refresh: function () { apply(root.getAttribute("data-theme") || "light"); }
+  };
+  /* Each screen's script registers here and runs once the app is ready, as function (screen, plumb) { ... }. */
+  window.plumbScreens = { _defs: [], define: function (id, fn) { this._defs.push([id, fn]); } };
+})();
+</script>
+</head>
+<body>
+<div class="pa-stage" id="pp-stage">
+  <div class="pa-frame" id="pp-frame">
+{{frame}}
+  </div>
+</div>
+<p class="pa-announce" id="pa-announce" aria-live="polite"></p>
+<script type="application/json" id="plumb-data">{{data}}</script>
+{{screen_scripts}}
+<script>
+/* The app: hash routing (#/ID, #/ID/STATE; #screen-ID[/STATE] too, so the prototype's links work), the screens' own
+   interactions, and window.plumbPrototype (the same API as prototype.html). */
+(function () {
+  "use strict";
+  var data = JSON.parse(document.getElementById("plumb-data").textContent);
+  var screens = data.screens;
+  var byId = {};
+  screens.forEach(function (s) { byId[s.id] = s; });
+  function $(id) { return document.getElementById(id); }
+  var frame = $("pp-frame"), announce = $("pa-announce");
+  var sections = {};
+  Array.prototype.forEach.call(frame.children, function (el) {
+    var id = el.getAttribute("data-screen");
+    if (id !== null) sections[id] = el;
+  });
+  var current = { page: null, screen: null, state: null };
+  var based = document.querySelector("base[href]") !== null;
+  var listeners = [];
+  var DIALOGS = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
+  function outerStates(section) {
+    return Array.prototype.filter.call(section.querySelectorAll("[data-state]"), function (el) {
+      return el.parentElement && el.parentElement.closest("[data-state], [data-screen]") === section;
+    });
+  }
+  function decode(text) {
+    try { return decodeURIComponent(text); } catch (err) { return text; }
+  }
+  function writeHash(mode, hash) {
+    if (!mode || decode(location.hash) === hash) return;
+    try {
+      /* the document's own URL plus the hash: a page with a <base> elsewhere would leave it on a bare "#..." */
+      history[mode === "push" ? "pushState" : "replaceState"](null, "", location.href.split("#")[0] + hash);
+    } catch (err) {
+      location.hash = hash;
+    }
+  }
+  function emit() {
+    var detail = { page: current.page, screen: current.screen, state: current.state };
+    listeners.slice().forEach(function (fn) {
+      try { fn(detail); } catch (err) { console.error("Plumb: a plumbPrototype listener failed:", err); }
+    });
+  }
+  function shown(el) {
+    return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
+  }
+  /* A state change on the same screen that opens a dialog: bring the dialog into view (the frame is the whole page, so
+     a dialog the screen fixes in place sits in the middle of a long page, not of the window). */
+  function revealDialog(section) {
+    var found = Array.prototype.filter.call(section.querySelectorAll(DIALOGS), shown)[0];
+    if (!found) return;
+    var r = found.getBoundingClientRect(), h = window.innerHeight || document.documentElement.clientHeight;
+    if (r.top >= 0 && r.bottom <= h) return;
+    found.scrollIntoView({ block: r.height > h ? "start" : "center", inline: "nearest" });
+  }
+  function show(id, state, opts) {
+    opts = opts || {};
+    var s = byId[id];
+    if (!s) return false;
+    if (!state || s.states.indexOf(state) < 0) state = s.states[0];
+    var sameScreen = current.screen === id;
+    var same = sameScreen && current.state === state;
+    if (!same) {
+      Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
+      outerStates(sections[id]).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+      document.title = s.title + " · " + data.project;
+    }
+    current = { page: "screen", screen: id, state: state };
+    writeHash(opts.history, "#/" + id + (state !== s.states[0] ? "/" + state : ""));
+    if (!sameScreen && opts.history) {
+      window.scrollTo(0, 0);
+      announce.textContent = s.title;
+    }
+    if (opts.focus && !sameScreen) {
+      var section = sections[id];
+      if (!section.hasAttribute("tabindex")) section.setAttribute("tabindex", "-1");
+      section.focus({ preventScroll: true });
+    }
+    if (sameScreen && !same) revealDialog(sections[id]);
+    if (!same) emit();
+    return true;
+  }
+  /* #/ID, #/ID/STATE, #screen-ID, #screen-ID/STATE; an unknown screen id opens the first screen. Anything else: null. */
+  function parse(hash) {
+    var h = decode(String(hash || "").replace(/^#/, ""));
+    if (h.charAt(0) === "/") {
+      var parts = h.slice(1).split("/");
+      if (byId[parts[0]]) return { screen: parts[0], state: parts[1] || null };
+      return { screen: screens[0].id, state: null };
+    }
+    if (h.indexOf("screen-") === 0) {
+      var rest = h.slice(7), cut = rest.lastIndexOf("/");
+      var sid = cut < 0 ? rest : rest.slice(0, cut);
+      if (byId[sid]) return { screen: sid, state: cut < 0 ? null : rest.slice(cut + 1) };
+      if (byId[rest]) return { screen: rest, state: null };
+      return { screen: screens[0].id, state: null };
+    }
+    return null;
+  }
+  function route() {
+    var r = parse(location.hash);
+    if (!r) {
+      /* no hash (back to where the page opened) is the first screen; another anchor leaves the screen as it is */
+      if (current.page === null || location.hash.length < 2) show(screens[0].id, null, {});
+      return;
+    }
+    show(r.screen, r.state, {});
+  }
+
+  /* Links: any <a href="#/..."> or "#screen-..." in a screen routes in place. */
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    var link = el && el.closest ? el.closest("a[href]") : null;
+    if (!link) return;
+    var href = link.getAttribute("href");
+    if (!href || href.charAt(0) !== "#") return;
+    var r = parse(href);
+    if (r) {
+      event.preventDefault();
+      show(r.screen, r.state, { history: "push", focus: true });
+    } else if (based && href.length > 1 && $(decode(href.slice(1)))) {
+      /* with a <base>, an in-page link would open another folder: move to the element instead */
+      event.preventDefault();
+      $(decode(href.slice(1))).scrollIntoView({ block: "start" });
+    }
+  });
+  window.addEventListener("popstate", route);
+  window.addEventListener("hashchange", route);
+
+  window.plumbPrototype = {
+    project: data.project,
+    view: "app",
+    screens: screens.map(function (s) { return { id: s.id, title: s.title, states: s.states.slice(), route: s.route }; }),
+    go: function (id, state, opts) {
+      var mode = opts && Object.prototype.hasOwnProperty.call(opts, "history") ? opts.history : "push";
+      return show(id, state || null, { history: mode });
+    },
+    setState: function (state) { return current.screen ? show(current.screen, state, { history: "replace" }) : false; },
+    current: function () { return { page: current.page, screen: current.screen, state: current.state }; },
+    screen: function (id) { return sections[id] || null; },
+    setTheme: function (theme) { return window.plumbTheme.set(theme); },
+    on: function (fn) {
+      listeners.push(fn);
+      return function () { listeners = listeners.filter(function (f) { return f !== fn; }); };
+    },
+    guide: $("plumb-guide"),
+    player: $("plumb-player")
+  };
+  window.plumbTheme.refresh();
+  route();
+
+  window.plumbScreens._defs.forEach(function (def) {
+    var id = def[0], section = sections[id];
+    if (!section) return;
+    var api = {
+      catalogue: false,
+      screen: id,
+      setState: function (state) { return current.screen === id ? show(id, state, { history: "replace" }) : false; },
+      go: function (target, state) { return show(target, state || null, { history: "push", focus: true }); },
+      state: function () { return current.screen === id ? current.state : null; }
+    };
+    try { def[1].call(section, section, api); } catch (err) { console.error("Plumb: the script of screen " + id + " failed:", err); }
+  });
+})();
+</script>
+{{player}}
+</body>
+</html>
