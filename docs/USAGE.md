@@ -1039,9 +1039,25 @@ mistakes go even in a project with no `AGENTS.md` or `CLAUDE.md`.
 Three checks, in this order:
 
 1. **The guard (always on):** hand edits to generated files and to Plumb's own files are refused, including through the
-   shell (`>`, `tee`, `sed -i`, `cp`, `Set-Content`, …). Removing or moving away a guarded file (`rm`, `rmdir`, `del`,
-   `Remove-Item`, `git rm`, `mv` / `Move-Item` / `git mv` from it), or a folder holding one, is refused the same way.
-   Running `build-tokens.py` or `build-prototype.py` is allowed.
+   shell. Removing or moving away a guarded file (`rm`, `rmdir`, `del`, `Remove-Item`, `git rm`, `mv` / `Move-Item` /
+   `git mv` from it), or a folder holding one, is refused the same way. Running `build-tokens.py` or
+   `build-prototype.py` is allowed.
+
+   A shell command is refused only when a guarded file is one of its **real write targets**:
+   - a redirect (`>`, `>>`, `1>`, `2>`, `&>`, `>|`), `tee [-a]`, `sed -i`, `perl -i`;
+   - the destination of `cp`, `mv`, `install`, `rsync` or `ln` (a folder destination counts as the file named like
+     the source in it), `truncate`, `dd of=`, `curl -o`, `wget -O`;
+   - PowerShell's `Set-Content`, `Add-Content`, `Out-File`, `New-Item`, `Copy-Item` / `Move-Item` onto it, and
+     `[IO.File]::WriteAllText(…)`;
+   - in inline code (`python -c`, `node -e`, a here-document or an `echo` piped to an interpreter): `open("<path>",
+     "w" | "a" | "x")`, `Path("<path>").write_text` / `write_bytes`, `shutil.copy` / `move`, `os.replace` / `rename`,
+     `fs.writeFileSync` and the like. When the code writes to a variable rather than a literal path, the paths that
+     reach that variable count (an assignment, a `for` loop, a list it appends to, the script's arguments);
+   - a shell's own script (`bash -c "…"`, a here-document fed to `bash`, `eval`, `find -exec`) is read as commands.
+
+   A command that only **mentions** a guarded path is allowed: quoted text (`git commit -m "… > app/globals.css"`), a
+   here-document written to another file (`cat > Makefile <<'EOF'` whose lines run `build-tokens.py`), and reading,
+   running or importing a guarded file (`json.load(open("…/screens.json"))`, `importlib` on a Plumb script).
 
    ```
    error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build
