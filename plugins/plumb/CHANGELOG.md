@@ -123,7 +123,7 @@
   names onto the project's own `color.sidebar-<role>` / `color.on-sidebar-<role>` token when there is one (`accent`
   and `active` are synonyms) before the generic role; it tells you when a next/font variable is applied on `<body>`
   instead of `<html>` (the font stack would be undefined on `:root`), read from the recorded `Routes:` (Next.js app
-  router only; no `Routes:`, no check); and a failing white-or-black text on its own fill (`on-X` on `X`) now offers
+  router only; no `Routes:`, no check); and a failing white-or-black (or near-white or near-black) text on its own fill (`on-X` on `X`) now offers
   two fixes with their ratios per theme, the fill stepped (same hue, text unchanged) first, then the text, in
   `--contrast` and the audit's `contrast` fix.
 

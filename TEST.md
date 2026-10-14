@@ -270,9 +270,9 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       `color.sidebar-active` token in the tokens file, `--sidebar-accent` maps onto it (not `{color.sunk}`); with
       `Routes: app (next-app)` recorded and a layout that puts a font's `.variable` on `<body>`, the plan's `by_hand`
       says "move `<name>.variable` to the `<html>` className in app/layout.tsx:<line>" (no `Routes:`, no such line).
-- [ ] A failing white-on-fill pair (`on-primary` on `primary`) shows "two options in light mode": the fill stepped
+- [ ] A failing white-on-fill (or near-white, e.g. `oklch(0.985 0 0)`) pair (`on-primary` on `primary`) shows "two options in light mode": the fill stepped
       first with its ratio, then the text, each at least 5.0:1 (4.5 plus the 0.5 spare); a non-white/black text
-      shows one "nearest passing" value as before.
+      shows one "nearest passing" value as before; on a surface (`on-surface` on `surface`) the text option comes first.
 - [ ] It asks you to pick a direction, then shows the full token set (light and dark) and the `scaffold.py --dry-run`
       file list, each inside a question, and writes only after you say OK; the real scaffold runs with the
       `--confirm <token>` the dry run printed, in its own shell call. Scratch files go in `<project>/.plumb-tmp/`

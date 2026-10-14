@@ -521,3 +521,85 @@ def test_a_font_variable_already_on_html_is_quiet(project: Path) -> None:
     (project / "app/layout.tsx").write_text(only_html, encoding="utf-8")
     (copy,) = plan(project)["copies"]
     assert not any("layout" in n for n in copy["by_hand"])
+
+
+def test_a_nested_sidebar_token_is_found(project: Path) -> None:
+    """color.sidebar.active has the variable name --color-sidebar-active; the alias points at its real path."""
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _extracted_tokens(project)
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    doc["color"]["sidebar"] = {"active": {"$value": "#eeeeee", "$extensions": {"plumb": {"dark": "#222222"}}},
+                               "on-active": {"$value": "#111111", "$extensions": {"plumb": {"dark": "#fefefe"}}}}
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"]["$value"] for o in copy["overrides"] if o["token_change"]}
+    assert got["--color-sidebar-accent"] == "{color.sidebar.active}"
+
+
+LOCAL_FONT = '''import localFont from "next/font/local";
+
+const brand = localFont({
+  src: [{ path: "./a.woff2", weight: "400" }, { path: "./b.woff2", weight: "700" }],
+  variable: "--font-geist-sans",
+});
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className={brand.variable}>{children}</body>
+    </html>
+  );
+}
+'''
+
+
+def test_a_font_with_a_nested_src_array_is_found(project: Path) -> None:
+    _font_project(project, layout=LOCAL_FONT)
+    (copy,) = plan(project)["copies"]
+    assert any("move `brand.variable` to the `<html>` className in app/layout.tsx:11" in n for n in copy["by_hand"])
+
+
+def test_a_body_in_a_comment_does_not_hide_the_real_tag(project: Path) -> None:
+    layout = "// the fonts go on <body> here, <html> there\n/* <body> */\n" + LAYOUT_BODY
+    _font_project(project, layout=layout)
+    (copy,) = plan(project)["copies"]
+    assert any("move `geistSans.variable` to the `<html>` className in app/layout.tsx:" in n for n in copy["by_hand"])
+
+
+FONTS_MODULE = 'import { Geist } from "next/font/google";\nexport const sans = Geist({ variable: "--font-geist-sans" });\n'
+LAYOUT_IMPORT = '''import { sans as geistSans } from "./fonts";
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className={geistSans.variable}>{children}</body>
+    </html>
+  );
+}
+'''
+
+
+def test_a_font_defined_in_a_local_module_is_followed_one_hop(project: Path) -> None:
+    _font_project(project, layout=LAYOUT_IMPORT)
+    (project / "app/fonts.ts").write_text(FONTS_MODULE, encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    assert any("move `geistSans.variable` to the `<html>` className in app/layout.tsx:6" in n for n in copy["by_hand"])
+    (project / "app/fonts.ts").write_text(FONTS_MODULE.replace("--font-geist-sans", "--font-other"), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    assert not any("layout" in n for n in copy["by_hand"])  # a different font: not the one the tokens read
+
+
+def test_a_font_from_somewhere_unreadable_says_it_could_not_be_checked(project: Path) -> None:
+    _font_project(project, layout=LAYOUT_IMPORT.replace('"./fonts"', '"@/lib/fonts"'))
+    (copy,) = plan(project)["copies"]
+    (item,) = [n for n in copy["by_hand"] if "layout" in n]
+    assert "could not see where geistSans is defined" in item and "var(--font-geist-sans)" in item
+    (project / "app/layout.tsx").write_text(LAYOUT_IMPORT, encoding="utf-8")  # a relative import with no file behind it
+    (copy,) = plan(project)["copies"]
+    assert any("could not see where geistSans is defined" in n for n in copy["by_hand"])
+
+
+def test_duplicate_next_app_routes_give_one_note(project: Path) -> None:
+    _font_project(project, routes="app (next-app), ./app/ (next-app)")
+    (copy,) = plan(project)["copies"]
+    assert len([n for n in copy["by_hand"] if "layout" in n]) == 1

@@ -205,13 +205,13 @@ def test_contrast_fix_for_white_on_a_fill_lists_the_fill_option_first(tmp_path: 
     found = [f for f in audit_json(project)["findings"] if f["rule"] == "contrast"]
     light = next(f for f in found if "on-primary on primary" in f["message"] and "light" in f["message"])
     fix = light["fix"]
-    assert fix.startswith("two options in light mode") and "keeps on-primary as it is (#ffffff)" in fix
-    assert fix.index("(1) step primary to #") < fix.index("(2) step on-primary to #070707")
+    assert fix.startswith("two options in light mode") and "on-primary stays #ffffff" in fix
+    assert fix.index("(1) step primary to #") < fix.index("(2) step on-primary to #")
     first = fix.split("(1) step primary to ")[1][:7]
     assert P.contrast("#ffffff", first) >= 4.5 + BT.FIX_SPARE - 0.05  # the pale-teal fill darkened enough
-    # dark mode: on-primary is #0f1217 (not black): only the on-primary option, worded as before
+    # dark mode: on-primary is #0f1217, near-black and near-neutral: it gets the fill option too, lightening the fill
     dark = next(f for f in found if "on-primary on primary" in f["message"] and "dark" in f["message"])
-    assert dark["fix"].startswith("nearest passing on-primary in dark mode:") and "two options" not in dark["fix"]
+    assert dark["fix"].startswith("two options in dark mode: (1) step primary to #") and "on-primary stays #0f1217" in dark["fix"]
 
 
 def test_contrast_uses_the_build_tokens_pair_logic() -> None:
