@@ -48,7 +48,7 @@ Contrast pairs (WCAG 2.x, light and dark):
       ["on-primary-fill", "primary-fill", "text"]            [fg, bg, kind], kind text (4.5) | large (3) | ui (3)
       {"fg": token, "bg": token, "need": 4.5, "note": "..."}  "need" defaults to 4.5 (3 for large text)
 --contrast exits 0 even when pairs fail: it writes the evidence, the audit is the gate.
-A failing pair lists the nearest passing foreground: its L* is stepped darker (light mode) or lighter (dark mode) until it
+A failing pair lists the nearest passing foreground: its OKLCH lightness (hue kept) is stepped darker (light mode) or lighter (dark mode) until it
 passes with FIX_SPARE (0.5) to spare, so the audit's contrast-headroom suggestion (under HEADROOM, 0.3) never flags it.
 
 Python 3.9+, standard library only. Declarations follow the order of the tokens file

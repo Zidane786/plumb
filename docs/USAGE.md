@@ -939,9 +939,12 @@ generated from it. To change a value, change the token (`/plumb:update`), then r
 **Contrast is computed, never guessed.** `build-tokens.py` measures every pair in light and dark (WCAG 2.2: 4.5:1 for
 text, 3:1 for large text and UI boundaries) and writes the evidence table into `references/dark-mode.md`. A failing pair
 is an audit error whose fix names the nearest passing value; Plumb never changes a colour without your OK. When white
-or black text sits on its own fill (`on-primary` on `primary`) and fails, the fix lists two options, each with its
-computed ratio per theme: step the fill (same hue, the text stays as it is) first, or step the text (a bigger change in
-look). Stepping a fill changes every use of it, so look at the preview before you choose.
+or black text (near-white and near-black count, e.g. `#fafafa`; a light grey does not) sits on its own fill
+(`on-primary` on `primary`) and fails, the fix lists two options, each with its computed ratio per theme: step the
+fill (same hue, the text stays as it is) first, or step the text (a bigger change in look). For a surface
+(`on-surface` on `surface`, `background`, `card` …) the text option comes first, because stepping a whole surface is a
+big change. When the token is an alias (`{color.brand}`) the fix says so and names the source token to change.
+Stepping a fill changes every use of it, so look at the preview before you choose.
 
 **Light and dark, everywhere.** Every colour token has a dark value; a missing one is an audit error unless the token is
 marked `"same-in-dark": true`. Pages never write `dark:` overrides: the tokens switch. A light-only project is an
