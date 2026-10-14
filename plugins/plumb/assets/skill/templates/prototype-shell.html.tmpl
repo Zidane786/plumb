@@ -466,7 +466,7 @@ body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
     var opened = !same && current.page === "screen" && current.screen === id ? openDialogs(sections[id]) : null;
     if (!same) {
       Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
-      outerStates(sections[id]).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+      outerStates(sections[id]).forEach(function (el) { el.hidden = (el.getAttribute("data-state") || "").trim() !== state; });
       if (opened) showOpened(sections[id], opened);
       each("[data-states-for]", function (group) {
         var mine = group.getAttribute("data-states-for") === id;

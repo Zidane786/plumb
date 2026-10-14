@@ -158,8 +158,19 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    Open `docs/design/app.html`: the Home screen full window, with no screens list, switcher, toggles or decisions;
    `app.html#/home/empty` shows the empty state and `app.html#/nope` the Home screen. Delete `app.html`, run
    `PY SKILL/scripts/build-prototype.py --check` → exit 1 with `stale: docs/design/app.html (missing)`; build again.
-4. `PY SKILL/scripts/build-prototype.py --approve home` → `approved home (<your git name>, <today>)`.
-5. `PY SKILL/scripts/audit.py docs/design/prototype/screens` → no errors (warnings such as `screen-not-built` are
+   In `docs/design/screens.html` the screen's markup is there once, shared by its six copies:
+   `grep -c 'data-screen-markup="home"' docs/design/screens.html` → `1`.
+4. Page size: write one very large screen, then build:
+   `PY -c "open('docs/design/prototype/screens/big.html','w',encoding='utf-8').write('<section data-screen=\"big\" data-title=\"Big\"><div data-state=\"ready\">' + '<p>filler text for the size check</p>' * 300000 + '</div></section>\n')"`
+   and `PY SKILL/scripts/build-prototype.py`.
+   **Expect:** exit 0 and one line naming the three pages: `warning: docs/design/app.html is 10.7 MB,
+   docs/design/prototype.html is 10.7 MB, docs/design/screens.html is 10.7 MB: over the 10 MB a generated page should
+   stay under (slow to open, heavy in the repository)`, then `note: every page holds each screen file once; the
+   largest: docs/design/prototype/screens/big.html (10.6 MB)` and one `fix: make the screen files smaller: move inline
+   data: images …; or git-ignore the pages …` line. `PY SKILL/scripts/build-prototype.py --check` prints the same
+   warning and still exits 0. Delete `big.html`, build again: no warning.
+5. `PY SKILL/scripts/build-prototype.py --approve home` → `approved home (<your git name>, <today>)`.
+6. `PY SKILL/scripts/audit.py docs/design/prototype/screens` → no errors (warnings such as `screen-not-built` are
    expected: the screen isn't built yet).
 
 ### 3.4 Prototype variants (`build-prototype.py --proposal`)

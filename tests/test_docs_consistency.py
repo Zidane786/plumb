@@ -216,6 +216,7 @@ QUOTED = {
     "no colour token is close": "assets/skill/scripts/audit.py",
     "generated files are up to date": "assets/skill/scripts/build-tokens.py",
     "no screen files in": "assets/skill/scripts/build-prototype.py",
+    "a generated page should stay under": "assets/skill/scripts/build-prototype.py",
     "several tokens files in": "assets/skill/scripts/build-tokens.py",
 }
 
@@ -301,6 +302,13 @@ TEST_EXPECTS = [
      "f\"proposal {name}: {len(folders)} variant{'s' if len(folders) != 1 else ''} ({', '.join(summary)})\""),
     ("approved home (", "assets/skill/scripts/build-prototype.py",
      "f\"approved {args.approve} ({e['approved']['by']}, {e['approved']['at']})\""),
+    ("MB: over the 10 MB a generated page should stay under (slow to open, heavy in the repository)",
+     "assets/skill/scripts/build-prototype.py",
+     '"a generated page should stay under (slow to open, heavy in the repository)"'),
+    ("note: every page holds each screen file once; the largest:", "assets/skill/scripts/build-prototype.py",
+     'f"note: every page holds each screen file once; the largest: '),
+    ("fix: make the screen files smaller: move inline data: images", "assets/skill/scripts/build-prototype.py",
+     'f"fix: make the screen files smaller: move inline data: images '),
     ("1 tour: first-look (3 steps, play mode)", "assets/skill/scripts/build-prototype.py",
      "f\"{t['id']} ({len(t['steps'])} steps, {t['mode']} mode)\""),
     ('steps[1].target "[data-test=new]"\n   matches nothing', "assets/skill/scripts/build-prototype.py",
