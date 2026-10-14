@@ -405,3 +405,201 @@ def test_used_in_never_lists_plumbs_own_pages(project: Path) -> None:
     (copy,) = plan(project)["copies"]
     used = {v["name"]: v["used_in"] for v in copy["project_variables"]}
     assert used == {"--background": ["components/chart.tsx:1"], "--foreground": []}
+
+
+# ---------------------------------------------------------------- sidebar roles (a sidebar-specific token wins)
+
+
+def test_a_sidebar_token_wins_over_the_generic_role(project: Path) -> None:
+    """sidebar-accent / sidebar-accent-foreground map onto color.sidebar-active / color.on-sidebar-active (accent and
+    active are synonyms) before the generic sunk / on-surface; sidebar-primary uses its own token when there is one."""
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _extracted_tokens(project, {"sidebar-active": "sidebar-accent", "on-sidebar-active": "sidebar-accent-foreground",
+                                "sidebar-primary": "sidebar-primary", "on-sidebar-primary": "sidebar-primary-foreground"})
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"]["$value"] for o in copy["overrides"]
+           if o["token_change"] and str(o["token_change"].get("$value", "")).startswith("{")}
+    assert got["--color-sidebar-accent"] == "{color.sidebar-active}"
+    assert got["--color-sidebar-accent-foreground"] == "{color.on-sidebar-active}"
+    assert got["--color-accent"] == "{color.sunk}"  # the non-sidebar names keep the generic role
+    assert got["--color-sidebar-ring"] == "{color.primary}"  # no sidebar-ring token: the generic mapping
+    # the same names written the other way round: the project says active, the tokens say accent
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n@theme inline {\n  --color-sidebar-active: var(--sa);\n}\n', encoding="utf-8")
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    del doc["color"]["sidebar-active"]
+    doc["color"]["sidebar-accent"] = {"$value": "#eeeeee", "$extensions": {"plumb": {"dark": "#222222"}}}
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    assert by_name(plan(project))["--color-sidebar-active"]["token_change"]["$value"] == "{color.sidebar-accent}"
+
+
+def test_a_sidebar_token_whose_colours_differ_is_a_look_change_note(project: Path) -> None:
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _extracted_tokens(project)
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    doc["color"]["sidebar-active"] = {"$value": "#123456", "$extensions": {"plumb": {"dark": "#654321"}}}
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"]["$value"] for o in copy["overrides"] if o["token_change"]}
+    assert got["--color-sidebar-accent"] == "{color.sidebar-active}"
+    assert any("--color-sidebar-accent becomes {color.sidebar-active}" in n and "the look changes" in n
+               for n in copy["notes"])
+
+
+def test_no_sidebar_token_keeps_the_generic_mapping(project: Path) -> None:
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _extracted_tokens(project)
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"]["$value"] for o in copy["overrides"] if o["token_change"]}
+    assert got["--color-sidebar-accent"] == "{color.sunk}"
+    assert got["--color-sidebar-accent-foreground"] == "{color.on-surface}"
+
+
+# ---------------------------------------------------------------- next/font variable applied on <body>
+
+GEIST_GLOBALS = '@import "tailwindcss";\n\n@theme inline {\n  --font-sans: var(--font-geist-sans);\n}\n'
+LAYOUT_BODY = '''import { Geist, Geist_Mono } from "next/font/google";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
+    </html>
+  );
+}
+'''
+
+
+def _font_project(p: Path, routes: str = "app (next-app)", layout: str = LAYOUT_BODY, folder: str = "app",
+                  name: str = "layout.tsx") -> None:
+    (p / "app/globals.css").write_text(GEIST_GLOBALS, encoding="utf-8")
+    doc = json.loads(tokens_file(p).read_text(encoding="utf-8"))
+    doc["font"]["sans"]["$value"] = ["Geist", "system-ui", "sans-serif"]
+    tokens_file(p).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    if routes:
+        md = p / "PLUMB.md"
+        md.write_text(md.read_text(encoding="utf-8").rstrip("\n") + f"\nRoutes: {routes}\n", encoding="utf-8")
+    (p / folder).mkdir(parents=True, exist_ok=True)
+    (p / folder / name).write_text(layout, encoding="utf-8")
+
+
+def test_a_font_variable_applied_on_body_is_a_by_hand_item(project: Path) -> None:
+    _font_project(project)
+    (copy,) = plan(project)["copies"]
+    assert by_name({"copies": [copy]})["--font-sans"]["token_change"]["prepend"] == "font.sans"
+    (item,) = [n for n in copy["by_hand"] if "layout" in n]
+    assert "move `geistSans.variable` to the `<html>` className in app/layout.tsx:12" in item
+    assert not any("geistMono" in n for n in copy["by_hand"])  # --font-geist-mono is not read by an override here
+
+
+def test_the_font_variable_check_follows_the_recorded_route_root(project: Path) -> None:
+    _font_project(project, routes="web/src/app (next-app)", folder="web/src/app", name="layout.jsx")
+    (copy,) = plan(project)["copies"]
+    assert any("move `geistSans.variable` to the `<html>` className in web/src/app/layout.jsx:" in n
+               for n in copy["by_hand"])
+
+
+@pytest.mark.parametrize("routes", ["", "none", "app (next-pages)", "elsewhere/app (next-app)", "(not recorded yet)"])
+def test_no_next_app_route_means_no_font_check(project: Path, routes: str) -> None:
+    _font_project(project, routes=routes)
+    (copy,) = plan(project)["copies"]
+    assert not any("layout" in n for n in copy["by_hand"])
+
+
+def test_a_font_variable_already_on_html_is_quiet(project: Path) -> None:
+    on_html = LAYOUT_BODY.replace('<html lang="en">', '<html lang="en" className={geistSans.variable}>')
+    _font_project(project, layout=on_html)
+    (copy,) = plan(project)["copies"]
+    assert not any("layout" in n for n in copy["by_hand"])  # on both <html> and <body>: defined at :root
+    only_html = on_html.replace("${geistSans.variable} ", "")
+    (project / "app/layout.tsx").write_text(only_html, encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    assert not any("layout" in n for n in copy["by_hand"])
+
+
+def test_a_nested_sidebar_token_is_found(project: Path) -> None:
+    """color.sidebar.active has the variable name --color-sidebar-active; the alias points at its real path."""
+    shutil.copy(SHADCN_STOCK, project / "app/globals.css")
+    _extracted_tokens(project)
+    doc = json.loads(tokens_file(project).read_text(encoding="utf-8"))
+    doc["color"]["sidebar"] = {"active": {"$value": "#eeeeee", "$extensions": {"plumb": {"dark": "#222222"}}},
+                               "on-active": {"$value": "#111111", "$extensions": {"plumb": {"dark": "#fefefe"}}}}
+    tokens_file(project).write_text(json.dumps(doc, indent=2), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    got = {o["name"]: o["token_change"]["$value"] for o in copy["overrides"] if o["token_change"]}
+    assert got["--color-sidebar-accent"] == "{color.sidebar.active}"
+
+
+LOCAL_FONT = '''import localFont from "next/font/local";
+
+const brand = localFont({
+  src: [{ path: "./a.woff2", weight: "400" }, { path: "./b.woff2", weight: "700" }],
+  variable: "--font-geist-sans",
+});
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className={brand.variable}>{children}</body>
+    </html>
+  );
+}
+'''
+
+
+def test_a_font_with_a_nested_src_array_is_found(project: Path) -> None:
+    _font_project(project, layout=LOCAL_FONT)
+    (copy,) = plan(project)["copies"]
+    assert any("move `brand.variable` to the `<html>` className in app/layout.tsx:11" in n for n in copy["by_hand"])
+
+
+def test_a_body_in_a_comment_does_not_hide_the_real_tag(project: Path) -> None:
+    layout = "// the fonts go on <body> here, <html> there\n/* <body> */\n" + LAYOUT_BODY
+    _font_project(project, layout=layout)
+    (copy,) = plan(project)["copies"]
+    assert any("move `geistSans.variable` to the `<html>` className in app/layout.tsx:" in n for n in copy["by_hand"])
+
+
+FONTS_MODULE = 'import { Geist } from "next/font/google";\nexport const sans = Geist({ variable: "--font-geist-sans" });\n'
+LAYOUT_IMPORT = '''import { sans as geistSans } from "./fonts";
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className={geistSans.variable}>{children}</body>
+    </html>
+  );
+}
+'''
+
+
+def test_a_font_defined_in_a_local_module_is_followed_one_hop(project: Path) -> None:
+    _font_project(project, layout=LAYOUT_IMPORT)
+    (project / "app/fonts.ts").write_text(FONTS_MODULE, encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    assert any("move `geistSans.variable` to the `<html>` className in app/layout.tsx:6" in n for n in copy["by_hand"])
+    (project / "app/fonts.ts").write_text(FONTS_MODULE.replace("--font-geist-sans", "--font-other"), encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    assert not any("layout" in n for n in copy["by_hand"])  # a different font: not the one the tokens read
+
+
+def test_a_font_from_somewhere_unreadable_says_it_could_not_be_checked(project: Path) -> None:
+    _font_project(project, layout=LAYOUT_IMPORT.replace('"./fonts"', '"@/lib/fonts"'))
+    (copy,) = plan(project)["copies"]
+    (item,) = [n for n in copy["by_hand"] if "layout" in n]
+    assert "could not see where geistSans is defined" in item and "var(--font-geist-sans)" in item
+    (project / "app/layout.tsx").write_text(LAYOUT_IMPORT, encoding="utf-8")  # a relative import with no file behind it
+    (copy,) = plan(project)["copies"]
+    assert any("could not see where geistSans is defined" in n for n in copy["by_hand"])
+
+
+def test_duplicate_next_app_routes_give_one_note(project: Path) -> None:
+    _font_project(project, routes="app (next-app), ./app/ (next-app)")
+    (copy,) = plan(project)["copies"]
+    assert len([n for n in copy["by_hand"] if "layout" in n]) == 1

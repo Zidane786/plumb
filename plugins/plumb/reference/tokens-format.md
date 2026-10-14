@@ -107,8 +107,7 @@ a `note:` asking to record the choice; an unknown value exits 2 with `error:` / 
 `build-tokens.py` computes WCAG 2.x contrast in light **and** dark: every `on-X` over `X`, every text token over every
 surface, `outline-input` and `contrast.ui` over every plain surface at 3:1, plus `extra_pairs`. The evidence table is
 written into `references/dark-mode.md` between `<!-- plumb:contrast:start -->` and `<!-- plumb:contrast:end -->`.
-A failing pair is an audit error whose fix names the nearest passing value (stepped darker in light, lighter in dark),
-aimed at the minimum plus 0.5 so the audit's `contrast-headroom` suggestion (under 0.3) never flags a value Plumb
+A failing pair is an audit error whose fix names the nearest passing value (stepped in OKLCH lightness with the hue kept: darker in light, lighter in dark); for white or black (near-neutral, near an end) `on-X` over `X` it lists two options with their ratios, the fill `X` stepped first (`on-X` first when `X` is a surface). Values are aimed at the minimum plus 0.5 so the audit's `contrast-headroom` suggestion (under 0.3) never flags a value Plumb
 proposed.
 Plumb never changes a colour on its own: show the pair, the ratio and the proposed value, and apply it with the user's OK.
 
