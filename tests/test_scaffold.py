@@ -847,3 +847,47 @@ def test_verify_accepts_none_for_allowed_raw_values(tmp_path: Path) -> None:
     path.write_text(json.dumps({"allowed_raw": "none"}), encoding="utf-8")
     assert run(tmp_path, "--answers", str(path)).returncode == 0
     assert "Allowed raw values" not in _verify(tmp_path).stdout
+
+
+def test_allowed_raw_default_follows_a_tsconfig_extends(tmp_path: Path) -> None:
+    _app(tmp_path, "web", ui_dir="components/ui")  # the alias would guess src/ without the base config
+    base = tmp_path / "web"
+    (base / "tsconfig.base.json").write_text(json.dumps({"compilerOptions": {"paths": {"@/*": ["./*"]}}}),
+                                             encoding="utf-8")
+    (base / "tsconfig.json").write_text('{"extends": "./tsconfig.base", "compilerOptions": {}}', encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/components/ui/**"
+
+
+def test_allowed_raw_default_survives_an_extends_cycle_and_a_missing_base(tmp_path: Path) -> None:
+    _app(tmp_path, "web")
+    (tmp_path / "web/tsconfig.json").write_text('{"extends": "./tsconfig.json"}', encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/src/components/ui/**"
+    other = tmp_path / "b"
+    _app(other, "web")
+    (other / "web/tsconfig.json").write_text('{"extends": "./nope.json"}', encoding="utf-8")
+    assert run(other).returncode == 0
+    assert allowed_line(other) == "web/src/components/ui/**"
+
+
+def test_allowed_raw_default_reads_jsconfig_with_comments_and_trailing_commas(tmp_path: Path) -> None:
+    _app(tmp_path, "site", ui_dir="components/ui")
+    (tmp_path / "site/jsconfig.json").write_text(
+        '{\n  // aliases\n  "compilerOptions": {\n    /* root */\n    "paths": { "@/*": ["./*",], },\n  },\n}\n',
+        encoding="utf-8")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "site/components/ui/**"
+
+
+def test_allowed_raw_default_prefers_an_existing_folder_over_a_wrong_alias_guess(tmp_path: Path) -> None:
+    _app(tmp_path, "web", ui_dir="components/ui")  # no tsconfig: "@/" would mean src/, which does not exist
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "web/components/ui/**"
+
+
+def test_allowed_raw_default_lists_every_web_package(tmp_path: Path) -> None:
+    _app(tmp_path, "admin", paths={"@/*": ["./src/*"]})
+    _app(tmp_path, "portal", paths={"@/*": ["./*"]}, ui_dir="components/ui")
+    assert run(tmp_path).returncode == 0
+    assert allowed_line(tmp_path) == "admin/src/components/ui/**, portal/components/ui/**"

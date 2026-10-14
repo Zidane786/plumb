@@ -1251,16 +1251,41 @@ def _loose_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _ts_config(path: Path, depth: int = 0, seen: Optional[set] = None) -> Tuple[dict, Path]:
+    """A tsconfig/jsconfig's `compilerOptions` (comments allowed) and the folder its `paths` are relative to (its
+    baseUrl, else the file's own folder), following a relative string `extends` up to 3 levels (cycle-safe)."""
+    seen = seen if seen is not None else set()
+    key = str(path.resolve())
+    if key in seen or depth > 3:
+        return {}, path.parent
+    seen.add(key)
+    data = _loose_json(path)
+    opts = data.get("compilerOptions") if isinstance(data.get("compilerOptions"), dict) else {}
+    ext = data.get("extends")
+    base_opts: dict = {}
+    base_dir = path.parent
+    if isinstance(ext, str) and ext.startswith("."):
+        target = (path.parent / ext)
+        if not target.suffix == ".json":
+            target = target.with_name(target.name + ".json")
+        base_opts, base_dir = _ts_config(target, depth + 1, seen)
+    merged = dict(base_opts)
+    merged.update(opts)
+    # paths resolve against baseUrl, else against the config that declared them
+    own_dir = path.parent if "paths" in opts or "baseUrl" in opts else base_dir
+    return merged, own_dir
+
+
 def _alias_dir(pkg: Path, alias: str) -> str:
     """The folder (relative to the package) an import alias such as `@/components/ui` points at: through the package's
     tsconfig/jsconfig `compilerOptions.paths` when one maps it, else `@/` (or `~/`) means `src/`."""
     alias = alias.strip().replace("\\", "/")
     for name in ("tsconfig.json", "jsconfig.json"):
-        opts = _loose_json(pkg / name).get("compilerOptions")
-        paths = opts.get("paths") if isinstance(opts, dict) else None
+        opts, cfg_dir = _ts_config(pkg / name)
+        paths = opts.get("paths")
         if not isinstance(paths, dict):
             continue
-        base = str(opts.get("baseUrl") or ".")
+        base = posixpath.join(os.path.relpath(cfg_dir, pkg).replace("\\", "/"), str(opts.get("baseUrl") or "."))
         best = None
         for key, targets in paths.items():
             star = key.endswith("*")
@@ -1287,12 +1312,16 @@ def _ui_folder(pkg: Path) -> str:
     aliases = conf.get("aliases") if isinstance(conf.get("aliases"), dict) else {}
     alias = aliases.get("ui") or (aliases["components"].rstrip("/") + "/ui" if aliases.get("components") else "")
     if isinstance(alias, str) and alias.strip():
-        folder = _alias_dir(pkg, alias).strip("/")
-        if folder and ".." not in folder.split("/"):
-            return folder
+        guess = _alias_dir(pkg, alias).strip("/")
+        if guess and ".." not in guess.split("/") and (pkg / guess).is_dir():
+            return guess
     for cand in ("src/components/ui", "components/ui", "app/components/ui"):
         if (pkg / cand).is_dir():
             return cand
+    if isinstance(alias, str) and alias.strip():
+        guess = _alias_dir(pkg, alias).strip("/")
+        if guess and ".." not in guess.split("/"):
+            return guess
     return "src/components/ui" if (pkg / "src").is_dir() else "components/ui"
 
 
