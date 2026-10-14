@@ -8,72 +8,75 @@
 <title>{{title}}</title>
 <style>
 /* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
-   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
+   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. Where
+   Plumb's format names a token for a role (--color-primary, --color-surface, --color-outline, --font-sans,
+   --radius-md, --shadow-popover ...), the role takes it when the page defines it, and today's neutral otherwise.
+   Text and muted text keep the neutral here: the mapping gives them the project's colour only when it reaches 4.5:1. */
 :where(:root), :where(.pl-light) {
-  --pl-bg: #fbfbfa;
-  --pl-surface: #ffffff;
-  --pl-sunk: #f0f0ed;
+  --pl-bg: var(--color-background, #fbfbfa);
+  --pl-surface: var(--color-surface, #ffffff);
+  --pl-sunk: var(--color-sunk, #f0f0ed);
   --pl-text: #1d1f23;
   --pl-muted: #5b616b;
-  --pl-border: #dcdcd6;
-  --pl-border-strong: #858a93;
-  --pl-accent: #2f5d8a;
-  --pl-on-accent: #ffffff;
-  --pl-focus: #2f5d8a;
-  --pl-bad: #b42318;
-  --pl-on-bad: #ffffff;
-  --pl-warn: #8a5a00;
-  --pl-good: #067647;
+  --pl-border: var(--color-outline, #dcdcd6);
+  --pl-border-strong: var(--color-outline-input, #858a93);
+  --pl-accent: var(--color-primary, #2f5d8a);
+  --pl-on-accent: var(--color-on-primary, #ffffff);
+  --pl-focus: var(--color-primary, #2f5d8a);
+  --pl-bad: var(--color-danger, #b42318);
+  --pl-on-bad: var(--color-on-danger, #ffffff);
+  --pl-warn: var(--color-warning, #8a5a00);
+  --pl-good: var(--color-success, #067647);
   color-scheme: light;
 }
 :where(:root[data-theme="dark"]), :where(.pl-dark) {
-  --pl-bg: #121315;
-  --pl-surface: #1a1c1f;
-  --pl-sunk: #0c0d0f;
+  --pl-bg: var(--color-background, #121315);
+  --pl-surface: var(--color-surface, #1a1c1f);
+  --pl-sunk: var(--color-sunk, #0c0d0f);
   --pl-text: #e8e9eb;
   --pl-muted: #a2a7af;
-  --pl-border: #2e3136;
-  --pl-border-strong: #6f747d;
-  --pl-accent: #8db8e3;
-  --pl-on-accent: #0d1117;
-  --pl-focus: #8db8e3;
-  --pl-bad: #f97066;
-  --pl-on-bad: #1a0b0a;
-  --pl-warn: #fdb022;
-  --pl-good: #47cd89;
+  --pl-border: var(--color-outline, #2e3136);
+  --pl-border-strong: var(--color-outline-input, #6f747d);
+  --pl-accent: var(--color-primary, #8db8e3);
+  --pl-on-accent: var(--color-on-primary, #0d1117);
+  --pl-focus: var(--color-primary, #8db8e3);
+  --pl-bad: var(--color-danger, #f97066);
+  --pl-on-bad: var(--color-on-danger, #1a0b0a);
+  --pl-warn: var(--color-warning, #fdb022);
+  --pl-good: var(--color-success, #47cd89);
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :where(:root:not([data-theme="light"])) {
-    --pl-bg: #121315;
-    --pl-surface: #1a1c1f;
-    --pl-sunk: #0c0d0f;
+    --pl-bg: var(--color-background, #121315);
+    --pl-surface: var(--color-surface, #1a1c1f);
+    --pl-sunk: var(--color-sunk, #0c0d0f);
     --pl-text: #e8e9eb;
     --pl-muted: #a2a7af;
-    --pl-border: #2e3136;
-    --pl-border-strong: #6f747d;
-    --pl-accent: #8db8e3;
-    --pl-on-accent: #0d1117;
-    --pl-focus: #8db8e3;
-    --pl-bad: #f97066;
-    --pl-on-bad: #1a0b0a;
-    --pl-warn: #fdb022;
-    --pl-good: #47cd89;
+    --pl-border: var(--color-outline, #2e3136);
+    --pl-border-strong: var(--color-outline-input, #6f747d);
+    --pl-accent: var(--color-primary, #8db8e3);
+    --pl-on-accent: var(--color-on-primary, #0d1117);
+    --pl-focus: var(--color-primary, #8db8e3);
+    --pl-bad: var(--color-danger, #f97066);
+    --pl-on-bad: var(--color-on-danger, #1a0b0a);
+    --pl-warn: var(--color-warning, #fdb022);
+    --pl-good: var(--color-success, #47cd89);
     color-scheme: dark;
   }
 }
 :where(:root) {
-  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --pl-radius: 8px;
-  --pl-radius-sm: 4px;
+  --pl-font: var(--font-sans, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
+  --pl-mono: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace);
+  --pl-radius: var(--radius-md, 8px);
+  --pl-radius-sm: var(--radius-sm, 4px);
   --pl-space-1: 4px;
   --pl-space-2: 8px;
   --pl-space-3: 12px;
   --pl-space-4: 16px;
   --pl-space-6: 24px;
-  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
-  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
+  --pl-shadow: var(--shadow-card, 0 1px 3px rgb(0 0 0 / 0.12));
+  --pl-shadow-lg: var(--shadow-popover, 0 8px 24px -4px rgb(0 0 0 / 0.18));
   --pl-duration: 150ms;
   --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
   --pl-text-control: 15px;
@@ -177,10 +180,16 @@ body {
   background-image: radial-gradient(color-mix(in srgb, var(--pl-text) 14%, transparent) 1px, transparent 1.4px);
   background-size: 18px 18px;
 }
-/* The frame is the screen's world: a container (so its md breakpoint follows the frame) and the containing block for
-   anything the screen fixes in place (toasts, sheets). */
+/* The frame is the screen's world:
+   - a size container, so its md breakpoint follows the frame (container-type alone makes no containing block);
+   - contain: layout makes it the containing block for anything the screen fixes in place (scrims, dialogs, toasts,
+     sheets): they sit inside the frame, as on a device of that width, never over the shell's toolbar or screens list,
+     and a zoom step's transform does not move them. A dialog that a state change opens is scrolled into view;
+   - isolation: a screen's own z-index stays inside the frame, under the walkthrough player. */
 .pp-frame {
   container: plumb-frame / inline-size;
+  contain: layout;
+  isolation: isolate;
   width: 100%; min-height: 34rem; overflow: hidden;
   background: var(--pl-bg); color: var(--pl-text);
   border: 1px solid var(--pl-border); border-radius: 12px; box-shadow: var(--pl-shadow-lg);
@@ -248,6 +257,10 @@ body {
   .pp-bar .pp-btn { padding: 0 11px; }
   .pp-pages a { padding: 0 10px; }
 }
+/* While a walkthrough runs (the player sets body.pl-touring), the screens list and the rail step aside, so the frame
+   keeps the width the screens' desktop layout needs (their 48rem container breakpoint); they come back when it ends. */
+body.pl-touring .pp-layout, body.pl-touring .pp-workspace { grid-template-columns: minmax(0, 1fr); }
+body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0s !important;
@@ -424,15 +437,37 @@ body {
     }
     else { screensLink.setAttribute("aria-current", "page"); decisionsLink.removeAttribute("aria-current"); }
   }
+  /* Dialogs on show in a screen: dialog[open], role dialog / alertdialog, aria-modal. */
+  function openDialogs(section) {
+    return Array.prototype.filter.call(
+      section.querySelectorAll("dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]"),
+      function (el) {
+        var vis = getComputedStyle(el).visibility;
+        return el.getClientRects().length > 0 && vis !== "hidden" && vis !== "collapse";
+      });
+  }
+  /* A same-screen state change that opens a dialog scrolls it into view (the frame holds a fixed dialog, so on a tall
+     screen it can sit below the window); a dialog that was already on show never moves the page. */
+  function showOpened(section, before) {
+    var fresh = openDialogs(section).filter(function (el) { return before.indexOf(el) < 0; })[0];
+    if (!fresh) return;
+    var bar = document.querySelector(".pp-bar"), r = fresh.getBoundingClientRect();
+    var top = bar && /sticky|fixed/.test(getComputedStyle(bar).position) ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+    if (r.top >= top && r.bottom <= window.innerHeight) return;
+    var opts = { block: r.height <= window.innerHeight - top ? "center" : "start", inline: "nearest", behavior: "instant" };
+    try { fresh.scrollIntoView(opts); } catch (err) { delete opts.behavior; fresh.scrollIntoView(opts); }
+  }
   function show(id, state, opts) {
     opts = opts || {};
     var s = byId[id];
     if (!s) return false;
     if (!state || s.states.indexOf(state) < 0) state = s.states[0];
     var same = current.page === "screen" && current.screen === id && current.state === state;
+    var opened = !same && current.page === "screen" && current.screen === id ? openDialogs(sections[id]) : null;
     if (!same) {
       Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
       outerStates(sections[id]).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+      if (opened) showOpened(sections[id], opened);
       each("[data-states-for]", function (group) {
         var mine = group.getAttribute("data-states-for") === id;
         group.hidden = !mine;

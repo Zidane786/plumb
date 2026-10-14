@@ -5,6 +5,8 @@
    - play: runs by itself like a video: a cursor that moves to the element and clicks it, typing letter by letter,
      subtitles, a progress bar with a marker per scene, pause and resume (Space), restart and speed (0.5x to 2x).
    Reduced motion keeps play playing; only the cursor glide and other animation go. Every text is set with textContent.
+   Hide panel (its button or H) swaps the dock for a small pill, remembered per viewer. While a tour runs, body has
+   .pl-touring (the shell folds its side columns away so the frame keeps its desktop width).
    It drives the shell through window.plumbPrototype and exposes window.plumbPlayer. */
 (function () {
   "use strict";
@@ -62,12 +64,16 @@
   if (stage) { stage.appendChild(layer); stage.appendChild(card); }
   var live = el("div", "pl-live", null, { "aria-live": "polite", role: "status" });
 
-  var dock = el("section", "pl-dock pp-ui", null, { "aria-label": "Walkthrough" });
+  var dock = el("section", "pl-dock pp-ui", null, { "aria-label": "Walkthrough", id: "pl-dock" });
   dock.hidden = true;
   var dockTop = el("div", "pl-dock-top");
   var eyebrow = el("p", "pl-eyebrow");
   var leaveBtn = button("pl-btn", "Leave", { "data-pl": "leave", "aria-keyshortcuts": "Escape" });
-  dockTop.appendChild(eyebrow); dockTop.appendChild(leaveBtn);
+  var hideBtn = button("pl-btn", "Hide panel", { "data-pl": "hide", "aria-keyshortcuts": "H", "aria-controls": "pl-dock",
+    "aria-expanded": "true" });
+  var topActs = el("div", "pl-group");
+  topActs.appendChild(hideBtn); topActs.appendChild(leaveBtn);
+  dockTop.appendChild(eyebrow); dockTop.appendChild(topActs);
   var dTitle = el("h2", "pl-title"), dCaption = el("p", "pl-caption");
   var hint = el("p", "pl-hint", null, { role: "alert" });
   hint.hidden = true;
@@ -95,8 +101,34 @@
   controls.appendChild(el("span", "pl-spacer"));
   controls.appendChild(restartBtn); controls.appendChild(modeBtn);
   [dockTop, dTitle, dCaption, hint, progress, controls].forEach(function (n) { dock.appendChild(n); });
-  if (mount) { mount.appendChild(dock); mount.appendChild(live); }
-  else { document.body.appendChild(dock); document.body.appendChild(live); }
+  /* Hide panel: the dock steps aside and this pill is what is left (the step's title in guide mode, with "Do it for me"
+     on a your-turn step; play mode keeps narrating in the subtitle). H or the pill's button brings the dock back; the
+     choice is remembered per viewer. A hint after a wrong click, and the end of play, bring the dock back for that
+     moment without changing the choice. */
+  var pill = el("div", "pl-pill pp-ui", null, { role: "group", "aria-label": "Walkthrough (panel hidden)" });
+  var pillTitle = el("span", "pl-pill-title");
+  var pillDo = button("pl-btn", "Do it for me", { "data-pl": "do" });
+  var showBtn = button("pl-btn pl-primary", "Show panel", { "data-pl": "show", "aria-keyshortcuts": "H",
+    "aria-controls": "pl-dock", "aria-expanded": "false" });
+  pill.appendChild(pillTitle); pill.appendChild(pillDo); pill.appendChild(showBtn);
+  pill.hidden = true;
+  [dock, pill, live].forEach(function (n) { (mount || document.body).appendChild(n); });
+  var PANEL_KEY = "plumb.player.panel";
+  function storedHidden() {
+    try { return window.localStorage.getItem(PANEL_KEY) === "hidden"; } catch (err) { return false; }
+  }
+  function storeHidden(on) {
+    try {
+      if (on) window.localStorage.setItem(PANEL_KEY, "hidden");
+      else window.localStorage.removeItem(PANEL_KEY);
+    } catch (err) { /* storage off (private window, blocked site data): the choice lasts for this page only */ }
+  }
+  function inChrome(node) { return !!node && (dock.contains(node) || pill.contains(node)); }
+  /* Focus that was on a control the panel change just hid (or that fell back to the page). */
+  function focusLost() {
+    var a = document.activeElement;
+    return !a || a === document.body || !a.getClientRects().length;
+  }
   /* While a tour runs, the first stop in the tab order jumps to its controls (the dock is last in the page). */
   var skip = el("a", "pp-skip pp-ui pl-skip", "Skip to the walkthrough", { href: "#plumb-player" });
   skip.hidden = true;
@@ -105,7 +137,8 @@
 
   /* ------------------------------------------------------------ the player's state */
   var T = { tour: null, mode: null, seq: [], scenes: [], pos: 0, speed: 1, paused: false, ended: false, run: 0, timer: null,
-            wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, zoomTimer: null };
+            wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, zoomTimer: null,
+            panelHidden: storedHidden(), reveal: false };
 
   function sequence(tour) {
     var seq = [];
@@ -179,18 +212,160 @@
     if (!section || !sel) return null;
     var list;
     try { list = section.querySelectorAll(sel); } catch (err) { return null; }
-    for (var i = 0; i < list.length; i++) {
-      var r = list[i].getBoundingClientRect();
-      if (list[i].getClientRects().length && (r.width > 0 || r.height > 0)) return list[i];
-    }
+    var f = frameBox();
+    for (var i = 0; i < list.length; i++) if (seen(list[i], f)) return list[i];
     return null;  /* nothing of it is on screen (another state, or the screen moved on): point at nothing */
+  }
+  /* The frame's padding box in the window (inside its border, scaled with a zoom): what a screen's content can cover. A
+     drawer moved off with translateX(100%) starts exactly at its edge. */
+  function frameBox() {
+    var b = frame.getBoundingClientRect(), k = frame.offsetWidth ? b.width / frame.offsetWidth : 1;
+    var left = b.left + frame.clientLeft * k, top = b.top + frame.clientTop * k;
+    return { left: left, top: top, right: left + frame.clientWidth * k, bottom: top + frame.clientHeight * k };
+  }
+  /* The element whose box stands for a node: the node itself, or for display: contents (no box of its own) its first
+     child that has one. */
+  function shape(node) {
+    if (getComputedStyle(node).display !== "contents") return node;
+    for (var c = node.firstElementChild; c; c = c.nextElementSibling) {
+      var s = shape(c);
+      if (s && s.getClientRects().length) return s;
+    }
+    return null;
+  }
+  function rectOf(node) { return (shape(node) || node).getBoundingClientRect(); }
+  /* A node the viewer can see, or could once its scrollers bring it in: laid out, not visibility: hidden (computed, so
+     also inside a hidden parent), and on the frame (rect f) rather than pushed off it (an off-canvas drawer moved aside
+     with a transform). A node an inner scroller has scrolled away (a wide table's far column, a lower item of a
+     fixed-height list) counts when that scroller's range reaches it. Judging never scrolls anything. */
+  function seen(node, f) {
+    var s = shape(node);
+    if (!s || !s.getClientRects().length) return false;
+    var r = s.getBoundingClientRect();
+    if (!(r.width > 0 || r.height > 0)) return false;
+    var vis = getComputedStyle(s).visibility;
+    if (vis === "hidden" || vis === "collapse") return false;
+    var q = reach(s, r);
+    return !!q && q.right > f.left && q.left < f.right && q.bottom > f.top && q.top < f.bottom;
+  }
+  function scrolls(cs) {
+    return { x: /auto|scroll/.test(cs.overflowX), y: /auto|scroll/.test(cs.overflowY) };
+  }
+  /* True when an element holds absolutely (abs) or fixed positioned descendants as their containing block. */
+  function holds(cs, fixed) {
+    var other = (cs.transform && cs.transform !== "none") || (cs.filter && cs.filter !== "none") ||
+      (cs.perspective && cs.perspective !== "none") || /layout|paint|strict|content/.test(cs.contain || "") ||
+      /transform|perspective|filter/.test(cs.willChange || "");
+    return fixed ? !!other : cs.position !== "static" || !!other;
+  }
+  /* True when node moves as scroller a scrolls: a is on its containing-block chain (a fixed toast, or an absolute drawer
+     placed against something outside a, does not move with it). */
+  function movesWith(node, a) {
+    var n = node;
+    while (n && n !== a) {
+      var pos = getComputedStyle(n).position, p = n.parentElement;
+      if (pos === "absolute" || pos === "fixed") {
+        while (p && p !== a && !holds(getComputedStyle(p), pos === "fixed")) p = p.parentElement;
+        if (p === a) return holds(getComputedStyle(a), pos === "fixed");
+      }
+      n = p;
+    }
+    return n === a;
+  }
+  /* The nearest-edge scroll (dx, dy) of scroller a that brings rect r into its view, within its scroll range. */
+  function nudge(a, cs, r) {
+    var sc = scrolls(cs), ar = a.getBoundingClientRect();
+    var left = ar.left + a.clientLeft, top = ar.top + a.clientTop, right = left + a.clientWidth, bottom = top + a.clientHeight;
+    function want(lo, hi, from, to) { return lo < from ? lo - from : hi > to ? Math.min(hi - to, lo - from) : 0; }
+    function range(v, d, max, rtl) {
+      var lo = rtl ? -max : 0, hi = rtl ? 0 : max;
+      return clamp(v + d, lo, hi) - v;
+    }
+    var rtl = cs.direction === "rtl";
+    var dx = sc.x ? range(a.scrollLeft, want(r.left, r.right, left, right), Math.max(0, a.scrollWidth - a.clientWidth), rtl) : 0;
+    var dy = sc.y ? range(a.scrollTop, want(r.top, r.bottom, top, bottom), Math.max(0, a.scrollHeight - a.clientHeight), false) : 0;
+    return { dx: dx, dy: dy };
+  }
+  /* Where a node's rect would be once every scroller between it and the frame brought it in (no scrolling), or null
+     when a box it moves with still leaves it fully outside: an overflow hidden / clip box (a carousel's other slide, a
+     collapsed accordion) or a scroller whose range does not reach it. Innermost first: an outer scroller moves the
+     node and the boxes inside it together, so each box is checked against the node where it then is. */
+  function reach(s, r) {
+    var q = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a), cx = cs.overflowX !== "visible", cy = cs.overflowY !== "visible";
+      if ((!cx && !cy) || !movesWith(s, a)) continue;
+      var sc = scrolls(cs);
+      if (sc.x || sc.y) {
+        var d = nudge(a, cs, q);
+        q = { left: q.left - d.dx, top: q.top - d.dy, right: q.right - d.dx, bottom: q.bottom - d.dy };
+      }
+      var ar = a.getBoundingClientRect(), left = ar.left + a.clientLeft, top = ar.top + a.clientTop;
+      if ((cx && (q.right <= left || q.left >= left + a.clientWidth)) ||
+          (cy && (q.bottom <= top || q.top >= top + a.clientHeight))) return null;
+    }
+    return q;
+  }
+  /* True when a node is scrolled or clipped out of view by a box between it and the frame (drawn only when in view). */
+  function clipped(node) {
+    var s = shape(node);
+    if (!s) return true;
+    var r = s.getBoundingClientRect();
+    for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a);
+      if (cs.overflowX === "visible" && cs.overflowY === "visible") continue;
+      if (!movesWith(s, a)) continue;
+      var ar = a.getBoundingClientRect(), left = ar.left + a.clientLeft, top = ar.top + a.clientTop;
+      if (r.right <= left || r.left >= left + a.clientWidth || r.bottom <= top || r.top >= top + a.clientHeight) return true;
+    }
+    return false;
+  }
+  /* Scrolls a node into view, nearest edge and at once, inside every scroller it moves with between it and the frame;
+     the window is left alone. A scroller that moved without moving the node is put back. Only decorate() calls this,
+     once per step. */
+  function reveal(node) {
+    var s = shape(node);
+    if (!s) return;
+    for (var a = s.parentElement; a && a !== frame && a !== document.body; a = a.parentElement) {
+      var cs = getComputedStyle(a), sc = scrolls(cs);
+      if ((!sc.x && !sc.y) || !movesWith(s, a)) continue;
+      var before = s.getBoundingClientRect(), d = nudge(a, cs, before);
+      if (!d.dx && !d.dy) continue;
+      var x0 = a.scrollLeft, y0 = a.scrollTop;
+      scrollBox(a, x0 + d.dx, y0 + d.dy);
+      var after = s.getBoundingClientRect();
+      if (after.left === before.left && after.top === before.top) scrollBox(a, x0, y0);
+    }
+  }
+  function scrollBox(a, left, top) {
+    try { a.scrollTo({ left: left, top: top, behavior: "instant" }); }
+    catch (err) { a.scrollLeft = left; a.scrollTop = top; }
+  }
+  /* Every scroll the player makes is instant, whatever scroll-behavior a screen sets (it reads positions right after). */
+  function scrollToNode(node, opts) {
+    opts.behavior = "instant";
+    try { node.scrollIntoView(opts); } catch (err) { delete opts.behavior; node.scrollIntoView(opts); }
+  }
+  function scrollWindowBy(dy) {
+    try { window.scrollBy({ top: dy, left: 0, behavior: "instant" }); } catch (err) { window.scrollBy(0, dy); }
+  }
+  /* The window's top edge below the shell's sticky bar, and the room the dock (or its pill) takes at the bottom. */
+  function topInset() {
+    var bar = document.querySelector(".pp-bar");
+    if (!bar || !bar.getClientRects().length) return 0;
+    var pos = getComputedStyle(bar).position;
+    return pos === "sticky" || pos === "fixed" ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+  }
+  function chromeHeight() {
+    if (!dock.hidden) return dock.offsetHeight + 16;
+    return pill.hidden ? 0 : pill.offsetHeight + 16;
   }
   function onStepScreen(step) {
     var cur = api.current();
     return cur.page === "screen" && cur.screen === step.screen;
   }
   function box(node) {
-    var s = stage.getBoundingClientRect(), r = node.getBoundingClientRect();
+    var s = stage.getBoundingClientRect(), r = rectOf(node);
     return { x: r.left - s.left, y: r.top - s.top, w: r.width, h: r.height };
   }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -229,7 +404,7 @@
     var f = frame.getBoundingClientRect();
     var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
     nodes.forEach(function (n) {
-      var r = n.getBoundingClientRect();
+      var r = rectOf(n);
       x1 = Math.min(x1, r.left); y1 = Math.min(y1, r.top); x2 = Math.max(x2, r.right); y2 = Math.max(y2, r.bottom);
     });
     var w = Math.max(1, x2 - x1), h = Math.max(1, y2 - y1), s = stage.getBoundingClientRect();
@@ -248,7 +423,8 @@
   function draw(step) {
     clearOverlays();
     if (!onStepScreen(step)) { unzoom(); return; }  /* a played or real click moved on: the step's marks go with it */
-    var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
+    /* drawn where things are now: nothing here scrolls, and what a scroller holds out of view is left out */
+    var targets = step.targets.map(function (s) { return find(step, s); }).filter(function (n) { return n && !clipped(n); });
     var boxes = targets.map(box);
     var W = stage.clientWidth, H = stage.clientHeight;
     if (step.point === "spotlight" && boxes.length) {
@@ -287,7 +463,7 @@
     }
     step.labels.forEach(function (lab) {
       var t = find(step, lab.target);
-      if (!t) return;
+      if (!t || clipped(t)) return;
       var b = box(t), tag = addOverlay(el("span", "pl-label", lab.text));
       placeClear(tag, clamp(b.x - 6, 4, Math.max(4, W - tag.offsetWidth - 4)), Math.max(4, b.y - 12), W, H);
     });
@@ -304,10 +480,11 @@
   function placeClear(tag, x, y, W, H) {
     var tw = tag.offsetWidth, th = tag.offsetHeight, s = stage.getBoundingClientRect(), keep = [];
     if (!badge.hidden) keep.push(box(badge));
-    if (!dock.hidden) {
-      var d = dock.getBoundingClientRect();
+    [dock, pill].forEach(function (n) {
+      if (n.hidden) return;
+      var d = n.getBoundingClientRect();
       keep.push({ x: d.left - s.left, y: d.top - s.top, w: d.width, h: d.height });
-    }
+    });
     function clear(px, py) {
       return keep.every(function (k) { return px + tw <= k.x - 2 || px >= k.x + k.w + 2 || py + th <= k.y - 2 || py >= k.y + k.h + 2; });
     }
@@ -319,11 +496,26 @@
     }
     put(tag, clamp(x, 4, Math.max(4, W - tw - 4)), clamp(y, 4, Math.max(4, H - th - 4)));
   }
-  /* The subtitle sits at the bottom of the part of the stage you can see, above the dock. */
+  /* A title card covers the part of the stage in the window (between the sticky bar and the dock); when the stage is
+     almost out of view, the window between them. */
+  function placeCard() {
+    if (card.hidden) return;
+    var s = stage.getBoundingClientRect(), top = topInset(), bottom = window.innerHeight - chromeHeight();
+    var vw = document.documentElement.clientWidth || window.innerWidth;
+    var y1 = Math.max(s.top, top), y2 = Math.min(s.bottom, bottom);
+    if (y2 - y1 < Math.min(240, bottom - top)) { y1 = top; y2 = bottom; }
+    var x1 = Math.max(s.left, 0), x2 = Math.min(s.right, vw);
+    if (x2 - x1 < 160) { x1 = 0; x2 = vw; }
+    card.style.left = x1 + "px";
+    card.style.top = y1 + "px";
+    card.style.width = Math.max(0, x2 - x1) + "px";
+    card.style.height = Math.max(0, y2 - y1) + "px";
+  }
+  /* The subtitle sits at the bottom of the part of the stage you can see, above the dock (or its pill). */
   function placeSubtitle() {
     if (subtitle.hidden) return;
     var s = stage.getBoundingClientRect();
-    var floor = window.innerHeight - (dock.hidden ? 0 : dock.offsetHeight + 16) - 16;
+    var floor = window.innerHeight - chromeHeight() - 16;
     var bottom = Math.min(s.bottom - 16, floor) - s.top;
     subtitle.style.bottom = "auto";
     subtitle.style.top = clamp(bottom - subtitle.offsetHeight, 8, Math.max(8, stage.clientHeight - subtitle.offsetHeight - 8)) + "px";
@@ -348,14 +540,40 @@
     else { x = b.x - w - gap; y = b.y + b.h / 2 - h / 2; }
     put(n, clamp(x, 8, Math.max(8, W - w - 8)), clamp(y, 4, Math.max(4, H - h - 4)));
   }
+  /* Scrolls the step's first target into the room between the sticky bar and the dock. One taller than that room:
+     with labels, its top edge and its topmost label come into view together when they fit, else the topmost label;
+     without labels, it goes to its nearest edge, and not at all while part of it is in view, so a tall area already
+     filling the window does not jump. */
+  function bringIntoView(node, labels) {
+    var el0 = shape(node) || node;
+    var r = el0.getBoundingClientRect(), top = topInset(), bottom = window.innerHeight - chromeHeight();
+    var margin = 32;
+    if (r.height <= bottom - top) {
+      if (r.top < top || r.bottom > bottom) scrollToNode(el0, { block: "center", inline: "nearest" });
+      return;
+    }
+    if (!labels.length) {
+      if (r.bottom <= top || r.top >= bottom) scrollToNode(el0, { block: "nearest", inline: "nearest" });
+      return;
+    }
+    var label = Infinity;
+    labels.forEach(function (n) { label = Math.min(label, rectOf(n).top); });
+    var hi = Math.min(r.top, label), lo = Math.max(r.top, label);
+    var want = lo - hi <= bottom - top - 3 * margin ? [hi, lo] : [label, label];
+    if (want[0] >= top + margin && want[1] <= bottom - 2 * margin) return;  /* in view already */
+    scrollWindowBy(want[0] - (top + margin));
+  }
+  /* The one place a step scrolls, once, when it opens: its first target into view inside its scrollers, then the
+     window (with its topmost label in view too, when it has labels in view); then everything is measured. */
   function decorate(step) {
     var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
-    if (targets.length) {
-      var r = targets[0].getBoundingClientRect(), bottom = window.innerHeight - (dock.hidden ? 0 : dock.offsetHeight + 16);
-      if (r.top < 0 || r.bottom > bottom) targets[0].scrollIntoView({ block: "center" });
-    }
+    if (targets.length) reveal(targets[0]);
+    var labelled = step.labels.map(function (lab) { return find(step, lab.target); })
+      .filter(function (n) { return n && !clipped(n); });
+    if (targets.length) bringIntoView(targets[0], labelled);
     T.redraw = function () { draw(step); };
-    if (step.point === "zoom" && targets.length && zoom(targets)) {
+    var shown = targets.filter(function (n) { return !clipped(n); });
+    if (step.point === "zoom" && shown.length && zoom(shown)) {
       T.zoomTimer = setTimeout(function () { if (T.redraw) T.redraw(); }, calm() ? 0 : 400);
     }
     draw(step);
@@ -451,9 +669,9 @@
   /* A click the player makes may navigate, and the shell then focuses the screen's title: when the viewer was working
      the dock (Enter on Next, Space on Pause), focus goes back to the dock so the next key still drives the tour. */
   function clickKeepingFocus(node) {
-    var had = dock.contains(document.activeElement);
+    var had = inChrome(document.activeElement);
     node.click();
-    if (had && T.tour && !dock.contains(document.activeElement)) focusPrimary();
+    if (had && T.tour && !inChrome(document.activeElement)) focusPrimary();
   }
   function tap() {
     cursor.classList.remove("pl-tap");
@@ -472,6 +690,14 @@
       : "Choose “" + a.value + "” in " + what) + where + ".");
     hint.textContent = text;
     hint.hidden = false;
+    if (dock.hidden && T.tour) {
+      /* the panel is hidden: bring it back for this step (the choice stays), and say the hint */
+      var had = inChrome(document.activeElement);
+      T.reveal = true;
+      showPanel();
+      if (had && focusLost()) focusPrimary();
+      live.textContent = text;
+    }
     layer.classList.remove("pl-flash");
     void layer.offsetWidth;
     layer.classList.add("pl-flash");
@@ -555,6 +781,10 @@
     eyebrow.textContent = (guide ? "Guide" : "Play") + " · " + T.tour.title + " · " + count;
     dock.setAttribute("aria-label", "Walkthrough: " + T.tour.title);
     dTitle.textContent = itemTitle(item);
+    pillTitle.textContent = guide ? itemTitle(item) : "";
+    pillTitle.hidden = !guide;
+    pillDo.hidden = !(guide && item.kind === "step" && item.step.yourTurn);
+    hideBtn.hidden = T.ended;
     dCaption.textContent = item.kind === "card" ? (item.text || "") : (item.step.caption || "");
     var turn = guide && item.kind === "step" && item.step.yourTurn;
     navGroup.hidden = !guide;
@@ -604,6 +834,8 @@
     T.pos = clamp(pos, 0, T.seq.length - 1);
     T.ended = false;
     T.spent = 0;
+    T.reveal = false;
+    if (T.panelHidden && !dock.hidden) showPanel();  /* back to the viewer's choice after a hint or the end of play */
     var item = T.seq[T.pos];
     T.plan = planOf(item);
     if (item.kind === "step") api.go(item.step.screen, item.step.state, { history: null });
@@ -617,6 +849,7 @@
       cardText.textContent = item.text || "";
       cardText.hidden = !item.text;
       card.hidden = false;
+      placeCard();
     } else {
       var s = item.step;
       if (T.mode !== "play" && s.point !== "cursor") cursor.hidden = true;
@@ -627,7 +860,7 @@
     }
     announce(item);
     var active = document.activeElement;
-    if (opts.focus || (active && dock.contains(active) && (active.hidden || active.disabled || !active.getClientRects().length))) focusPrimary();
+    if (opts.focus || (inChrome(active) && (active.hidden || active.disabled || !active.getClientRects().length))) focusPrimary();
     emit();
     if (T.mode === "play" && !T.paused) { playItem(item); if (!T.raf && !calm()) T.raf = requestAnimationFrame(tick); }
   }
@@ -654,12 +887,15 @@
     T.paused = true;
     subtitle.hidden = true;
     paintDock();
+    var had = inChrome(document.activeElement);
+    showPanel();  /* Play again and Leave are in the panel: it comes back at the end, the choice stays */
+    if (had && focusLost()) focusPrimary();
     fill.style.width = "100%";
     live.textContent = "Played to the end. Press Play again to watch it again, or Leave to look around.";
     emit();
   }
   function focusPrimary() {
-    var target = T.mode === "play" ? playBtn : (!nextBtn.hidden ? nextBtn : doBtn);
+    var target = dock.hidden && !pill.hidden ? showBtn : T.mode === "play" ? playBtn : (!nextBtn.hidden ? nextBtn : doBtn);
     try { target.focus({ preventScroll: true }); } catch (err) { target.focus(); }
   }
 
@@ -696,10 +932,9 @@
       markBox.appendChild(b);
       return b;
     });
-    dock.hidden = false;
     skip.hidden = false;
-    document.body.classList.add("pl-docked");
-    sizeDock();
+    document.body.classList.add("pl-docked", "pl-touring");
+    showPanel();
     if (!wasActive) note("Started the walkthrough “" + tour.title + "”");
     render(pos, { focus: opts.focus !== false });
     return true;
@@ -712,13 +947,13 @@
     cursor.hidden = true;
     badge.hidden = true;
     dock.hidden = true;
+    pill.hidden = true;
     skip.hidden = true;
-    document.body.classList.remove("pl-docked");
+    document.body.classList.remove("pl-docked", "pl-touring");
     if (T.raf) cancelAnimationFrame(T.raf);
     T.raf = 0;
     var title = T.tour.title;
     T.tour = null; T.mode = null; T.seq = []; T.scenes = []; T.paused = false; T.ended = false;
-    fitRail();
     var cur = api.current();
     if (cur.page === "screen" && cur.screen) {
       var info = screenInfo(cur.screen);
@@ -774,30 +1009,49 @@
     T.paused = false;
     render(T.pos, { focus: true });
   }
+  /* The page keeps room at its bottom for the dock, or for the pill while the panel is hidden. */
   function sizeDock() {
-    document.body.style.setProperty("--pl-dock-h", dock.offsetHeight + "px");
-    fitRail();
+    document.body.style.setProperty("--pl-dock-h", (dock.hidden ? pill.offsetHeight : dock.offsetHeight) + "px");
   }
-  /* While a tour runs, the sticky side rail (why + guide) ends above the dock, so its last items stay reachable by
-     scrolling the rail; on narrow layouts the rail is not sticky and the page's bottom padding does the job. */
-  function fitRail() {
-    var rail = $("pp-rail");
-    if (!rail) return;
-    if (!T.tour || getComputedStyle(rail).position !== "sticky") { rail.style.maxHeight = ""; return; }
-    var room = dock.getBoundingClientRect().top - 16 - rail.getBoundingClientRect().top;
-    rail.style.maxHeight = Math.max(160, Math.floor(room)) + "px";
+  /* Shows the dock, or the pill in its place while the viewer keeps the panel hidden, and re-places what sits above
+     them (subtitle, title card, labels). */
+  function showPanel() {
+    var hide = !!T.tour && T.panelHidden && !T.reveal && !T.ended;
+    dock.hidden = !T.tour || hide;
+    pill.hidden = !hide;
+    sizeDock();
+    placeSubtitle();
+    placeCard();
+    if (T.redraw) T.redraw();
+  }
+  function setPanel(hide) {
+    if (!T.tour || T.ended) return;  /* at the end of play the panel stays, with Play again */
+    var had = inChrome(document.activeElement);
+    T.reveal = false;
+    T.panelHidden = !!hide;
+    storeHidden(T.panelHidden);
+    showPanel();
+    if (had) {
+      var to = T.panelHidden ? showBtn : hideBtn;
+      try { to.focus({ preventScroll: true }); } catch (err) { to.focus(); }
+    }
+    live.textContent = T.panelHidden ? "Panel hidden. Press H or Show panel to bring it back." : "Panel shown.";
   }
 
   leaveBtn.addEventListener("click", function () { leave(); });
+  hideBtn.addEventListener("click", function () { setPanel(true); });
+  showBtn.addEventListener("click", function () { setPanel(false); });
   backBtn.addEventListener("click", back);
   nextBtn.addEventListener("click", next);
-  doBtn.addEventListener("click", function () {
+  function doItForMe() {
     var item = T.seq[T.pos];
     if (!item || item.kind !== "step") return;
     var run = T.run;
     actNow(item.step);
     setTimeout(function () { advance(run); }, 60);
-  });
+  }
+  doBtn.addEventListener("click", doItForMe);
+  pillDo.addEventListener("click", doItForMe);
   playBtn.addEventListener("click", function () { setPaused(!T.paused); });
   restartBtn.addEventListener("click", function () { if (T.tour) { T.paused = false; render(0, { focus: true }); } });
   modeBtn.addEventListener("click", function () { setMode(T.mode === "guide" ? "play" : "guide"); });
@@ -806,22 +1060,40 @@
   document.addEventListener("keydown", function (e) {
     if (!T.tour || e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     var t = e.target;
-    var typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""));
+    var typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || "") ||
+      /^(textbox|combobox|searchbox|spinbutton)$/.test((t.getAttribute && t.getAttribute("role")) || ""));
     if (e.key === "Escape") { e.preventDefault(); leave(); return; }
     if (typing) return;
     if (e.key === "ArrowRight") { e.preventDefault(); next(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); back(); }
+    else if ((e.key === "h" || e.key === "H") && !e.shiftKey) {
+      e.preventDefault();
+      if (!e.repeat) setPanel(!dock.hidden);  /* holding H toggles once */
+    }
     else if ((e.key === " " || e.key === "Spacebar") && T.mode === "play") {
       if (t && t.closest && t.closest("button, a[href], [role=button], summary")) return;
       e.preventDefault();
       setPaused(!T.paused);
     }
   });
-  window.addEventListener("resize", function () { if (T.redraw) T.redraw(); if (T.tour) { sizeDock(); placeSubtitle(); } });
-  window.addEventListener("scroll", function () { if (T.tour) { placeSubtitle(); fitRail(); } }, { passive: true });
+  window.addEventListener("resize", function () {
+    if (T.redraw) T.redraw();
+    if (T.tour) { sizeDock(); placeSubtitle(); placeCard(); }
+  });
+  window.addEventListener("scroll", function () { if (T.tour) { placeSubtitle(); placeCard(); } }, { passive: true });
+  /* The marks follow the viewer's own scrolling inside the screen (a list, a table, a scrolling main): redrawn once a
+     frame while something in the frame scrolls; a redraw measures and never scrolls. */
+  var scrollRedraw = 0;
+  document.addEventListener("scroll", function (e) {
+    var n = e.target;
+    if (!T.redraw || scrollRedraw || !n || n.nodeType !== 1 || !frame.contains(n)) return;
+    scrollRedraw = requestAnimationFrame(function () { scrollRedraw = 0; if (T.redraw) T.redraw(); });
+  }, { capture: true, passive: true });
   if (window.ResizeObserver) {
     new ResizeObserver(function () { if (T.redraw) T.redraw(); }).observe(frame);
-    new ResizeObserver(function () { if (T.tour) sizeDock(); }).observe(dock);
+    var chromeSized = new ResizeObserver(function () { if (T.tour) { sizeDock(); placeSubtitle(); placeCard(); } });
+    chromeSized.observe(dock);
+    chromeSized.observe(pill);
   }
 
   /* ------------------------------------------------------------ links: #tour-<id> and #tour-<id>-<n> */
@@ -921,7 +1193,7 @@
   function flash(node) {
     if (T.tour || !node) return;
     clearOverlays();
-    node.scrollIntoView({ block: "nearest" });
+    scrollToNode(shape(node) || node, { block: "nearest" });
     ring("pl-ring", box(node));
     setTimeout(function () { if (!T.tour) clearOverlays(); }, 1600);
   }

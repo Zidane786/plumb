@@ -22,6 +22,41 @@ The `audience` picks the mode that opens first: `client` and `whats-new` open in
 `#tour-<id>-<n>` its step n. Captions and callouts are `aria-live`; every control works by keyboard; a skip link leads
 to the walkthrough.
 
+## The player on the page
+
+- **Hide panel** (the button at the top of the walkthrough's panel, or the `H` key) moves the panel out of the way of
+  the screen. A small pill stays at the bottom of the window: in guide mode it names the step, in play mode it is only
+  the "Show panel" button (the subtitle keeps narrating). `H` again, or the pill's button, brings the panel back. The
+  arrow keys, Space and Esc still work while it is hidden. On a "your turn" step the pill also offers "Do it for me";
+  a wrong click brings the panel back for that step, with the hint shown and announced; at the end of play the panel
+  comes back with "Play again" (and no Hide panel until you play again or leave). Neither changes your choice: the
+  next step hides it again. `H` does nothing while you
+  type in a field (also a `role=textbox`, `combobox`, `searchbox` or `spinbutton` widget), with Shift, Ctrl, Alt or Cmd
+  held, or as a held key repeats. The choice is remembered in this browser (`localStorage`; with storage off it lasts
+  for the page).
+- **On top, always:** the screen frame is its own stacking context, so a screen's own dialogs, toasts and sheets
+  (whatever their `z-index`) stay under the panel, the subtitle, the cursor and the labels. In `prototype.html` the
+  frame is also the containing block for what a screen fixes in place (scrims, dialogs, toasts), so they sit inside the
+  frame, as on a device of that width, and never cover the toolbar or the screens list.
+- **What it points at:** the first element of a selector that is visible: an element hidden with `visibility: hidden`
+  (also inside a hidden parent) or pushed off the frame (an off-canvas drawer) is skipped. One that an inner scroller
+  has scrolled away (a wide table's far column, a lower item of a fixed-height list) still counts: when the step
+  opens, its first element is scrolled into view inside that scroller, once. One a box that does not scroll keeps out
+  of view (a carousel's other slide, a collapsed accordion) is passed over for the next match. Nothing else scrolls:
+  other elements and labels that a scroller holds out of view are left out, the marks follow your own scrolling inside
+  the screen, and a redraw never undoes it. A
+  `display: contents` element is pointed at through its first child that has a box.
+- **Long pages:** a step scrolls its element into the room between the top bar and the panel, at once (whatever
+  `scroll-behavior` the page sets). For an element taller than that room, its top edge and its topmost label come into
+  view together when they fit, else the topmost label; with no labels it scrolls only when none of it is in view.
+  Title cards stay pinned in the window.
+- **Room for the screen:** while a tour runs, the screens list and the "Why it looks like this" / Guide rail fold away,
+  so the frame keeps the width the screens' desktop layout needs (their `@container plumb-frame (min-width: 48rem)`
+  rules); they come back when the tour ends.
+- **The project's look:** the player's colours, fonts, radius and shadow come from the project's tokens where they exist
+  (`color.primary` for its accent, `color.surface`, `color.outline`, `font.sans`, `radius.lg`, `shadow.popover` …) and
+  fall back to Plumb's neutral look. Subtitles, the play badge and the cursor keep one fixed high-contrast look.
+
 ## The file
 
 One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits, `_` and `-` (and not

@@ -55,6 +55,16 @@
   to 2×, pause and scene markers), captions, callouts, labels, notes, title cards, spotlight, ring, arrow, beacon,
   zoom and a cursor, chapters, and "your turn" steps for training. Every tour is also a standalone page that opens
   offline, to send to a client.
+- **The walkthrough player gets out of the way**: **Hide panel** (or the `H` key) swaps the panel for a small pill
+  (the step's title in guide mode; in play mode the subtitle keeps narrating), remembered in the browser. While a tour
+  runs, the screens list and the side rail fold away so screens keep their desktop layout. The panel, subtitle,
+  cursor and labels always sit above a screen's own dialogs and toasts; hidden and off-canvas elements are never
+  pointed at, and one scrolled away inside a table or list is scrolled into view; tall elements scroll so their first
+  label shows; title cards stay in the window; a hint or the end of play brings a hidden panel back for that moment;
+  the player wears the project's tokens (primary, surface, outline, fonts, radius, shadow) where it has them.
+- **A screen's fixed layers stay in its frame**: in `prototype.html` a `position: fixed` scrim, dialog or toast sits
+  inside the screen's frame (as on a device of that width), never over the toolbar or the screens list; a state change
+  that opens a dialog scrolls it into view.
 - **`/plumb:audit`**: every rule (raw colours, arbitrary and off-scale values, inline styles, a second icon library,
   emoji, missing focus, hover-only actions, small touch targets, Swift and Kotlin literals…), contrast in light and
   dark, missing dark values, generated files that drifted, and prototype fidelity, then an agent review of what no rule

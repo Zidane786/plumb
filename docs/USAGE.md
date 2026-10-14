@@ -872,6 +872,20 @@ flow it builds; `/plumb:tour` writes custom ones. The prototype stays fully clic
 The audience picks the mode that opens first: a client demo and "what's new" open in play mode; training, review and
 team tours in guide mode. The other mode is one click away.
 
+**Getting the panel out of the way:** **Hide panel** (or the `H` key) tucks the walkthrough's panel away and leaves a
+small pill at the bottom: the step's title and "Show panel" in guide mode, just the button in play mode, where the
+subtitle keeps narrating. `H` or the pill brings it back; the arrow keys, Space and Esc keep working. On a "your
+turn" step the pill offers "Do it for me"; a wrong click brings the panel back for that step with the hint, and the end
+of play brings it back with "Play again" (the next step follows your choice again). `H` is ignored while you type in a
+field or hold a modifier key. Your choice is remembered in this browser.
+
+**While a tour runs** the screens list and the side rail fold away so the screen gets the full width (its desktop
+layout, not a squeezed phone one); they return when the tour ends. The panel, subtitle, cursor and labels always sit on
+top of the screen's own dialogs and toasts, which stay inside the screen's frame; a hidden or off-canvas element is
+never pointed at, and one scrolled away inside a table or list is scrolled into view; long elements scroll so their
+first label shows, and title cards stay in the window. The player wears the project's tokens (primary colour,
+surface, outline, fonts, radius, shadow) where it has them, and Plumb's neutral look otherwise.
+
 **Adding text:** a caption (the subtitle line), a callout bubble on a chosen side of an element, numbered or named
 labels on several elements at once, a note placed anywhere, title cards (intro, chapter, closing), and text typed into a
 real field letter by letter in play mode.
