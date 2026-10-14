@@ -531,8 +531,8 @@ def plumb_md_values(platforms: List[str], styling: str, docs: str, skill_dir: st
         "UI_PACKAGES": answers.get("ui_packages") or (f". ({STYLING_LABEL[styling]})" if "web" in platforms else "."),
         "PYTHON": base["PYTHON"], "EDIT_CHECK": "on", "END_CHECK": "on", "THEMES": base["THEMES"],
         "UI_FILES": ui_files, "ALLOWED_RAW": answers.get("allowed_raw") or ("components/ui/**" if "web" in platforms else "none"),
-        "PROTOTYPE_MAIN": f"{docs}/prototype.html", "SCREENS_PAGE": f"{docs}/screens.html",
-        "SCREENS_MAP": f"{docs}/prototype/screens.json", "PROTOTYPE_SYNC": "on",
+        "PROTOTYPE_MAIN": f"{docs}/prototype.html", "APP_PAGE": f"{docs}/app.html",
+        "SCREENS_PAGE": f"{docs}/screens.html", "SCREENS_MAP": f"{docs}/prototype/screens.json", "PROTOTYPE_SYNC": "on",
         "DATE": base["DATE"], "DIRECTION": base["DIRECTION"],
     }
 

@@ -384,7 +384,8 @@ def test_custom_docs_dir(tmp_path: Path) -> None:
     assert (tmp_path / "design-docs/prototype/screens").is_dir()
     doc = json.loads((tmp_path / SKILL_REL / "assets/tokens/demo.tokens.json").read_text(encoding="utf-8"))
     assert doc["$extensions"]["plumb"]["docs_dir"] == "design-docs"
-    assert "design-docs/prototype.html" in (tmp_path / "PLUMB.md").read_text(encoding="utf-8")
+    plumb_md = (tmp_path / "PLUMB.md").read_text(encoding="utf-8")
+    assert "Main: design-docs/prototype.html · app: design-docs/app.html · screens: design-docs/screens.html" in plumb_md
 
 
 def test_files_are_utf8_with_lf(tmp_path: Path) -> None:

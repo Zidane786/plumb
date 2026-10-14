@@ -978,7 +978,7 @@ tokens `python3 .claude/skills/acme-design-system/scripts/build-tokens.py` (make
 check `python3 .claude/skills/acme-design-system/scripts/build-tokens.py --check` (make tokens-check) · audit `python3 .claude/skills/acme-design-system/scripts/audit.py` (make design-audit)
 
 ## Prototype
-Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
+Main: docs/design/prototype.html · app: docs/design/app.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
 Prototype sync: on               (end-of-turn check stops once when a built screen changed without its prototype)
 
 ## Plumb updates

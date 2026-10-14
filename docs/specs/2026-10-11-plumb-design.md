@@ -398,8 +398,16 @@ toggles, decisions rail or player). **prototype.html is for reviewing, app.html 
   what is drawn over it.
 - **Sidebar hook:** an element with `data-app-sidebar` in a screen is `position: sticky; top: 0;
   height: 100dvh` from the md breakpoint. Nothing else about a screen's layout is assumed.
-- **Dialogs:** the frame is the whole page, so a state change on the same screen scrolls an opened
-  dialog (`dialog[open]`, `role="dialog"` or `"alertdialog"`, `aria-modal="true"`) into view.
+- **Dialogs:** a long screen scrolls the page, so a change that opens a dialog (`dialog[open]`,
+  `role="dialog"` or `"alertdialog"`, `aria-modal="true"`) brings it into view: a state change on the
+  same screen, `plumb.go(other, state)` or a link straight to that state. Only a dialog the change made
+  visible counts (on another screen: compared with its first state), so a dialog that was showing
+  already (a docked help panel) never moves the page.
+- **Fixed elements:** the frame is an inline-size container, which is no containing block for
+  `position: fixed`, so a screen's fixed toasts and bars sit on the window as in the product. The frame
+  and stage must not get `transform`, `filter`, `perspective`, `contain: layout`/`paint` or the like.
+- **The md breakpoint** is the frame's width, the window minus a classic scrollbar (about 17 px on
+  Windows): a window just over 48rem with such a scrollbar shows the layout below md.
 - Generated like the other pages (byte-stable, offline, light and dark; `--check` reports it stale
   or missing; the tokens build refreshes its token block). Each proposal variant gets its own
   `proposals/<name>/<variant>/app.html`. `app.html` itself carries no player.
@@ -903,7 +911,7 @@ tokens `python3 .claude/skills/caredesk-design-system/scripts/build-tokens.py` (
 check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
 
 ## Prototype
-Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
+Main: docs/design/prototype.html · app: docs/design/app.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
 Prototype sync: on               (end-of-turn check stops once when a built screen changed without its prototype)
 
 ## Plumb updates
@@ -1017,7 +1025,8 @@ plugins/plumb/
                prototypes.md · ux.md · copilot.md
   assets/skill/   the design-system template: SKILL.md, design.md and references/* skeletons;
                   scripts/{build-tokens.py, audit.py, build-prototype.py, _plumb.py};
-                  web templates (v4, v3, css); specimen, report and prototype-shell templates
+                  web templates (v4, v3, css); specimen, report, prototype-shell and app-shell
+                  templates
   hooks/       hooks.json · run.sh · run.cmd · session_start.py · pre_edit.py · stop_check.py
   templates/   PLUMB.md · the AGENTS/CLAUDE row · decision entry · Makefile snippet
   upgrades/    README.md · 1.0.0.md

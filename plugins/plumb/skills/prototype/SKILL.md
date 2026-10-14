@@ -15,7 +15,7 @@ Every command: [`scripts.md`](../../reference/scripts.md).
 written without the user's OK:** before writing, say what you will write and where, and ask; write only on a yes. Never
 install or download anything (no package, font, icon set, image or tool); if something seems missing,
 ask the user and wait for their decision. Both themes, unless `PLUMB.md` says `Themes: light-only`. Never edit `prototype.html`,
-`screens.html`, `screens.json`, `tours/*.html` or the proposal pages: `build-prototype.py` writes them. **Never run
+`app.html`, `screens.html`, `screens.json`, `tours/*.html` or the proposal pages: `build-prototype.py` writes them. **Never run
 `--approve` (or record an approval) without the user's explicit yes to that screen** in this conversation: show the
 screen, ask, wait; never chain it after another command. `audit.py`: **exit 1 means errors found, not a crash**
 (your tool may show it as a failed command). **End-of-turn check:** if it stops you after the user said not to fix

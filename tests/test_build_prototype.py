@@ -733,9 +733,13 @@ APP_SCREENS = {
 <section data-screen="overview" data-title="Overview" data-order="2">
   <h2>Overview</h2>
   <div data-state="ready"><div class="grid"><p>Open items: 12</p><p>Closed this week: 4</p></div>
-    <a href="#/people" data-test="to-people">People</a></div>
+    <a href="#/people" data-test="to-people">People</a>
+    <button type="button" data-test="invite-person">Invite a person</button></div>
   <div data-state="empty"><p>Nothing to show yet.</p></div>
 </section>
+<script data-screen-script>
+screen.querySelector("[data-test=invite-person]").addEventListener("click", function () { plumb.go("people", "invite"); });
+</script>
 """,
     "people": """<style>
 [data-screen="people"] { font-family: var(--font-sans); color: var(--color-on-surface); background: var(--color-background); }
@@ -744,6 +748,8 @@ APP_SCREENS = {
 [data-screen="people"] .body { flex: 1; min-width: 0; padding: var(--spacing-4); }
 [data-screen="people"] .tall { height: 2600px; }
 [data-screen="people"] .layer { position: relative; z-index: 60; }
+[data-screen="people"] .toast { position: fixed; right: 0; bottom: 0; margin: 0; }
+[data-screen="people"] .bar { position: fixed; right: 0; top: 0; margin: 0; }
 @container plumb-frame (max-width: 47.99rem) {
   [data-screen="people"] .layout { flex-direction: column; }
   [data-screen="people"] .side { width: auto; }
@@ -757,10 +763,15 @@ APP_SCREENS = {
       <button type="button" data-test="invite">Invite someone</button>
       <button type="button" data-test="theme">Switch theme</button>
       <button type="button" data-test="go">See the empty overview</button>
+      <button type="button" data-test="filter">Only admins</button>
       <div class="tall"></div>
       <div data-state="ready"><p>Three people.</p></div>
       <div data-state="invite"><div class="layer" role="dialog" aria-modal="true" aria-label="Invite" data-test="dialog">
         <p>Invite by email</p></div></div>
+      <div data-state="filtered"><p>One admin.</p></div>
+      <aside role="dialog" aria-label="Help" data-test="help"><p>Need a hand? Ask the team.</p></aside>
+      <p class="toast" role="status" data-test="toast">Saved</p>
+      <p class="bar" data-test="bar">Signed in</p>
     </div>
   </div>
 </section>
@@ -769,6 +780,7 @@ screen.setAttribute("data-catalogue", String(plumb.catalogue));
 screen.querySelector("[data-test=invite]").addEventListener("click", function () { plumb.setState("invite"); });
 screen.querySelector("[data-test=theme]").addEventListener("click", function () { window.plumbTheme.toggle(); });
 screen.querySelector("[data-test=go]").addEventListener("click", function () { plumb.go("overview", "empty"); });
+screen.querySelector("[data-test=filter]").addEventListener("click", function () { plumb.setState("filtered"); });
 </script>
 """,
 }
@@ -1440,6 +1452,81 @@ def test_app_frame_keeps_screen_layers_inside(browser, app_built) -> None:
             var r = d.getBoundingClientRect();
             return document.elementFromPoint(r.left + 5, r.top + 5) === over; })()""")
         assert on_top
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+DIALOG_IN_VIEW = """(() => { var r = document.querySelector('[data-test=dialog]').getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= window.innerHeight; })()"""
+
+
+def test_app_a_dialog_that_was_showing_never_moves_the_page(browser, app_built) -> None:
+    """The help panel (role=dialog, always shown, far down) is not opened by a state change: no jump to it."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        assert page.is_visible('[data-test="help"]') and page.evaluate("window.scrollY") == 0  # none at load either
+        page.click('#pp-frame [data-test="filter"]')
+        assert _state_of(page) == "people/filtered" and page.evaluate("window.scrollY") == 0
+        page.evaluate("window.plumbPrototype.setState('ready')")
+        assert page.evaluate("window.scrollY") == 0
+        page.click('#pp-frame [data-test="to-overview"]')
+        page.click('#pp-frame [data-test="to-people"]')  # another screen, its first state: the help panel stays put
+        assert _state_of(page) == "people/ready" and page.evaluate("window.scrollY") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_reveals_a_dialog_opened_from_another_screen(browser, app_built) -> None:
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280, hash_="#/overview")
+    try:
+        page.click('#pp-frame [data-test="invite-person"]')  # plumb.go("people", "invite")
+        assert _state_of(page) == "people/invite"
+        assert page.evaluate("window.scrollY") > 0 and page.evaluate(DIALOG_IN_VIEW)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_reveals_a_dialog_opened_by_a_link(browser, app_built) -> None:
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280, hash_="#/people/invite")
+    try:
+        assert _state_of(page) == "people/invite"
+        assert page.evaluate("window.scrollY") > 0 and page.evaluate(DIALOG_IN_VIEW)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_fixed_elements_sit_on_the_window(browser, app_built) -> None:
+    """The frame is an inline-size container (no containing block for position: fixed): a screen's fixed toast and bar
+    stay at the window's edges on a long page, as in the product. Adding transform, filter, contain: layout and the
+    like to the frame or the stage would pin them to the page and fail this."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        page.evaluate("window.scrollTo(0, 1500)")
+        assert page.evaluate("window.scrollY") == 1500
+        assert page.evaluate("document.querySelector('[data-test=toast]').getBoundingClientRect().bottom") == 900
+        assert page.evaluate("document.querySelector('[data-test=bar]').getBoundingClientRect().top") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_app_announces_each_screen_change(browser, app_built) -> None:
+    """The live region is cleared, then set, so the same title twice in a row is announced again."""
+    ctx, page, errors, _ = _open(browser, app_built / APP_DOCS / "app.html", 1280)
+    try:
+        page.evaluate("""() => { window.seen = [];
+            new MutationObserver(() => window.seen.push(document.getElementById('pa-announce').textContent))
+                .observe(document.getElementById('pa-announce'), { childList: true, characterData: true, subtree: true }); }""")
+        page.click('#pp-frame [data-test="to-overview"]')
+        page.wait_for_function("window.seen.indexOf('Overview') >= 0")
+        page.go_back()
+        page.click('#pp-frame [data-test="to-overview"]')
+        page.wait_for_function("window.seen.filter(t => t === 'Overview').length === 2")
+        assert page.evaluate("window.seen") == ["Overview", "", "Overview"]  # emptied before the repeat
         assert errors == []
     finally:
         ctx.close()

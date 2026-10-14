@@ -22,8 +22,8 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
                                    toggle picks one, then remembered in localStorage (when the browser allows it). The
                                    window is the frame (#pp-frame, container plumb-frame, isolation: isolate), so the md
                                    breakpoint follows the window; an element with data-app-sidebar is sticky, full
-                                   height, from the md breakpoint; a state change on the same screen scrolls an opened
-                                   dialog into view.
+                                   height, from the md breakpoint; a dialog a change opens (a state change, plumb.go
+                                   or a link to that state) is scrolled into view, one that was showing never is.
   <docs>/screens.html              the catalogue: a sidebar, every screen in every state in light and dark side by side,
                                    the control-state sheet (buttons, input, chip, link in default, hover, focus, pressed,
                                    disabled, loading) drawn from the tokens, and the Decisions page. Each copy is its
@@ -56,8 +56,7 @@ which reads as step n of that tour in a #tour- link). Every prototype.html carri
   a selector that matches nothing or one the check cannot read exits 2 naming the tour file, line and fix, also on --check.
 
 The pages come from templates/prototype-shell.html.tmpl, app-shell.html.tmpl and screens.html.tmpl. All inline the
-project's
-`build-tokens.py --css-vars` export between /* plumb:tokens */ and /* plumb:tokens:end */, a small runtime and each
+project's `build-tokens.py --css-vars` export between /* plumb:tokens */ and /* plumb:tokens:end */, a small runtime and each
 screen's scripts, so they open from disk with nothing loaded from the network. No timestamps: rebuilding gives the
 same bytes.
 

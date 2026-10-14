@@ -221,14 +221,25 @@ body {
   function shown(el) {
     return el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden";
   }
-  /* A state change on the same screen that opens a dialog: bring the dialog into view (the frame is the whole page, so
-     a dialog the screen fixes in place sits in the middle of a long page, not of the window). */
-  function revealDialog(section) {
-    var found = Array.prototype.filter.call(section.querySelectorAll(DIALOGS), shown)[0];
-    if (!found) return;
+  function shownDialogs(section) {
+    return Array.prototype.filter.call(section.querySelectorAll(DIALOGS), shown);
+  }
+  function showState(section, state) {
+    outerStates(section).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+  }
+  /* Bring into view a dialog this change opened. A dialog the screen fixes in place is already on the window (the
+     frame is an inline-size container: no containing block for position: fixed); this is for a dialog in the flow of a
+     long page, or placed absolutely in it. A dialog that was showing already (a docked help panel, a banner) never
+     moves the page. */
+  function revealDialog(found) {
     var r = found.getBoundingClientRect(), h = window.innerHeight || document.documentElement.clientHeight;
     if (r.top >= 0 && r.bottom <= h) return;
     found.scrollIntoView({ block: r.height > h ? "start" : "center", inline: "nearest" });
+  }
+  function say(text) {
+    /* cleared first, so the same title twice in a row is announced again */
+    announce.textContent = "";
+    window.requestAnimationFrame(function () { announce.textContent = text; });
   }
   function show(id, state, opts) {
     opts = opts || {};
@@ -237,23 +248,30 @@ body {
     if (!state || s.states.indexOf(state) < 0) state = s.states[0];
     var sameScreen = current.screen === id;
     var same = sameScreen && current.state === state;
+    var section = sections[id], before = [];
     if (!same) {
-      Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
-      outerStates(sections[id]).forEach(function (el) { el.hidden = el.getAttribute("data-state") !== state; });
+      if (!sameScreen) {
+        Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
+        showState(section, s.states[0]);  /* what the screen shows anyway: its first state */
+      }
+      before = shownDialogs(section);
+      showState(section, state);
       document.title = s.title + " · " + data.project;
     }
     current = { page: "screen", screen: id, state: state };
     writeHash(opts.history, "#/" + id + (state !== s.states[0] ? "/" + state : ""));
     if (!sameScreen && opts.history) {
       window.scrollTo(0, 0);
-      announce.textContent = s.title;
+      say(s.title);
     }
     if (opts.focus && !sameScreen) {
-      var section = sections[id];
       if (!section.hasAttribute("tabindex")) section.setAttribute("tabindex", "-1");
       section.focus({ preventScroll: true });
     }
-    if (sameScreen && !same) revealDialog(sections[id]);
+    if (!same) {
+      var opened = shownDialogs(section).filter(function (d) { return before.indexOf(d) < 0; })[0];
+      if (opened) revealDialog(opened);
+    }
     if (!same) emit();
     return true;
   }

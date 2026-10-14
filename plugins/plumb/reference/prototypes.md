@@ -81,9 +81,13 @@ list, state switcher, toggles, decisions or player). Use it to demo; use `protot
 - Screen scripts run with the same `plumb` API (`plumb.catalogue` is false), and `window.plumbPrototype` /
   `window.plumbTheme` are there, so a screen's own theme toggle works. The theme follows the system until that toggle
   picks one; the choice is remembered in the browser when it allows it.
-- The window is the frame, so `@container plumb-frame (min-width: 48rem)` rules follow the window width. A screen that
-  is longer than the window scrolls the page; a state change that opens a dialog scrolls it into view, and
-  `data-app-sidebar` keeps a sidebar in view.
+- The window is the frame, so `@container plumb-frame (min-width: 48rem)` rules follow the window width (the width
+  inside a classic scrollbar: on Windows, a window just over 48rem may show the layout below md). A screen that is
+  longer than the window scrolls the page; a change that opens a dialog (a state change, `plumb.go`, a link to that
+  state) scrolls it into view, while a dialog that was already showing never moves the page; `data-app-sidebar` keeps
+  a sidebar in view.
+- Screens may use `position: fixed`: toasts and bars sit on the window, as in the product. (For Plumb's own pages:
+  never give the frame or stage `transform`, `filter` or `contain`, which would pin them to the page.)
 - Generated and offline like the other pages; each proposal variant has its own `app.html`.
 
 ## The quality bar (Effective HTML)
