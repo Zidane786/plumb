@@ -1064,36 +1064,46 @@ Three checks, in this order:
    `git mv` from it), or a folder holding one, is refused the same way. Running `build-tokens.py` or
    `build-prototype.py` is allowed.
 
-   A shell command is refused only when a guarded file is one of its **real write targets**:
-   - a redirect (`>`, `>>`, `1>`, `2>`, `&>`, `>|`), `tee [-a]`, `sed -i`, `perl -i`;
+   A shell command is refused when a guarded file is one of its **real write targets**:
+   - a redirect (`>`, `>>`, `1>`, `2>`, `&>`, `>|`), `tee [-a]`, `sed -i` (and sed's `w FILE`), `perl -i`, `sort -o`,
+     `uniq IN OUT`;
    - the destination of `cp`, `mv`, `install`, `rsync` or `ln` (a folder destination counts as the file named like
-     the source in it), `truncate`, `dd of=`, `curl -o`, `wget -O`;
+     the source in it; a recursive copy or a move into a folder that holds a guarded file is refused like removing it),
+     `truncate`, `dd of=`, `curl -o` / `--output-dir`, `wget -O`;
    - PowerShell's `Set-Content`, `Add-Content`, `Out-File`, `New-Item`, `Copy-Item` / `Move-Item` onto it, and
      `[IO.File]::WriteAllText(…)`;
    - in inline code (`python -c`, `node -e`, a here-document or an `echo` piped to an interpreter): `open("<path>",
-     "w" | "a" | "x")`, `Path("<path>").write_text` / `write_bytes`, `shutil.copy` / `move`, `os.replace` / `rename`,
-     `fs.writeFileSync` and the like. When the code writes to a variable rather than a literal path, the paths that
-     reach that variable count (an assignment, a `for` loop, a list it appends to, the script's arguments);
-   - a shell's own script (`bash -c "…"`, a here-document fed to `bash`, `eval`, `find -exec`) is read as commands.
+     "w" | "a" | "x")`, `Path("<path>").write_text` / `write_bytes`, `shutil.copy` / `copytree` / `move`,
+     `os.replace` / `rename`, `fs.writeFileSync` and the like, with the target put together from the code's constants
+     (`os.path.join(d, "screens.html")`, `Path(d) / "x"`, `+`, f-strings, `%`, `.format`, `${}`);
+   - a shell's own script (`bash -c "…"` with `$1` …, a here-document fed to `bash`, `eval`, `source <(echo …)`,
+     `find -exec`) is read as commands, and so is **a file the same command wrote and then runs** (`python3 FILE`,
+     `bash FILE`, `source FILE`, `make -f FILE`, `python3 - < FILE`).
 
-   A command that only **mentions** a guarded path is allowed: quoted text (`git commit -m "… > app/globals.css"`), a
-   here-document written to another file (`cat > Makefile <<'EOF'` whose lines run `build-tokens.py`), and reading,
-   running or importing a guarded file (`json.load(open("…/screens.json"))`, `importlib` on a Plumb script).
+   Otherwise the guard's earlier, stricter reading decides, and its refusal stands unless the command only
+   **mentions** the guarded file in one of three provable ways:
+   - (a) inside a here-document, `echo`, `printf` or `tee` text written to another file, **unless the same command
+     runs that file, pipes it on, or names it again** (`cat > Makefile <<'EOF'` whose lines run `build-tokens.py` is
+     fine; `cat > fix.py <<'EOF' … EOF; python3 fix.py` is code);
+   - (b) as an argument of a read-only program (`cat`, `head`, `tail`, `grep`, `rg`, `wc`, `diff`, `ls`, `stat`,
+     `file`, `sha256sum`, `jq` …);
+   - (c) in inline code that gives it straight to a read (`open(p)` to read, `json.load(open(p))`,
+     `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`), runs no command or code,
+     and writes only to plain paths that are not guarded and not next to a guarded file.
 
-   This is **default deny, prove safe**. Whatever the guard's previous, stricter reading refused stays refused, unless
-   the new reading proves every guarded path in the command is data or a read. It can't prove that, and keeps the
-   stricter answer, when the command uses any of these:
-   - a program it doesn't know, or a runner (`npx`, `poetry run`, `conda run` …), or `xargs`;
-   - a variable or `$( … )` it can't resolve in a target or a `cd` (shell variables set in the same command, `$PWD` and
-     `$CLAUDE_PROJECT_DIR` are followed);
-   - code piped from a file, or inline code that runs commands (`os.system`, `subprocess`, `exec`) or writes somewhere
-     it can't follow;
-   - very deep nesting, or a reading that would take too long.
+   Anything else keeps the stricter answer, for example:
+   - a commit message or `echo` to the screen that names a guarded file with a `>`;
+   - code that passes a guarded path to `dirname`, `join` or an f-string, or writes through a variable;
+   - a program the reader doesn't know, a runner (`npx`, `poetry run`, `conda run` …), `xargs` or a script run;
+   - a variable or `$( … )` the reader can't resolve in a target or a `cd` (shell variables set in the same command,
+     `$PWD` and `$CLAUDE_PROJECT_DIR` are followed);
+   - code piped from a file, very deep nesting, or a reading that would take too long. A command over 64 KB is not
+     read at all: it is refused when it names a guarded file.
 
-   The guard is a consistency net, not a sandbox. Script files, `xargs`, `find -exec` on the files found, `patch`,
-   `tar -x`, `prettier --write`, editors like `ed`, and commands run through other tools are not followed. Restoring a
-   file from git (`git checkout -- <file>`, `git restore`) is allowed. `build-tokens.py --check` and the end-of-turn
-   check catch the drift.
+   The guard is a consistency net, not a sandbox. Script files written before the command, `xargs`, `find -exec` on
+   the files found, `patch`, `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other
+   tools are not followed. Restoring a file from git (`git checkout -- <file>`, `git restore`) is allowed.
+   `build-tokens.py --check` and the end-of-turn check catch the drift.
 
    ```
    error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build
