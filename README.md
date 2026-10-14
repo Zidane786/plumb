@@ -150,6 +150,7 @@ See it as a page: **[docs/what-you-get.html](docs/what-you-get.html)**. In short
 docs/design/
   decisions.md                            every design choice: the options, the one chosen, why, who decided
   prototype.html · screens.html           the whole product, clickable; every screen in every state, light and dark
+  app.html                                the same screens full window, for a demo (prototype.html to review)
   prototype/screens/<id>.html             one source file per screen
   tours/<id>.html                         shareable walkthroughs that open offline
   specimen.html · audit-*.html            every token and component; audit reports

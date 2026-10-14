@@ -96,8 +96,9 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
   and `<variant>/idea.md` (`# Title`, the idea in a sentence or two, `- ` lines with the trade-offs). Mobile platforms:
   a phone layout with that platform's conventions.
 - `PY SKILL/scripts/build-prototype.py --proposal <name>` builds, per variant, `prototype.html` (clickable, state
-  switcher, phone/desktop and light/dark toggles) and `screens.html` (every screen × every state, light and dark side by
-  side), plus `proposals/<name>/index.html` with the variants side by side. Exit 2 → fix the file it names.
+  switcher, phone/desktop and light/dark toggles), `app.html` (full window, for a demo) and `screens.html` (every
+  screen × every state, light and dark side by side), plus `proposals/<name>/index.html` with the variants side by side.
+  Exit 2 → fix the file it names.
 - Check: `PY SKILL/scripts/audit.py <docs>/prototype/proposals/<name>` reports no findings in those screen files (only
   tokens; fix what it reports, then build again). With a browser (the agent's browser tool, else
   `PY "<ROOT>/scripts/screenshot.py" … --theme dark`), look at each variant at 390 and 1280 px in both themes and fix
@@ -105,7 +106,8 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
 
 ## Step 3: choose
 
-Tell the user to open `<docs>/prototype/proposals/<name>/index.html`, then ask: "Which variant?" with options A, B, C
+Tell the user to open `<docs>/prototype/proposals/<name>/index.html` (each variant links its prototype.html to review
+and its app.html to demo), then ask: "Which variant?" with options A, B, C
 (recommend one and say why, from the key task) and "Combine or change something". Changes → edit that variant's screen
 files, run `--proposal <name>` again, ask again.
 
@@ -121,8 +123,9 @@ files, run `--proposal <name>` again, ask again.
   the product's words; every target present in the screen file's markup (`<ROOT>/reference/tours.md`).
 - `PY SKILL/scripts/build-prototype.py`. Exit 2 → fix what it names (a screen file, a tour step) and run it again.
   `PY SKILL/scripts/audit.py <docs>/prototype/screens` reports no findings in those screen files.
-- Show the user `<docs>/prototype.html#screen-<id>` (each new or changed screen), `<docs>/screens.html` (every state,
-  both themes) and the walkthrough (`prototype.html#tour-<flow>`, or the standalone `<docs>/tours/<flow>.html`). Ask,
+- Show the user both links, **prototype.html to review, app.html to demo**: `<docs>/prototype.html#screen-<id>` (each
+  new or changed screen) and `<docs>/app.html#/<id>`; then `<docs>/screens.html` (every state, both themes) and the
+  walkthrough (`prototype.html#tour-<flow>`, or the standalone `<docs>/tours/<flow>.html`). Ask,
   per screen: "Approve <screen> as the reference to build?" — Approve (recommended when they are happy) / Change
   something. Changes → edit the screen file or tour (say what), rebuild, ask again.
 - On each yes: `PY SKILL/scripts/build-prototype.py --approve <id>`.

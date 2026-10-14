@@ -2,9 +2,9 @@
 
 Create, extract, prototype, audit and maintain a project's design system, so every screen an agent builds stays
 consistent: one token file that generates the web, iOS and Android themes, a clickable prototype of the whole product
-that you approve before anything is built, and checks that stop drift while the agent works. Claude Code and GitHub
-Copilot CLI, macOS, Linux and Windows. You stay in charge: one question at a time, nothing written without your OK,
-nothing installed or downloaded.
+that you approve before anything is built (and the same screens full window, `app.html`, to demo), and checks that
+stop drift while the agent works. Claude Code and GitHub Copilot CLI, macOS, Linux and Windows. You stay in charge: one
+question at a time, nothing written without your OK, nothing installed or downloaded.
 
 **The complete guide:** [docs/USAGE.md](https://github.com/Zidane786/plumb/blob/main/docs/USAGE.md) ·
 **what a project gets:** [docs/what-you-get.html](https://github.com/Zidane786/plumb/blob/main/docs/what-you-get.html)

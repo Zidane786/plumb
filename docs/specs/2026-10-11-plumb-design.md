@@ -224,6 +224,8 @@ real frontend:
 - `docs/design/screens.html`: the catalogue. A navigation sidebar and every screen in every state
   (loading, empty, error, success, disabled, long text, zero, offline where relevant), plus every
   control state (default, hover, focus, pressed, disabled, loading).
+- `docs/design/app.html`: the app view, for a demo. Every screen full window, with none of the
+  prototype's panels (§3.4.2).
 
 **One source per screen.** Both pages are assembled from `docs/design/prototype/screens/<id>.html`
 (one file per screen, its states marked with `data-state`, its interactions inline) by
@@ -373,6 +375,34 @@ the prototype.
 HTML, real tokens, audited, clickable, kept in step with the code). Figma remains better for
 freehand visual exploration and illustration, designers editing together on one canvas, and
 handoff to teams that don't build with agents.
+
+### 3.4.2 The app view (`app.html`)
+
+`build-prototype.py` also writes `<docs>/app.html` from the same screens, tokens and scripts:
+every screen full window, with no prototype panels (no screens list, state switcher, frame or theme
+toggles, decisions rail or player). **prototype.html is for reviewing, app.html for demoing**;
+`/plumb:prototype` and the proposal index name both.
+
+- **Routes:** `#/ID` and `#/ID/STATE`; `#screen-ID[/STATE]` works too, so the screens' own links
+  and the prototype's addresses keep working. It opens on the first screen by `data-order` (no
+  project-specific forwarding); an unknown id opens that first screen.
+- **The same screen-script API** as `prototype.html`: `function (screen, plumb)` with
+  `plumb.setState`, `plumb.go`, `plumb.state`, `plumb.catalogue === false`, plus `window.plumbTheme`
+  and `window.plumbPrototype` (`go`, `setState`, `current`, `screen`, `setTheme`, `on`).
+- **Theme:** the system setting until a screen's own toggle picks one, then remembered in
+  `localStorage` (a per-viewer convenience: when storage is off or throws, the page still renders
+  and the choice lasts the visit).
+- **The window is the frame:** the frame (`#pp-frame`, inside the stage `#pp-stage` a tour page's
+  player draws over) is `container: plumb-frame / inline-size` and spans the window, so the md
+  breakpoint follows the window; it has `isolation: isolate`, so a screen's z-indexes never cover
+  what is drawn over it.
+- **Sidebar hook:** an element with `data-app-sidebar` in a screen is `position: sticky; top: 0;
+  height: 100dvh` from the md breakpoint. Nothing else about a screen's layout is assumed.
+- **Dialogs:** the frame is the whole page, so a state change on the same screen scrolls an opened
+  dialog (`dialog[open]`, `role="dialog"` or `"alertdialog"`, `aria-modal="true"`) into view.
+- Generated like the other pages (byte-stable, offline, light and dark; `--check` reports it stale
+  or missing; the tokens build refreshes its token block). Each proposal variant gets its own
+  `proposals/<name>/<variant>/app.html`. `app.html` itself carries no player.
 
 ### 3.5 `/plumb:audit`
 
@@ -726,22 +756,26 @@ Assembles the main prototype from the screen files: `prototype.html` (an app she
 navigation, hash routing between screens, a state switcher, phone/desktop and light/dark toggles,
 each screen's own interactions, the per-screen decisions panel plus a Decisions page from
 `docs/design/decisions.md`, the per-screen guide panel, and the walkthrough player for every file
-in `tours/`) and `screens.html` (sidebar navigation, every screen × every
-`data-state`, and the control-state sheet generated from the tokens and components). It inlines
-`build-tokens.py --css-vars`, a small dependency-free runtime, and each screen's scripts, so both
-pages are single files that open from disk.
+in `tours/`), `app.html` (the app view of §3.4.2: every screen full window, hash routes `#/ID` and
+`#/ID/STATE`, the same screen-script API, no panels, from `templates/app-shell.html.tmpl`) and
+`screens.html` (sidebar navigation, every screen × every `data-state`, and the control-state sheet
+generated from the tokens and components). It inlines `build-tokens.py --css-vars`, a small
+dependency-free runtime, and each screen's scripts, so every page is a single file that opens from
+disk.
 
 It is the **only writer of `screens.json`** (as Slate's `board.py` is of `tickets.json`): skills
 change it through commands, never by editing it. `--map <id> --route=<route> --files <globs>`
 sets a screen's route and source files (confirmed with you); `--approve <id>` records your
 approval (git `user.name`, date, hash of the screen file); `--synced <id>` marks a screen updated
-from already-built code. `--check` exits 1 when either page or the token blocks are stale, or a
+from already-built code. `--check` exits 1 when a page (`app.html` included) is stale or missing,
+the token blocks are stale, or a
 walkthrough step names a screen, state or element that does not exist. Same exit-code and error conventions as §6.1.
 
 `--proposal <name>` builds `/plumb:prototype`'s variants instead of the main prototype: from each
 `docs/design/prototype/proposals/<name>/<variant>/screens/*.html` (and an optional `idea.md` with the variant's idea and
-trade-offs) it writes that variant's `prototype.html` and `screens.html` (both views, light and dark, the token block
-inlined) and `proposals/<name>/index.html` with the variants side by side. The pages are generated (never edited) and
+trade-offs) it writes that variant's `prototype.html`, `app.html` and `screens.html` (light and dark, the token block
+inlined) and `proposals/<name>/index.html` with the variants side by side, each linking prototype.html to review and
+app.html to demo. The pages are generated (never edited) and
 byte-stable; `--check --proposal <name>` exits 1 when one is stale; `screens.json` is not touched. A variant or
 proposal folder that leads outside the proposals folder is refused. When tokens change, the main build and
 `build-tokens.py` refresh the token block of every generated proposal page, so old variants keep rendering.

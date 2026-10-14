@@ -487,9 +487,9 @@ before writing the variants' files (and where); which variant you choose (or wha
 the chosen screen into the main prototype; whether you approve each new or changed screen; before recording the
 decision; then whether to build it now, make a Slate ticket, or leave it for later.
 
-**What it changes:** `docs/design/prototype/proposals/<name>/` (the variants, both views each, plus `index.html`),
-`docs/design/prototype/screens/<id>.html` (the chosen screen), a default walkthrough in
-`docs/design/prototype/tours/<flow>.json`, the rebuilt `prototype.html` and `screens.html`, your approval in
+**What it changes:** `docs/design/prototype/proposals/<name>/` (the variants, both views and the app view each, plus
+`index.html`), `docs/design/prototype/screens/<id>.html` (the chosen screen), a default walkthrough in
+`docs/design/prototype/tours/<flow>.json`, the rebuilt `prototype.html`, `app.html` and `screens.html`, your approval in
 `screens.json`, and a decision entry. A component the screen needs that doesn't exist yet is listed as "to build" in
 `references/inventory.md`.
 
@@ -505,7 +505,8 @@ plumb Open docs/design/prototype/proposals/billing/index.html. Which variant? (R
 you   B, with A's empty state
 plumb I'll write screens/billing.html, link it from home.html, and add tours/billing.json. OK?
       …
-plumb Approve billing as the reference to build? (prototype.html#screen-billing, screens.html shows every state)
+plumb Review: prototype.html#screen-billing · Demo: app.html#/billing · every state: screens.html
+plumb Approve billing as the reference to build?
 you   Approve
 plumb billing is approved: build it to match docs/design/prototype.html#screen-billing. Build it now, a Slate ticket, or later?
 ```
@@ -788,19 +789,26 @@ Every Plumb project has **one main prototype of the whole product**, kept in ste
   dialogs, menus, form validation, toasts), with a state switcher, a phone/desktop toggle, a light/dark toggle, a
   "Why it looks like this" panel per screen (the decisions behind it, who made them, the options considered), a guide
   panel per screen, a Decisions page, and the walkthrough player.
+- **`docs/design/app.html`**: the app view, for a demo. Every screen full window, with none of the prototype's
+  panels (no screens list, state switcher, toggles, decisions or player): it looks and clicks like the product. The
+  screens' own links, buttons and theme toggle work; the theme follows your system until a screen's toggle picks one,
+  and the browser remembers it. A sidebar marked `data-app-sidebar` stays in view while a long page scrolls, and a
+  dialog a click opens is scrolled into view. **prototype.html to review, app.html to demo.**
 - **`docs/design/screens.html`**: the catalogue. A sidebar, and every screen in every state (loading, empty, error,
   success, disabled, long text, zero, offline where relevant) in **light and dark side by side**, plus every control
   state (default, hover, focus, pressed, disabled, loading).
 
-Both pages open from disk, with no server and no network.
+Every page opens from disk, with no server and no network.
 
-**One source per screen.** Both pages are built by `build-prototype.py` from
+**One source per screen.** Every page is built by `build-prototype.py` from
 `docs/design/prototype/screens/<id>.html`: one file per screen, its states marked with `data-state`, its interactions
 inline, and only the design system's tokens for colours, type, spacing, radius, shadow and motion. Edit a screen file
-and rebuild; both pages follow, so they can never disagree. The audit runs on the screen files like on your code.
+and rebuild; every page follows, so they can never disagree. The audit runs on the screen files like on your code.
 
 **Links you can share:** `prototype.html#screen-booking` opens a screen; `#screen-booking/error` a screen in one state;
-`#tour-client-demo` a walkthrough; `#tour-client-demo-3` its step 3.
+`#tour-client-demo` a walkthrough; `#tour-client-demo-3` its step 3. In the app view: `app.html#/booking` and
+`app.html#/booking/error` (the `#screen-…` links work there too); `app.html` alone opens the first screen (the lowest
+`data-order`).
 
 **The map, `screens.json`.** `build-prototype.py` is its only writer. For each screen it records the route, the source
 files that build it, the states, its status (`to-build` until every source glob matches a file, then `built`) and your
@@ -811,20 +819,21 @@ approval:
 | `build-prototype.py --map billing --route=/billing --files "app/billing/**"` | the route and source files, confirmed with you |
 | `build-prototype.py --approve billing` | your approval: who (git `user.name`, else `$USER` / `%USERNAME%`), when, and a hash of the screen file. Editing the screen file afterwards makes the approval stale |
 | `build-prototype.py --synced billing` | the screen file was updated to match code that was already built; listed for you to confirm, never blocking |
-| `build-prototype.py --check` | nothing written; exit 1 when a page or token block is stale, exit 2 when a walkthrough step points at something that no longer exists |
+| `build-prototype.py --check` | nothing written; exit 1 when a page (`app.html` included) or token block is stale or missing, exit 2 when a walkthrough step points at something that no longer exists |
 
 **Variants.** `/plumb:prototype` makes 2–3 variants that differ in UX (layout, flow, density, navigation), all on the
 same design system. Each comes as **both views**, its clickable prototype and its every-state catalogue, so you compare
-how loading, empty and error look, not only the happy path:
+how loading, empty and error look, not only the happy path, plus its app view for a demo:
 
 ```
 docs/design/prototype/proposals/billing/
   a-calm-list/screens/billing.html     the variant's screen file (what goes to main if chosen)
   a-calm-list/idea.md                  its idea and trade-offs
-  a-calm-list/prototype.html           clickable (generated)
+  a-calm-list/prototype.html           clickable, to review (generated)
+  a-calm-list/app.html                 full window, to demo (generated)
   a-calm-list/screens.html             every state, light and dark (generated)
   b-dense-table/…
-  index.html                           the variants side by side (generated)
+  index.html                           the variants side by side: "Review: prototype.html · Demo: app.html" (generated)
 ```
 
 The chosen variant's screen file is copied into the main prototype; the others stay in `proposals/` as the record. When
@@ -915,12 +924,12 @@ Every file has an owner, and the owner decides who may change it and what an upg
 │   ├── web/  stack.md · components.md · ux-guidelines.md · dark-mode.md                       [Y]
 │   └── mobile/  README.md · components.md · ios/ · android/                                   [Y]
 ├── scripts/                              [P] build-tokens.py · audit.py · build-prototype.py · _plumb.py
-└── templates/                            [P] the specimen, report, prototype shell and player templates
+└── templates/                            [P] the specimen, report, prototype shell, app shell and player templates
 docs/design/
 ├── decisions.md                          [Y] the design decision log
 ├── directions.html · extract.html            the create directions / the extract before-and-after (the record)
 ├── specimen.html                         [G] every token and component, light and dark
-├── prototype.html · screens.html         [G] the main prototype and the catalogue
+├── prototype.html · app.html · screens.html  [G] the main prototype, the app view and the catalogue
 ├── prototype/screens/<id>.html           [Y] one source per screen
 ├── prototype/screens.json                [G] the map (build-prototype.py only)
 ├── prototype/tours/<id>.json             [Y] walkthrough scripts

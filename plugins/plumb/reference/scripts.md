@@ -23,7 +23,7 @@ one step (an answers file, a `--snapshot`, saved `--json` or `--check` output to
 traceback. Bad input exits 2. Do what the `fix:` line says, or ask the user when it says so; never guess.
 
 **Never by hand.** Generated files (`[G]`: `tokens.css`, `tailwind.tokens.js`, the Swift and Kotlin
-themes, `specimen.html`, `prototype.html`, `screens.html`, `prototype/screens.json`, `tours/*.html`, the proposal pages,
+themes, `specimen.html`, `prototype.html`, `app.html`, `screens.html`, `prototype/screens.json`, `tours/*.html`, the proposal pages,
 `audit-*.html`, and Plumb's block in each web copy) are
 written only by these scripts; Plumb's own files (`[P]`: `<skill>/scripts/*`, `<skill>/templates/*`,
 `assets/platforms/README.md`) only by `scaffold.py` during `/plumb:upgrade`. The edit check refuses hand edits to both.
@@ -90,12 +90,12 @@ Exit codes: 0 no errors (warnings and suggestions allowed) · 1 errors found · 
 
 | Flag | Does |
 |---|---|
-| (none) | Assembles `<docs>/prototype.html` (the clickable app, the walkthrough player, decisions), `<docs>/screens.html` (every screen × state, light and dark side by side, control states) and `<docs>/prototype/screens.json` from `<docs>/prototype/screens/*.html`, `<docs>/decisions.md` and `<docs>/prototype/tours/*.json`; writes `<docs>/tours/<tour>.html` per tour. No timestamps: rebuilding gives the same bytes. |
-| `--check` | Writes nothing; exit 1 naming each stale or missing page (or a stale token block). A tour step naming a screen, state or element that does not exist exits 2. |
+| (none) | Assembles `<docs>/prototype.html` (the clickable app, the walkthrough player, decisions; use it to review), `<docs>/app.html` (every screen full window with no panels, `#/ID` and `#/ID/STATE` routes, the same screen scripts; use it to demo), `<docs>/screens.html` (every screen × state, light and dark side by side, control states) and `<docs>/prototype/screens.json` from `<docs>/prototype/screens/*.html`, `<docs>/decisions.md` and `<docs>/prototype/tours/*.json`; writes `<docs>/tours/<tour>.html` per tour. No timestamps: rebuilding gives the same bytes. |
+| `--check` | Writes nothing; exit 1 naming each stale or missing page, `app.html` included (or a stale token block). A tour step naming a screen, state or element that does not exist exits 2. |
 | `--map ID --route=ROUTE --files GLOB ...` | Records a screen's route (`--route=/billing`, `--route=/b/:id`) and source files (globs from the project root) and their hash, the baseline the audit compares against. `status` becomes `built` once every glob matches a file. Confirm route and files with the user first. Write the route joined to the flag with `=`: a bare `/` as its own argument after the flag looks like a path to Copilot CLI, which then asks for access to the whole file system; `--route=/` does not. |
 | `--approve ID` | Records the user's approval: git `user.name` (else `$USER`/`%USERNAME%`), today's date, the screen file's hash; clears "synced from code". **Never run `--approve` without the user's explicit yes to that screen, given in this conversation** (not for a synced screen, not because a build passed, not for several screens on one general OK). Editing the screen afterwards makes the approval stale. |
 | `--synced ID` | Marks a screen updated to match code that was already built (a small fix, code written before Plumb); listed for the user to confirm, never blocking. |
-| `--proposal NAME` | Builds `/plumb:prototype`'s variants instead of the main prototype: for each `<docs>/prototype/proposals/NAME/<variant>/screens/*.html` (+ optional `idea.md`), that variant's `prototype.html` and `screens.html` (both views, light and dark, the token block inlined), and `NAME/index.html` with the variants side by side. Generated and byte-stable; `screens.json` is not touched. With `--check`, exit 1 when one is stale. Does not combine with `--map`, `--approve` or `--synced`. The main build (and build-tokens.py) refreshes the token block of every generated proposal page. |
+| `--proposal NAME` | Builds `/plumb:prototype`'s variants instead of the main prototype: for each `<docs>/prototype/proposals/NAME/<variant>/screens/*.html` (+ optional `idea.md`), that variant's `prototype.html`, `app.html` and `screens.html` (light and dark, the token block inlined), and `NAME/index.html` with the variants side by side ("Review: prototype.html · Demo: app.html" per variant). Generated and byte-stable; `screens.json` is not touched. With `--check`, exit 1 when one is stale or missing. Does not combine with `--map`, `--approve` or `--synced`. The main build (and build-tokens.py) refreshes the token block of every generated proposal page. |
 | `--root`, `--project` | As for build-tokens.py. |
 
 `screens.json` is written only by this script (never by hand). Every command rebuilds the pages. **A broken tour does not
