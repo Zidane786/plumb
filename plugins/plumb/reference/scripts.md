@@ -78,7 +78,7 @@ Exit codes: 0 ok · 1 stale (`--check`) · 2 bad input (`error: <token>: …`).
 | `--add-review REVIEW.json` | With `--html`: merges the agent's review (a JSON list of `{severity, file, line?, message, fix, why?}`) into the report as a separate **Agent review** section, each finding marked so. Never changes the terminal findings, the counts or the exit code. Bad file → exit 2 naming the entry and key, no report written. See [rules.md](rules.md#agent-review-not-a-rule). |
 | `--no-tokens` | Inconsistency-only mode even when a tokens file exists (infers the scales from the code). Automatic when there are no tokens yet. |
 | `--quick FILE` | One file, only the errors an edit adds, JSON out (what the edit check runs). `--before -` reads the old text on stdin; `--before PATH` from a file; without it the file counts as new. Never runs the cross-file rules. |
-| `--inventory` | Added for `/plumb:extract`: every value in use with counts and `file:line`, and the proposed clusters (see the extract skill). |
+| `--inventory` | Added for `/plumb:extract`: every value in use with counts and `file:line`, and the proposed clusters (see the extract skill). `rounded-*` classes count at the project's own `@theme` / `@theme inline` `--radius-*` values (plain lengths, `var(--radius)`, `calc(var(--radius) ± N px|rem)`), Tailwind's defaults only for sizes it does not define. Colour clusters stay within one source (`variable` = a named CSS variable, `palette` = a Tailwind palette class, `literal`); each cluster says which. |
 | `--root`, `--project` | As for build-tokens.py. |
 
 Exit codes: 0 no errors (warnings and suggestions allowed) · 1 errors found · 2 nothing checked or bad input.

@@ -1148,15 +1148,20 @@ class _Scan:
         own = self.named.get(scale) or {}
         return own[name] if name in own else default
 
-    def add(self, kind: str, value: str, pos: int) -> None:
+    def add(self, kind: str, value: str, pos: int, source: str = "literal") -> None:
+        """Count one use. A colour also records its source kind (COLOUR_SOURCES), so clusters never mix kinds."""
         line = bisect.bisect_right(self._nl, pos - 1) + 1 if pos > 0 else 1
         slot = self.inv[kind].get(value)
         if slot is None:
             slot = self.inv[kind][value] = {"count": 0, "where": []}
         slot["count"] += 1
         slot["where"].append(f"{self.name}:{line}")
+        if kind == "color":
+            by = slot.setdefault("sources", {}).setdefault(source, {"count": 0, "where": []})
+            by["count"] += 1
+            by["where"].append(f"{self.name}:{line}")
 
-    def colours(self, start: int, end: int, css: bool) -> None:
+    def colours(self, start: int, end: int, css: bool, source: str = "literal") -> None:
         code = self.code
         for m in _I_HEX.finditer(code, start, end):
             pos, digits = m.start(), m.group(1)
@@ -1169,16 +1174,16 @@ class _Scan:
                 before = code[max(line_start, pos - 150):pos]
                 if any(call in before for call in _I_SELECTOR_CALLS):
                     continue
-            self.add("color", _hex_value(digits), pos)
+            self.add("color", _hex_value(digits), pos, source)
         for m in _I_FN.finditer(code, start, end):
             value = _fn_colour(m.group(1).lower(), m.group(2))
             if value:
-                self.add("color", value, m.start())
+                self.add("color", value, m.start(), source)
 
     def declaration(self, prop: str, value: str, pos: int, colours: bool) -> None:
         """One CSS declaration (or a JS style property already turned into kebab-case)."""
         if colours:
-            self.colours(pos, pos + len(value), True)
+            self.colours(pos, pos + len(value), True, "variable" if prop.startswith("--") else "literal")
         prop = prop.lower()
         v = value.strip()
         if not v or v.startswith("var(") and ")" == v[-1:] and v.count("(") == 1:
@@ -1334,7 +1339,7 @@ class _Scan:
             if value:
                 self.add("easing", value, m.start())
         for m in _TW_PALETTE.finditer(code, start, end):
-            self.add("color", TAILWIND_PALETTE[m.group(1)], m.start())
+            self.add("color", TAILWIND_PALETTE[m.group(1)], m.start(), "palette")
 
     def swift(self) -> None:
         code = self.code
@@ -1442,6 +1447,84 @@ def inventory_add(inv: dict, name: str, text: str, tailwind: bool = False, code:
         scan.tailwind(pos, len(code))
 
 
+_THEME_AT = re.compile(r"@theme\b[^{};]*\{")
+_RADIUS_VAR = re.compile(r"(?<![\w-])--radius(?:-([\w.]+))?\s*:\s*([^;{}]{1,200})")
+_CALC_RADIUS = re.compile(r"^calc\(\s*(var\(\s*--radius(?:-[\w.]+)?\s*\)|\d*\.?\d+(?:px|rem))\s*([+-])\s*"
+                          r"(\d*\.?\d+)(px|rem)\s*\)$")
+_LEN_ONLY = re.compile(r"^(\d*\.?\d+)(px|rem)$")
+_VAR_REF = re.compile(r"^var\(\s*--radius(?:-([\w.]+))?\s*\)$")
+
+
+def _theme_blocks(code: str) -> list:
+    """The bodies of every @theme / @theme inline block (braces matched)."""
+    out = []
+    for m in _THEME_AT.finditer(code):
+        depth, i = 1, m.end()
+        while i < len(code) and depth:
+            depth += {"{": 1, "}": -1}.get(code[i], 0)
+            i += 1
+        out.append(code[m.end():i - 1 if depth == 0 else i])
+    return out
+
+
+def theme_radii(codes) -> dict:
+    """The project's own radius steps in px, {"sm": 6.0, "lg": 10.0, ...}, from CSS text (comments already masked).
+
+    The base is `--radius` (anywhere, first definition wins); the steps are the `--radius-<name>` variables inside
+    `@theme` / `@theme inline`. A value is a plain length, var(--radius) (or another radius variable), or
+    calc(<one of those> +/- N px|rem), rem = 16px. A step that does not resolve is left out, so the caller falls back to
+    Tailwind's default for it. Empty when the project defines no theme radius."""
+    base: Optional[float] = None
+    raw: Dict[str, str] = {}
+    for code in codes:
+        if "--radius" not in code:
+            continue
+        if base is None:
+            for m in _RADIUS_VAR.finditer(code):
+                if m.group(1) is None:
+                    m2 = _LEN_ONLY.match(m.group(2).strip())
+                    if m2:
+                        base = _px_len(m2.group(1), m2.group(2))
+                        break
+        for block in _theme_blocks(code):
+            for m in _RADIUS_VAR.finditer(block):
+                if m.group(1) is not None:
+                    raw.setdefault(m.group(1), m.group(2).strip())
+    out: Dict[str, float] = {}
+
+    def term(text: str, seen: tuple) -> Optional[float]:
+        text = text.strip()
+        m = _LEN_ONLY.match(text)
+        if m:
+            return _px_len(m.group(1), m.group(2))
+        m = _VAR_REF.match(text)
+        if m:
+            name = m.group(1)
+            if name is None:
+                return base
+            return resolve(name, seen) if name in raw else None
+        return None
+
+    def resolve(name: str, seen: tuple) -> Optional[float]:
+        if name in seen:
+            return None
+        text = raw[name]
+        m = _CALC_RADIUS.match(text)
+        if m:
+            first = term(m.group(1), seen + (name,))
+            if first is None:
+                return None
+            delta = _px_len(m.group(3), m.group(4))
+            return max(0.0, first + delta if m.group(2) == "+" else first - delta)
+        return term(text, seen + (name,))
+
+    for name in sorted(raw):
+        px = resolve(name, ())
+        if px is not None:
+            out[name] = px
+    return out
+
+
 def _where_key(w: str) -> Tuple[str, int]:
     file, _, line = w.rpartition(":")
     return file, int(line) if line.isdigit() else 0
@@ -1452,6 +1535,8 @@ def finish_inventory(inv: dict) -> dict:
     for values in inv.values():
         for slot in values.values():
             slot["where"] = sorted(set(slot["where"]), key=_where_key)
+            for by in (slot.get("sources") or {}).values():
+                by["where"] = sorted(set(by["where"]), key=_where_key)
     return inv
 
 
@@ -1509,8 +1594,13 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
                 seen.append(name)
     inv = new_inventory()
     use_tw = detected if tailwind is None else tailwind
+    named = None
+    if use_tw:  # rounded-lg is the project's own --radius-lg when its @theme defines one, Tailwind's default otherwise
+        radii = theme_radii(mask_comments(t, source_ext(n) or ".css") for n, t in found
+                            if source_ext(n) in (".css", ".scss"))
+        named = {"radius": radii} if radii else None
     for name, text in found:
-        inventory_add(inv, name, text, use_tw)
+        inventory_add(inv, name, text, use_tw, named=named)
     return finish_inventory(inv)
 
 
@@ -1518,6 +1608,7 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
 
 
 SIZE_KINDS = ("font-size", "line-height", "spacing", "radius", "duration")
+COLOUR_SOURCES = ("variable", "palette", "literal")  # a named CSS variable, a Tailwind palette class, any other value
 COLOUR_DELTA = 3.0  # CIEDE2000 below this: the same colour to the eye
 SIZE_PX, SIZE_RATIO = 1.0, 0.06  # sizes within 1px (1ms) or 6% are the same step
 
@@ -1540,6 +1631,21 @@ def cluster(inventory: dict, kind: str) -> list:
     not yet grouped is the canonical (the value to propose as a token) and takes every ungrouped value close to it.
     Other kinds (font-family, font-weight, shadow, easing) are never merged: each value is its own group."""
     values = inventory.get(kind) or {}
+    if kind == "color":  # never merge across source kinds: a named variable's value stays apart from palette classes
+        groups = []
+        for source in COLOUR_SOURCES:
+            part = {}
+            for v, s in values.items():
+                by = s.get("sources") or {"literal": {"count": s["count"]}}
+                if source in by:
+                    part[v] = {"count": by[source]["count"]}
+            groups += [dict(g, source=source) for g in _cluster_values(part, kind)]
+        groups.sort(key=lambda g: (-g["count"], COLOUR_SOURCES.index(g["source"])))
+        return groups
+    return _cluster_values(values, kind)
+
+
+def _cluster_values(values: dict, kind: str) -> list:
     items = sorted(values.items(), key=lambda kv: (-kv[1]["count"], kv[0]))
     count = {v: s["count"] for v, s in items}
     order = [v for v, _ in items]
