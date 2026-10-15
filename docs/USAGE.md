@@ -937,6 +937,21 @@ turn" step the pill offers "Do it for me"; a wrong click brings the panel back f
 of play brings it back with "Play again" (the next step follows your choice again). `H` is ignored while you type in a
 field or hold a modifier key. Your choice is remembered in this browser.
 
+**Voice and subtitles (play mode):** the **Voice** button (or the `V` key) reads the captions aloud with the browser's
+own speech and the voices already on your computer: nothing is downloaded, and it works offline. It is off by default
+(screen-reader users already hear the captions) and your choice is remembered in this browser. The voice reads the same
+caption line the player shows on screen, no second subtitle system (a step's optional `"say"` changes only what is
+spoken). With the voice on, each caption stays on screen while it is spoken, then the step's hold, then the next one;
+with it off, the usual timing. The pace is calm (about 150 words a minute at 1×) and follows the speed control (slower
+at 0.5×, capped at 1.5× and 2× so it stays clear). Pause, jumps, Back/Next, Hide panel and a speed change keep voice and
+screen in step. A tour that opens in play mode with its page waits on its first card: **Start with voice** or **Start
+without voice** (browsers only speak after a click). No speech in the browser: the button is disabled with "Voice
+isn't available in this browser" and the tour plays with captions; an error mid-tour says "Voice stopped: continuing
+with captions" and carries on. **Save subtitles (.vtt)** (in the panel while playing and at the end) downloads
+`<tour id>.vtt` with the real times each caption showed, so it matches a screen recording of that run at any speed.
+Those times live only in the page's memory for the current run (never stored or sent; gone on reload unless you save
+them); only the Voice on/off choice is kept in `localStorage`.
+
 **While a tour runs** the screens list and the side rail fold away so the screen gets the full width (its desktop
 layout, not a squeezed phone one); they return when the tour ends. The panel, subtitle, cursor and labels always sit on
 top of the screen's own dialogs and toasts, which stay inside the screen's frame; a hidden or off-canvas element is

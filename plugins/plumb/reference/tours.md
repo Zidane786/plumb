@@ -16,7 +16,8 @@ The prototype stays fully clickable with or without tours. `<docs>` is the docs 
   element. For a reviewer, a new teammate, a learner.
 - **Play mode:** plays the flow like a video for a client or a demo: actions run by themselves, captions narrate, a
   progress bar has a marker per chapter you can jump to, Space pauses and resumes, restart, speed 0.5×, 1×, 1.5×, 2×.
-  With reduced motion it still plays by itself; only the cursor glide and animation are dropped.
+  With reduced motion it still plays by itself; only the cursor glide and animation are dropped. It can also speak
+  its captions and save them as subtitles (see "Voice and subtitles").
 
 The `audience` picks the mode that opens first: `client` and `whats-new` open in play mode; `training`, `review` and
 `team` in guide mode. Either mode is one click away. Links: `prototype.html#tour-<id>` opens a tour,
@@ -89,6 +90,39 @@ the frame holds those layers, so zoom works as always.
   (`color.primary` for its accent, `color.surface`, `color.outline`, `font.sans`, `radius.lg`, `shadow.popover` …) and
   fall back to Plumb's neutral look. Subtitles, the play badge and the cursor keep one fixed high-contrast look.
 
+## Voice and subtitles (play mode)
+
+- **Voice:** the "Voice" button in the play controls (a toggle, `aria-pressed`) or the `V` key reads the captions aloud
+  with the browser's own speech (`speechSynthesis`) and the voices already on the computer: nothing is downloaded or
+  installed, and it works offline. It is **off by default** (screen-reader users already hear the captions), and the
+  choice is remembered in this browser (`localStorage`; with storage off it lasts for the page). `V` does nothing while
+  you type, with Shift, Ctrl, Alt or Cmd held, or as a held key repeats.
+- **One caption line:** the voice reads the same caption the player already shows on screen (no second subtitle
+  system): a card's title and text, and each step's subtitle. A step's optional `"say"` replaces the caption for speech
+  only (an abbreviation spelled out, a name said the way it sounds); the screen still shows the caption. The page's
+  `lang` picks the voice, else the browser's default voice.
+- **Pace:** calm, like a product demo, and it follows the speed control: rate about 0.9 at 1× (about 150 words a
+  minute), 0.7 at 0.5×, 1.15 at 1.5× and 1.3 at 2× (capped so it stays clear), with a short pause after each sentence.
+  With the voice on, each caption stays on screen while it is spoken, then the step's `hold` (scaled by the speed, as
+  today), then the next one; with the voice off, today's timing. With reduced motion the voice still plays.
+- **In step:** pause (Space) stops the sentence and Play speaks it again; restart, a chapter jump, Back/Next, leaving,
+  switching to guide mode, Hide panel and a speed change cancel or restart the current sentence, so voice and screen
+  never drift.
+- **Start:** a browser speaks only after a click or key press, so a tour that opens in play mode with its page (a tour
+  page, a `#tour-…` link) waits on its first card with **Start with voice** and **Start without voice** (the
+  remembered choice is the primary button; Play or Space starts with it). Started from a button on the page, it plays at
+  once. Guide mode is silent.
+- **No voice:** no `speechSynthesis`, no voices within about a second, or speech blocked: the Voice button is disabled
+  with "Voice isn't available in this browser", the first card offers only **Start**, and the tour plays with captions
+  and today's timing. An error during a tour (or speech that never ends: a safety timer from the word count) shows and
+  announces once "Voice stopped: continuing with captions"; the voice stays off for the rest of that run and the tour
+  goes on with its own timing, never stalling.
+- **Subtitles (.vtt):** while a tour plays, the player notes when each caption really appears and goes, from the start
+  of play; "Save subtitles (.vtt)" (in the panel while playing and at the end) downloads `<tour id>.vtt`, a WebVTT file
+  made in the page, that matches a screen recording of that run at any speed, voice on or off. The times are kept
+  only in memory for the current run (never in `localStorage`, never written anywhere or sent) and are gone on reload
+  unless you save them; only the Voice on/off choice is stored. Nothing is written to the repo.
+
 ## The file
 
 One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits, `_` and `-` (and not
@@ -145,6 +179,7 @@ One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits
 | `screen` | The screen id (its file name in `prototype/screens/`). |
 | `state` | One of that screen's `data-state` names (default: its first). |
 | `title`, `caption` | The coach-mark title and the subtitle / narration line. Use the project's vocabulary and the audience's tone. |
+| `say` | Optional: what the voice says instead of the caption (speech only; the screen shows the caption). Text, like `caption`. |
 | `target` or `targets` | One CSS selector, or several (several rings or labels in one step). |
 | `point` | How to point at the target: `spotlight` (dims the rest), `ring` (outline, rest visible), `arrow`, `beacon` (a pulsing dot; static with reduced motion), `zoom` (enlarges the area and outlines it; an area that already fills the view is only outlined), `cursor` (moves and clicks in play mode), `none`; or `{"style": "arrow", "label": "Start here"}`. |
 | `callout` | A bubble attached to the target: `{"text", "side": "top" \| "right" \| "bottom" \| "left"}`. |
@@ -199,7 +234,8 @@ Two passes, both evidence for the agent, never a substitute for looking ([script
 
 `build-prototype.py` writes `<docs>/tours/<id>.html` for each tour: one self-contained file with every screen (tokens,
 interactions) and that tour, opening straight into it (play mode for a client or what's-new audience, guide mode
-otherwise), in the tour's view: the full-window app (default) or the prototype page. It opens from disk with no server and no network, so it can be emailed or put in training
+otherwise; in play mode it waits on its first card for Start, with or without voice), in the tour's view: the
+full-window app (default) or the prototype page. It opens from disk with no server and no network, so it can be emailed or put in training
 material; viewers can leave the tour and click around. It is generated: never edit it, it is rebuilt whenever a screen
 or the tour changes, and `--check` fails when it is stale. A tour page whose tour file was removed is deleted.
 

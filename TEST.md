@@ -551,9 +551,12 @@ screenshots. `app.html` fills the window at both widths with no prototype panels
 `@container plumb-frame (min-width: 48rem)` layout shows at 1280 but not at 390.
 
 **The walkthrough player** (still headless): in the same script, open `plumb-scratch/docs/design/tours/first-look.html`
-(from 3.5) at 1440 and 1280 wide, wait for the tour to start, then:
+(from 3.5) at 1440 and 1280 wide, wait for the tour to start (a play-mode tour waits on its first card: press its
+Start), then:
 
 ```python
+if page.evaluate("window.plumbPlayer.state().waiting"):
+    page.click("[data-pl=start-quiet]")
 frame = page.evaluate("document.getElementById('pp-frame').getBoundingClientRect().width")
 cols = page.evaluate("[...document.querySelectorAll('.pp-side, #pp-rail')].filter(e => e.getClientRects().length).length")
 page.keyboard.press("h")
@@ -592,6 +595,30 @@ print("panel at the top for a pinned element:", pinned)
 **Expected:** `panel at the top for a pinned element: True` at both widths: the panel moves to the top of the window
 for that step (it would cover the pinned element at the bottom) and the page does not scroll. Reload: every step
 without a pinned element keeps the panel at the bottom.
+
+**Voice and subtitles:** headless browsers usually have no voices, so give the page a stand-in speech engine that
+ends each sentence after 50 ms (`page.add_init_script(FAKE)` before `page.goto`), open the same tour page in play mode,
+and play it through with the voice on at 2×:
+
+```python
+FAKE = """window.__said = []; window.speechSynthesis = { getVoices: () => [{name: 'Test', lang: 'en-US', default: true}],
+  speak(u) { __said.push([u.text, u.rate]); setTimeout(() => u.onend && u.onend({}), 50); }, cancel() {},
+  addEventListener() {} }; window.SpeechSynthesisUtterance = function (t) { this.text = t; };"""
+page.goto(path.as_uri() + "#tour-first-look")
+page.click("[data-pl=start-voice]")
+page.evaluate("window.plumbPlayer.setSpeed(2)")
+page.wait_for_function("window.plumbPlayer.state().ended", timeout=60000)
+with page.expect_download() as dl:
+    page.click(".pl-dock [data-pl=vtt]")
+vtt = open(dl.value.path(), encoding="utf-8").read()
+print("file", dl.value.suggested_filename, "| cues", vtt.count(" --> "), "| rates", sorted({r for _, r in page.evaluate("__said")}),
+      "| stored", page.evaluate("Object.keys(localStorage)"))
+```
+
+**Expected:** `file first-look.vtt`, one cue per card and step of the tour, in order, with the captions shown on
+screen; `rates [1.3]` (2×; 1× would be 0.9); `stored ['plumb.player.voice']` (the caption times stay in the page's
+memory). Without the stand-in (a plain headless browser, no voices), the Voice button is disabled with "Voice isn't
+available in this browser" and the first card offers only Start.
 
 ---
 
