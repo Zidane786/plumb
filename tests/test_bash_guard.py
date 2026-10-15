@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-from hook_support import (HOOKS, LAUNCHERS, PLUGIN, SKILL_REL, actionable, allowed, denied, hook_env, make_project,
-                          payload, refused, run_hook)
+from hook_support import (CI, HOOKS, LAUNCHERS, PLUGIN, SKILL_REL, actionable, allowed, denied, hook_env,
+                          ignores_case, make_project, payload, refused, run_hook)
 
 pytestmark = pytest.mark.skipif(not LAUNCHERS, reason="no hook launcher (sh or PowerShell) on this machine")
 
@@ -499,8 +499,68 @@ def test_the_forms_the_review_found_are_refused(decide, command):
 def test_the_second_reviews_writes_are_all_refused(decide):
     """Including what the earlier reader allowed: a script the command writes and runs, folders written into, write
     targets put together from names, sort -o / uniq / sed w, $1 in sh -c, source <(echo …), $'\\x2e'."""
-    allowed_now = [(label, cmd) for label, cmd in CASES.rr_writes(SKILL_REL, str(decide.proj)) if not decide.new(cmd)]
+    allowed_now = [(label, cmd) for label, cmd in CASES.rr_writes(SKILL_REL, str(decide.proj)) if not decide.new(cmd)
+                   and not (label == CASE_FOLDED and not _caseless(decide))]
     assert not allowed_now, allowed_now
+
+
+CASE_FOLDED = "case-folded path (case-insensitive file system)"
+
+
+def _caseless(decide) -> bool:
+    """Where the guard compares paths without case: the project's file system ignores case (the tests' own look), or
+    the platform is Windows or macOS (Plumb's files may sit on another volume there)."""
+    return ignores_case(decide.proj) or sys.platform in ("win32", "darwin")
+
+
+def test_a_path_in_another_case_follows_the_file_system(decide):
+    """Docs/Design/Screens.html is screens.html where the file system ignores case (Windows and macOS by default, a
+    casefold folder or a Windows drive in WSL on Linux): refused there. Where case counts (Linux by default) it is
+    another file, and writing it is allowed."""
+    command = "echo x > Docs/Design/Screens.html"
+    if _caseless(decide):
+        reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+        assert reason and " is generated" in reason, reason
+    else:
+        assert not decide.new(command)
+    assert decide.new(f"echo x > {GEN}")  # the path as written is refused everywhere
+
+
+def test_the_guard_asks_the_file_system_whether_case_counts(H, tmp_path, monkeypatch):
+    folder = tmp_path / "Proj"
+    folder.mkdir()
+    assert H.fs_ignores_case(str(folder)) is ignores_case(folder)
+    digits = folder / "2026"  # a name without letters: the folder above it decides
+    digits.mkdir()
+    assert H.fs_ignores_case(str(digits)) is ignores_case(folder)
+    assert H.fs_ignores_case(str(tmp_path / "missing" / "x")) is None
+    real = H.os.lstat
+
+    def case_sensitive(path, *a, **k):  # the other case is missing: a case-sensitive file system
+        if os.path.basename(path) == "pROJ":
+            raise FileNotFoundError(path)
+        return real(path, *a, **k)
+
+    def case_blind(path, *a, **k):  # the other case is the same folder
+        return real(str(folder) if os.path.basename(path) == "pROJ" else path, *a, **k)
+
+    for platform in (False, True):  # Linux; Windows and macOS (where paths are always compared without case)
+        monkeypatch.setattr(H, "PLATFORM_CASELESS", platform)
+        monkeypatch.setattr(H.os, "lstat", case_sensitive)
+        assert H.fs_ignores_case(str(folder)) is False
+        H.set_case_from(str(folder))
+        assert H.CASELESS is platform
+        assert (H.under(str(folder / "A.css"), str(folder).upper()) == "A.css") is platform
+        monkeypatch.setattr(H.os, "lstat", case_blind)
+        assert H.fs_ignores_case(str(folder)) is True
+        H.set_case_from(str(folder))
+        assert H.CASELESS is True and H.under(str(folder / "A.css"), str(folder).upper()) == "A.css"
+        monkeypatch.setattr(H.os, "lstat", real)
+        H.set_case_from(str(tmp_path / "missing"))  # cannot tell: the platform's way
+        assert H.CASELESS is platform
+    monkeypatch.undo()
+    H.set_case_from(str(folder))
+    assert H.CASELESS is (ignores_case(folder) or H.PLATFORM_CASELESS)
 
 
 @pytest.mark.parametrize("command", RULED_REFUSED)
@@ -525,14 +585,36 @@ def test_wrapped_writes_never_slip_past_the_earlier_reader(decide):
     assert not misses, misses[:10]
 
 
+# The in-process speed limit: the guard's own cost on a long command, far under the hook's 10 s timeout. A shared CI
+# runner (Windows most) or Python 3.9 is several times slower than a developer machine, so CI gets more room; the
+# fastest of a few runs is what counts (a busy machine slows single runs down).
+SPEED_LIMIT = 3.0 if CI or os.name == "nt" else 1.0
+
+
+def _fastest(decide, run, n: int = 3) -> float:
+    times = []
+    for _ in range(n):
+        decide.pe.H._EFFECTS_CACHE.clear()  # every run reads the command again
+        t = time.perf_counter()
+        run()
+        times.append(time.perf_counter() - t)
+        if min(times) < SPEED_LIMIT / 2:
+            break
+    return min(times)
+
+
 def test_a_command_too_long_to_read_is_refused_when_it_names_a_guarded_file(decide):
     filler = "; ".join(f"echo x > /tmp/f{i}" for i in range(6000))
-    t = time.perf_counter()
     reason = decide.pe.shell_refusal(decide.project, filler + f"; cat {GEN}", str(decide.proj), str(decide.proj))
     assert reason and "could not check this shell command" in reason and "screens.html" in reason, reason
     actionable(reason)
     assert decide.pe.shell_refusal(decide.project, filler, str(decide.proj), str(decide.proj)) is None
-    assert time.perf_counter() - t < 1.0
+
+    def both():
+        decide.pe.shell_refusal(decide.project, filler + f"; cat {GEN}", str(decide.proj), str(decide.proj))
+        decide.pe.shell_refusal(decide.project, filler, str(decide.proj), str(decide.proj))
+    took = _fastest(decide, both)
+    assert took < SPEED_LIMIT, f"{took:.2f} s (limit {SPEED_LIMIT} s)"
 
 
 def test_the_reviews_reads_and_ours_are_allowed(decide):
@@ -547,9 +629,18 @@ def test_a_long_for_loop_and_many_cp_arguments_are_fast(decide):
                     "cp " + " ".join(f"a{i}" for i in range(20000)) + " dest/",
                     "; ".join(f"echo x > /tmp/f{i}" for i in range(3000))):
         assert len(command) > 20000
-        t = time.perf_counter()
-        decide.new(command)
-        assert time.perf_counter() - t < 1.0, command[:60]
+        took = _fastest(decide, lambda: decide.new(command))
+        assert took < SPEED_LIMIT, f"{command[:60]}: {took:.2f} s (limit {SPEED_LIMIT} s)"
+    # the reader itself stays inside its own budget, so it decides (the earlier reader is not left to): in one of a
+    # few runs, as a busy machine slows single runs down
+    troubles = []
+    for _ in range(3):
+        decide.pe.H._EFFECTS_CACHE.clear()
+        troubles.append(decide.pe.H.shell_effects(command, str(decide.proj), str(decide.proj)).trouble)
+        if troubles[-1] is None:
+            break
+    decide.pe.H._EFFECTS_CACHE.clear()
+    assert troubles[-1] is None, troubles
 
 
 def test_a_glob_past_the_cap_makes_the_reader_unsure(H, tmp_path):
@@ -573,6 +664,68 @@ def test_past_its_time_budget_the_previous_reader_decides_and_one_line_is_logged
     assert "time budget" in text and "refused: the earlier reader decided" in text and "(failed open) · Given: the shell" not in text
     allowed(run_hook(launcher, "pre_edit.py", payload("claude", "bash", CWD=str(proj), COMMAND=f"cat {GEN}"), proj,
                      env))
+
+
+def test_the_time_budget_holds_on_a_coarse_clock(decide, monkeypatch):
+    """time.monotonic ticks only every ~16 ms on Windows before Python 3.13: a budget measured on it never ran out on a
+    short command there. The budget runs on a fine clock, so a monotonic clock that stands still changes nothing."""
+    H = decide.pe.H
+    monkeypatch.setattr(H.time, "monotonic", lambda: 1000.0)
+    monkeypatch.setenv("PLUMB_SHELL_BUDGET", "0")
+    command = f"git commit -m 'never > {GEN} by hand'"
+    H._EFFECTS_CACHE.clear()
+    eff = H.shell_effects(command, str(decide.proj), str(decide.proj))
+    assert eff.trouble is not None and eff.trouble[1] == "timeout", eff.trouble
+    H._EFFECTS_CACHE.clear()
+    assert decide.new(command)  # the earlier reader decides: refused
+    monkeypatch.delenv("PLUMB_SHELL_BUDGET")
+    H._EFFECTS_CACHE.clear()
+    assert not decide.new(command)  # within the budget the reader proves the message is data
+    H._EFFECTS_CACHE.clear()
+
+
+def test_real_paths_shared_across_a_command_match_realpath(H, tmp_path):
+    (tmp_path / "real" / "sub").mkdir(parents=True)
+    (tmp_path / "real" / "f.txt").write_text("x", encoding="utf-8")
+    paths = [tmp_path / "real" / "f.txt", tmp_path / "real" / "new.txt", tmp_path / "real" / "sub" / "a" / "b.txt",
+             tmp_path / "missing" / "deep" / "x.html", tmp_path / "real" / "sub"]
+    try:  # links where the system lets the test make them (Windows asks for developer mode)
+        os.symlink(str(tmp_path / "real"), str(tmp_path / "link"))
+        os.symlink(str(tmp_path / "real" / "f.txt"), str(tmp_path / "real" / "to-f.txt"))
+        os.symlink(str(tmp_path / "real" / "gone.txt"), str(tmp_path / "real" / "broken.txt"))
+        paths += [tmp_path / "link" / "new.txt", tmp_path / "link" / "f.txt", tmp_path / "real" / "to-f.txt",
+                  tmp_path / "real" / "broken.txt", tmp_path / "link" / "sub" / "z" / "y.txt"]
+    except (OSError, NotImplementedError):
+        pass
+    cache: dict = {}
+    for p in paths:
+        assert H.real_path(str(p), cache) == os.path.realpath(str(p)), p
+    assert H.real_path(str(paths[1]), cache) == os.path.realpath(str(paths[1]))  # from the cache
+
+
+@pytest.mark.parametrize("path,drive", [
+    ("/c/Users/me/proj", "C:/Users/me/proj"), ("/d", "D:/"), ("/cygdrive/e/x y/z.html", "E:/x y/z.html"),
+    ("/c", "C:/"), ("/cd/x", None), ("/tmp/x", None), ("c/x", None), ("C:/x", None), ("/1/x", None),
+])
+def test_bash_drive_paths_read_on_windows(H, path, drive):
+    """Claude Code runs Bash on Windows in Git for Windows' Bash, where /c/Users/... is C:\\Users\\...: the reader
+    reads both forms there (and only there)."""
+    assert H.msys_drive(path) == drive
+    assert H.path_forms(path) == ([path, drive] if drive and os.sep == "\\" else [path])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires Windows: drive letters")
+def test_windows_paths_in_every_form_are_refused(decide):
+    proj = str(decide.proj)
+    drive, rest = os.path.splitdrive(proj)
+    bash = "/" + drive[0].lower() + rest.replace("\\", "/")
+    for command in (f"echo x > '{bash}/{GEN}'", f"cd \"{bash}\" && echo x > {GEN}",
+                    f"cd '{bash}/docs' && rm design/screens.html",
+                    f"echo x > '{proj}\\docs\\design\\screens.html'", f"echo x > \"{proj.upper()}\\{GEN}\"",
+                    f"Set-Content -Path '{proj}\\docs\\design\\screens.html' -Value x",
+                    f"python3 -c \"open(r'{proj}\\docs\\design\\screens.html', 'w')\"",
+                    f"cp x '{drive.lower()}{rest}/{GEN}'"):
+        assert decide.new(command), command
 
 
 # ---------------------------------------------------------------- round 3: the allow paths, pinned on both sides

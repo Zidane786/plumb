@@ -66,7 +66,6 @@ import fnmatch
 import os
 import re
 import sys
-import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -75,11 +74,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _hooklib as H  # noqa: E402
 
 MAX_ISSUES = 10
-_CASE = re.I if H.CASELESS else 0
-_THEME = re.compile(r"Theme\.(?:swift|kt)$", _CASE)
-_PLATFORM_OUTPUTS = (re.compile(r"assets/platforms/web/(?:tokens\.css|tailwind\.tokens\.js)", _CASE),
-                     re.compile(r"assets/platforms/mobile/ios/[^/]*Theme\.swift", _CASE),
-                     re.compile(r"assets/platforms/mobile/android/[^/]*Theme\.kt", _CASE))
+# Matched without case where paths are compared without it (H.CASELESS, settled once the project is known).
+_THEME = r"Theme\.(?:swift|kt)$"
+_PLATFORM_OUTPUTS = (r"assets/platforms/web/(?:tokens\.css|tailwind\.tokens\.js)",
+                     r"assets/platforms/mobile/ios/[^/]*Theme\.swift",
+                     r"assets/platforms/mobile/android/[^/]*Theme\.kt")
+
+
+def _case() -> int:
+    return re.I if H.CASELESS else 0
 
 
 def _generated_header(path: str) -> bool:
@@ -191,7 +194,7 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
             if ((len(parts) == 2 and parts[0] == "scripts" and parts[1].endswith(".py"))
                     or (len(parts) >= 2 and parts[0] == "templates") or f(in_skill) == f("assets/platforms/README.md")):
                 return _own(shown)
-            if any(rx.fullmatch(in_skill) for rx in _PLATFORM_OUTPUTS):
+            if any(re.fullmatch(rx, in_skill, _case()) for rx in _PLATFORM_OUTPUTS):
                 return _tokens_output(proj, shown)
     home = proj.home_root()
     in_home = H.under(path, home)
@@ -212,7 +215,7 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
     proposal = _proposal_page(proj, in_project)
     if proposal is not None and (not os.path.isfile(path) or _proposal_header(path)):
         return _proposal_output(proj, shown, *proposal)
-    if _THEME.search(in_project) and os.path.isfile(path) and _generated_header(path):
+    if re.search(_THEME, in_project, _case()) and os.path.isfile(path) and _generated_header(path):
         return _tokens_output(proj, shown)
     return None
 
@@ -354,14 +357,30 @@ def removal_guard(proj: H.Project, path: str, cwd: str) -> Optional[str]:
     return None
 
 
-def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: str) -> Optional[str]:
+class _Checked:
+    """What one shell command's checks share: the (path, removal) pairs found allowed (the shell reader and the earlier
+    reader list mostly the same paths) and the real paths worked out (H.real_path)."""
+
+    def __init__(self) -> None:
+        self.allowed: set = set()
+        self.reals: dict = {}
+
+
+def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: str,
+                         checked: Optional[_Checked] = None) -> Optional[str]:
+    """The refusal for the first of these paths (absolute, normalised) the guard refuses, or None."""
+    checked = checked or _Checked()
     for target in paths:
-        path = os.path.realpath(target)
+        key = (target, removal)
+        if key in checked.allowed:
+            continue
+        path = H.real_path(target, checked.reals)
         why = removal_guard(proj, path, cwd) if removal else guard(proj, path)
         if why and is_copy(proj, path) and _has_block(path):
             why = _copy_shell_output(proj, copy_shown(proj, path))
         if why:
             return why
+        checked.allowed.add(key)
     return None
 
 
@@ -390,6 +409,7 @@ class _Guarded:
         self.files = guarded_files(proj, cwd)  # existing ones, the plugin root included
         self.names = sorted(set(_FIXED_NAMES) | {os.path.basename(f) for f in self.files if os.path.isfile(f)})
         self.seen: dict = {}
+        self.reals: dict = {}  # H.real_path's work, shared by every word of the command
         root = os.path.realpath(proj.root_s)
         # the folders Plumb owns whole: the docs folder (its generated pages), the design-system skill, its scripts/
         # and templates/ (never the project root or a folder above it, never the folder of a project file Plumb
@@ -404,7 +424,7 @@ class _Guarded:
 
     def path(self, path: str) -> bool:
         try:
-            real = os.path.realpath(path)
+            real = H.real_path(path, self.reals)
             if real not in self.seen:
                 self.seen[real] = bool(guard(self.proj, real)) or (
                     os.path.isdir(real) and any(H.under(f, real) is not None for f in self.files))
@@ -428,7 +448,7 @@ class _Guarded:
         guarded paths are matched, never the file system."""
         out: List[str] = []
         for kind, value, bases in items:
-            if time.monotonic() > deadline:
+            if H.clock() >= deadline:
                 break
             if kind == "lit":
                 out.append(value)
@@ -473,14 +493,14 @@ class _Guarded:
         `.` and the project root never count."""
         root = os.path.realpath(self.proj.root_s)
         for word in dict.fromkeys(w for w in words if w and not w.startswith(("$", "-", "\x00"))):
-            if time.monotonic() > deadline:
+            if H.clock() >= deadline:
                 return "a path Plumb ran out of time to check"
             w = os.path.expanduser(word.replace("\\", "/") if os.sep == "/" else word).rstrip("/\\")
             if not w or not re.search(r"[/\\]", w) or "$" in w or "`" in w:
                 continue  # a bare name, or a word with a part still unknown: only a full path counts
-            for base in bases:
+            for form, base in ((f, b) for f in H.path_forms(w) for b in bases):
                 try:
-                    real = os.path.realpath(os.path.normpath(w if os.path.isabs(w) else os.path.join(base, w)))
+                    real = os.path.realpath(os.path.normpath(form if os.path.isabs(form) else os.path.join(base, form)))
                 except (OSError, ValueError):
                     continue
                 if re.search(r"[*?\[]", w):
@@ -501,12 +521,12 @@ class _Guarded:
         if len(words) > _MAX_WORDS:
             return "a path among more words than Plumb checks"
         for word in dict.fromkeys(words):
-            if time.monotonic() > deadline:
+            if H.clock() >= deadline:
                 return "a path Plumb ran out of time to check"
             w = word[7:] if word.startswith("file://") else word
             w = os.path.expanduser(os.path.expandvars(w.replace("\\", "/") if os.sep == "/" else w))
-            for base in bases:
-                if self.path(os.path.normpath(w if os.path.isabs(w) else os.path.join(base, w))):
+            for form, base in ((f, b) for f in H.path_forms(w) for b in bases):
+                if self.path(os.path.normpath(form if os.path.isabs(form) else os.path.join(base, form))):
                     return word
         return None
 
@@ -520,7 +540,7 @@ def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str, rule: Optional[_Gu
     if eff.unsure:
         return False
     rule = rule or _Guarded(proj, cwd)
-    deadline = time.monotonic() + NAMES_BUDGET
+    deadline = H.clock() + NAMES_BUDGET
     if any(rule.text(text, bases, deadline) for text, bases in eff.other):
         return False
     for target in eff.code_writes:
@@ -540,7 +560,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
     when the target's own text names a guarded folder or file, or the command names a guarded path anywhere. Past the
     number of tries or the time the check has, the command-wide rule decides alone: refused when the command names a
     guarded path, else the earlier reader decides."""
-    deadline = time.monotonic() + NAMES_BUDGET
+    deadline = H.clock() + NAMES_BUDGET
     command_hit: List[Optional[str]] = []
     literal_seen: dict = {}
     yields: dict = {}
@@ -549,7 +569,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
     def in_command() -> Optional[str]:
         if not command_hit:
             command_hit.append(rule.target(eff.command_words(), tuple(dict.fromkeys((cwd, proj.root_s))),
-                                           time.monotonic() + NAMES_BUDGET))
+                                           H.clock() + NAMES_BUDGET))
         return command_hit[0]
 
     def unknown(word: str, scope) -> Optional[str]:
@@ -572,7 +592,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
                 f"target path out in full (and change {hit} the way Plumb's own message for it says)")
 
     for kind, word, sources, scope in eff.loop_targets:
-        if time.monotonic() > deadline or "#" in sources:
+        if H.clock() >= deadline or "#" in sources:
             return past_limits()
         if any(items == [H._ANY] for items in sources.values()):
             why = unknown(word, scope)
@@ -594,7 +614,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
         for options in choices:
             combos = [c + [o] for c in combos for o in options]
         for combo in combos:
-            if time.monotonic() > deadline:
+            if H.clock() >= deadline:
                 return past_limits()
             paths = H.substitute(word, dict(combo), scope, proj.root_s)
             if paths is None:  # a part still unknown after the variables ($TMPDIR, $OUT): the target's own text only
@@ -617,7 +637,7 @@ def _unread(proj: H.Project, command: str, base: str, cwd: str, rule: Optional[_
     """For a command the reader could not read: the first of its words that names a guarded file or folder (or a
     parent of one) by the guard's rule, or None."""
     bases = tuple(dict.fromkeys((base, cwd)))
-    return (rule or _Guarded(proj, cwd)).text(command, bases, time.monotonic() + NAMES_BUDGET)
+    return (rule or _Guarded(proj, cwd)).text(command, bases, H.clock() + NAMES_BUDGET)
 
 
 def _unread_refusal(hit: str, why: str) -> str:
@@ -651,12 +671,14 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
                       "it)", category="timeout", outcome=f"{'refused' if hit else 'allowed'} without reading it")
         return _unread_refusal(hit, size) if hit else None
     eff = H.shell_effects(command, base, proj.root_s)
-    why = (_shell_paths_refusal(proj, eff.writes, False, cwd) or _shell_paths_refusal(proj, eff.removals, True, cwd)
-           or _shell_paths_refusal(proj, eff.folder_writes, True, cwd))
+    checked = _Checked()  # paths found allowed are not checked again
+    why = (_shell_paths_refusal(proj, eff.writes, False, cwd, checked)
+           or _shell_paths_refusal(proj, eff.removals, True, cwd, checked)
+           or _shell_paths_refusal(proj, eff.folder_writes, True, cwd, checked))
     if why is None and eff.loop_targets:
         why = _loop_refusal(proj, eff, rule(), cwd)
     if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one
-        deadline = time.monotonic() + NAMES_BUDGET
+        deadline = H.clock() + NAMES_BUDGET
         named = next((n for n in (rule().target(words, bases, deadline) for words, bases in eff.computed) if n), None)
         if named is not None:
             why = (f"error: this shell command writes to or removes a path Plumb cannot work out, and that path is "
@@ -668,8 +690,8 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
         if hit is not None:
             why = _unread_refusal(hit, "it is too complex to read")
     if why is None:
-        floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
-                 or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
+        floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd, checked)
+                 or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd, checked))
         if floor is not None and not _proven(proj, eff, cwd, rule()):
             why = floor
     if eff.trouble is not None and eff.trouble[1] != "deep":  # deep nesting is the command's, not Plumb's mistake

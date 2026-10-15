@@ -275,7 +275,7 @@ def rr_writes(S, ABS):
         ("heredoc <<\"EOF\" then write", f"cat <<\"EOF\"\nhello\nEOF\necho x > {G}"),
         ("heredoc <<E\"O\"F then write", f"cat <<E\"O\"F\nhello\nEOF\necho x > {G}"),
         ("heredoc <<-EOF tabs then write", f"cat <<-EOF\n\thello\n\tEOF\necho x > {G}"),
-        ("case-folded path (macOS)", "echo x > Docs/Design/Screens.html"),
+        ("case-folded path (case-insensitive file system)", "echo x > Docs/Design/Screens.html"),
         ("./ and .. normalisation", "echo x > docs/design/../design/./screens.html"),
         ("glob in redirect", "echo x > docs/design/screen?.html"),
         ("exec {fd}>", f"exec {{fd}}> {G}"),

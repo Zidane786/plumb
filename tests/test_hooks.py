@@ -21,9 +21,9 @@ from pathlib import Path
 import pytest
 
 from hook_support import (BUILD_PROTOTYPE, BUILD_TOKENS, CI, HOOKS, LAUNCHERS, MAP, PLUGIN, PROPOSALS, REPO, SCREENS,
-                          SKILL_REL, actionable, allowed, build_proposal, context, git, git_init, hook_env, make_project,
-                          needs_git, notes, patch, payload, plant_markers, plugin_copy, plumb_md, plumb_tmp, read,
-                          refused, run_hook, run_script, set_plumb, write)
+                          SKILL_REL, TEMP_IGNORES_CASE, actionable, allowed, build_proposal, context, git, git_init,
+                          hook_env, make_project, needs_git, notes, patch, payload, plant_markers, plugin_copy, plumb_md,
+                          plumb_tmp, read, refused, run_hook, run_script, set_plumb, write)
 
 pytestmark = pytest.mark.skipif(not LAUNCHERS, reason="no hook launcher (sh or PowerShell) on this machine")
 
@@ -1433,7 +1433,7 @@ def test_builder_exemption_covers_only_the_builder_itself(launcher, tmp_path, pr
     assert " is generated" in refused(bash(launcher, tmp_path, proj, command))
 
 
-@pytest.mark.skipif(sys.platform not in ("darwin", "win32"), reason="requires macOS or Windows: case-insensitive file system")
+@pytest.mark.skipif(not TEMP_IGNORES_CASE, reason="requires macOS or Windows: case-insensitive file system")
 def test_generated_file_in_another_case_is_refused(launcher, tmp_path, proj):
     rel = f"{SKILL_REL}/assets/platforms/web/TOKENS.CSS"
     assert " is generated" in refused(write_tool(launcher, tmp_path, proj, rel, "x"))
@@ -1599,14 +1599,25 @@ def test_git_planted_in_the_project_is_never_run(launcher, tmp_path, proj):
 
 
 @pytest.mark.parametrize("command", [
-    "python3 -c \"open('{d}/a b/tokens.css', 'w').write('x')\"",
-    "python3 -c 'open(\"{d}/a b/tokens.css\", \"w\").write(\"x\")'",
+    "python3 -c \"open('{p}/a b/tokens.css', 'w').write('x')\"",
+    "python3 -c 'open(\"{p}/a b/tokens.css\", \"w\").write(\"x\")'",
+    "python3 -c \"open(r'{d}/a b/tokens.css', 'w').write('x')\"",
     "echo x > \"{d}/a b/tokens.css\"",
     "echo x > '{d}/a b/tokens.css'",
+    "echo x > '{p}/a b/tokens.css'",
 ])
 def test_shell_paths_with_spaces_are_read_whole(H, command, tmp_path):
-    found = _targets(H, command.format(d=tmp_path), str(tmp_path))
+    """{d} is the folder as the system writes it (C:\\Users\\... on Windows), {p} with forward slashes: in a plain
+    Python string a backslash starts an escape (\\t is a tab), as Python itself reads it, so code gives Windows paths
+    with / or in a raw string."""
+    found = _targets(H, command.format(d=tmp_path, p=tmp_path.as_posix()), str(tmp_path))
     assert os.path.join(str(tmp_path), "a b", "tokens.css") in [os.path.normpath(t) for t in found], found
+
+
+def test_inline_code_reads_escapes_as_python_does(H, tmp_path):
+    """'a\\tb.css' in Python code is a<TAB>b.css, not a\\tb.css: the reader sees the file the code really writes."""
+    found = _targets(H, "python3 -c \"open('x\\tokens.css', 'w')\"", str(tmp_path))
+    assert os.path.join(str(tmp_path), "x\tokens.css") in [os.path.normpath(t) for t in found], found
 
 
 def test_generated_file_under_a_folder_with_a_space_is_refused(launcher, tmp_path):

@@ -146,6 +146,20 @@ def _base_project() -> Path:
     return dest
 
 
+def ignores_case(folder: Path) -> bool:
+    """The tests' own look at the file system (not the guard's): the folder's name in the other case is the folder.
+    Windows and macOS file systems ignore case by default, Linux's do not."""
+    folder = Path(os.path.realpath(str(folder)))
+    while folder.name and folder.name.swapcase() == folder.name:
+        folder = folder.parent
+    other = folder.parent / folder.name.swapcase()
+    return bool(folder.name) and other.exists() and os.path.samefile(str(folder), str(other))
+
+
+# Whether the folder the tests' projects live in ignores case.
+TEMP_IGNORES_CASE = ignores_case(Path(tempfile.gettempdir()))
+
+
 def make_project(tmp_path: Path, name: str = "Café Ünïcode") -> Path:
     """A fresh copy of the built test project under tmp_path/<name>/demo."""
     dest = tmp_path / name / "demo"
