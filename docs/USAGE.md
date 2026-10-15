@@ -1081,60 +1081,71 @@ Three checks, in this order:
      `bash FILE`, `source FILE`, `make -f FILE`, `python3 - < FILE`).
 
    Otherwise the guard's earlier, stricter reading decides, and its refusal stands unless the command only
-   **mentions** the guarded file in one of four provable ways:
+   **mentions** the guarded file in one of three provable ways, or in a `git commit` message:
    - (a) inside a here-document, `echo`, `printf` or `tee` text written to another file, **unless that file may be
      used again**: the same command runs it, pipes it on, or names it, its stem (`import fixmod`) or its folder again;
      it is code (`.py`, `.js`, `.sh` …, or a file with no suffix) and the command also starts an interpreter, a shell or
-     a package tool; or it is a file a program picks up by itself (`sitecustomize.py`, `*.pth`, `.bashrc`, `.profile`,
+     a package tool; it is a file a program picks up by itself (`sitecustomize.py`, `*.pth`, `.bashrc`, `.profile`,
      `.npmrc`, `.curlrc`, `package.json`, `Makefile`, `conftest.py`, anything under `.git/` or `.husky/`, a hooks
-     folder or a file named as a git hook); the command can run text later where the guard does not look (a `trap`, a
-     shell function or `alias`, `BASH_ENV` / `ENV` / `PROMPT_COMMAND`, `eval`, `source`); or a glob in it matches
-     the file (`source *.md`). `cat > notes/plan.md <<'EOF'` that quotes a guarded path is fine;
-     `cat > fix.py <<'EOF' … EOF; python3 fix.py` is code;
+     folder or a file named as a git hook); the command can run text later (a `trap`, a shell function or `alias`,
+     `BASH_ENV` / `ENV` / `PROMPT_COMMAND`, `eval`, `source`); or a glob in it matches the file (`source *.md`).
+     `cat > notes/plan.md <<'EOF'` that quotes a guarded path is fine; `cat > fix.py <<'EOF' … EOF; python3 fix.py`
+     is code;
    - (b) as an argument of a read-only program (`cat`, `head`, `tail`, `grep`, `rg`, `wc`, `diff`, `ls`, `stat`,
      `file`, `sha256sum`, `jq` …);
    - (c) in inline code that gives it straight to a read (`open(p)` to read, `json.load(open(p))`,
-     `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`), or straight to
-     `print(…)`, `print(json.dumps(…))` or `console.log(…)` when the output goes to the screen (not piped, not
-     redirected to a file, not inside `$( … )` or another shell, the literal not also stored in a variable, and the
-     code never assigns to, renames or reaches `print`, `json`, `dumps`, `console` or `JSON` any other way (`as`,
-     `builtins`, `globals()`, `setattr`, `globalThis`, `Object.assign`, `console['log']`, destructuring) or moves the
-     output (`sys.stdout`, `dup2`)). The code runs no command or code, opens no
-     file through `opener=`, `os.open` or `os.fdopen`, imports nothing by a name it builds, and writes only to plain
-     paths that are not guarded, not next to a guarded file, not under `/dev/fd/` or `/proc/`, and not used again (the
-     same test as (a));
+     `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`). The code runs no
+     command or code, opens no file through `opener=`, `os.open` or `os.fdopen`, imports nothing by a name it builds,
+     and writes only to plain paths that are not guarded, not next to a guarded file, not under `/dev/fd/` or
+     `/proc/`, and not used again (the same test as (a)). Printing a guarded path (`print(…)`, `console.log(…)`,
+     `json.dumps(…)`) is not a read: such a command keeps the stricter answer;
    - (d) in a `git commit` message: only the values of `-m` / `--message` / `-F` / `--file` / `-t` (in every spelling:
      `--message=…`, `-m…`, `-F-`, `--file=-`, a cluster like `-am`) and a here-document or here-string on its stdin
-     are data. Every other word is still checked, a redirect on the
-     command is still a write, and it does not count when git is given an option that runs something (`-c` anywhere
-     before `commit`, `--config-env`, `--exec-path`), a variable is set before it (an editor, a config; author and committer names are
-     fine), or the same command wrote a hook (under `.git/hooks/`, `.husky/`, a hooks folder, or a file named as a
-     git hook).
+     are data. Every other word is still checked, a redirect on the command is still a write, and it does not count
+     when git is given an option that runs something (`-c` anywhere before `commit`, `--config-env`, `--exec-path`), a
+     variable is set before it (an editor, a config; author and committer names are fine), or the same command wrote
+     a hook (under `.git/hooks/`, `.husky/`, a hooks folder, or a file named as a git hook).
 
    Every other word of the command (an unknown program's words, code literals outside those positions, a variable's
    value) must name no guarded path by the guard's own rule: a guarded file whether it exists yet or not (a theme or
    tour not built yet, anything under the plugin), a folder that holds one, or a parent of one (`docs`).
 
+   A write or removal target the reader can't work out is refused outright when it is built from a guarded path: its
+   text (`$( … )`, backticks, `${…}`), the value of a variable it uses, or the words a loop variable takes (`for f in
+   docs/design/*.html; do sed -i … "$f"; done`, `$(ls …)`, `ls … | while read f`; an indirect `${!N}` or a `read`
+   from anywhere else is checked against the whole command) names a guarded file or a guarded folder (the docs folder,
+   the design-system skill, its `scripts/` or `templates/`) by its full path. A bare file name (`README.md`,
+   `globals.css`) or `.` is not enough: `echo x > "$(mktemp -d)/README.md"` is allowed.
+
    Anything else keeps the stricter answer, for example:
    - an `echo` to the screen that names a guarded file with a `>`;
-   - code that passes a guarded path to `dirname`, `join` or an f-string, or writes through a variable;
+   - code that passes a guarded path to `dirname`, `join`, an f-string or `print`;
    - a program the reader doesn't know, a runner (`npx`, `poetry run`, `conda run` …), `xargs` or a script run;
    - a variable or `$( … )` the reader can't resolve in a target or a `cd` (shell variables set in the same command,
-     `$PWD` and `$CLAUDE_PROJECT_DIR` are followed). A write or removal target it can't work out (`$( … )`, backticks,
-     `${…}`) is refused outright when its text, or the value of a variable it uses, names a guarded file or folder:
-     `cat a > "$(dirname docs/design/screens.html)/screens.html"`;
+     `$PWD` and `$CLAUDE_PROJECT_DIR` are followed);
    - code piped from a file, nesting deeper than the reader follows, or a reading that would take too long.
+
+   "Keeps the stricter answer" means the earlier reading decides: these are refused only when that reading finds a
+   guarded write target in them.
 
    A command over 64 KB, one whose brackets nest deeper than 200, and one the reader fails on are not read: each is
    refused when any of its words names a guarded file, a guarded folder or a parent of one, and otherwise the earlier
    reading decides. A reader failure or a command too long to read adds one line, with the real outcome, to the hooks'
    log (`/plumb:feedback`).
 
-   The guard is a consistency net, not a sandbox. Script files written before the command, `xargs`, `find -exec` on
-   the files found, `patch`, `tar -x`, `unzip`, `prettier --write`, editors like `ed`, commands run through other
-   tools, the project's own git hooks (`git commit` runs them), and a computed target whose text names no guarded
-   path (`> "$(cat target.txt)"`) are not followed. Restoring a file from git (`git checkout -- <file>`, `git restore`) is allowed.
-   `build-tokens.py --check` and the end-of-turn check catch the drift.
+   The guard is a consistency net, not a sandbox. Not followed:
+   - script files written before the command, `xargs`, `find -exec` on the files found, `patch`, `tar -x`, `unzip`,
+     `prettier --write`, editors like `ed`, and commands run through other tools;
+   - the project's own git hooks (`git commit` runs them);
+   - a computed target whose text names no guarded path (`> "$(cat target.txt)"`);
+   - a write or removal called through another name (`f = os.remove`, `print = os.remove`, `getattr(os, 'remove')`,
+     `const u = fs.unlinkSync`);
+   - a shell text written to a file and run later through a function, `alias`, `trap`, `BASH_ENV` / `ENV` /
+     `PROMPT_COMMAND`, `eval "$(cat …)"` or a glob (these void allow (a), so the earlier reading decides, but the
+     file's text is not read as code).
+
+   Restoring a file from git (`git checkout -- <file>`, `git restore`) is allowed. `build-tokens.py --check` and the
+   end-of-turn check catch the drift.
 
    ```
    error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build

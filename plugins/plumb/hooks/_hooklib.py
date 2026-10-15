@@ -1145,7 +1145,7 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 #
 # What a Bash or PowerShell command writes, moves away or removes, for the guard. The earlier reader
 # (_shell_legacy.py) decides; this reader adds what it finds, and may turn the earlier reader's refusal into an allow
-# only in four provable patterns (pre_edit._proven):
+# only in three provable patterns and a commit message (pre_edit._proven):
 # (a) a here-document / here-string / echo / printf / tee text written to a file that the same command may not use
 #     again (_data_file_used: it does not run, source, pipe, import, or name the file, its stem or its folder a second
 #     time; it is not code while the command starts an interpreter; it is not a file a program picks up by itself:
@@ -1153,17 +1153,18 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 # (b) the words of a read-only program (cat, head, tail, grep, rg, wc, diff, ls, stat, file, sha*sum, jq …);
 # (c) inline code (python -c, node -e, a here-document fed to an interpreter) that gives each guarded literal straight
 #     to a read sink (open(p) to read, json.load(open(p)), Path(p).read_text / exists / is_file, spec_from_file_location,
-#     fs.readFileSync / existsSync, require) or to print / print(json.dumps(…)) / console.log of a top-level command
-#     whose output reaches the screen (_printed: not piped or redirected, nothing rebinds print), runs no command or
-#     code, opens nothing through opener= / os.open / os.fdopen, imports nothing by a name it builds, and writes only to
-#     plain literals that are not guarded, not next to a guarded file, not /dev/fd/ or /proc/, and not used again (a);
+#     fs.readFileSync / existsSync, require), runs no command or code, opens nothing through opener= / os.open /
+#     os.fdopen, imports nothing by a name it builds, and writes only to plain literals that are not guarded, not next
+#     to a guarded file, not /dev/fd/ or /proc/, and not used again (a); printing a guarded literal is not a read;
 # (d) a git commit message: the values of -m / --message / -F / --file / -t and stdin are data; not with a git option
 #     that runs something (-c, --config-env, --exec-path), a variable set before git, or a hook the command wrote.
 # Anything else keeps the earlier decision: an unknown program's words (other text), a runner (npx, poetry run …),
 # xargs, a script run, a variable or $( ) it cannot resolve in a target or a cd, code piped from a file, an f-string,
 # nesting deeper than it reads, too many globbed paths, a parse error, or the time budget. Brackets nested past
 # _MAX_NESTING are not read at all, and pre_edit refuses such a command (and one the reader crashed on) when it names
-# a guarded path.
+# a guarded path. A write target it cannot work out ($( ), backticks, ${…}, a for / read loop variable) is kept in
+# eff.computed with the text it is built from (variable values, the words a loop variable takes; the whole command
+# for ${!N} or a read from an unknown source), and pre_edit refuses it when that text names a guarded path in full.
 #
 # A small lexer (quotes, escapes, here-documents, $( ), backticks, process substitution, subshells, comments, the
 # operators) splits the command into simple commands. Their write targets: a redirect (>, >>, 1>, 2>, &>, >|, <>),
@@ -1536,17 +1537,19 @@ class _Scope:
     earlier in the command, pushd's stack, and (shared by the whole command) the files it wrote, with their text when
     the reader knows it."""
 
-    __slots__ = ("bases", "vars", "dirs", "written")
+    __slots__ = ("bases", "vars", "dirs", "written", "loops")
 
     def __init__(self, bases: Tuple[str, ...], variables: Dict[str, str], dirs: Optional[List[Tuple[str, ...]]] = None,
-                 written: Optional[Dict[str, Optional[str]]] = None) -> None:
+                 written: Optional[Dict[str, Optional[str]]] = None,
+                 loops: Optional[Dict[str, List[str]]] = None) -> None:
         self.bases = bases
         self.vars = variables
         self.dirs = dirs if dirs is not None else []
         self.written = written if written is not None else {}
+        self.loops = loops if loops is not None else {}  # for / read variables: the words they may take
 
     def copy(self) -> "_Scope":
-        return _Scope(self.bases, dict(self.vars), list(self.dirs), self.written)
+        return _Scope(self.bases, dict(self.vars), list(self.dirs), self.written, dict(self.loops))
 
     def expand(self, word: str) -> str:
         return _VAR.sub(lambda m: self.vars.get(m.group(1) or m.group(2), m.group(0)), word) if "$" in word else word
@@ -1586,6 +1589,7 @@ class ShellEffects:
         # targets the reader cannot work out ($( ), backticks, ${…}): their text (with the values of the variables
         # they use) and the folders they were in; pre_edit refuses one that names a guarded path
         self.computed: List[Tuple[str, Tuple[str, ...]]] = []
+        self.command = ""  # the whole command (an indirect ${!N} target is checked against all of it)
         self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
     def doubt(self, why: str) -> None:
@@ -1633,8 +1637,13 @@ class ShellEffects:
         w = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", w))
         if strict and ("$" in w or "`" in w):
             if target and len(self.computed) < _MAX_TARGETS:
-                used = [scope.vars[m.group(1)] for m in re.finditer(r"\$\{?#?!?([A-Za-z_]\w*)", word)
-                        if m.group(1) in scope.vars]
+                used: List[str] = []
+                for m in re.finditer(r"\$\{?#?(!?)([A-Za-z_]\w*)", word):
+                    name = m.group(2)
+                    used += [scope.vars[name]] if name in scope.vars else []
+                    used += scope.loops.get(name, [])
+                    if m.group(1) or scope.loops.get(name) == [_ANY]:  # ${!N}, read from an unknown source
+                        used.append(self.command)
                 self.computed.append((" ".join([word, w] + used), scope.bases))
             self.doubt("a variable or a command the reader cannot resolve in a path")
         out: List[str] = []
@@ -2284,10 +2293,8 @@ def _simple(cmd: _Simple, scope: _Scope, eff: ShellEffects, depth: int, before: 
             if file_word:
                 path = file_word.replace(".", "/") + ".py" if kind == "module" else file_word
                 _run_file(path, lang, argv, scope, eff, depth)
-        # print allow: only a top-level command whose output reaches the screen (not piped, not redirected to a file)
-        shown = depth == 0 and not cmd.pipe_out and all(r.lower() in ("/dev/null", "nul", "$null") for r in cmd.redirs)
         for text in code:
-            _code(text, lang, argv, scope, eff, depth, shown=shown)
+            _code(text, lang, argv, scope, eff, depth)
         provable = kind in ("code", "stdin")
         if provable:
             eff.note(scope, *argv)
@@ -2404,6 +2411,45 @@ def _assign(words: List[str], scope: _Scope, eff: ShellEffects) -> bool:
     return True
 
 
+_ANY = "\x00any"  # a read variable whose source the reader does not know
+
+
+def _bind_loop(words: List[str], cmd: _Simple, before: Optional[_Simple], scope: _Scope, eff: ShellEffects) -> None:
+    """`for VAR in WORDS`: VAR may take each word (a glob expanded in the folder, the paths named inside a $( ) such as
+    $(ls docs/*.html)); `PRODUCER | while read VAR`: the producer's words; a read with any other source: unknown (its
+    target is then checked against the whole command)."""
+    if len(words) >= 2 and words[0] == "for" and re.fullmatch(r"[A-Za-z_]\w*", words[1]):
+        values = words[3:] if words[2:3] == ["in"] else []
+        scope.loops[words[1]] = _loop_words(values, scope)
+    elif words and _command_name(words[0]) == "read":
+        names = [w for w in words[1:] if re.fullmatch(r"[A-Za-z_]\w*", w)]
+        if cmd.piped and before is not None:
+            source = _loop_words(before.words[_command_start(before.words, eff) + 1:] + list(before.stdin), scope)
+        else:
+            source = [_ANY]
+        for name in names:
+            scope.loops[name] = source
+
+
+def _loop_words(values: List[str], scope: _Scope) -> List[str]:
+    out: List[str] = []
+    for v in values:
+        inner = re.findall(r"\$\((.*?)\)|`(.*?)`", v, re.S)
+        parts = [x for pair in inner for x in pair if x] or [v]
+        for part in parts:
+            for word in part.split() if part is not v else [v]:
+                if word.startswith("-"):
+                    continue
+                out.append(word)
+                if re.search(r"[*?\[]", word):
+                    for base in scope.bases:
+                        full = word if os.path.isabs(word) else os.path.join(base, word)
+                        out += glob.glob(full)[:_MAX_GLOB]
+        if len(out) > _MAX_TARGETS:
+            break
+    return out[:_MAX_TARGETS]
+
+
 def _script(text: str, scope: _Scope, eff: ShellEffects, depth: int = 0) -> None:
     """Read a shell script's commands for their writes and removals. `cd DIR` moves the folder for the commands after
     it (not past the end of a subshell); a command substitution runs in the folder of its command."""
@@ -2437,6 +2483,7 @@ def _script(text: str, scope: _Scope, eff: ShellEffects, depth: int = 0) -> None
             if _literal_output(sub) is None:
                 _script(sub, here.copy(), eff, depth + 1)
         words = cmd.words[_command_start(cmd.words, eff):]
+        _bind_loop(words, cmd, before, here, eff)
         if not cmd.redirs and _assign(cmd.words, here, eff):
             pass
         elif not _cd(words, here, eff):
@@ -2872,7 +2919,6 @@ class _Code:
         self.argv = argv
         self.o2c, self.c2o = _brackets(self.text)
         self.calls: List[_Call] = []
-        self.print_safe: Optional[bool] = None  # see _print_safe
         s = self.text
         for m in _CALL.finditer(s):
             if len(self.calls) % 256 == 0:
@@ -2957,13 +3003,11 @@ def _read_sink(c: _Code, call: _Call) -> Optional[str]:
     return None
 
 
-def _code(code: str, lang: str, argv: List[str], scope: _Scope, eff: ShellEffects, depth: int,
-          shown: bool = False) -> None:
+def _code(code: str, lang: str, argv: List[str], scope: _Scope, eff: ShellEffects, depth: int) -> None:
     """Read inline code (lang "py", "js" or "ps") for the files it writes and removes; and for (c): the reader is
     unsure when it runs commands or code, opens files in a way it does not check (opener=, os.open, os.fdopen), or
     writes to anything but a plain literal (a /dev/fd/ or /proc/ target included); its literals that are not given
-    straight to a read sink go to eff.other; its plain literal targets to eff.code_writes. shown: the interpreter's
-    output goes to the screen (not piped), so a literal given straight to print / console.log is data."""
+    straight to a read sink go to eff.other; its plain literal targets to eff.code_writes."""
     eff.tick()
     c = _Code(code, lang, argv, eff)
     s = c.text
@@ -2988,9 +3032,6 @@ def _code(code: str, lang: str, argv: List[str], scope: _Scope, eff: ShellEffect
         sink = _read_sink(c, call)
         if sink is not None and _LIT.fullmatch(sink.strip()):
             read_ok.add(int(sink.strip()[1:-1]))
-        if shown:
-            for arg in _printed(c, call):
-                read_ok.add(int(arg[1:-1]))
         if _keyword(args, ("opener",)) is not None or (low in ("open", "fdopen") and recv == "os") or low == "fdopen":
             eff.doubt("inline code that opens a file in a way the reader does not check")
         if (low in ("import_module", "__import__") or (low in ("require", "import") and not method)) \
@@ -3094,45 +3135,6 @@ def _code(code: str, lang: str, argv: List[str], scope: _Scope, eff: ShellEffect
     eff.note(scope, *(value for index, (value, _exact) in enumerate(c.lits) if index not in read_ok))
 
 
-_PRINT_REBOUND = re.compile(
-    r"\b(?:builtins|__builtins__|setattr|globals|locals|vars|__dict__|globalThis|global|window|self|Reflect|"
-    r"defineProperty|__proto__|prototype|modules|stdout|dup2|__import__|importlib)\b|\bwith\s*\("
-    r"|\b(?:def|class|function|lambda|let|const|var)\s+(?:print|json|JSON|console|dumps|stringify|log)\b"
-    r"|(?<![\w$.])print\b(?!\s*\()|\b(?:dumps|stringify)\b(?!\s*\()"
-    r"|(?<![\w$.])(?:json|JSON|console)\b(?!\s*\.\s*[\w$]+\s*\()")
-_IMPORT_LINE = re.compile(r"\bfrom\s+[\w.]+\s+import\s+[\w., ]+|\bimport\s+[\w.]+(?:\s*,\s*[\w.]+)*")
-
-
-def _print_safe(c: _Code) -> bool:
-    """print / json.dumps / console.log / JSON.stringify are the built-ins in this code: nothing rebinds them (an
-    assignment, a def, an `as` name, builtins / globalThis, a with block) or moves the output (sys.stdout, dup2)."""
-    if c.print_safe is None:
-        s = c.text
-        c.print_safe = (re.search(r"\bas\s+(?:print|json|JSON|console|dumps|stringify)\b", s) is None
-                        and _PRINT_REBOUND.search(_IMPORT_LINE.sub(" ", s)) is None)
-    return c.print_safe
-
-
-def _printed(c: _Code, call: _Call) -> List[str]:
-    """The literals a call only shows on the screen: print(LIT …), print(json.dumps(LIT)), console.log(LIT …); a
-    literal that is also bound to a name elsewhere in the code is not one, nor is any when the code could rebind print
-    (or json, console) or move its output, or the call names a file= to print to."""
-    low = call.name.lower()
-    if not ((low == "print" and not call.method) or (low in ("log", "info", "error", "warn") and call.recv == "console")):
-        return []
-    if not _print_safe(c) or _keyword(call.args, ("file",)) is not None:
-        return []
-    out = []
-    for arg in call.pos:
-        m = re.fullmatch(r"(?:json\s*\.\s*dumps|JSON\s*\.\s*stringify)\s*\(\s*(\x01\d+\x02)\s*\)|(\x01\d+\x02)", arg.strip())
-        if m:
-            lit = m.group(1) or m.group(2)
-            value = c.lits[int(lit[1:-1])][0]
-            if sum(1 for v, _e in c.lits if v == value) == 1:
-                out.append(lit)
-    return out
-
-
 # Files a program picks up by itself (startup files, hooks, project files) and code that can be imported by name.
 _PICKED_UP = re.compile(r"(?:^|/)(?:sitecustomize\.py|usercustomize\.py|[^/]*\.pth|\.pythonrc(?:\.py)?|\.bashrc|"
                         r"\.bash_profile|\.bash_login|\.bash_logout|\.profile|\.zshrc|\.zprofile|\.zshenv|\.zlogin|"
@@ -3169,7 +3171,7 @@ class _Words:
             self.stems[stem] = self.stems.get(stem, 0) + 1
         self.loads = _LOADERS.search(command) is not None
         self.deferred = _DEFERRED.search(command) is not None
-        self.globs = [g for g in re.findall(r"[^\s'\"`=;|&<>(){}]*[*?\[][^\s'\"`=;|&<>(){}]*", command)][:_MAX_TARGETS]
+        self.globs = re.findall(r"[^\s'\"`=;|&<>(){}]*[*?\[][^\s'\"`=;|&<>(){}]*", command)[:_MAX_TARGETS]
         self.folders: Dict[str, int] = {}
 
     def folder_count(self, folder: str) -> int:
@@ -3235,6 +3237,7 @@ def shell_effects(command: str, cwd: str, root: Optional[str] = None) -> ShellEf
         except ValueError:
             budget = SHELL_BUDGET
         eff = ShellEffects(root, time.monotonic() + budget)
+        eff.command = command
         scope = _Scope((cwd,), {})
         try:
             if _nesting(command) > _MAX_NESTING:  # not read: pre_edit refuses it when it names a guarded path

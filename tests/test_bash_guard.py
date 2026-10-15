@@ -601,8 +601,9 @@ GIT_REFUSE = [
     f"git log --grep 'x > {GEN} by hand'",  # not commit
 ]
 
-# print: allowed when the literal goes straight to the screen.
-PRINT_ALLOW = [
+# print / console.log / json.dumps of a guarded literal is not a proven read (ruling, round 5: the print allow is
+# removed): the earlier reader decides, and it refuses each of these.
+PRINTS = [
     f"python3 -c \"import json; print('{GEN}'); {DUMP}\"",
     f"python3 -c \"import json; print(json.dumps('{GEN}')); {DUMP}\"",
     f"node -e \"console.log('{GEN}'); require('fs').writeFileSync('/tmp/plumb-y.txt', 'x')\"",
@@ -668,7 +669,12 @@ CODE_REFUSE = [
 ]
 
 
-@pytest.mark.parametrize("command", GIT_ALLOW + PRINT_ALLOW + DATA_ALLOW + CODE_ALLOW)
+@pytest.mark.parametrize("command", PRINTS)
+def test_a_printed_guarded_literal_keeps_the_earlier_decision(decide, command):
+    assert decide.old(command) and decide.new(command), command
+
+
+@pytest.mark.parametrize("command", GIT_ALLOW + DATA_ALLOW + CODE_ALLOW)
 def test_the_provable_allows_turn_an_earlier_refusal_into_an_allow(decide, command):
     assert decide.old(command), "the earlier reader allows it already: the case proves nothing"
     assert not decide.new(command), command
@@ -773,8 +779,34 @@ COMPUTED_REFUSE = [
 ]
 COMPUTED_ALLOW = [
     "cat a > \"$(mktemp -d)/out.txt\"",
+    # a guarded file's bare name, a substring of one, or `.` is not a guarded path (only a full path counts)
+    "echo x >> \"$(mktemp -d)/README.md\"",
+    "echo x > \"$OUT_DIR/README.md\"",
+    "echo x > \"$(mktemp -d)/globals.css\"",
+    "echo x > \"$(mktemp -d)/audit.py\"",
+    "cp /tmp/a \"$(mktemp -d)/player.js\"",
+    "echo x > \"$(mktemp -d)/myapp.html\"",
+    "cat a > \"$(realpath .)/notes/out.txt\"",
+    "for f in notes/*.md; do sed -i 's/a/b/' \"$f\"; done",  # a loop over files that are not guarded
+    "ls notes/*.md | while read f; do cp \"$f\" /tmp/; rm \"$f\"; done",
     "D=$(mktemp -d); echo x > \"$D/notes.txt\"",
     "cp /tmp/a \"`mktemp`\"",
+]
+
+
+# Loop variables: a for / read variable takes its words (globs expanded); an indirect ${!N} or a read with an unknown
+# source is checked against the whole command.
+COMPUTED_REFUSE += [
+    "for f in docs/design/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in docs/design/*.html; do sed -i 's/a/b/' \"${f}\"; done",
+    "for f in docs/design/*.html; do rm \"$f\"; done",
+    f"for f in {GEN}; do cp /tmp/x \"$f\"; done",
+    f"for f in {SKILL_REL}/scripts/*.py; do echo x >> \"$f\"; done",
+    "for f in $(ls docs/design/*.html); do sed -i 's/a/b/' \"$f\"; done",
+    "for f in $(find docs/design -name '*.html'); do rm \"$f\"; done",
+    "ls docs/design/*.html | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    f"while read f; do rm \"$f\"; done <<'EOF'\n{GEN}\nEOF",
+    f"G={GEN}; N=G; echo x > \"${{!N}}\"",
 ]
 
 
@@ -783,6 +815,19 @@ def test_a_target_it_cannot_work_out_is_refused_when_its_text_names_a_guarded_pa
     reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
     assert reason, command
     actionable(reason)
+    assert "README.md" not in reason.split("\n")[0] or "platforms/README.md" in reason
+
+
+def test_a_computed_target_refusal_names_the_real_guarded_path(decide):
+    reason = decide.pe.shell_refusal(decide.project, f"cat a > \"$(dirname {GEN})/screens.html\"", str(decide.proj),
+                                     str(decide.proj))
+    assert reason and ("docs/design/screens.html" in reason or "docs/design," in reason), reason
+
+
+def test_a_loop_over_guarded_files_is_refused_end_to_end(launcher, tmp_path, proj):
+    reason = refused(claude(launcher, tmp_path, proj, "for f in docs/design/*.html; do sed -i 's/a/b/' \"$f\"; done"))
+    actionable(reason)
+    allowed(claude(launcher, tmp_path, proj, "for f in notes/*.md; do sed -i 's/a/b/' \"$f\"; done"))
 
 
 @pytest.mark.parametrize("command", COMPUTED_ALLOW)
@@ -837,3 +882,34 @@ def test_the_allow_conditions_hold_in_every_spelling(decide, command):
 @pytest.mark.parametrize("command", GIT_SPELLINGS_ALLOW)
 def test_git_commit_message_spellings_are_data(decide, command):
     assert decide.proven(command) and not decide.new(command), command
+
+
+# R4: the voided allows in the real decision. Each body is one the earlier reader refuses, so the command is refused
+# end to end (decide.old and decide.new) when its allow does not hold, and once through the launchers.
+BODY = f"open('{GEN}', 'w').write('x')"
+VOIDED_END_TO_END = [
+    f"cat > q.md <<'EOF'\n{BODY}\nEOF\neval \"$(cat q*)\"",
+    f"cat > notes/fix.md <<'EOF'\n{BODY}\nEOF\ntrap 'python3 notes/*.md' EXIT",
+    f"cat > notes/fix.md <<'EOF'\n{BODY}\nEOF\nalias go='python3 notes/fix.md'",
+    f"cat > notes/fix.md <<'EOF'\n{BODY}\nEOF\nf() {{ python3 notes/*.md; }}; f",
+    f"cat > env.md <<'EOF'\n{BODY}\nEOF\nBASH_ENV=env.md bash -c true",
+    f"cat > p.md <<'EOF'\n{BODY}\nEOF\nPROMPT_COMMAND='python3 p.md'",
+    f"cat > site/x.pth <<'EOF'\nimport os; {BODY}\nEOF",
+    f"python3 -c \"import os, json; print = os.remove; print('{GEN}'); {DUMP}\"",
+    f"python3 -c \"import os, json, builtins as b; b.print = os.remove; print('{GEN}'); {DUMP}\"",
+    f"node -e \"globalThis.console = {{log: require('fs').unlinkSync}}; console.log('{GEN}'); "
+    "require('fs').writeFileSync('/tmp/plumb-y', 'x')\"",
+    f"node -e \"this.console = {{log: require('fs').unlinkSync}}; console.log('{GEN}'); "
+    "require('fs').writeFileSync('/tmp/plumb-y', 'x')\"",
+    f"cat > .githooks/pre-commit <<'EOF'\n{BODY}\nEOF\ngit commit -m 'never > {GEN} by hand'",
+]
+
+
+@pytest.mark.parametrize("command", VOIDED_END_TO_END)
+def test_a_voided_allow_is_refused_in_the_real_decision(decide, command):
+    assert decide.old(command) and decide.new(command), command
+
+
+@pytest.mark.parametrize("command", VOIDED_END_TO_END[:2] + VOIDED_END_TO_END[7:8])
+def test_a_voided_allow_is_refused_through_the_launchers(launcher, tmp_path, proj, command):
+    actionable(refused(claude(launcher, tmp_path, proj, command)))

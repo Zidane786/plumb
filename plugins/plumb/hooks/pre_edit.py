@@ -23,13 +23,14 @@ In such a project, in this order:
    Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell, eval), a file
    the command wrote and then runs, and in inline code (python -c, node -e, a here-document fed to an interpreter)
    open(<path>, "w"|"a"|"x"), Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like, with
-   targets put together from the code's constants. A target the reader cannot work out ($( ), backticks, ${…}) is
-   refused when its text (or the value of a variable it uses) names a guarded file or folder. A refusal of the
-   earlier reader becomes an allow only when the shell reader proves it (_proven): (a) a here-document / echo / printf / tee text written to a file the same
-   command does not run, import, name again or leave where a program picks it up (a Makefile whose lines run the
-   scripts is fine; sitecustomize.py, .bashrc, a git hook are not), (b) a read-only program's words, (c) inline code
-   that only reads its guarded literals (json.load, importlib, Path.read_text) or prints them to the screen, and writes
-   only to plain literals away from them, (d) a git commit message (-m / -F / -t values, a here-document on stdin),
+   targets put together from the code's constants. A target the reader cannot work out ($( ), backticks, ${…}, a
+   for / read loop variable) is refused when its text, the value of a variable it uses or the words a loop variable
+   takes name a guarded file or folder by its full path (_Guarded.target). A refusal of the earlier reader becomes an
+   allow only when the shell reader proves it (_proven): (a) a here-document / echo / printf / tee text written to a
+   file the same command does not run, import, name again or leave where a program picks it up (a Makefile whose
+   lines run the scripts is fine; sitecustomize.py, .bashrc, a git hook are not), (b) a read-only program's words,
+   (c) inline code that only reads its guarded literals (json.load, importlib, Path.read_text) and writes only to
+   plain literals away from them, (d) a git commit message (-m / -F / -t values, a here-document on stdin),
    unless git is given an option that runs something, a variable is set before it, or the command wrote a hook. Every
    other word must name no guarded path by guard()'s own rule (files that do not exist yet, the plugin root, a
    folder that holds a guarded file or a parent of one). Running build-tokens.py or build-prototype.py, and anything
@@ -324,6 +325,14 @@ class _Guarded:
         self.files = guarded_files(proj, cwd)  # existing ones, the plugin root included
         self.names = sorted(set(_FIXED_NAMES) | {os.path.basename(f) for f in self.files if os.path.isfile(f)})
         self.seen: dict = {}
+        root = os.path.realpath(proj.root_s)
+        folders = {os.path.dirname(f) for f in self.files if os.path.isfile(f)}
+        folders.add(os.path.realpath(os.path.join(proj.root_s, proj.docs_rel)))
+        if proj.skill_dir is not None:
+            skill = os.path.realpath(str(proj.skill_dir))
+            folders |= {skill, os.path.join(skill, "scripts"), os.path.join(skill, "templates")}
+        # a guarded folder: one that holds guarded files itself (never the project root or a folder above it)
+        self.folders = {f for f in folders if H.under(root, f) is None}
 
     def path(self, path: str) -> bool:
         try:
@@ -334,6 +343,29 @@ class _Guarded:
             return self.seen[real]
         except (OSError, ValueError):
             return True  # a path the system cannot even look up: not proved safe
+
+    def target(self, text: str, bases, deadline: float) -> Optional[str]:
+        """For a target the reader could not work out: the first guarded file or guarded folder that a word of text
+        names by its full path (from one of bases, or absolute; a glob by its folder), shown from the project root, or
+        None. A bare file name, `.` and the project root never count."""
+        for word in dict.fromkeys(w for w in _WORD_SPLIT.split(text) if w and not w.startswith(("$", "-"))):
+            if time.monotonic() > deadline:
+                return "a path Plumb ran out of time to check"
+            w = os.path.expanduser(word.replace("\\", "/") if os.sep == "/" else word).rstrip("/\\")
+            if not w or not re.search(r"[/\\]", w):
+                continue  # a bare name: only a full path counts
+            globbed = re.search(r"[*?\[]", w) is not None
+            for base in bases:
+                full = os.path.normpath(w if os.path.isabs(w) else os.path.join(base, w))
+                candidates = [os.path.dirname(full)] if globbed else [full]
+                for c in candidates:
+                    try:
+                        real = os.path.realpath(c)
+                    except (OSError, ValueError):
+                        continue
+                    if real in self.folders or (not globbed and guard(self.proj, real)):
+                        return H.under(real, os.path.realpath(self.proj.root_s)) or real
+        return None
 
     def text(self, text: str, bases, deadline: float) -> Optional[str]:
         """The first guarded name or path in text (each word resolved in each of bases, ~ and $VARS expanded), or
@@ -355,15 +387,15 @@ class _Guarded:
         return None
 
 
-def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str) -> bool:
+def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str, rule: Optional[_Guarded] = None) -> bool:
     """The shell reader proves the command's guarded paths are data or reads: (a) a here-document / echo / printf / tee
     text written to a file the command does not use again, (b) a read-only program's words, (c) inline code that gives
-    each guarded literal straight to a read sink (or to print on the screen) and writes only to plain literals away
+    each guarded literal straight to a read sink and writes only to plain literals away
     from the guarded files, (d) a git commit message. Every other word (eff.other) must name no guarded path by the
     guard's own rule."""
     if eff.unsure:
         return False
-    rule = _Guarded(proj, cwd)
+    rule = rule or _Guarded(proj, cwd)
     deadline = time.monotonic() + NAMES_BUDGET
     if any(rule.text(text, bases, deadline) for text, bases in eff.other):
         return False
@@ -374,10 +406,10 @@ def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str) -> bool:
     return True
 
 
-def _unread(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+def _unread(proj: H.Project, command: str, base: str, cwd: str, rule: Optional[_Guarded] = None) -> Optional[str]:
     """For a command the reader could not read: the first of its words that names a guarded file or folder (or a
     parent of one) by the guard's rule, or None."""
-    return _Guarded(proj, cwd).text(command, tuple(dict.fromkeys((base, cwd))), time.monotonic() + NAMES_BUDGET)
+    return (rule or _Guarded(proj, cwd)).text(command, tuple(dict.fromkeys((base, cwd))), time.monotonic() + NAMES_BUDGET)
 
 
 def _unread_refusal(hit: str, why: str) -> str:
@@ -391,36 +423,44 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     targets; and whenever the earlier reader would refuse it, unless the shell reader proves the guarded paths are only
     data or reads (_proven). A command it does not read (over SHELL_HUGE, brackets nested past the reader's depth) or
     one the reader failed on (a crash, the recursion limit) is refused when any of its words names a guarded file or
-    folder; a reader that ran out of time leaves the decision to the earlier reader. A crash, a timeout and a command
+    folder; a write or removal target it cannot work out is refused when it names a guarded path in full
+    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. A crash, a timeout and a command
     too long to read are logged once, with the real outcome."""
     command = command.replace("\x00", "")  # a NUL byte never reaches a shell: read the rest
     if not H.WRITE_HINT.search(command):
         return None
+    built: List[_Guarded] = []
+
+    def rule() -> _Guarded:  # built once per command, only when needed (it globs the guarded files)
+        if not built:
+            built.append(_Guarded(proj, cwd))
+        return built[0]
+
     if len(command) > SHELL_HUGE:
         size = f"{len(command) // 1024} KB"
-        hit = _unread(proj, command, base, cwd)
+        hit = _unread(proj, command, base, cwd, rule())
         H.log_failure(f"a shell command of {size}, too long to read", "the command read (a guarded path in it refuses "
                       "it)", category="timeout", outcome=f"{'refused' if hit else 'allowed'} without reading it")
         return _unread_refusal(hit, size) if hit else None
     eff = H.shell_effects(command, base, proj.root_s)
     why = (_shell_paths_refusal(proj, eff.writes, False, cwd) or _shell_paths_refusal(proj, eff.removals, True, cwd)
            or _shell_paths_refusal(proj, eff.folder_writes, True, cwd))
-    if why is None and eff.computed:  # a target it cannot work out ($( ), backticks, ${…}) that names a guarded path
-        rule, deadline = _Guarded(proj, cwd), time.monotonic() + NAMES_BUDGET
-        named = next((n for n in (rule.text(text, bases, deadline) for text, bases in eff.computed) if n), None)
+    if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one
+        deadline = time.monotonic() + NAMES_BUDGET
+        named = next((n for n in (rule().target(text, bases, deadline) for text, bases in eff.computed) if n), None)
         if named is not None:
-            why = (f"error: this shell command writes to a path Plumb cannot work out, and that path's text names "
-                   f"{named}, a path Plumb guards\nfix: write the target path out in full so Plumb can check it (and "
+            why = (f"error: this shell command writes to a path Plumb cannot work out, and that path is built from "
+                   f"{named}, a path Plumb guards\nfix: write each target path out in full so Plumb can check it (and "
                    f"change {named} the way Plumb's own message for it says)")
     hit = None
     if why is None and eff.trouble is not None and eff.trouble[1] in ("crash", "deep"):
-        hit = _unread(proj, command, base, cwd)
+        hit = _unread(proj, command, base, cwd, rule())
         if hit is not None:
             why = _unread_refusal(hit, "it is too complex to read")
     if why is None:
         floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
                  or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
-        if floor is not None and not _proven(proj, eff, cwd):
+        if floor is not None and not _proven(proj, eff, cwd, rule()):
             why = floor
     if eff.trouble is not None and eff.trouble[1] != "deep":  # deep nesting is the command's, not Plumb's mistake
         given, category, exc = eff.trouble

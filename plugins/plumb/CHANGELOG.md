@@ -115,13 +115,14 @@
 - **The guard refuses real writes, not mentions**: a shell command is refused when a guarded file is a real write
   target (a redirect, `tee`, `sed -i`, `perl -i`, the destination of `cp` / `mv` / `install` / `rsync` / `ln`, `rm`,
   `truncate`, `dd of=`, and in inline code `open("…", "w")`, `Path("…").write_text` and the like). The earlier,
-  stricter reading still decides, and its refusal becomes an allow only in four provable cases: a here-document,
+  stricter reading still decides, and its refusal becomes an allow only in three provable cases and a commit
+  message: a here-document,
   `echo`, `printf` or `tee` text written to a file the same command doesn't run, import, name again or leave where a
   program picks it up by itself (`sitecustomize.py`, `.bashrc`, a git hook …); a read-only program's words (`cat`,
   `grep`, `diff` …); inline code that only reads its guarded paths (`json.load` of `screens.json`, `importlib` on a
-  Plumb script) or prints them to the screen, and writes only to plain paths away from them; and a `git commit`
-  message (`-m`, `-F`, a here-document), unless git is given an option that runs something or the command wrote a
-  hook. Every other word must name no guarded path, file or folder, even one not built yet. A file a command writes
+  Plumb script) and writes only to plain paths away from them; and a `git commit` message (`-m`, `-F`, a
+  here-document), unless git is given an option that runs something, a variable is set before it, or the command
+  wrote a hook. Every other word must name no guarded path, file or folder, even one not built yet. A file a command writes
   and then runs is read as code. It also catches writes it missed:
   `eval`, `find -exec`, `curl -o` / `--output-dir`, `wget -O`, `perl -0pi`, `sort -o`, `uniq IN OUT`, sed's `w FILE`,
   `sh -c '… "$1"'`, `source <(echo …)`, a copy into the folder of a guarded file, a recursive copy or move into a
@@ -129,8 +130,10 @@
   targets put together in code (`os.path.join(d, …)`, `Path(d) / …`, f-strings, `%`, `.format`, `${}`), code piped to
   an interpreter or on `/dev/stdin`, and `os.remove` / `shutil.rmtree` in inline code. A command over 64 KB, one
   nested deeper than the reader reads, and one the reader fails on are refused when they name a guarded file or
-  folder (or a parent of one). A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`) is refused when
-  its text names a guarded file or folder (`cat a > "$(dirname docs/design/screens.html)/screens.html"`).
+  folder (or a parent of one). A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`, a
+  `for` or `while read` loop variable) is refused when its text, the value of a variable it uses, or the words the
+  loop variable takes name a guarded file or folder by its full path (`cat a > "$(dirname
+  docs/design/screens.html)/screens.html"`, `for f in docs/design/*.html; do sed -i … "$f"; done`).
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
