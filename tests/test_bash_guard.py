@@ -814,6 +814,15 @@ COMPUTED_ALLOW = [
     "find . -maxdepth 1 -name '*.md' | while read f; do sed -i 's/a/b/' \"$f\"; done",
     "find . -maxdepth 1 -name '*.css' | while read f; do sed -i 's/a/b/' \"$f\"; done",
     "find docs -mindepth 3 -name '*.html' | while read f; do rm \"$f\"; done",
+    # B1: a loop over guarded files that writes to a folder held in a variable the command does not set
+    "for f in docs/design/*.html; do cp \"$f\" \"$TMPDIR/${f##*/}\"; done",
+    "D=$(mktemp -d); for f in docs/design/*.html; do cp \"$f\" \"$D/${f##*/}\"; done",
+    "out=$(mktemp -d) && for f in docs/design/*.html; do cp \"$f\" \"$out/$(basename \"$f\")\"; done && ls \"$out\"",
+    "for f in docs/design/*.html; do cp \"$f\" \"$BACKUP_DIR/\"; done",
+    "for f in docs/design/*.html; do sed 's/x/y/' \"$f\" > \"$OUT/${f##*/}\"; done",
+    "ls docs/design | while read f; do cp \"docs/design/$f\" \"$TMP/$f\"; done",
+    "for n in 1 2 3; do curl -s \"https://x/$n\" > \"$TMPDIR/$n.json\"; done; jq . docs/design/prototype/screens.json",
+    "for size in sm md lg; do sed \"s/SIZE/$size/\" docs/design/specimen.html > \"$OUT/specimen-$size.html\"; done",
     "D=$(mktemp -d); echo x > \"$D/notes.txt\"",
     "cp /tmp/a \"`mktemp`\"",
 ]
@@ -1040,7 +1049,7 @@ def test_past_its_limits_the_loop_check_leaves_it_to_the_command_wide_rule(decid
     assert decide.pe.shell_refusal(decide.project, big, str(decide.proj), str(decide.proj)) is None
     assert time.perf_counter() - t < 5.0
     reason = decide.pe.shell_refusal(decide.project, big + f"; cat {GEN}", str(decide.proj), str(decide.proj))
-    assert reason and "more loop values than Plumb can check" in reason and "docs/design/screens.html" in reason
+    assert reason and "too large for Plumb to check" in reason and "docs/design/screens.html" in reason
     actionable(reason)
     assert "ran out of time to check, a path" not in reason
     many = "for a in " + " ".join(f"n{i}" for i in range(150)) + " docs; do for b in " + \

@@ -1691,7 +1691,7 @@ class ShellEffects:
                 if key not in self._loop_seen:
                     if len(self.loop_targets) >= _MAX_TARGETS:
                         self.doubt("more paths than the reader checks")
-                        sources = {"!": [_ANY]}
+                        sources = {"#": [_ANY]}  # too many loop targets: pre_edit's command-wide rule
                         key = (kind, "", (), scope.bases)
                         if key in self._loop_seen:
                             return []

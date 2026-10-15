@@ -1148,8 +1148,8 @@ Three checks, in this order:
    log (`/plumb:feedback`).
 
    The guard is a consistency net, not a sandbox. Not followed:
-   - script files written before the command, `xargs`, `find -exec` on the files found, `patch`, `tar -x`, `unzip`,
-     `prettier --write`, editors like `ed`, and commands run through other tools;
+   - script files written before the command, `xargs`, `find -exec` and `find -delete` on the files found, `patch`,
+     `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other tools;
    - the project's own git hooks (`git commit` runs them);
    - a loop whose source the reader models only roughly: `find` with predicates other than `-name` / `-iname` /
      `-type` / `-maxdepth` / `-mindepth` (and `ls -R`, `git ls-files`, a file read line by line) count as unknown

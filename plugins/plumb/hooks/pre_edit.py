@@ -368,8 +368,8 @@ class _Guarded:
     def could_yield(self, items, deadline: float) -> List[str]:
         """What a loop source could hold that matters: for each item, the guarded paths it could yield, in the form the
         shell would give them (a literal as written; a glob's guarded matches; `ls DIR`'s guarded entries as bare names
-        and as DIR/name; `find DIR`'s guarded files, filtered by -name / -type / -mindepth / -maxdepth). Only the guarded paths are matched,
-        never the file system."""
+        and as DIR/name; `find DIR`'s guarded files, filtered by -name / -type / -mindepth / -maxdepth). Only the
+        guarded paths are matched, never the file system."""
         out: List[str] = []
         for kind, value, bases in items:
             if time.monotonic() > deadline:
@@ -511,12 +511,12 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
         hit = in_command()
         if hit is None:
             return None  # nothing guarded is named: the earlier reader decides
-        return (f"error: this shell command has more loop values than Plumb can check in time, and it names {hit}, a "
-                f"path Plumb guards\nfix: split it into shorter loops, or write each target path out in full (and "
-                f"change {hit} the way Plumb's own message for it says)")
+        return (f"error: this shell command is too large for Plumb to check (more loop targets or values than it tries "
+                f"in time), and it names {hit}, a path Plumb guards\nfix: split it into shorter loops, or write each "
+                f"target path out in full (and change {hit} the way Plumb's own message for it says)")
 
     for kind, word, sources, scope in eff.loop_targets:
-        if time.monotonic() > deadline:
+        if time.monotonic() > deadline or "#" in sources:
             return past_limits()
         if any(items == [H._ANY] for items in sources.values()):
             why = unknown(word, scope)
@@ -541,10 +541,15 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
             if time.monotonic() > deadline:
                 return past_limits()
             paths = H.substitute(word, dict(combo), scope, proj.root_s)
-            if paths is None:  # a part still unknown after the variables: the unknown-source rule
-                why = unknown(word, scope)
-                if why:
-                    return why
+            if paths is None:  # a part still unknown after the variables ($TMPDIR, $OUT): the target's own text only
+                literal = H.literal_part(word)
+                if literal.strip("/.") and literal not in literal_seen:
+                    literal_seen[literal] = rule.target([literal], scope.bases, deadline)
+                hit = literal_seen.get(literal) if literal.strip("/.") else None
+                if hit is not None:
+                    return (f"error: this shell command writes to or removes {word}, built from {hit}, a path Plumb "
+                            f"guards\nfix: write each target path out in full so Plumb can check it (and change {hit} "
+                            f"the way Plumb's own message for it says)")
                 break
             why = _shell_paths_refusal(proj, paths, kind in (1, 2), cwd)
             if why:
