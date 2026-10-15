@@ -182,6 +182,13 @@
   target the reader can't work out (`$( … )`, backticks, `${…}`) is refused when its text or the value of a variable
   it uses names a guarded file or a folder Plumb owns whole by its full path (`cat a > "$(dirname
   docs/design/screens.html)/screens.html"`).
+- **The guard reads paths the way the file system does**: it compares them without case on Windows and macOS, and on
+  Linux when the project's file system ignores case (asked of the file system itself: a folder that ignores case, a
+  Windows drive in WSL); on Windows it reads Git for Windows' Bash drive paths (`/c/Users/…`,
+  `/cygdrive/c/…`) as well as `\` and `/`, drive letters in either case and quoted paths with spaces. Its time budget
+  runs on a fine clock (on Windows before Python 3.13 the coarse one let a budget pass unnoticed), and a long command
+  is checked faster (each folder's real path is worked out once per command), so even a Windows runner stays well
+  inside the hook's timeout.
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
