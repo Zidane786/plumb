@@ -1140,9 +1140,115 @@ mistakes go even in a project with no `AGENTS.md` or `CLAUDE.md`.
 Three checks, in this order:
 
 1. **The guard (always on):** hand edits to generated files and to Plumb's own files are refused, including through the
-   shell (`>`, `tee`, `sed -i`, `cp`, `Set-Content`, …). Removing or moving away a guarded file (`rm`, `rmdir`, `del`,
-   `Remove-Item`, `git rm`, `mv` / `Move-Item` / `git mv` from it), or a folder holding one, is refused the same way.
-   Running `build-tokens.py` or `build-prototype.py` is allowed.
+   shell. Removing or moving away a guarded file (`rm`, `rmdir`, `del`, `Remove-Item`, `git rm`, `mv` / `Move-Item` /
+   `git mv` from it), or a folder holding one, is refused the same way. Running `build-tokens.py` or
+   `build-prototype.py` is allowed.
+
+   A shell command is refused when a guarded file is one of its **real write targets**:
+   - a redirect (`>`, `>>`, `1>`, `2>`, `&>`, `>|`), `tee [-a]`, `sed -i` (and sed's `w FILE`), `perl -i`, `sort -o`,
+     `uniq IN OUT`;
+   - the destination of `cp`, `mv`, `install`, `rsync` or `ln` (a folder destination counts as the file named like
+     the source in it; a recursive copy or a move into a folder that holds a guarded file is refused like removing it),
+     `truncate`, `dd of=`, `curl -o` / `--output-dir`, `wget -O`;
+   - PowerShell's `Set-Content`, `Add-Content`, `Out-File`, `New-Item`, `Copy-Item` / `Move-Item` onto it, and
+     `[IO.File]::WriteAllText(…)`;
+   - in inline code (`python -c`, `node -e`, a here-document or an `echo` piped to an interpreter): `open("<path>",
+     "w" | "a" | "x")`, `Path("<path>").write_text` / `write_bytes`, `shutil.copy` / `copytree` / `move`,
+     `os.replace` / `rename`, `fs.writeFileSync` and the like, with the target put together from the code's constants
+     (`os.path.join(d, "screens.html")`, `Path(d) / "x"`, `+`, f-strings, `%`, `.format`, `${}`);
+   - a shell's own script (`bash -c "…"` with `$1` …, a here-document fed to `bash`, `eval`, `source <(echo …)`,
+     `find -exec`) is read as commands, and so is **a file the same command wrote and then runs** (`python3 FILE`,
+     `bash FILE`, `source FILE`, `make -f FILE`, `python3 - < FILE`).
+
+   Otherwise the guard's earlier, stricter reading decides, and its refusal stands unless the command only
+   **mentions** the guarded file in one of three provable ways, or in a `git commit` message:
+   - (a) inside a here-document, `echo`, `printf` or `tee` text written to another file, **unless that file may be
+     used again**: the same command runs it, pipes it on, or names it, its stem (`import fixmod`) or its folder again;
+     it is code (`.py`, `.js`, `.sh` …, or a file with no suffix) and the command also starts an interpreter, a shell or
+     a package tool; it is a file a program picks up by itself (`sitecustomize.py`, `*.pth`, `.bashrc`, `.profile`,
+     `.npmrc`, `.curlrc`, `package.json`, `Makefile`, `conftest.py`, anything under `.git/` or `.husky/`, a hooks
+     folder or a file named as a git hook); the command can run text later (a `trap`, a shell function or `alias`,
+     `BASH_ENV` / `ENV` / `PROMPT_COMMAND`, `eval`, `source`); or a glob in it matches the file (`source *.md`).
+     `cat > notes/plan.md <<'EOF'` that quotes a guarded path is fine; `cat > fix.py <<'EOF' … EOF; python3 fix.py`
+     is code;
+   - (b) as an argument of a read-only program (`cat`, `head`, `tail`, `grep`, `rg`, `wc`, `diff`, `ls`, `stat`,
+     `file`, `sha256sum`, `jq` …);
+   - (c) in inline code that gives it straight to a read (`open(p)` to read, `json.load(open(p))`,
+     `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`). The code runs no
+     command or code, opens no file through `opener=`, `os.open` or `os.fdopen`, imports nothing by a name it builds,
+     and writes only to plain paths that are not guarded, not next to a guarded file, not under `/dev/fd/` or
+     `/proc/`, and not used again (the same test as (a)). Printing a guarded path (`print(…)`, `console.log(…)`,
+     `json.dumps(…)`) is not a read: such a command keeps the stricter answer;
+   - (d) in a `git commit` message: only the values of `-m` / `--message` / `-F` / `--file` / `-t` (in every spelling:
+     `--message=…`, `-m…`, `-F-`, `--file=-`, a cluster like `-am`) and a here-document or here-string on its stdin
+     are data. Every other word is still checked, a redirect on the command is still a write, and it does not count
+     when git is given an option that runs something (`-c` anywhere before `commit`, `--config-env`, `--exec-path`), a
+     variable is set before it (an editor, a config; author and committer names are fine), or the same command wrote
+     a hook (under `.git/hooks/`, `.husky/`, a hooks folder, or a file named as a git hook).
+
+   Every other word of the command (an unknown program's words, code literals outside those positions, a variable's
+   value) must name no guarded path by the guard's own rule: a guarded file whether it exists yet or not (a theme or
+   tour not built yet, anything under the plugin), a folder that holds one, or a parent of one (`docs`).
+
+   Loop variables are followed by one question, asked against the guarded paths only (never by listing your files):
+   could the variable of a `for` / `select` loop or of `… | while read` hold a guarded path, or a name the target turns
+   into one? Its words are literals, globs (the guarded paths they match; `*`, `?` and `[…]` never cross a `/`, so
+   `for f in *.md` stays in the folder), `ls DIR` (the guarded files in DIR, as bare names too), `find DIR -name PAT
+   -type f -maxdepth N` (the guarded files under DIR that match); each of those is put into the target (`$f`,
+   `${f%.html}.html`, `docs/design/$f`, `$D/$f` with `D` set earlier, `$PWD/…`, `$HOME/…`, a copy `g="$f"`, a
+   `cd "$d"`). So `for f in docs/design/*.html;
+   do sed -i … "$f"; done` and `ls docs/design | while read f; do rm "docs/design/$f"; done` are refused, while `for f
+   in app/*.tsx; …`, `find app -name '*.tsx' | while read f; …` and a loop that copies guarded files out to `/tmp` are
+   allowed. With a source the reader can't read (`$(cat list.txt)`, a `read` from a file, `${!N}`), the target is
+   refused when its own text names a guarded folder or file, or the command names a guarded path anywhere. A loop
+   with more values than the guard tries (20,000 across the command), or one it can't finish in time, is decided the
+   same way as a command too long to read: refused when the command names a guarded path, else the earlier reading
+   decides.
+
+   A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`) is refused outright when it is
+   built from a guarded path: one of its words, the value of a variable it uses or a word inside its `$( … )` names a
+   guarded file, a file a glob there can match, or a folder Plumb owns whole (the docs folder, the design-system
+   skill, its `scripts/` or `templates/`) by its full path. A bare file name (`README.md`,
+   `globals.css`) or `.` is not enough: `echo x > "$(mktemp -d)/README.md"` is allowed.
+
+   Anything else keeps the stricter answer, for example:
+   - an `echo` to the screen that names a guarded file with a `>`;
+   - code that passes a guarded path to `dirname`, `join`, an f-string or `print`;
+   - a program the reader doesn't know, a runner (`npx`, `poetry run`, `conda run` …), `xargs` or a script run;
+   - a variable or `$( … )` the reader can't resolve in a target or a `cd` (shell variables set in the same command,
+     `$PWD` and `$CLAUDE_PROJECT_DIR` are followed);
+   - code piped from a file, nesting deeper than the reader follows, or a reading that would take too long.
+
+   "Keeps the stricter answer" means the earlier reading decides: these are refused only when that reading finds a
+   guarded write target in them.
+
+   A command over 64 KB, one whose brackets nest deeper than 200, and one the reader fails on are not read: each is
+   refused when any of its words names a guarded file, a guarded folder or a parent of one, and otherwise the earlier
+   reading decides. A reader failure or a command too long to read adds one line, with the real outcome, to the hooks'
+   log (`/plumb:feedback`).
+
+   The guard is a consistency net, not a sandbox. Not followed:
+   - script files written before the command, `xargs`, `find -exec` and `find -delete` on the files found, `patch`,
+     `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other tools;
+   - the project's own git hooks (`git commit` runs them);
+   - a loop whose source the reader models only roughly: `find` with predicates other than `-name` / `-iname` /
+     `-type` / `-maxdepth` / `-mindepth` (and `ls -R`, `git ls-files`, a file read line by line) count as unknown
+     sources; `ls DIR` and `find DIR -type d` yield guarded files and the folders Plumb owns whole, not a folder that
+     only holds one (`ls docs | while read f; do rm -rf "docs/$f"; done`); a `cd "$d"` into a loop variable is
+     followed only over literal words, not globs (`for d in docs/*; do cd "$d" && rm screens.html; done`); a
+     conditional reassignment inside the loop (`[ -n "$x" ] && f=notes/a.md`) ends the loop binding; and an unknown
+     source used as a prefix (`for f in $(cat x); do rm "$f/docs/design/screens.html"; done`);
+   - a computed target whose text names no guarded path in full (`> "$(cat target.txt)"`), including one built from a
+     bare folder name or a prefix (`rm -rf "$(echo docs)"`, `> "${ROOT:-.}/docs/design/screens.html"`,
+     `> "$(realpath docs)/design/screens.html"`);
+   - a write or removal called through another name (`f = os.remove`, `print = os.remove`, `getattr(os, 'remove')`,
+     `const u = fs.unlinkSync`);
+   - a shell text written to a file and run later through a function, `alias`, `trap`, `BASH_ENV` / `ENV` /
+     `PROMPT_COMMAND`, `eval "$(cat …)"` or a glob (these void allow (a), so the earlier reading decides, but the
+     file's text is not read as code).
+
+   Restoring a file from git (`git checkout -- <file>`, `git restore`) is allowed. `build-tokens.py --check` and the
+   end-of-turn check catch the drift.
 
    ```
    error: app/globals.css is generated from the design tokens; a hand edit is lost on the next build

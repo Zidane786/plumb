@@ -409,7 +409,7 @@ def test_shell_paths_under_home_variables_are_expanded(H, command, tmp_path, mon
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     expected = os.path.normpath(str(tmp_path / "home" / ".plumb-test" / "x.css"))
-    found = H.shell_targets(command, str(tmp_path)) + H.shell_removals(command, str(tmp_path))
+    found = _targets(H, command, str(tmp_path)) + _removals(H, command, str(tmp_path))
     assert expected in found, found
 
 
@@ -429,7 +429,7 @@ def test_shell_paths_under_home_variables_are_expanded(H, command, tmp_path, mon
     ("cat a; ls b", []),
 ])
 def test_shell_removal_targets(H, command, removed, tmp_path):
-    found = [Path(t) for t in H.shell_removals(command, str(tmp_path))]
+    found = [Path(t) for t in _removals(H, command, str(tmp_path))]
     assert [str(p.relative_to(tmp_path)).replace("\\", "/") for p in found] == removed
 
 
@@ -455,28 +455,28 @@ def test_a_heredoc_script_then_a_plumb_build_is_allowed(launcher, tmp_path, proj
 
 def test_heredoc_bodies_are_read_as_the_stage_input(H, tmp_path):
     command = HEREDOC_THEN_BUILD.format(screens=tmp_path / "s", root=tmp_path, skill=SKILL_REL)
-    targets = [Path(t) for t in H.shell_targets(command, str(tmp_path))]
+    targets = [Path(t) for t in _targets(H, command, str(tmp_path))]
     assert not any(t.name == "build-prototype.py" for t in targets), targets
     # a heredoc that writes a guarded file it names is still caught, and so is a shell heredoc's own command
     for cmd, name in (("python3 - <<EOF\nopen('app/globals.css', 'w').write('x')\nEOF", "globals.css"),
                       ("bash <<'X'\necho x > docs/design/specimen.html\nX\necho done", "specimen.html"),
                       ("cat > app/globals.css <<'EOF'\nbody {}\nEOF", "globals.css"),
                       ("cat <<-EOF > docs/design/screens.html\n\t<p>it's</p>\n\tEOF", "screens.html")):
-        found = [Path(t).name for t in H.shell_targets(cmd, str(tmp_path))]
+        found = [Path(t).name for t in _targets(H, cmd, str(tmp_path))]
         assert name in found, (cmd, found)
-    assert H.shell_targets("cat <<< 'x' > notes.txt", str(tmp_path)) == [str(tmp_path / "notes.txt")]
+    assert _targets(H, "cat <<< 'x' > notes.txt", str(tmp_path)) == [str(tmp_path / "notes.txt")]
 
 
 def test_an_arithmetic_shift_is_not_a_heredoc(H, tmp_path, launcher, proj):
     """Review M1: `$((a<<b))` must not read the next lines as a here-document body (they would escape the guard)."""
     for cmd in ("echo $((a<<b))\nrm app/globals.css", "x=$(( a << b )); rm app/globals.css",
                 "(( n = a<<b ))\nrm app/globals.css"):
-        removed = [Path(t).name for t in H.shell_removals(cmd, str(tmp_path))]
+        removed = [Path(t).name for t in _removals(H, cmd, str(tmp_path))]
         assert "globals.css" in removed, (cmd, removed)
     reason = refused(bash(launcher, tmp_path, proj, "echo $((a<<b))\nrm app/globals.css"))
     assert " is generated" in reason
     # a real here-document right after arithmetic is still one
-    found = [Path(t).name for t in H.shell_targets("echo $((1<<2)); bash <<X\necho x > app/globals.css\nX",
+    found = [Path(t).name for t in _targets(H, "echo $((1<<2)); bash <<X\necho x > app/globals.css\nX",
                                                    str(tmp_path))]
     assert "globals.css" in found
 
@@ -493,15 +493,15 @@ def test_an_arithmetic_shift_is_not_a_heredoc(H, tmp_path, launcher, proj):
 def test_a_shell_c_script_is_read_as_commands(H, tmp_path, cmd, launcher, proj):
     """Review M9: `bash -c "…"` (and sh, zsh, pwsh -c, powershell -Command) runs its script: its writes and removals
     count like any other."""
-    found = [Path(t).name for t in H.shell_targets(cmd, str(tmp_path)) + H.shell_removals(cmd, str(tmp_path))]
+    found = [Path(t).name for t in _targets(H, cmd, str(tmp_path)) + _removals(H, cmd, str(tmp_path))]
     assert "globals.css" in found, (cmd, found)
     reason = refused(bash(launcher, tmp_path, proj, cmd))
     assert " is generated" in reason or "Plumb" in reason
 
 
 def test_a_shell_c_script_that_only_reads_is_allowed(H, tmp_path):
-    assert H.shell_targets('bash -c "cat app/globals.css | wc -l"', str(tmp_path)) == []
-    assert H.shell_removals("sh -c 'ls app'", str(tmp_path)) == []
+    assert _targets(H, 'bash -c "cat app/globals.css | wc -l"', str(tmp_path)) == []
+    assert _removals(H, "sh -c 'ls app'", str(tmp_path)) == []
 
 
 def test_a_heredoc_writing_a_generated_file_is_refused(launcher, tmp_path, proj):
@@ -1104,6 +1104,15 @@ def test_hooks_json_runs_every_hook_through_the_launchers():
 # ---------------------------------------------------------------- in-process: _hooklib parsers
 
 
+def _targets(H, command: str, cwd: str):
+    """The files a shell command writes, as the guard's reader sees them."""
+    return list(H.shell_effects(command, cwd).writes)
+
+
+def _removals(H, command: str, cwd: str):
+    return list(H.shell_effects(command, cwd).removals)
+
+
 @pytest.fixture(scope="module")
 def H():
     spec = importlib.util.spec_from_file_location("plumb_hooklib_test", HOOKS / "_hooklib.py")
@@ -1153,7 +1162,7 @@ def test_apply_patch_add_delete_move_and_failure(H):
     ("git checkout -- a.css", []),
 ])
 def test_shell_write_targets(H, command, targets, tmp_path):
-    found = [Path(t) for t in H.shell_targets(command, str(tmp_path))]
+    found = [Path(t) for t in _targets(H, command, str(tmp_path))]
     assert [str(p.relative_to(tmp_path)).replace("\\", "/") for p in found] == targets
 
 
@@ -1497,7 +1506,7 @@ def test_git_planted_in_the_project_is_never_run(launcher, tmp_path, proj):
     "echo x > '{d}/a b/tokens.css'",
 ])
 def test_shell_paths_with_spaces_are_read_whole(H, command, tmp_path):
-    found = H.shell_targets(command.format(d=tmp_path), str(tmp_path))
+    found = _targets(H, command.format(d=tmp_path), str(tmp_path))
     assert os.path.join(str(tmp_path), "a b", "tokens.css") in [os.path.normpath(t) for t in found], found
 
 

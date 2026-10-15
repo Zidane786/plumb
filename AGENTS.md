@@ -74,7 +74,9 @@ plugins/plumb/                        the installed plugin (only this folder shi
     version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install
     check-tour.py                     plays a tour page headless (guide + play) and checks every step
   hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
-                                      (a hook that fails open also logs one line to ~/.plumb/feedback/hooks.md)
+                                      (a hook that fails open also logs one line to ~/.plumb/feedback/hooks.md);
+                                      _shell_legacy.py: the Bash guard's earlier reader, kept as its floor
+                                      (frozen copy for tests: tests/legacy_guard.py)
   templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,
                                       directions.html (the fallback directions page)
   upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
@@ -138,6 +140,13 @@ TEST.md                               hands-on test guide for any machine
   only. Every hook git call goes through the hardened helper (config overrides as environment
   pairs, no lazy fetch, absolute git from PATH, shared 3 s budget, fail open). Keep
   `SECURITY.md` "Trust boundary" exact when this changes.
+- **The Bash guard: the earlier reader decides.** A shell command the earlier reader
+  (`hooks/_shell_legacy.py`) refuses stays refused unless the new reader proves one of three
+  patterns: a data text written to a file the command never uses again, a read-only program's
+  words, or inline code that only reads its guarded literals (`pre_edit._proven`). Never widen
+  them without a review, and never change the earlier reader to allow more; `tests/legacy_guard.py`
+  is its frozen copy, and `tests/test_bash_guard.py` asserts the guard refuses everything it
+  refuses, with no exemptions.
 - **Exceptions by path, never by comment.** Audit allowances live on `PLUMB.md`'s allow list
   (e.g. `components/ui/**`); no `// plumb-ignore` style comments.
 - **Generated pages load nothing from the network:** no CDN, no hosted fonts; system font
