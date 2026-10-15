@@ -28,7 +28,7 @@ the pages committed). Splitting a screen into several files does not shrink anyt
 ## The screen file contract
 
 One file per screen, `<docs>/prototype/screens/<id>.html`. `<id>` is the file name (letters, digits, `_`, `-`) and the
-`data-screen` value. A file whose name starts with `_` or `.` is never a screen (keep drafts as `_draft.html`).
+`data-screen` value. The `_shared/` folder beside the screens is reserved for shared files; nothing in it is a screen.
 
 ```html
 <style>
@@ -94,9 +94,9 @@ in name order (prefix them `10-base.css`, `20-shell.css` to choose the order). N
 - **JS** files run for **each** screen (each copy in `screens.html`), before the screen's own script, as
   `function (screen, plumb) { … }` with the same API (`plumb.screen` says which screen). A shared script that throws is
   logged with its file name; the others still run.
-- **Same contract as a screen file:** inlined as written, so `</script` in a JS file or `</style` in a CSS file, and
-  anything that loads from the network or another file (`fetch(`, `new XMLHttpRequest`, `WebSocket`, `EventSource`,
-  `sendBeacon(`, `import`, CSS `@import`, `url(https://…)` or `url(//…)`) exits 2 naming the file and line.
+- **Checked before it is inlined** (shared files only): `</script` in a JS file or `</style` in a CSS file, and
+  code that loads from the network or another file (`fetch(`, `new XMLHttpRequest`, `WebSocket`, `EventSource`,
+  `sendBeacon(`, `import`, CSS `@import`, `url(https://…)` or `url(//…)`) exits 2 naming the file and line. A JS comment or string that only mentions them does not count.
 - **Approvals:** the shared files are part of every screen's approval. Editing one makes the approval of every screen in
   that folder stale, and the build's note names the shared file ("… changed since Ana approved it on 2026-10-14 (the
   shared file: docs/design/prototype/screens/_shared/base.css changed; shared files reach every screen)"). Show the
@@ -198,12 +198,13 @@ system. Each variant comes as **both views**, so states are compared, not only t
 
 ## Approvals and the map
 
-- `build-prototype.py --approve <id>` records the user's yes to a screen (who, when, a hash of the screen file).
+- `build-prototype.py --approve <id>` records the user's yes to a screen (who, when, a hash of the screen file plus the
+  `_shared/` files that reach it).
   **Never run `--approve` (or record an approval) without the user's explicit yes to that screen** in this
   conversation: show the screen (its `prototype.html#screen-<id>` link), ask "Approve <screen> as the reference to
   build?", wait for the answer. Never chain it after another command (`--synced x && --approve x`), never approve on
-  the user's behalf because a flow "usually" ends approved. Editing the screen file afterwards makes the approval
-  stale (`screen-unapproved`): show the change and ask again.
+  the user's behalf because a flow "usually" ends approved. Editing the screen file or a shared file afterwards makes
+  the approval stale (`screen-unapproved`): show the change and ask again.
 - `--map <id> --route=<route> --files <globs>` links a screen to its route and source files once they exist (or are
   agreed); the screen is `to-build` until every glob matches, then `built`. Pass the route as one argument
   (`--route=/`, `--route=/billing`): Copilot CLI reads a bare `/` as a path and asks for access to it.
@@ -221,6 +222,8 @@ system. Each variant comes as **both views**, so states are compared, not only t
   the agent once ("update prototype screen booking: states loading, empty"), and the audit reports `screen-drift` as an
   error. Update the screen file to show the change, ask, then `--approve` (or `--synced` for a small already-built fix).
 - **a route with no screen** is `route-not-prototyped`.
+- **a `_shared/` file** counts as a change to every screen in its folder, in both directions: editing it stales those
+  approvals (the end-of-turn check asks), and a code change mirrored in it is not drift.
 - A UI change is not done until the main prototype shows it.
 
 ## Decisions on screens

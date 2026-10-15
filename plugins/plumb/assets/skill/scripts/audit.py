@@ -167,7 +167,8 @@ assets/platforms/*/starter/, and docs/design is left to the prototype checks. PA
 
 --snapshot and --changed are the end-of-turn check's audit (the Stop hook calls the same functions in-process:
 take_snapshot, changed_since, changed_findings). A snapshot records the tracked files: the UI files the full audit would
-walk plus the prototype screen files (<docs>/prototype/screens/*.html). In a git repository it holds HEAD and the hash
+walk plus the prototype screen files (<docs>/prototype/screens/*.html and the shared files
+<docs>/prototype/screens/_shared/*.css and *.js, which count as a change to every screen). In a git repository it holds HEAD and the hash
 (and, when small, the text) of every tracked file `git status` lists as changed or untracked; elsewhere the modification
 time and size of every tracked file (and the text of the small ones); plus each screen's status in screens.json.
 --changed compares the files now with it (git: also files committed since its HEAD, their old text read with
@@ -175,9 +176,9 @@ time and size of every tracked file (and the text of the small ones); plus each 
 per-file findings each file gained (quick() against its text at the snapshot; none when that text cannot be read: the
 check fails open, it never blocks on what may be old), route-not-prototyped for a route that is new in a changed file,
 and, with Prototype sync on, screen-drift for a screen that was built when the snapshot was taken whose source files
-changed while its screen file did not (and still differ from the recorded baseline: "update prototype screen booking:
-states ..."), and screen-unapproved for a built screen whose screen file or source changed and whose current prototype
-is not approved. No changed files: "no UI files changed since the snapshot", exit 0. A missing or broken snapshot
+changed while neither its screen file nor a shared file did (and still differ from the recorded baseline: "update prototype screen booking:
+states ..."), and screen-unapproved for a built screen whose screen file, a shared file or its source changed and whose
+current prototype is not approved. No changed files: "no UI files changed since the snapshot", exit 0. A missing or broken snapshot
 exits 2. Git runs as an absolute path found on PATH (never in the project), read-only, with the commands a repository's
 config can name turned off (_GIT_OVERRIDES; SECURITY.md "Trust boundary"), and all its calls in one run share a
 GIT_BUDGET of 3 seconds: past it git counts as failed (no git: a snapshot keeps modification times; a git snapshot
@@ -4166,13 +4167,24 @@ def _git_state(root: Path) -> Optional[_GitState]:
     return _GitState(top, head, dirty)
 
 
+def _is_shared_screen_file(rel_path: str, screens: str) -> bool:
+    """<screens>/_shared/<name>.css or .js (not a dot file): part of every screen's approval (build-prototype.py)."""
+    if not rel_path.startswith(screens + "_shared/"):
+        return False
+    name = rel_path[len(screens) + len("_shared/"):]
+    return "/" not in name and not name.startswith(".") and name.endswith((".css", ".js"))
+
+
 def _tracked_matcher(root: Path, skill_dir: Path, settings: dict) -> Callable[[str], Optional[bool]]:
-    """rel -> True (a screen file), False (a UI file), None (not tracked by the snapshot)."""
+    """rel -> True (a screen file, or a shared file of the screens: _shared/*.css, *.js), False (a UI file), None (not
+    tracked by the snapshot)."""
     wanted = ui_matcher(root, skill_dir, settings)
     screens = f"{_docs_rel(settings)}/prototype/screens/"
 
     def tracked(rel_path: str) -> Optional[bool]:
         if rel_path.startswith(screens) and "/" not in rel_path[len(screens):] and rel_path.endswith(".html"):
+            return True
+        if _is_shared_screen_file(rel_path, screens):
             return True
         if file_ext(rel_path) is None or in_build_output(rel_path):
             return None
@@ -4411,12 +4423,14 @@ def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Itera
         return
     changed = {c.rel for c in changes}
     sources = [c.rel for c in changes if not c.screen]
+    screens_dir = f"{_docs_rel(proj.settings)}/prototype/screens/"
+    shared_changed = any(_is_shared_screen_file(r, screens_dir) for r in changed)  # it reaches every screen
     built_then = snapshot.get("screens") if isinstance(snapshot.get("screens"), dict) else {}
     try:
         for s in _screens(fid):
             e = s.entry
             mine = [r for r in sources if any(P.glob_rx(g).match(r) for g in e["files"])]
-            screen_changed = s.file in changed
+            screen_changed = s.file in changed or shared_changed
             if (mine and not screen_changed and built_then.get(s.id) == "built" and e["status"] == "built"
                     and fid.code_changed(s) is not False):
                 states = ", ".join(s.states) or "its states"

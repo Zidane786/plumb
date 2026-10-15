@@ -1776,17 +1776,24 @@ def add_shared(project: Path, folder: str = SHARED_REL) -> None:
     write(project / folder / "notes.md", "not a shared file: only .css and .js are read\n")
 
 
-def test_underscore_files_and_the_shared_folder_are_never_screens(tmp_path: Path) -> None:
+def test_underscore_screens_stay_screens_and_only_the_shared_folder_is_reserved(tmp_path: Path) -> None:
+    """Backwards compatible: a screen file named _x.html (or _shared.html, a file) is a screen as before, its approval
+    kept; only the _shared folder is reserved, and nothing in it is a screen. The audit reads the same screens."""
     p = make_project(tmp_path / "p", build=False)
-    draft = read(p / SCREENS_REL / "menu.html").replace('data-screen="menu"', 'data-screen="_draft"')
-    write(p / SCREENS_REL / "_draft.html", draft)
-    write(p / SCREENS_REL / ".hidden.html", draft.replace("_draft", "hidden"))
-    write(p / SHARED_REL / "x.html", draft.replace("_draft", "x"))
-    add_shared(p)
+    menu = read(p / SCREENS_REL / "menu.html")
+    write(p / SCREENS_REL / "_legacy.html", menu.replace('data-screen="menu"', 'data-screen="_legacy"'))
+    write(p / SCREENS_REL / "_shared.html", menu.replace('data-screen="menu"', 'data-screen="_shared"'))
+    assert run(p).returncode == 0
+    assert run(p, "--approve", "_legacy", env=clean_env(tmp_path, USER="Ana", USERNAME="Ana")).returncode == 0
+    approved = entry(p, "_legacy")["approved"]
+    write(p / SHARED_REL / "x.html", menu.replace('data-screen="menu"', 'data-screen="x"'))
     r = run(p)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert [s["id"] for s in screens_json(p)["screens"]] == ["home", "booking", "menu"]
-    assert 'data-screen="_draft"' not in read(p / PROTO_REL) and 'data-screen="x"' not in read(p / PROTO_REL)
+    ids = [s["id"] for s in screens_json(p)["screens"]]
+    assert sorted(ids) == sorted(["home", "booking", "menu", "_legacy", "_shared"]) and "x" not in ids
+    assert entry(p, "_legacy")["approved"] == approved and "has no file any more" not in r.stdout
+    assert 'data-screen="x"' not in read(p / PROTO_REL)
+    assert [s.id for s in BP.load_screens(p / SCREENS_REL, p, BT.rel)] == ids  # what audit.py's fidelity reads
 
 
 def test_only_shared_files_is_no_prototype(tmp_path: Path) -> None:
@@ -1888,6 +1895,8 @@ def test_check_covers_shared_files_and_builds_are_byte_stable(project: Path) -> 
     ("x.js", 'var x = new XMLHttpRequest();\n', "XMLHttpRequest"),
     ("x.js", 'import("./more.js");\n', "import("),
     ("x.js", 'import { a } from "./a.js";\n', "import"),
+    ("x.js", 'var t = `rows: ${fetch("/rows")}`;\n', "fetch("),  # a template's ${...} is code
+    ("x.js", 'var u = "// not a comment"; fetch("/y");\n', "fetch("),  # a string ends before the code
     ("x.css", '</style><script>alert(1)</script>\n', "</style"),
     ("x.css", '@import url("https://example.com/x.css");\n', "@import"),
     ("x.css", '@import "local.css";\n', "@import"),
@@ -1905,7 +1914,10 @@ def test_shared_files_that_load_nothing_are_accepted(project: Path) -> None:
     data: URLs, @import inside a CSS comment."""
     write(project / SHARED_REL / "ok.js", 'function prefetch(x) { return x; }\nvar api = { fetch: function () {} };\n'
                                           'api.fetch(); prefetch(1);\nvar help = "https://example.com/help";\n'
-                                          'var important = 1;\n')
+                                          'var important = 1;\n// never fetch() here: the data is inline\n'
+                                          '/* new XMLHttpRequest() was the old way;\n   import("x") too */\n'
+                                          'var tip = `\nimport your list from a spreadsheet: fetch("it")`;\n'
+                                          "var s = 'see https://example.com/api, fetch(later)';\n")
     write(project / SHARED_REL / "ok.css", '/* @import was here */\n[data-screen] .icon { mask: url(#m); '
                                            'background: url(img/bg.png), url("data:image/svg+xml,'
                                            '%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E"); }\n')
@@ -1923,6 +1935,31 @@ def test_unscoped_shared_css_warns(project: Path) -> None:
     assert f'warning: {SHARED_REL}/loose.css:2: the style rule "button"' in r.stderr
     assert 'rule "[data-screen' not in r.stderr  # scoped rules are fine
     assert f"fix: start each selector in {SHARED_REL}/loose.css with [data-screen]" in r.stderr
+    r = run(project, "--check")  # --check says it too
+    assert r.returncode == 0 and f'warning: {SHARED_REL}/loose.css:1: the style rule ".card"' in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("problem", ["shared", "change-id"])
+def test_a_refused_shared_file_or_id_does_not_block_the_map(project: Path, tmp_path: Path, problem: str) -> None:
+    """Like a broken tour: --approve (and --map, --synced) still records the map and warns; the build and --check exit
+    2 until it is fixed."""
+    if problem == "shared":
+        write(project / SHARED_REL / "x.js", 'fetch("/x");\n')
+        needle = f"{SHARED_REL}/x.js:1"
+    else:
+        write(project / DOCS / "prototype/changes.md", "- **C1** Heading: clearer\n")
+        home = project / SCREENS_REL / "home.html"
+        write(home, read(home).replace("<h2>", '<h2 data-guide="C2 · Not listed">', 1))
+        needle = "uses C2"
+    before = read(project / PROTO_REL)
+    r = run(project, "--approve", "booking", env=clean_env(tmp_path, USER="Ana", USERNAME="Ana"))
+    assert r.returncode == 0, r.stderr
+    assert entry(project, "booking")["approved"]["by"] == "Ana"
+    assert "warning: the pages were not rebuilt because a shared file or a change id is refused" in r.stderr
+    assert needle in r.stderr and "\nfix: " in r.stderr and r.stderr.count("then run") == 1, r.stderr
+    assert read(project / PROTO_REL) == before
+    assert_refusal(run(project), needle)
+    assert_refusal(run(project, "--check"), needle)
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])

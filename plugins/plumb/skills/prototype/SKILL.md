@@ -118,6 +118,10 @@ files, run `--proposal <name>` again, ask again.
 - **Ask before writing:** list the files: the chosen screen files → `<docs>/prototype/screens/<id>.html` (new or
   replacing), the links you will add to other screen files (e.g. `<a href="#screen-<id>">` in `home.html`), and the tour
   file(s). Write only on a yes. The other variants stay in `proposals/<name>/` as the record.
+- **The chosen variant's `_shared/` files** go in that list too, by name → `<docs>/prototype/screens/_shared/`; a
+  name main already has is a conflict: show both and ask. A shared file reaches every main screen, so it makes all
+  their approvals stale: after the build, show and ask per screen as below (never `--approve` without their yes).
+  Change ids are checked in main only when `<docs>/prototype/changes.md` exists.
 - **Links into other screens change those screen files, which makes their approvals stale.** After the build, show each
   of them too and ask to approve it again (`--approve <id>`), as for the new screen.
 - **Default walkthrough:** `<docs>/prototype/tours/<flow>.json` for each flow this builds or changes: the happy path,

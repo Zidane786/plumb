@@ -57,7 +57,7 @@
   as a chip (main screens are checked only when `<docs>/prototype/changes.md` exists). CSS and scripts several screens
   use go once in `screens/_shared/*.css` and `*.js` (main and each variant): the CSS is in every page once, each
   script runs for every screen before its own, and editing one makes those screens' approvals stale, named in the
-  build output. A file starting with `_` is never a screen.
+  build output; the end-of-turn check counts a shared edit as a change to every screen.
 - **Walkthroughs and `/plumb:tour`**: guide mode (step by step) and play mode (plays like a video, with speeds 0.5×
   to 2×, pause and scene markers), captions, callouts, labels, notes, title cards, spotlight, ring, arrow, beacon,
   zoom and a cursor, chapters, and "your turn" steps for training. Every tour is also a standalone page that opens

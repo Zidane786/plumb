@@ -77,7 +77,7 @@ Screen file contract (one per screen, <id>.html):
   ID is the file name without .html (letters, digits, _ and -). The md breakpoint follows the frame the screen sits in
   (phone or desktop; the window in app.html), so responsive screen CSS uses `@container plumb-frame (min-width: 48rem)`.
   data-app-sidebar on an app shell's sidebar keeps it in view in app.html (sticky, full height, from the md breakpoint).
-  A file whose name starts with _ or . is never a screen.
+  The _shared folder beside the screens is reserved for shared files (below); nothing in it is a screen.
 
 Shared files: <screens folder>/_shared/*.css and *.js (the main screens/ and each variant's screens/; other files there
 are not read). CSS is inlined once per page in name order, before the screens' styles (a selector that does not start
@@ -465,11 +465,11 @@ def unscoped_selectors(css: str) -> List[Tuple[int, str]]:
 
 
 def screen_files(folder: Path) -> List[Path]:
-    """The screen files of a screens folder: <id>.html, never a name starting with _ or . (the _shared folder and
-    drafts kept beside the screens are not screens)."""
+    """The screen files of a screens folder: every <id>.html file directly in it, as always (the _shared folder is a
+    folder, so nothing in it is a screen)."""
     if not folder.is_dir():
         return []
-    return sorted(p for p in folder.glob("*.html") if p.is_file() and not p.name.startswith(("_", ".")))
+    return sorted(p for p in folder.glob("*.html") if p.is_file())
 
 
 def load_screens(folder: Path, root: Path, rel, shared: Optional[List["Shared"]] = None) -> List[Screen]:
@@ -503,6 +503,65 @@ _CSS_REMOTE = re.compile(r"url\(\s*['\"]?\s*(?:[a-z][a-z0-9+.-]*:)?//|@import\b"
 _SHARED_SCOPED = re.compile(r"\[\s*data-screen\s*(?:[~|^$*]?=|\])")
 
 
+def blank_js(text: str) -> str:
+    """The JS with every comment and the inside of every string and template literal turned to spaces (newlines and the
+    quote marks kept, so offsets and lines stay): a comment or text that mentions fetch( or an import loads nothing.
+    A template literal's ${...} expressions stay code. Regex literals are read as code (a deliberately small reader)."""
+    out = list(text)
+    i, n = 0, len(text)
+    depth: List[int] = []  # one entry per open ${...}: the { nesting inside it
+
+    def blank(a: int, b: int) -> None:
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    def template(j: int) -> int:
+        """Blank template text from j to the closing backtick or the next ${; return where code resumes."""
+        start = j
+        while j < n and text[j] != "`" and not text.startswith("${", j):
+            j += 2 if text[j] == "\\" else 1
+        blank(start, j)
+        if text.startswith("${", j):
+            depth.append(0)
+            return j + 2
+        return j + 1
+
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            end = text.find("\n", i)
+            end = n if end == -1 else end
+            blank(i, end)
+            i = end
+        elif c == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            blank(i, end)
+            i = end
+        elif c == "`":
+            i = template(i + 1)
+        elif c in "'\"":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            blank(i + 1, j)
+            i = j + 1
+        elif c == "{" and depth:
+            depth[-1] += 1
+            i += 1
+        elif c == "}" and depth:
+            if depth[-1] == 0:
+                depth.pop()
+                i = template(i + 1)  # back in the template's text
+            else:
+                depth[-1] -= 1
+                i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
 class Shared:
     """One shared file: `name` is its path inside the screens folder (_shared/base.css), `rel` from the project root."""
 
@@ -510,12 +569,21 @@ class Shared:
         self.name, self.rel, self.kind, self.text = name, rel, kind, text.strip("\n")
         self.hash = sha256_text(text)
         self.warnings: List[str] = []
+        self.problem: Optional[PlumbError] = None  # why it cannot be inlined (check_shared raises it)
+
+
+def check_shared(shared: List[Shared]) -> None:
+    """Refuse (exit 2) the first shared file that cannot be inlined: </script or </style in it, or a network load."""
+    for s in shared:
+        if s.problem is not None:
+            raise s.problem
 
 
 def load_shared(folder: Path, root: Path, rel) -> List[Shared]:
     """<folder>/_shared/*.css and *.js in name order (a name starting with . is skipped; other files there are not
-    read). CSS goes into every page once; each JS file runs for every screen before the screen's own script. The same
-    contract as a screen file's blocks: inline, and nothing loaded from the network."""
+    read). CSS goes into every page once; each JS file runs for every screen before the screen's own script. Each file
+    is checked before it is inlined (`problem`, raised by check_shared): no </script or </style inside, nothing loaded
+    from the network (JS comments and string text do not count). Only a file that cannot be read raises here."""
     base = folder / SHARED_DIR
     if not base.is_dir():
         return []
@@ -531,21 +599,22 @@ def load_shared(folder: Path, root: Path, rel) -> List[Shared]:
         shared = Shared(f"{SHARED_DIR}/{path.name}", prel, kind, text)
         tag = "script" if kind == "js" else "style"
         close = re.search(rf"</{tag}", text, re.I)
+        found = (_JS_NETWORK if kind == "js" else _CSS_REMOTE).search(
+            blank_js(text) if kind == "js" else _CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text))
         if close:
             line = text.count("\n", 0, close.start()) + 1
-            raise _err(f"{prel}:{line}: \"</{tag}\" inside a shared {kind.upper()} file ends the page's <{tag}> block early",
-                       "write it as \"<\\/script\" in a string (the file is inlined as it is)" if kind == "js" else
-                       "remove it: a shared CSS file holds CSS rules only, inlined as they are")
-        found = (_JS_NETWORK if kind == "js" else _CSS_REMOTE).search(
-            text if kind == "js" else _CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text))
-        if found:
+            shared.problem = _err(
+                f"{prel}:{line}: \"</{tag}\" inside a shared {kind.upper()} file ends the page's <{tag}> block early",
+                "write it as \"<\\/script\" in a string (the file is inlined as it is)" if kind == "js" else
+                "remove it: a shared CSS file holds CSS rules only, inlined as they are")
+        elif found:
             line = text.count("\n", 0, found.start()) + 1
             what = " ".join(found.group(0).split())
             fix = ("put the rules in this file (an @import is not inlined, and the catalogue loads nothing) and use "
                    "relative or data: URLs" if kind == "css" else
                    "keep the data in the script (a constant or JSON in the file): the pages load nothing from the network")
-            raise _err(f"{prel}:{line}: \"{what}\" loads from the network or another file; a shared file must not",
-                       fix)
+            shared.problem = _err(f"{prel}:{line}: \"{what}\" loads from the network or another file; a shared file "
+                                  f"must not", fix)
         if kind == "css":
             for off, sel in unscoped_selectors(text):
                 if not _SHARED_SCOPED.match(sel):
@@ -2223,6 +2292,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             raise _err(f"{rel(folder, root)}: variant {folder.name} has no screen files in screens/",
                        f"write its screens as {rel(screens_dir, root)}/<id>.html (or remove the folder), then run {again}")
         shared = load_shared(screens_dir, root, rel)
+        check_shared(shared)
         screens = load_screens(screens_dir, root, rel, shared)
         variant_screens += screens
         shared_warnings += shared_warning_lines(shared)
@@ -2393,20 +2463,31 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     screens = load_screens(folder, root, rel, shared)
     by_id = {s.id: s for s in screens}
     changes_path = docs / "prototype" / "changes.md"
-    changes = read_changes(changes_path, root, rel)
-    # change ids in the main screens are checked only when the prototype keeps a change list
-    id_warnings = (check_change_ids(screens, changes, rel(changes_path, root), command, "the prototype")
-                   if changes is not None else [])
     tours_folder, pages_folder = docs / "prototype" / "tours", docs / "tours"
     mutating = bool(args.map or args.approve or args.synced)
     tour_error: Optional[PlumbError] = None
+    blocked_by = "a tour is broken"
+    id_warnings: List[str] = []
+    try:
+        check_shared(shared)
+        changes = read_changes(changes_path, root, rel)
+        # change ids in the main screens are checked only when the prototype keeps a change list
+        if changes is not None:
+            id_warnings = check_change_ids(screens, changes, rel(changes_path, root), command, "the prototype")
+    except PlumbError as exc:
+        if not mutating:
+            raise
+        # like a broken tour: --map / --approve / --synced still record the map; the pages wait for the fix
+        tour_error, blocked_by = exc, "a shared file or a change id is refused"
     try:
         tours = load_tours(tours_folder, screens, root, rel, rel(folder, root) + "/")
     except PlumbError as exc:
         if not mutating:
             raise
         # --map / --approve / --synced change the screen map, not the tours: record the change and say the pages wait
-        tours, tour_error = [], exc
+        tours = []
+        if tour_error is None:
+            tour_error = exc
     old = read_map(map_path, rel(map_path, root))
     for flag in ("map", "approve", "synced"):
         sid = getattr(args, flag)
@@ -2469,9 +2550,9 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"wrote {rel(map_path, root)}")
         for line in done:
             print(line)
-        problem = str(tour_error).replace("error: ", "", 1).split("\nfix: ", 1)
-        print(f"warning: the pages were not rebuilt because a tour is broken: {problem[0]}\n"
-              f"fix: {problem[1] if len(problem) > 1 else 'fix the tour file'}, then run {command}", file=sys.stderr)
+        problem = re.sub(r", then run \S.*$", "", str(tour_error).replace("error: ", "", 1)).split("\nfix: ", 1)
+        print(f"warning: the pages were not rebuilt because {blocked_by}: {problem[0]}\n"
+              f"fix: {problem[1] if len(problem) > 1 else 'fix the file it names'}, then run {command}", file=sys.stderr)
         return 0
     project_name = str(settings.get("project") or "").strip() or "Product"
     ctx = {
@@ -2516,7 +2597,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             else:
                 stale.append(f"stale: {rel(path, root)}")
         stale += [f"stale: {rel(path, root)} (its tour file is gone)" for path in orphans]
-        for line in id_warnings:
+        for line in shared_warning_lines(shared) + id_warnings:
             print(line, file=sys.stderr)
         if size_warning:  # --check builds every page in memory: a page over the limit is said here too (exit code unchanged)
             print(size_warning, file=sys.stderr)

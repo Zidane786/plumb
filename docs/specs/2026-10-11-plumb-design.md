@@ -235,12 +235,12 @@ file updates both pages, so they cannot disagree. The token block in every page 
 `build-tokens.py --css-vars`, so prototypes are token-true, and `audit.py` must exit 0 on them.
 
 **Shared files.** CSS and scripts several screens use live once in `<screens folder>/_shared/*.css` and `*.js` (the
-main `prototype/screens/` and each variant's `screens/`; a file starting with `_` or `.` is never a screen). The CSS
+main `prototype/screens/` and each variant's `screens/`; the folder is reserved, nothing in it is a screen). The CSS
 is inlined once per page in name order, selectors scoped by the author (`[data-screen]`; anything else is a warning);
 each JS file runs for every screen, before the screen's own script, as `function (screen, plumb)` with the same API, in
 name order, in every page (the catalogue's copies and the tour pages included). They are part of every screen's
 approval hash (with none, it is the screen file's own hash, so approvals recorded before stand): editing one makes
-those approvals stale, and the build names the file. The same contract as a screen file: no `</script>` /
+those approvals stale, and the build names the file. Shared files are checked before they are inlined: no `</script>` /
 `</style>` inside, nothing loaded from the network or another file.
 
 **Change ids.** A change may mark each element it touched `data-guide="<ID> · what changed and why"`, `<ID>` a letter
