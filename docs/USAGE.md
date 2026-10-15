@@ -524,7 +524,8 @@ training with hands-on "your turn" steps, onboarding a teammate, a design review
 flow or several.
 
 **What it asks:** who is watching (client, training, review, team, what's new; this sets the tone and whether it
-opens in play or guide mode); what they should take away; which flows, screens and states; when it matters, pacing,
+opens in play or guide mode); where it should play (the full-window app, recommended, or the prototype page with its
+screens list and decisions rail, for a design review); what they should take away; which flows, screens and states; when it matters, pacing,
 chapters, the intro and closing cards and which steps are "your turn". Then it shows the steps as a table and asks
 before writing.
 
@@ -535,12 +536,15 @@ adding it (which makes that screen's approval stale until you approve it again).
 ```
 you   /plumb:tour client-demo
 plumb Who is watching? (a) a client or stakeholder demo, opens in play mode (Recommended) (b) training …
+plumb Where should it play? (a) Full-window app (Recommended) (b) Prototype page (with the screens list and the decisions rail, for a design review)
+you   a
 plumb In one sentence, what should they take away?
 you   "A booking takes under a minute"
 plumb Steps:  1 Tonight at a glance · home · spotlight .tables · "The host lands on tonight's tables…" …
       Write this tour to docs/design/prototype/tours/client-demo.json?
 you   Write it
-plumb Open docs/design/prototype.html#tour-client-demo, or send docs/design/tours/client-demo.html (works offline).
+plumb Send docs/design/tours/client-demo.html (the full-window app, opens straight into the tour, works offline),
+      or play it in the prototype: docs/design/prototype.html#tour-client-demo.
 ```
 
 ### `/plumb:audit`
@@ -839,7 +843,7 @@ screen)`. A project without shared files keeps the approvals it had.
 **Links you can share:** `prototype.html#screen-booking` opens a screen; `#screen-booking/error` a screen in one state;
 `#tour-client-demo` a walkthrough; `#tour-client-demo-3` its step 3. In the app view: `app.html#/booking` and
 `app.html#/booking/error` (the `#screen-…` links work there too); `app.html` alone opens the first screen (the lowest
-`data-order`).
+`data-order`). The prototype's **Open as app** link opens `app.html` on the screen and state you are looking at.
 
 **The map, `screens.json`.** `build-prototype.py` is its only writer. For each screen it records the route, the source
 files that build it, the states, its status (`to-build` until every source glob matches a file, then `built`) and your
@@ -898,7 +902,7 @@ together on one canvas, and handoff to teams that don't build with agents.
 
 ## Tours: guide mode and play mode
 
-Every `prototype.html` has a **walkthrough player**. A walkthrough's script is a tour file,
+Every `prototype.html` and every tour page has a **walkthrough player**. A walkthrough's script is a tour file,
 `docs/design/prototype/tours/<id>.json`: which steps, which words. `/plumb:prototype` writes a default one for every
 flow it builds; `/plumb:tour` writes custom ones. The prototype stays fully clickable with or without them.
 
@@ -941,9 +945,17 @@ click shows a hint); in play mode the same step runs by itself. One tour is both
 **Pacing:** chapters (named groups of steps, shown as scene markers), intro and closing cards ("what you'll see",
 "what to try next"), a default speed, and a longer hold on a step that needs reading.
 
-**Sharing:** every tour is also its own page, `docs/design/tours/<id>.html`: the whole prototype plus that tour, opening
+**Sharing:** every tour is also its own page, `docs/design/tours/<id>.html`: every screen plus that tour, opening
 straight into it. It opens from disk with no network, so you can email it to a client or put it in training material;
 viewers can leave the tour and click around.
+
+**Where it plays:** the tour file's `"view"` picks that page's look. `app` (the default, and what `/plumb:prototype`'s
+default tours use) is the full-window app view, the screens alone with the player on top, for a demo or training; its
+closing card links to the prototype. `prototype` is the prototype page, with the screens list and the decisions rail
+(they fold away while the tour runs), for a design review. `prototype.html#tour-<id>` plays any tour in the prototype.
+In the app view the page itself scrolls, so the player keeps a step's element clear of the screen's own fixed or sticky
+header, and a zoom step on a screen with a fixed layer (a fixed header, a toast) points with a spotlight instead, so
+nothing jumps. Moving through a tour never adds browser history entries: Back leaves the page.
 
 **Tours stay in step:** every element a step points at must exist in the screen file. When a screen changes so that a
 step no longer matches, `build-prototype.py` exits 2 naming the tour, the step and the fix, and the pages aren't rebuilt

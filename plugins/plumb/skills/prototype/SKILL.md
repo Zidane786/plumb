@@ -125,13 +125,13 @@ files, run `--proposal <name>` again, ask again.
 - **Links into other screens change those screen files, which makes their approvals stale.** After the build, show each
   of them too and ask to approve it again (`--approve <id>`), as for the new screen.
 - **Default walkthrough:** `<docs>/prototype/tours/<flow>.json` for each flow this builds or changes: the happy path,
-  one step per meaningful screen or action, plus the most important non-happy state; `"audience": "review"`; captions in
-  the product's words; every target present in the screen file's markup (`<ROOT>/reference/tours.md`).
+  one step per meaningful screen or action, plus the most important non-happy state; `"audience": "review"`; no
+  `"view"` (it plays in the full-window app view); captions in the product's words; every target present in the screen file's markup (`<ROOT>/reference/tours.md`).
 - `PY SKILL/scripts/build-prototype.py`. Exit 2 → fix what it names (a screen file, a tour step) and run it again.
   `PY SKILL/scripts/audit.py <docs>/prototype/screens` reports no findings in those screen files.
 - Show the user both links, **prototype.html to review, app.html to demo**: `<docs>/prototype.html#screen-<id>` (each
   new or changed screen) and `<docs>/app.html#/<id>`; then `<docs>/screens.html` (every state, both themes) and the
-  walkthrough (`prototype.html#tour-<flow>`, or the standalone `<docs>/tours/<flow>.html`). Ask,
+  walkthrough (`prototype.html#tour-<flow>`, or its own page `<docs>/tours/<flow>.html`, in the app view). Ask,
   per screen: "Approve <screen> as the reference to build?" — Approve (recommended when they are happy) / Change
   something. Changes → edit the screen file or tour (say what), rebuild, ask again.
 - On each yes: `PY SKILL/scripts/build-prototype.py --approve <id>`.

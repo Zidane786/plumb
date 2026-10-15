@@ -47,7 +47,8 @@
   review, app.html to demo). Links `#/screen` and `#/screen/state` (the prototype's `#screen-…` links work too), the
   screens' own scripts and theme toggle (the choice is remembered in the browser), the md breakpoint following the
   window, a `data-app-sidebar` that stays in view, and a dialog a click opens scrolled into view. Each proposal variant
-  gets one too, linked from the proposal index next to its prototype.
+  gets one too, linked from the proposal index next to its prototype. The prototype's **Open as app** link opens it on
+  the screen and state you are looking at.
 - **`/plumb:prototype`**: 2–3 variants of a new screen, flow or interaction, each as a clickable prototype and as
   every state in light and dark, side by side on one page (`build-prototype.py --proposal <name>`); the one you pick
   joins the main prototype with a default walkthrough, and your approval is recorded per screen.
@@ -62,6 +63,12 @@
   to 2×, pause and scene markers), captions, callouts, labels, notes, title cards, spotlight, ring, arrow, beacon,
   zoom and a cursor, chapters, and "your turn" steps for training. Every tour is also a standalone page that opens
   offline, to send to a client.
+- **Tours play full window**: a tour file's `"view"` says where its page plays it: `app` (the default) is the app
+  view with the player on top, its closing card linking to the prototype; `prototype` is the prototype page with the
+  screens list and decisions rail, for a design review. `/plumb:tour` asks "Where should it play?" (full-window app
+  recommended) and shows both links; `prototype.html#tour-<id>` plays every tour. In the app view a step's element is
+  kept clear of the screen's own fixed or sticky header, a zoom never pulls a screen's fixed layers out of place (a
+  spotlight points instead), and moving through a tour adds no browser history entries.
 - **The walkthrough player gets out of the way**: **Hide panel** (or the `H` key) swaps the panel for a small pill
   (the step's title in guide mode; in play mode the subtitle keeps narrating), remembered in the browser. While a tour
   runs, the screens list and the side rail fold away so screens keep their desktop layout. The panel, subtitle,

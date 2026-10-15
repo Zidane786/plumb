@@ -21,12 +21,14 @@
   --pl-chrome-radius: var(--radius-lg, 14px);
   --pl-chrome-shadow: var(--shadow-popover, 0 12px 32px -6px var(--pl-video-shadow-strong));
 }
-.pp-stage { position: relative; }
+#pp-stage { position: relative; }
 /* The frame is its own stacking context: whatever z-index a screen gives its dialogs, toasts or sheets, they stay
    under the walkthrough's dock, subtitle, cursor and labels. */
 #pp-frame { isolation: isolate; }
-.pp-stage.pl-zooming { overflow: hidden; }
-.pp-frame.pl-zoom-in { transition: transform 360ms var(--pl-ease); }
+/* While a zoom lasts the stage clips the scaled frame; clip (not hidden) keeps a screen's sticky header and sidebar
+   sticking in the app view, where the stage is the page. */
+#pp-stage.pl-zooming { overflow: hidden; overflow: clip; }
+#pp-frame.pl-zoom-in { transition: transform 360ms var(--pl-ease); }
 
 .pl-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; border-radius: 12px; }
 .pl-layer > * { position: absolute; }
@@ -94,7 +96,14 @@
   box-shadow: var(--pl-shadow-lg); }
 .pl-card-box h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
 .pl-card-box p { margin: 0; color: var(--pl-muted); overflow-wrap: anywhere; }
+.pl-card-link { justify-self: center; font-weight: 600; color: var(--pl-accent); text-underline-offset: 2px; }
 
+/* "Skip to the walkthrough": the first stop in the tab order while a tour runs, off the window until it has focus, so
+   it never takes room from the screen (on every page with the player, the app view included). */
+.pl-skip { position: fixed; left: 8px; top: -60px; z-index: 45; padding: 8px 12px; font: 600 14px/1.3 var(--pl-font);
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong);
+  border-radius: var(--pl-radius-sm); }
+.pl-skip:focus { top: 8px; }
 .pl-eyebrow { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
 .pl-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
@@ -187,7 +196,7 @@ body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
   .pl-card-box { padding: 20px 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pl-cursor, .pp-frame.pl-zoom-in { transition: none !important; }
+  .pl-cursor, #pp-frame.pl-zoom-in { transition: none !important; }
   .pl-beacon::after { animation: none !important; transform: scale(1.8); opacity: 0.45; }
   .pl-cursor.pl-tap::after { animation: none !important; opacity: 0.5; transform: scale(1.4); }
   .pl-flash .pl-ring, .pl-flash .pl-edge, .pl-attn { animation: none !important; }
