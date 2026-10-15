@@ -533,6 +533,13 @@ before writing.
 `docs/design/tours/<id>.html` (the shareable page). If a step needs an element the screen file lacks, it asks before
 adding it (which makes that screen's approval stale until you approve it again).
 
+**How it checks the tour:** after the build, `build-prototype.py --check-tour <tour file>` checks that one tour against
+the screens and warns about a step whose element the screen's CSS shows only at some frame widths ("visible only when
+the frame is ≥ 48rem"). Then, when a Chrome, Edge or Chromium is already on the machine, the plugin's `check-tour.py`
+plays the tour page headless in guide and play mode at 1280 and 1440 wide and names each step whose screen or state is
+wrong, whose element is hidden, zero-size or off the window, or whose player panel is covered; it fixes those steps
+and checks again. No browser: it says so and asks whether to go on without that check (nothing is installed).
+
 ```
 you   /plumb:tour client-demo
 plumb Who is watching? (a) a client or stakeholder demo, opens in play mode (Recommended) (b) training …
@@ -932,6 +939,11 @@ nothing jumps. Moving through a tour never adds browser history entries: Back le
 step no longer matches, `build-prototype.py` exits 2 naming the tour, the step and the fix, and the pages aren't rebuilt
 until it's fixed. Recording approvals still works meanwhile. `/plumb:tour <id>` fixes a custom tour.
 
+**Checking a tour by hand:** `python3 <skill>/scripts/build-prototype.py --check-tour docs/design/prototype/tours/<id>.json`
+checks one tour without writing anything (and warns about elements hidden below or above a frame width), and, with a
+browser on the machine, `python3 <plugin>/scripts/check-tour.py docs/design/tours/<id>.html` plays it headless and
+lists every step that does not show what it points at (exit 0 all fine, 2 problems, 3 no browser).
+
 Captions and callouts are announced to screen readers, and every control works by keyboard. Turning a tour into
 in-app onboarding in the live product is not part of 1.0.0.
 
@@ -1061,6 +1073,7 @@ make design-audit    # python3 <skill>/scripts/audit.py                  the aud
 python3 <skill>/scripts/audit.py --html                                  the audit with its HTML report
 python3 <skill>/scripts/build-prototype.py                               rebuild the prototype pages
 python3 <skill>/scripts/build-prototype.py --check                       exit 1 when a prototype page is stale
+python3 <skill>/scripts/build-prototype.py --check-tour <tour file>      check one tour file; writes nothing
 ```
 
 Every flag of every script, with "use it when", is in the plugin's
@@ -1270,7 +1283,9 @@ system font stack. Every page opens from disk, offline, on any machine.
 Most checks need no browser: the audit reads code, CSS and prototype HTML directly. The visual extras (screenshot
 comparison in `/plumb:audit` and `/plumb:ux`) use the first browser available, installing nothing: the agent's own
 browser tool if your organisation allows one; else a Chrome, Edge or Chromium already on the machine, run headless by
-`screenshot.py`; else the visual part is skipped with a note and every other check still runs.
+`screenshot.py`; else the visual part is skipped with a note and every other check still runs. The browser pass of a
+tour (`check-tour.py`) uses the same search; with no browser it prints `note: tour check skipped: no browser found`,
+and `/plumb:tour` says so and asks whether to continue.
 
 ### Slate
 

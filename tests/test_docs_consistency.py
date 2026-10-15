@@ -213,6 +213,7 @@ QUOTED = {
     "read the skill before UI changes": "hooks/session_start.py",
     "design system not found": "hooks/session_start.py",
     "visual comparison skipped: no browser found": "scripts/screenshot.py",
+    "tour check skipped: no browser found": "scripts/check-tour.py",
     "no colour token is close": "assets/skill/scripts/audit.py",
     "generated files are up to date": "assets/skill/scripts/build-tokens.py",
     "no screen files in": "assets/skill/scripts/build-prototype.py",
@@ -317,6 +318,16 @@ TEST_EXPECTS = [
      'f"wrote: {args.out} ({browser.name}, {args.width}x{args.height}, {args.theme})"'),
     ("note: visual comparison skipped: no browser found", "scripts/screenshot.py",
      "note: visual comparison skipped: no browser found"),
+    ("ok: docs/design/prototype/tours/first-look.json: 3 steps (play mode, app view) match the screens",
+     "assets/skill/scripts/build-prototype.py",
+     "f\"ok: {prel}: {n} step{'s' if n != 1 else ''} ({tour['mode']} mode, {tour['view']} view) match the \""),
+    ("is hidden by the screen's CSS (display: none): visible only when the frame is ≥ 48rem",
+     "assets/skill/scripts/build-prototype.py", "is hidden by the screen's CSS"),
+    ("ok: 3 steps × guide/play × 1280, 1440", "scripts/check-tour.py",
+     "f\"ok: {n} step{'s' if n != 1 else ''} × guide/play × {', '.join(str(w) for w in widths)}\""),
+    ('step 1 (Today): the target ".list" is hidden (display: none) at 600 (guide, play)', "scripts/check-tour.py",
+     'lines.append(f"step {n} ({step_name(steps.get(n, {}), chapters)}): {problem} at {at}")'),
+    ("note: tour check skipped: no browser found", "scripts/check-tour.py", "note: tour check skipped: no browser found"),
 ]
 
 
@@ -839,8 +850,8 @@ def test_theme_switch_rule_reads_tailwind_dark_config_and_unsupported_attributes
 
 PLUGIN_SCRIPTS = {
     "detect.py": "scripts/detect.py", "scaffold.py": "scripts/scaffold.py", "version.py": "scripts/version.py",
-    "screenshot.py": "scripts/screenshot.py", "build-tokens.py": "assets/skill/scripts/build-tokens.py",
-    "audit.py": "assets/skill/scripts/audit.py", "build-prototype.py": "assets/skill/scripts/build-prototype.py",
+    "screenshot.py": "scripts/screenshot.py", "check-tour.py": "scripts/check-tour.py",
+    "build-tokens.py": "assets/skill/scripts/build-tokens.py", "audit.py": "assets/skill/scripts/audit.py", "build-prototype.py": "assets/skill/scripts/build-prototype.py",
 }
 _HELP: Dict[str, str] = {}
 
