@@ -416,6 +416,9 @@ body {
   var markups = templates("data-screen-markup"), styles = templates("data-screen-styles"),
     scripts = templates("data-screen-scripts");
   function part(map, id) { return id in map ? map[id].innerHTML : ""; }
+  /* The screens folder's _shared/ CSS and JS, in the page once too: every copy takes them before its own. */
+  function shared(attr) { var t = document.querySelector("template[" + attr + "]"); return t ? t.innerHTML : ""; }
+  var sharedStyles = shared("data-shared-styles"), sharedScripts = shared("data-shared-scripts");
   /* The screen's markup in one state: every outer state block (no [data-state] or [data-screen] between it and the
      section) but `state` gets hidden, as the build's Screen.render does and as prototype.html's setState picks them.
      The shared template is cloned, never changed. */
@@ -457,8 +460,8 @@ body {
       "<meta charset=\"utf-8\"><base href=\"" + attr(base) + "\">" +
       "<meta http-equiv=\"Content-Security-Policy\" content=\"" + attr(CSP) + "\">" +
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
-      "<style>" + frameCss + "\n" + BASE + "</style>" + part(styles, id) + SHIM +
-      "</head><body>" + markupIn(id, state) + part(scripts, id) +
+      "<style>" + frameCss + "\n" + BASE + "</style>" + sharedStyles + part(styles, id) + SHIM +
+      "</head><body>" + markupIn(id, state) + sharedScripts + part(scripts, id) +
       "<script>(" + inFrame.toString() + ")(" + JSON.stringify(key) + ", " + JSON.stringify(state) + ");<\/script>" +
       "</body></html>";
   });

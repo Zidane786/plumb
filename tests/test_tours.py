@@ -2110,6 +2110,34 @@ def test_the_marks_follow_the_viewers_scrolling_inside_a_list(browser, staged) -
         ctx.close()
 
 
+# ---------------------------------------------------------------- change ids in the Guide panel
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_guide_panel_shows_a_change_id_as_a_chip(browser, tmp_path: Path, scheme: str) -> None:
+    """data-guide="F01 · what changed": the Guide lists the text with the id as a chip; text without a leading id
+    (or with one that is not a letter and digits) stays plain."""
+    p = make_tour_project(tmp_path / "p", build=False)
+    home = p / HOME_REL
+    write(home, read(home).replace("<h2>", '<h2 data-guide="F01 · The heading says what the page is for">', 1)
+          .replace('<ul class="tables">', '<ul class="tables" data-guide="AB1 · not an id">', 1))
+    assert run(p).returncode == 0
+    ctx, page, errors, _ = _open(browser, p / PROTO_REL, scheme=scheme)
+    try:
+        items = page.locator("#plumb-guide .pl-gs-do li button")
+        texts = items.evaluate_all("bs => bs.map(b => b.textContent)")
+        assert "F01The heading says what the page is for" in texts, texts
+        assert GUIDE_ITEM in texts and "AB1 · not an id" in texts, texts
+        chip = page.locator("#plumb-guide .pl-chip")
+        assert chip.count() == 1 and chip.inner_text() == "F01" and chip.get_attribute("data-change") == "F01"
+        colors = chip.evaluate("c => [getComputedStyle(c).color, getComputedStyle(c).backgroundColor]")
+        assert colors[0] != colors[1]
+        page.locator("#plumb-guide .pl-gs-do button", has=page.locator(".pl-chip")).click()  # still flashes its element
+        assert errors == []
+    finally:
+        ctx.close()
+
+
 # ---------------------------------------------------------------- where a tour plays: "view" (app, the default, or prototype)
 
 def _roles_block() -> str:

@@ -5,7 +5,7 @@ Compares the UI files and prototype screen files with the session snapshot sessi
 no snapshot yet: it takes one now and stays quiet). No UI file changed: silent. Otherwise it runs the plugin's own
 audit.py (never the project's copy: trust boundary, see _hooklib) on the changed files, in-process, as `audit.py --changed SNAPSHOT` does (audit.changed_findings): the errors each
 changed file gained this session, a new route with no prototype, and prototype sync (a built screen whose source files
-changed while its screen file did not; a screen that changed and is not approved).
+changed while its screen file did not; a screen that changed, or whose _shared/ CSS or JS changed, and is not approved).
 
 - New errors: {"decision": "block", "reason": "<the list, at most 10, each error: + fix:>, then 'If the user asked you
   not to fix these now, say so and stop.'"} on stdout, so the agent goes on to fix them or say why not. It blocks once

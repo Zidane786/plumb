@@ -1301,7 +1301,12 @@
         var text = (n.getAttribute("data-guide") || "").trim();
         if (!text || seen[text] || !n.getClientRects().length) return;
         seen[text] = true;
-        var li = el("li"), b = button("", text);
+        /* "F01 · what changed and why": a change id (a letter and digits, then ·) shows as a chip */
+        var id = /^([A-Za-z]\d+)\s*·\s*([\s\S]*)$/.exec(text), li = el("li"), b = button("", id ? null : text);
+        if (id) {
+          b.appendChild(el("span", "pl-chip", id[1], { "data-change": id[1] }));
+          b.appendChild(document.createTextNode(id[2]));
+        }
         b.addEventListener("click", function () { flash(n); });
         li.appendChild(b);
         gDo.appendChild(li);

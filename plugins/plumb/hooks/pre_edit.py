@@ -284,8 +284,8 @@ def _approved(bp, root: Path, docs: str, entry: dict) -> bool:
     if not isinstance(approved, dict) or not screen.is_file():
         return False
     try:
-        return approved.get("hash") == bp.sha256_text(screen.read_bytes().decode("utf-8-sig", "replace"))
-    except OSError:
+        return approved.get("hash") == bp.screen_file_hash(screen)  # the screen file and its folder's _shared files
+    except (OSError, UnicodeDecodeError):
         return False
 
 
