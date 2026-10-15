@@ -286,7 +286,7 @@ def test_quoted_messages_are_real() -> None:
 
 # TEST.md's expected output (level 3) next to the code that prints it: (what TEST.md says, the script, the code text).
 TEST_EXPECTS = [
-    ("done: 38 written, 0 kept", "scripts/scaffold.py", 'f"done: {wrote} written, {kept} kept"'),
+    ("done: 40 written, 0 kept", "scripts/scaffold.py", 'f"done: {wrote} written, {kept} kept"'),
     ("confirm: show the user this list; after their OK run the same command without --dry-run, plus --confirm",
      "scripts/scaffold.py", 'confirm: show the user this list; after their OK run the same command without --dry-run, '
                             'plus "'),
@@ -1070,6 +1070,21 @@ def test_status_writes_nothing_itself_even_for_feedback() -> None:
 
 def test_create_checklist_still_checks_who_decided() -> None:
     assert "with who decided" in _flat(SKILLS / "create/SKILL.md")
+
+
+# "Install or download" then "ask the user" in the same sentence (whitespace-normalised, markdown emphasis dropped).
+NO_DOWNLOADS = re.compile(r"\binstall(?:ed)?\s+or\s+download(?:ed)?\b[^.]{0,200}?\bask the user\b")
+
+
+@pytest.mark.parametrize("path", [PLUGIN / "templates/PLUMB.md", PLUGIN / "templates/agents-row.md"] + skill_files(),
+                         ids=lambda p: p.parent.name if p.name == "SKILL.md" else p.name)
+def test_every_skill_and_template_says_no_downloads_and_ask_the_user(path: Path) -> None:
+    # No downloads, ever (AGENTS.md): Plumb installs and downloads nothing; when something is missing the agent asks
+    # the user and waits. Every skill, the project's PLUMB.md and the AGENTS row keep saying so.
+    flat = _flat(path).replace("*", "")
+    assert NO_DOWNLOADS.search(flat), (
+        f"{path.relative_to(REPO)}: say that nothing is installed or downloaded and to ask the user "
+        "(e.g. 'Never install or download anything; if something is missing, ask the user and wait.')")
 
 
 def test_templates_and_session_start_point_to_feedback() -> None:

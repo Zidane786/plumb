@@ -100,7 +100,7 @@ PY <repo>/plugins/plumb/scripts/scaffold.py --project-root . --name Demo --skill
 `confirm: show the user this list; after their OK run the same command without --dry-run, plus --confirm <token>`
 (12 hex characters). The second command (no token) is refused with
 `error: the scaffold writes into the project only after the user approved the dry-run list` and writes nothing. The
-third, with the token the dry run printed, ends `done: 38 written, 0 kept`.
+third, with the token the dry run printed, ends `done: 40 written, 0 kept`.
 `PLUMB.md` exists and starts with `<!-- plumb v1.0.0 · written by /plumb:init, safe to edit values -->`.
 
 Below, `SKILL` is `.claude/skills/demo-design-system`.
@@ -165,7 +165,7 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    `PY -c "open('docs/design/prototype/screens/big.html','w',encoding='utf-8').write('<section data-screen=\"big\" data-title=\"Big\"><div data-state=\"ready\">' + '<p>filler text for the size check</p>' * 300000 + '</div></section>\n')"`
    and `PY SKILL/scripts/build-prototype.py`.
    **Expect:** exit 0 and one line naming the three pages: `warning: docs/design/app.html is 10.7 MB,
-   docs/design/prototype.html is 10.7 MB, docs/design/screens.html is 10.7 MB: over the 10 MB a generated page should
+   docs/design/prototype.html is 10.8 MB, docs/design/screens.html is 10.7 MB: over the 10 MB a generated page should
    stay under (slow to open, heavy in the repository)`, then `note: every page holds each screen file once; the
    largest: docs/design/prototype/screens/big.html (10.6 MB)` and one `fix: make the screen files smaller: move inline
    data: images …; or git-ignore the pages …` line. `PY SKILL/scripts/build-prototype.py --check` prints the same
