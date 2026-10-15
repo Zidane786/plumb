@@ -141,10 +141,11 @@ TEST.md                               hands-on test guide for any machine
   pairs, no lazy fetch, absolute git from PATH, shared 3 s budget, fail open). Keep
   `SECURITY.md` "Trust boundary" exact when this changes.
 - **The Bash guard: the earlier reader decides.** A shell command the earlier reader
-  (`hooks/_shell_legacy.py`) refuses stays refused unless the new reader proves one of three
-  patterns: a data text written to a file the command never uses again, a read-only program's
-  words, or inline code that only reads its guarded literals (`pre_edit._proven`). Never widen
-  them without a review, and never change the earlier reader to allow more; `tests/legacy_guard.py`
+  (`hooks/_shell_legacy.py`) refuses stays refused unless the new reader proves one of four
+  patterns (`pre_edit._proven`): (a) a data text written to a file the command never uses again,
+  (b) a read-only program's words, (c) inline code that only reads its guarded literals, or
+  (d) a `git commit` message, unless git is given an option that runs something, a variable is
+  set before it, or the command wrote a hook. Never widen them without a review, and never change the earlier reader to allow more; `tests/legacy_guard.py`
   is its frozen copy, and `tests/test_bash_guard.py` asserts the guard refuses everything it
   refuses, with no exemptions.
 - **Exceptions by path, never by comment.** Audit allowances live on `PLUMB.md`'s allow list

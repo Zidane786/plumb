@@ -200,7 +200,10 @@ system. Each variant comes as **both views**, so states are compared, not only t
 - A variant's pages sit in its own folder, so a relative image path in a variant's screen file resolves from that
   folder; check such paths when the screen is copied to `<docs>/prototype/screens/`.
 - The chosen variant's screen files (and its `_shared/` files) are copied to `<docs>/prototype/screens/` (the main
-  prototype); the others stay.
+  prototype); the others stay. Its change ids come with its screen files: when main keeps
+  `<docs>/prototype/changes.md`, the variant's lines from `proposals/<name>/changes.md` are carried into it (else the
+  next build exits 2 on an unlisted id); with no main `changes.md`, ask whether to keep the ids as Guide chips or drop
+  them (remove the `F01 · ` prefix from the `data-guide` text).
 
 ## Approvals and the map
 
@@ -210,7 +213,8 @@ system. Each variant comes as **both views**, so states are compared, not only t
   conversation: show the screen (its `prototype.html#screen-<id>` link), ask "Approve <screen> as the reference to
   build?", wait for the answer. Never chain it after another command (`--synced x && --approve x`), never approve on
   the user's behalf because a flow "usually" ends approved. Editing the screen file or a shared file afterwards makes
-  the approval stale (`screen-unapproved`): show the change and ask again.
+  the approval stale (`screen-unapproved`; when only a shared file changed, the finding names that file, so show its
+  change, not the screen file's): show the change and ask again.
 - `--map <id> --route=<route> --files <globs>` links a screen to its route and source files once they exist (or are
   agreed); the screen is `to-build` until every glob matches, then `built`. Pass the route as one argument
   (`--route=/`, `--route=/billing`): Copilot CLI reads a bare `/` as a path and asks for access to it.

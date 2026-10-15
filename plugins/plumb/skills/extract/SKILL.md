@@ -151,7 +151,7 @@ route without a screen as `route-not-prototyped`: add those (asked). `build-prot
 
 ## 18. Each screen approved? — STOP per screen
 
-Give the paths of `docs/design/prototype.html` and `screens.html`, then per screen: "Approve <screen> as the reference
+Give the paths of `docs/design/prototype.html` (to review), `app.html` (to demo) and `screens.html`, then per screen: "Approve <screen> as the reference
 to build?" Approve (Recommended when it matches the app) · leave it synced for later · change something. **STOP: ask,
 wait for the answer.** Only on an explicit approve: `build-prototype.py --approve <id>`.
 

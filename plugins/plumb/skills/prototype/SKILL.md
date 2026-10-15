@@ -121,7 +121,9 @@ files, run `--proposal <name>` again, ask again.
 - **The chosen variant's `_shared/` files** go in that list too, by name → `<docs>/prototype/screens/_shared/`; a
   name main already has is a conflict: show both and ask. A shared file reaches every main screen, so it makes all
   their approvals stale: after the build, show and ask per screen as below (never `--approve` without their yes).
-  Change ids are checked in main only when `<docs>/prototype/changes.md` exists.
+  Its change ids (`data-guide="F01 · …"`) come along: when main keeps `<docs>/prototype/changes.md`, carry the
+  chosen variant's lines from `proposals/<name>/changes.md` into it (in the list); with none, ask whether to keep
+  the ids or drop them (remove the `F01 · ` prefix).
 - **Links into other screens change those screen files, which makes their approvals stale.** After the build, show each
   of them too and ask to approve it again (`--approve <id>`), as for the new screen.
 - **Default walkthrough:** `<docs>/prototype/tours/<flow>.json` for each flow this builds or changes: the happy path,

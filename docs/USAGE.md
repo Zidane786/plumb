@@ -894,7 +894,9 @@ list the ids in `docs/design/prototype/proposals/billing/changes.md`, one line e
 `build-prototype.py --proposal billing` (and `--check`) exits 2 when a screen uses an id that isn't listed (or there is
 no `changes.md`), naming the screen file and the id; a listed id no screen uses is a `warning:`; the proposal's
 `index.html` lists the changes and where each one is used. In the Guide panel the id shows as a chip next to its text.
-The main prototype can use ids too: they are checked only when `docs/design/prototype/changes.md` exists. Guide text
+The main prototype can use ids too: they are checked only when `docs/design/prototype/changes.md` exists. When the
+chosen variant goes to main, its ids come along: Plumb lists its `changes.md` lines among the files to write (when
+main keeps a `changes.md`), or asks whether to keep the ids or drop them. Guide text
 without an id in front is never checked.
 
 **Always in step, both ways.** A screen "to build" stays listed in `/plumb:status` and the audit until its route
