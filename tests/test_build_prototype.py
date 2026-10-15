@@ -1897,6 +1897,8 @@ def test_check_covers_shared_files_and_builds_are_byte_stable(project: Path) -> 
     ("x.js", 'import { a } from "./a.js";\n', "import"),
     ("x.js", 'var t = `rows: ${fetch("/rows")}`;\n', "fetch("),  # a template's ${...} is code
     ("x.js", 'var u = "// not a comment"; fetch("/y");\n', "fetch("),  # a string ends before the code
+    ("x.js", "var q = /'/; fetch(\"/x\");\n", "fetch("),  # a quote in a regex literal opens no string
+    ("x.js", 'var h = s.replace(/[/"]/g, "") / 2; fetch("/z");\n', "fetch("),  # / in a class; then a division
     ("x.css", '</style><script>alert(1)</script>\n', "</style"),
     ("x.css", '@import url("https://example.com/x.css");\n', "@import"),
     ("x.css", '@import "local.css";\n', "@import"),
@@ -1917,7 +1919,8 @@ def test_shared_files_that_load_nothing_are_accepted(project: Path) -> None:
                                           'var important = 1;\n// never fetch() here: the data is inline\n'
                                           '/* new XMLHttpRequest() was the old way;\n   import("x") too */\n'
                                           'var tip = `\nimport your list from a spreadsheet: fetch("it")`;\n'
-                                          "var s = 'see https://example.com/api, fetch(later)';\n")
+                                          "var s = 'see https://example.com/api, fetch(later)';\n"
+                                          "function f(s) { return /fetch(es)?|import(ed)?/.test(s); }\n")
     write(project / SHARED_REL / "ok.css", '/* @import was here */\n[data-screen] .icon { mask: url(#m); '
                                            'background: url(img/bg.png), url("data:image/svg+xml,'
                                            '%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E"); }\n')
@@ -1971,11 +1974,21 @@ def test_shared_js_runs_for_each_screen_before_its_own_script(browser, tmp_path:
     add_shared(p)
     home = p / SCREENS_REL / "home.html"
     write(home, read(home) + OWN_HOME_JS)
+    tour = json.loads(read(FIXTURE / "tours/demo.json"))
+    for view in ("app", "prototype"):  # both views a tour page plays in
+        write(p / DOCS / f"prototype/tours/in-{view}.json", json.dumps(dict(tour, view=view), ensure_ascii=False))
     assert run(p).returncode == 0
     order_of = "window.__order || []"
-    for rel in (PROTO_REL, APP_REL):
+    tour_pages = [f"{DOCS}/tours/in-app.html", f"{DOCS}/tours/in-prototype.html"]
+    assert 'id="plumb-guide"' in read(p / tour_pages[1]) and 'id="plumb-guide"' not in read(p / tour_pages[0])
+    for rel in [PROTO_REL, APP_REL] + tour_pages:
         ctx, page, errors, requests = _open(browser, p / rel, scheme=scheme)
         try:
+            # the shared CSS is in the page once, the shared JS once (it runs per screen, below)
+            assert page.evaluate("[...document.querySelectorAll('style')]"
+                                 ".filter(s => s.textContent.includes('rgb(1, 2, 3)')).length") == 1, rel
+            assert page.evaluate("[...document.querySelectorAll('script')]"
+                                 ".filter(s => s.textContent.includes('push(\"a:\"')).length") == 1, rel
             order = page.evaluate(order_of)
             for sid in ("home", "booking", "menu"):
                 assert order.count(f"a:{sid}") == 1, (rel, order)

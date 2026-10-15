@@ -512,7 +512,8 @@ _SHARED_SCOPED = re.compile(r"\[\s*data-screen\s*(?:[~|^$*]?=|\])")
 def blank_js(text: str) -> str:
     """The JS with every comment and the inside of every string and template literal turned to spaces (newlines and the
     quote marks kept, so offsets and lines stay): a comment or text that mentions fetch( or an import loads nothing.
-    A template literal's ${...} expressions stay code. Regex literals are read as code (a deliberately small reader)."""
+    A template literal's ${...} expressions stay code. A / after an operator, ( , = : [ ! & | ? { } ; or return/typeof
+    starts a regex literal, blanked like a string (a deliberately small reader: after anything else, / divides)."""
     out = list(text)
     i, n = 0, len(text)
     depth: List[int] = []  # one entry per open ${...}: the { nesting inside it
@@ -521,6 +522,19 @@ def blank_js(text: str) -> str:
         for k in range(a, min(b, n)):
             if out[k] != "\n":
                 out[k] = " "
+
+    def regex_may_start(k: int) -> bool:
+        """A / at k starts a regex literal when the code before it ends in an operator or punctuation (or nothing),
+        or the word return / typeof; after a name, a number or ) ] it divides."""
+        k -= 1
+        while k >= 0 and out[k] in " \t\r\n":
+            k -= 1
+        if k < 0 or out[k] in "(,=:[!&|?{};+-*%<>~^":
+            return True
+        end = k + 1
+        while k >= 0 and (out[k].isalnum() or out[k] in "_$"):
+            k -= 1
+        return text[k + 1:end] in ("return", "typeof")
 
     def template(j: int) -> int:
         """Blank template text from j to the closing backtick or the next ${; return where code resumes."""
@@ -545,6 +559,19 @@ def blank_js(text: str) -> str:
             end = n if end == -1 else end + 2
             blank(i, end)
             i = end
+        elif c == "/" and regex_may_start(i):
+            j = i + 1
+            in_class = False
+            while j < n and text[j] != "\n" and (in_class or text[j] != "/"):
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                j += 1
+            blank(i + 1, j)
+            i = j + 1
         elif c == "`":
             i = template(i + 1)
         elif c in "'\"":

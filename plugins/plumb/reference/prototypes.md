@@ -96,7 +96,7 @@ in name order (prefix them `10-base.css`, `20-shell.css` to choose the order). N
   logged with its file name; the others still run.
 - **Checked before it is inlined** (shared files only): `</script` in a JS file or `</style` in a CSS file, and
   code that loads from the network or another file (`fetch(`, `new XMLHttpRequest`, `WebSocket`, `EventSource`,
-  `sendBeacon(`, `import`, CSS `@import`, `url(https://…)` or `url(//…)`) exits 2 naming the file and line. A JS comment or string that only mentions them does not count.
+  `sendBeacon(`, `import`, CSS `@import`, `url(https://…)` or `url(//…)`) exits 2 naming the file and line. A JS comment, string or regex literal that only mentions them does not count.
 - **Approvals:** the shared files are part of every screen's approval. Editing one makes the approval of every screen in
   that folder stale, and the build's note names the shared file ("… changed since Ana approved it on 2026-10-14 (the
   shared file: docs/design/prototype/screens/_shared/base.css changed; shared files reach every screen)"). Show the
