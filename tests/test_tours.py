@@ -554,8 +554,9 @@ document.addEventListener('plumb:tour', function (e) {
 """
 
 
-def _open(browser, path: Path, width: int = 1280, scheme: str = "light", hash_: str = "", reduced: bool = False):
-    ctx = browser.new_context(viewport={"width": width, "height": 900}, color_scheme=scheme,
+def _open(browser, path: Path, width: int = 1280, scheme: str = "light", hash_: str = "", reduced: bool = False,
+          height: int = 900):
+    ctx = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme,
                               reduced_motion="reduce" if reduced else "no-preference")
     page = ctx.new_page()
     errors: list = []
@@ -2586,6 +2587,170 @@ def test_leaving_an_app_view_tour_keeps_focus_on_the_screen(browser, apptour) ->
             page.evaluate("document.activeElement.outerHTML.slice(0, 80)")
         assert page.evaluate("document.activeElement.getAttribute('data-screen')") == "home"
         assert "The app is yours to click around" in page.inner_text(".pl-live")
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------------- pinned targets and labels away from their target
+
+BOARD_REL = f"{DOCS}/prototype/screens/board.html"
+# An app shell: a sticky sidebar (data-app-sidebar) with a link, a page header with two labelled things, a long list, a
+# footer far below, and a state with a toast fixed to the bottom-right corner of the window.
+BOARD_ROWS = "".join(f'<p class="row r{i}">Row {i}</p>' for i in range(1, 61))
+BOARD = """<style>
+[data-screen="board"] .shell { display: block; }
+[data-screen="board"] .side { padding: var(--spacing-4); background: var(--color-sunk); }
+[data-screen="board"] .head { display: flex; gap: var(--spacing-4); padding: var(--spacing-4); }
+[data-screen="board"] .row { margin: 0; padding: var(--spacing-4); }
+[data-screen="board"] .foot { margin-top: 1200px; padding: var(--spacing-4); }
+[data-screen="board"] .toast { position: fixed; right: var(--spacing-6); bottom: var(--spacing-6); z-index: 70;
+  width: 280px; padding: var(--spacing-3); background: var(--color-surface); }
+@container plumb-frame (min-width: 48rem) {
+  [data-screen="board"] .shell { display: grid; grid-template-columns: 14rem minmax(0, 1fr); align-items: start; }
+}
+</style>
+<section data-screen="board" data-title="Board" data-order="11">
+  <div class="shell">
+    <nav class="side" data-app-sidebar aria-label="Sections"><a href="#screen-board" class="week">Week</a></nav>
+    <main>
+      <header class="head"><p class="kpi">This week: 12</p><button type="button" class="primary">New item</button></header>
+      <div data-state="ready">""" + BOARD_ROWS + """<footer class="foot">The end</footer></div>
+      <div data-state="saved">""" + BOARD_ROWS + """<footer class="foot">The end</footer>
+        <div class="toast" role="status">Saved</div></div>
+    </main>
+  </div>
+</section>
+"""
+
+
+def pins_tour() -> dict:
+    labels = [{"target": ".head .kpi", "text": "This week"}, {"target": ".head .primary", "text": "New"}]
+    return {"title": "Pinned and labelled", "audience": "review", "steps": [
+        {"screen": "board", "title": "The last row", "caption": "Down the list.", "target": ".r60", "point": "ring"},
+        {"screen": "board", "title": "The sidebar", "caption": "Labels on the header.", "target": ".side .week",
+         "point": "ring", "labels": labels},
+        {"screen": "board", "title": "Too far apart", "caption": "The header and the footer.", "target": ".side .week",
+         "point": "ring", "labels": [{"target": ".head .kpi", "text": "This week"}, {"target": ".foot", "text": "End"}]},
+        {"screen": "board", "state": "saved", "title": "Saved", "caption": "The toast says so.", "target": ".toast",
+         "point": "beacon"},
+        {"screen": "board", "state": "ready", "title": "A row", "caption": "In the middle.", "target": ".r30",
+         "point": "ring"},
+    ]}
+
+
+@pytest.fixture(scope="module")
+def pins(tmp_path_factory) -> Path:
+    p = make_tour_project(tmp_path_factory.mktemp("pins") / "Pins Ünïcode", {"demo": demo(), "pins": pins_tour()},
+                          build=False)
+    write(p / BOARD_REL, BOARD)
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return p
+
+
+PINS_PAGE = f"{PAGES_REL}/pins.html"
+OVERLAP = """([a, b]) => { var r = document.querySelector(a).getBoundingClientRect();
+  var s = document.querySelector(b).getBoundingClientRect();
+  return Math.max(0, Math.min(r.right, s.right) - Math.max(r.left, s.left)) *
+         Math.max(0, Math.min(r.bottom, s.bottom) - Math.max(r.top, s.top)); }"""
+TOAST = '#pp-frame [data-screen="board"] .toast'
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_toast_fixed_to_the_window_is_not_scrolled_to_and_the_dock_moves_clear(browser, pins, width: int) -> None:
+    ctx, page, errors, _ = _open(browser, pins / PINS_PAGE, width=width, height=800)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        page.evaluate("window.scrollTo({top: 0, behavior: 'instant'})")
+        _start(page, "pins", "guide", step=4)
+        page.wait_for_timeout(100)
+        assert page.evaluate("window.scrollY") == 0, "scrolling cannot move a toast fixed to the window"
+        assert page.evaluate(OVERLAP, [".pl-dock", TOAST]) == 0, page.evaluate(RECT, ".pl-dock")
+        assert page.evaluate(IN_WINDOW, TOAST)
+        assert _shown(page, ".pl-beacon") == 1
+        assert page.evaluate(ON_TOP, ".pl-dock [data-pl=next]")
+        # reached from a step that scrolled down: the page stays where it is, the dock still keeps clear
+        _start(page, "pins", "guide", step=1)
+        down = page.evaluate("window.scrollY")
+        assert down > 0
+        page.evaluate("window.plumbPlayer.jump(window.plumbPlayer.state().pos + 3)")
+        assert _state(page)["step"] == 4
+        assert page.evaluate("window.scrollY") == down, "the step did not scroll the page"
+        assert page.evaluate(OVERLAP, [".pl-dock", TOAST]) == 0
+        # play mode: the subtitle follows the dock and keeps clear of the toast too
+        _start(page, "pins", "play", step=4)
+        page.evaluate("window.plumbPlayer.pause()")
+        assert page.evaluate(OVERLAP, [".pl-dock", TOAST]) == 0
+        assert page.evaluate(OVERLAP, [".pl-subtitle", TOAST]) == 0
+        assert page.evaluate(OVERLAP, [".pl-subtitle", ".pl-dock"]) == 0
+        sub = page.evaluate(RECT, ".pl-subtitle")
+        assert sub[1] >= 0 and sub[1] + sub[3] <= 800, sub
+        # a target that scrolls keeps today's dock at the bottom of the window
+        _start(page, "pins", "guide", step=5)
+        dock = page.evaluate(RECT, ".pl-dock")
+        assert abs(dock[1] + dock[3] - (800 - 8)) <= 1, dock
+        assert page.evaluate(IN_WINDOW, '#pp-frame [data-screen="board"] .r30')
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_pill_keeps_clear_of_a_pinned_toast_too(browser, pins) -> None:
+    ctx, page, errors, _ = _open(browser, pins / PINS_PAGE, width=390, height=800)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        _start(page, "pins", "guide", step=4)
+        page.keyboard.press("h")
+        assert _shown(page, ".pl-pill") == 1
+        assert page.evaluate(OVERLAP, [".pl-pill", TOAST]) == 0, page.evaluate(RECT, ".pl-pill")
+        page.keyboard.press("h")
+        assert page.evaluate(OVERLAP, [".pl-dock", TOAST]) == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_in_the_prototype_page_the_dock_keeps_clear_of_a_toast_too(browser, pins) -> None:
+    ctx, page, errors, _ = _open(browser, pins / PROTO_REL, height=800)
+    try:
+        _start(page, "pins", "guide", step=4)
+        page.wait_for_timeout(100)
+        assert page.evaluate(OVERLAP, [".pl-dock", TOAST]) == 0
+        assert page.evaluate(IN_WINDOW, TOAST)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+LABELS_SHOWN = """() => { var d = document.querySelector('.pl-dock').getBoundingClientRect();
+  return [...document.querySelectorAll('.pl-label')].map(function (n) { var r = n.getBoundingClientRect();
+    return {text: n.textContent, ok: r.top >= 0 && r.bottom <= d.top}; }); }"""
+WEEK = '#pp-frame [data-screen="board"] .side .week'
+
+
+@pytest.mark.parametrize("via", ["next", "jump"])
+def test_labels_away_from_a_target_in_view_are_brought_in_with_it(browser, pins, via: str) -> None:
+    ctx, page, errors, _ = _open(browser, pins / PINS_PAGE, height=800)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        _start(page, "pins", "guide", step=1)
+        assert page.evaluate("window.scrollY") > 0
+        if via == "next":
+            page.click(".pl-dock [data-pl=next]")
+        else:
+            page.evaluate("window.plumbPlayer.jump(window.plumbPlayer.state().pos + 1)")
+        assert _state(page)["step"] == 2
+        assert page.evaluate(IN_WINDOW, WEEK), "the target stays in view"
+        labels = page.evaluate(LABELS_SHOWN)
+        assert [x["text"] for x in labels] == ["This week", "New"], labels
+        assert all(x["ok"] for x in labels), labels
+        # they cannot all fit (the footer is far below): the target and the first label come first
+        page.click(".pl-dock [data-pl=next]")
+        assert _state(page)["step"] == 3
+        assert page.evaluate(IN_WINDOW, WEEK)
+        first = [x for x in page.evaluate(LABELS_SHOWN) if x["text"] == "This week"]
+        assert first and first[0]["ok"], page.evaluate(LABELS_SHOWN)
         assert errors == []
     finally:
         ctx.close()

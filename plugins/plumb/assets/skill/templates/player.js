@@ -145,7 +145,7 @@
   /* ------------------------------------------------------------ the player's state */
   var T = { tour: null, mode: null, seq: [], scenes: [], pos: 0, speed: 1, paused: false, ended: false, run: 0, timer: null,
             wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, zoomTimer: null,
-            panelHidden: storedHidden(), reveal: false };
+            panelHidden: storedHidden(), reveal: false, step: null };
 
   function sequence(tour) {
     var seq = [];
@@ -416,6 +416,98 @@
     if (!dock.hidden) return dock.offsetHeight + 16;
     return pill.hidden ? 0 : pill.offsetHeight + 16;
   }
+  /* The panel on show (the dock, or the pill while the panel is hidden), or null. */
+  function chromeEl() { return !dock.hidden ? dock : !pill.hidden ? pill : null; }
+  /* The dock (and the pill) sit at the bottom of the window, or at its top (below the shell's sticky bar) for a step
+     whose target they would cover there. */
+  function atTop() { return dock.classList.contains("pl-at-top"); }
+  function setTop(on) {
+    [dock, pill].forEach(function (n) {
+      n.classList.toggle("pl-at-top", on);
+      if (on) n.style.setProperty("--pl-top", topInset() + "px");
+      else n.style.removeProperty("--pl-top");
+    });
+  }
+  /* The part of the window clear of the shell's bar and the panel: [top, bottom]. */
+  function roomTop() {
+    var top = topInset(), c = atTop() ? chromeEl() : null;
+    return c ? Math.max(top, c.getBoundingClientRect().bottom + 8) : top;
+  }
+  function roomBottom() { return atTop() ? window.innerHeight : window.innerHeight - chromeHeight(); }
+  /* True when a node stays where it is as the page scrolls: it, or a box around it, is fixed to the window (a toast or a
+     bar of the app view, where nothing between it and the page holds fixed layers). */
+  function pinned(node) {
+    for (var n = node; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      if (getComputedStyle(n).position === "fixed") return fixedToWindow(n);
+    }
+    return false;
+  }
+  /* How much of the panel's box covers the given rects (in px²). */
+  function cover(rects) {
+    var c = chromeEl();
+    if (!c) return 0;
+    var d = c.getBoundingClientRect();
+    return rects.reduce(function (sum, r) {
+      return sum + Math.max(0, Math.min(r.right, d.right) - Math.max(r.left, d.left)) *
+        Math.max(0, Math.min(r.bottom, d.bottom) - Math.max(r.top, d.top));
+    }, 0);
+  }
+  /* Puts the panel at the bottom of the window, or at its top when at the bottom it would cover one of the step's
+     targets and at the top it covers less: a toast fixed to a bottom corner, a bar stuck to the bottom of the window.
+     Only the given nodes count; by default every target of the step on show that is fixed to the window or fits the
+     room (a target taller than the window is always partly under the panel, which then stays at the bottom). Never
+     scrolls. */
+  function placeChrome(step, nodes) {
+    setTop(false);
+    if (!step || !chromeEl()) return;
+    var room = window.innerHeight - chromeHeight() - topInset();
+    var list = nodes || step.targets.map(function (s) { return find(step, s); }).filter(function (n) {
+      return n && !clipped(n) && (pinned(shape(n) || n) || rectOf(n).height <= room);
+    });
+    var rects = list.map(rectOf);
+    var below = cover(rects);
+    if (!below) return;
+    setTop(true);
+    if (cover(rects) >= below) setTop(false);
+  }
+  /* True when a node or a box around it is sticky: it may stay in the window while the page (and its labels) scroll. */
+  function sticky(node) {
+    for (var n = node; n && n !== document.body; n = n.parentElement) {
+      if (getComputedStyle(n).position === "sticky") return true;
+    }
+    return false;
+  }
+  /* Brings a step's labels into view with its target (already in view, or fixed to the window): the target and every
+     label together when they fit the room, else the target and the first label. A target that may stay put while the
+     page scrolls (fixed to the window, or in a sticky sidebar) is tried first as staying put; a scroll that leaves the
+     target or those labels out of view is undone. A label counts with the room its tag takes above the labelled
+     element. */
+  function fitLabels(el0, labels, top, bottom, still) {
+    if (!labels.length) return;
+    var pad = 8, lo = top + pad, hi = bottom - pad;
+    function need(n) { var r = rectOf(n); return { top: r.top - 16, bottom: r.top + 24 }; }
+    function within(b) { return b.top >= top && b.bottom <= bottom; }
+    function ok(set) { return set.every(function (n) { return within(need(n)); }) && (still || within(el0.getBoundingClientRect())); }
+    /* the smallest window scroll that brings these labels (and the target, when it moves with them) in, or null */
+    function shift(set, withTarget) {
+      var u = (withTarget ? [el0.getBoundingClientRect()] : []).concat(set.map(need)).reduce(function (a, b) {
+        return { top: Math.min(a.top, b.top), bottom: Math.max(a.bottom, b.bottom) };
+      }, { top: Infinity, bottom: -Infinity });
+      if (u.bottom - u.top > hi - lo) return null;
+      return u.top < lo ? u.top - lo : u.bottom > hi ? u.bottom - hi : 0;
+    }
+    if (ok(labels)) return;
+    var sets = [labels, labels.slice(0, 1)], tries = [], y0 = window.scrollY;
+    if (still || sticky(el0)) sets.forEach(function (s) { tries.push([s, false]); });
+    if (!still) sets.forEach(function (s) { tries.push([s, true]); });
+    for (var i = 0; i < tries.length; i++) {
+      var d = shift(tries[i][0], tries[i][1]);
+      if (d === null) continue;
+      if (d) scrollWindowBy(d);
+      if (ok(tries[i][0])) return;
+      scrollWindowBy(y0 - window.scrollY);  /* undone: the target first */
+    }
+  }
   function onStepScreen(step) {
     var cur = api.current();
     return cur.page === "screen" && cur.screen === step.screen;
@@ -581,10 +673,17 @@
     card.style.width = Math.max(0, x2 - x1) + "px";
     card.style.height = Math.max(0, y2 - y1) + "px";
   }
-  /* The subtitle sits at the bottom of the part of the stage you can see, above the dock (or its pill). */
+  /* The subtitle sits at the bottom of the part of the stage you can see, above the dock (or its pill); with the panel
+     at the top of the window, just below it. */
   function placeSubtitle() {
     if (subtitle.hidden) return;
-    var s = stage.getBoundingClientRect();
+    var s = stage.getBoundingClientRect(), c = atTop() ? chromeEl() : null;
+    subtitle.style.bottom = "auto";
+    if (c) {
+      var under = c.getBoundingClientRect().bottom + 16 - s.top;
+      subtitle.style.top = clamp(under, 8, Math.max(8, stage.clientHeight - subtitle.offsetHeight - 8)) + "px";
+      return;
+    }
     var floor = window.innerHeight - chromeHeight() - 16;
     var bottom = Math.min(s.bottom - 16, floor) - s.top;
     subtitle.style.bottom = "auto";
@@ -611,20 +710,22 @@
     put(n, clamp(x, 8, Math.max(8, W - w - 8)), clamp(y, 4, Math.max(4, H - h - 4)));
   }
   /* Scrolls the step's first target into the room between the sticky bar (and the screen's own fixed or sticky
-     header) and the dock. One that fits is centred in that room. One taller than that room:
+     header) and the dock. One that fits is centred in that room; then its labels come in with it (fitLabels). One
+     fixed to the window is never scrolled to (scrolling cannot move it): only its labels are. One taller than that room:
      with labels, its top edge and its topmost label come into view together when they fit, else the topmost label;
      without labels, it goes to its nearest edge, and not at all while part of it is in view, so a tall area already
      filling the window does not jump. */
   function bringIntoView(node, labels) {
-    var el0 = shape(node) || node;
-    var top = screenTop(el0, topInset()), bottom = window.innerHeight - chromeHeight();
+    var el0 = shape(node) || node, still = pinned(el0);
+    var top = screenTop(el0, roomTop()), bottom = roomBottom();
     var r = el0.getBoundingClientRect(), margin = 32;
-    if (r.height <= bottom - top) {
-      if (r.top < top || r.bottom > bottom) {
+    if (still || r.height <= bottom - top) {
+      if (!still && (r.top < top || r.bottom > bottom)) {
         scrollToNode(el0, { block: "nearest", inline: "nearest" });  /* the window and any box between, as before */
         r = el0.getBoundingClientRect();
         scrollWindowBy((r.top + r.bottom) / 2 - (top + bottom) / 2);
       }
+      fitLabels(el0, labels, top, bottom, still);
       return;
     }
     if (!labels.length) {
@@ -639,13 +740,17 @@
     scrollWindowBy(want[0] - (top + margin));
   }
   /* The one place a step scrolls, once, when it opens: its first target into view inside its scrollers, then the
-     window (with its topmost label in view too, when it has labels in view); then everything is measured. */
+     window (with its labels in view too, when it has labels in view); then the panel keeps clear of the targets and
+     everything is measured. A target fixed to the window moves the panel first, so the room is measured right. */
   function decorate(step) {
     var targets = step.targets.map(function (s) { return find(step, s); }).filter(Boolean);
     if (targets.length) reveal(targets[0]);
     var labelled = step.labels.map(function (lab) { return find(step, lab.target); })
       .filter(function (n) { return n && !clipped(n); });
+    T.step = step;
+    placeChrome(step, targets.filter(function (n) { return !clipped(n) && pinned(shape(n) || n); }));
     if (targets.length) bringIntoView(targets[0], labelled);
+    placeChrome(step, null);
     var point = step.point === "zoom" && zoomMovesFixed(step) ? "spotlight" : step.point;
     T.redraw = function () { draw(step, point); };
     var shown = targets.filter(function (n) { return !clipped(n); });
@@ -658,6 +763,8 @@
     clearOverlays();
     unzoom();
     T.redraw = null;
+    T.step = null;
+    setTop(false);
     if (T.turn) { T.turn(); T.turn = null; }
     hint.hidden = true;
     hint.textContent = "";
@@ -1110,6 +1217,7 @@
     dock.hidden = !T.tour || hide;
     pill.hidden = !hide;
     sizeDock();
+    if (T.step) placeChrome(T.step, null);  /* the pill is smaller than the dock: it may fit at the bottom */
     placeSubtitle();
     placeCard();
     if (T.redraw) T.redraw();
@@ -1167,6 +1275,7 @@
     }
   });
   window.addEventListener("resize", function () {
+    if (T.step) placeChrome(T.step, null);
     if (T.redraw) T.redraw();
     if (T.tour) { sizeDock(); placeSubtitle(); placeCard(); }
   });
