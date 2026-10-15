@@ -759,3 +759,81 @@ def test_a_reader_crash_is_logged_once_with_the_real_outcome(decide, monkeypatch
     reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
     assert bool(reason) is refused_, reason
     assert len(lines) == 1 and lines[0].startswith(outcome), lines
+
+
+# ---------------------------------------------------------------- round 4: computed targets, the allow conditions pinned
+
+COMPUTED_REFUSE = [
+    f"cat a > \"$(dirname {GEN})/screens.html\"",
+    f"G={GEN}; cat a > \"${{G%/*}}/screens.html\"",
+    f"cat a > \"`dirname {GEN}`/screens.html\"",
+    f"OUT=$(dirname {GEN}); cp /tmp/a \"$OUT/x.html\"",  # the variable's value names it
+    f"rm \"$(dirname {OWN})\"/build-tokens.py",  # a removal
+    f"cp -r /tmp/x \"$(echo {SKILL_REL})/templates\"",  # a guarded folder
+]
+COMPUTED_ALLOW = [
+    "cat a > \"$(mktemp -d)/out.txt\"",
+    "D=$(mktemp -d); echo x > \"$D/notes.txt\"",
+    "cp /tmp/a \"`mktemp`\"",
+]
+
+
+@pytest.mark.parametrize("command", COMPUTED_REFUSE)
+def test_a_target_it_cannot_work_out_is_refused_when_its_text_names_a_guarded_path(decide, command):
+    reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    assert reason, command
+    actionable(reason)
+
+
+@pytest.mark.parametrize("command", COMPUTED_ALLOW)
+def test_a_target_it_cannot_work_out_that_names_no_guarded_path_stays_allowed(decide, command):
+    assert not decide.new(command), command
+
+
+# What the allows must not prove, in more spellings (pinned through Decider.proven: the earlier refusal stands).
+CONDITIONS_NOT_PROVEN = [
+    # (a): F run later through a function, an alias, a trap, a startup variable, or a glob
+    f"cat > notes/fix.md <<'EOF'\necho x > {GEN}\nEOF\nf() {{ bash notes/*.md; }}; f",
+    f"cat > notes/fix.md <<'EOF'\necho x > {GEN}\nEOF\nalias go='sh notes/fix.md'",
+    f"cat > notes/fix.md <<'EOF'\necho x > {GEN}\nEOF\ntrap 'source *.md' EXIT",
+    f"cat > fix.md <<'EOF'\necho x > {GEN}\nEOF\ntrap 'source *.md' EXIT",
+    f"cat > env.md <<'EOF'\necho x > {GEN}\nEOF\nBASH_ENV=env.md bash -c true",
+    f"cat > e.md <<'EOF'\necho x > {GEN}\nEOF\nexport ENV=e.md; sh -i </dev/null",
+    f"cat > p.md <<'EOF'\necho x > {GEN}\nEOF\nPROMPT_COMMAND='. ./p.md'",
+    f"cat > q.md <<'EOF'\necho x > {GEN}\nEOF\neval \"$(cat q*)\"",
+    # print / json / console rebound in any spelling
+    f"python3 -c \"import builtins, os; builtins.print = os.remove; print('{GEN}')\"",
+    f"python3 -c \"import os; globals()['print'] = os.remove; print('{GEN}')\"",
+    f"python3 -c \"import os; [print] = [os.remove]; print('{GEN}')\"",
+    f"python3 -c \"import os; print, x = os.remove, 1; print('{GEN}')\"",
+    f"python3 -c \"import os, json as j; j.dumps = os.remove; print(j.dumps('{GEN}'))\"",
+    f"python3 -c \"import os, json; m = json; m.dumps = os.remove; print(json.dumps('{GEN}'))\"",
+    f"python3 -c \"import os, json; setattr(json, 'dumps', os.remove); print(json.dumps('{GEN}'))\"",
+    f"node -e \"globalThis.console = {{log: require('fs').unlinkSync}}; console.log('{GEN}')\"",
+    f"node -e \"console['log'] = require('fs').unlinkSync; console.log('{GEN}')\"",
+    f"node -e \"({{console}} = {{console: {{log: require('fs').unlinkSync}}}}); console.log('{GEN}')\"",
+    f"node -e \"Object.assign(console, {{log: require('fs').unlinkSync}}); console.log('{GEN}')\"",
+    f"node -e \"JSON.stringify = require('fs').unlinkSync; console.log(JSON.stringify('{GEN}'))\"",
+    # (d): an option that runs something, in any position before commit
+    f"git -C . -c core.hooksPath=/tmp/h commit -m 'never > {GEN} by hand'",
+    f"git --no-pager -c x=y commit -m 'never > {GEN} by hand'",
+    f"git -cx=y commit -m 'never > {GEN} by hand'",
+    f"git --config-env=core.editor=E commit -m 'never > {GEN} by hand'",
+]
+GIT_SPELLINGS_ALLOW = [
+    f"git commit --message='never > {GEN} by hand'",
+    f"git commit -m'never > {GEN} by hand'",
+    f"git commit -F- <<'EOF'\nnever > {GEN} by hand\nEOF",
+    f"git commit --file=- <<'EOF'\nnever > {GEN} by hand\nEOF",
+    f"git commit -F - <<< 'never > {GEN} by hand'",
+]
+
+
+@pytest.mark.parametrize("command", CONDITIONS_NOT_PROVEN)
+def test_the_allow_conditions_hold_in_every_spelling(decide, command):
+    assert not decide.proven(command), command
+
+
+@pytest.mark.parametrize("command", GIT_SPELLINGS_ALLOW)
+def test_git_commit_message_spellings_are_data(decide, command):
+    assert decide.proven(command) and not decide.new(command), command

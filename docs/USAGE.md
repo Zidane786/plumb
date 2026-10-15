@@ -1087,22 +1087,27 @@ Three checks, in this order:
      it is code (`.py`, `.js`, `.sh` …, or a file with no suffix) and the command also starts an interpreter, a shell or
      a package tool; or it is a file a program picks up by itself (`sitecustomize.py`, `*.pth`, `.bashrc`, `.profile`,
      `.npmrc`, `.curlrc`, `package.json`, `Makefile`, `conftest.py`, anything under `.git/` or `.husky/`, a hooks
-     folder or a file named as a git hook). `cat > notes/plan.md <<'EOF'` that quotes a guarded path is fine;
+     folder or a file named as a git hook); the command can run text later where the guard does not look (a `trap`, a
+     shell function or `alias`, `BASH_ENV` / `ENV` / `PROMPT_COMMAND`, `eval`, `source`); or a glob in it matches
+     the file (`source *.md`). `cat > notes/plan.md <<'EOF'` that quotes a guarded path is fine;
      `cat > fix.py <<'EOF' … EOF; python3 fix.py` is code;
    - (b) as an argument of a read-only program (`cat`, `head`, `tail`, `grep`, `rg`, `wc`, `diff`, `ls`, `stat`,
      `file`, `sha256sum`, `jq` …);
    - (c) in inline code that gives it straight to a read (`open(p)` to read, `json.load(open(p))`,
      `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`), or straight to
      `print(…)`, `print(json.dumps(…))` or `console.log(…)` when the output goes to the screen (not piped, not
-     redirected to a file, not inside `$( … )` or another shell, the literal not also stored in a variable, and nothing
-     in the code rebinds `print`, `json` or `console` or moves the output). The code runs no command or code, opens no
+     redirected to a file, not inside `$( … )` or another shell, the literal not also stored in a variable, and the
+     code never assigns to, renames or reaches `print`, `json`, `dumps`, `console` or `JSON` any other way (`as`,
+     `builtins`, `globals()`, `setattr`, `globalThis`, `Object.assign`, `console['log']`, destructuring) or moves the
+     output (`sys.stdout`, `dup2`)). The code runs no command or code, opens no
      file through `opener=`, `os.open` or `os.fdopen`, imports nothing by a name it builds, and writes only to plain
      paths that are not guarded, not next to a guarded file, not under `/dev/fd/` or `/proc/`, and not used again (the
      same test as (a));
-   - (d) in a `git commit` message: only the values of `-m` / `--message` / `-F` / `--file` / `-t` (also in a cluster
-     like `-am`) and a here-document on its stdin are data. Every other word is still checked, a redirect on the
-     command is still a write, and it does not count when git is given an option that runs something (`-c`,
-     `--config-env`, `--exec-path`), a variable is set before it (an editor, a config; author and committer names are
+   - (d) in a `git commit` message: only the values of `-m` / `--message` / `-F` / `--file` / `-t` (in every spelling:
+     `--message=…`, `-m…`, `-F-`, `--file=-`, a cluster like `-am`) and a here-document or here-string on its stdin
+     are data. Every other word is still checked, a redirect on the
+     command is still a write, and it does not count when git is given an option that runs something (`-c` anywhere
+     before `commit`, `--config-env`, `--exec-path`), a variable is set before it (an editor, a config; author and committer names are
      fine), or the same command wrote a hook (under `.git/hooks/`, `.husky/`, a hooks folder, or a file named as a
      git hook).
 
@@ -1115,7 +1120,9 @@ Three checks, in this order:
    - code that passes a guarded path to `dirname`, `join` or an f-string, or writes through a variable;
    - a program the reader doesn't know, a runner (`npx`, `poetry run`, `conda run` …), `xargs` or a script run;
    - a variable or `$( … )` the reader can't resolve in a target or a `cd` (shell variables set in the same command,
-     `$PWD` and `$CLAUDE_PROJECT_DIR` are followed);
+     `$PWD` and `$CLAUDE_PROJECT_DIR` are followed). A write or removal target it can't work out (`$( … )`, backticks,
+     `${…}`) is refused outright when its text, or the value of a variable it uses, names a guarded file or folder:
+     `cat a > "$(dirname docs/design/screens.html)/screens.html"`;
    - code piped from a file, nesting deeper than the reader follows, or a reading that would take too long.
 
    A command over 64 KB, one whose brackets nest deeper than 200, and one the reader fails on are not read: each is
@@ -1124,8 +1131,9 @@ Three checks, in this order:
    log (`/plumb:feedback`).
 
    The guard is a consistency net, not a sandbox. Script files written before the command, `xargs`, `find -exec` on
-   the files found, `patch`, `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other
-   tools are not followed. Restoring a file from git (`git checkout -- <file>`, `git restore`) is allowed.
+   the files found, `patch`, `tar -x`, `unzip`, `prettier --write`, editors like `ed`, commands run through other
+   tools, the project's own git hooks (`git commit` runs them), and a computed target whose text names no guarded
+   path (`> "$(cat target.txt)"`) are not followed. Restoring a file from git (`git checkout -- <file>`, `git restore`) is allowed.
    `build-tokens.py --check` and the end-of-turn check catch the drift.
 
    ```

@@ -129,7 +129,8 @@
   targets put together in code (`os.path.join(d, …)`, `Path(d) / …`, f-strings, `%`, `.format`, `${}`), code piped to
   an interpreter or on `/dev/stdin`, and `os.remove` / `shutil.rmtree` in inline code. A command over 64 KB, one
   nested deeper than the reader reads, and one the reader fails on are refused when they name a guarded file or
-  folder (or a parent of one).
+  folder (or a parent of one). A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`) is refused when
+  its text names a guarded file or folder (`cat a > "$(dirname docs/design/screens.html)/screens.html"`).
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace

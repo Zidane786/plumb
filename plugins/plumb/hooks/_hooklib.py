@@ -52,6 +52,7 @@ Python 3.9+, standard library only.
 
 from __future__ import annotations
 
+import fnmatch
 import glob
 import hashlib
 import importlib.util
@@ -1582,6 +1583,9 @@ class ShellEffects:
         self.unsure: List[str] = []
         self.trouble: Optional[Tuple[str, str, Optional[BaseException]]] = None
         self.data_files: List[Tuple[str, str]] = []  # (absolute path, the word) of what (a) wrote
+        # targets the reader cannot work out ($( ), backticks, ${…}): their text (with the values of the variables
+        # they use) and the folders they were in; pre_edit refuses one that names a guarded path
+        self.computed: List[Tuple[str, Tuple[str, ...]]] = []
         self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
     def doubt(self, why: str) -> None:
@@ -1603,7 +1607,7 @@ class ShellEffects:
                 return
             self.other.append((t, scope.bases))
 
-    def _paths(self, word: str, scope: _Scope, strict: bool) -> List[str]:
+    def _paths(self, word: str, scope: _Scope, strict: bool, target: bool = False) -> List[str]:
         """The absolute paths a word names: variables set in the command expanded, $PWD the folder,
         $CLAUDE_PROJECT_DIR the project, ~ and $HOME the home folder; in a target (strict) braces and globs expanded,
         and a part left unresolved ($X, `…`) makes the reader unsure."""
@@ -1628,6 +1632,10 @@ class ShellEffects:
             w = w.replace("\\", "/")
         w = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", w))
         if strict and ("$" in w or "`" in w):
+            if target and len(self.computed) < _MAX_TARGETS:
+                used = [scope.vars[m.group(1)] for m in re.finditer(r"\$\{?#?!?([A-Za-z_]\w*)", word)
+                        if m.group(1) in scope.vars]
+                self.computed.append((" ".join([word, w] + used), scope.bases))
             self.doubt("a variable or a command the reader cannot resolve in a path")
         out: List[str] = []
         for x in (_braces(w) if strict else [w]):
@@ -1644,7 +1652,7 @@ class ShellEffects:
     def _add(self, kind: int, word: str, scope: _Scope) -> List[str]:
         lst = (self.writes, self.removals, self.folder_writes, self.code_writes)[kind]
         seen = self._seen[kind]
-        found = self._paths(word, scope, True)
+        found = self._paths(word, scope, True, kind < 3)
         for p in found:
             if p in seen:
                 continue
@@ -3141,6 +3149,12 @@ _LOADERS = re.compile(r"\b(?:python[\d.]*|py|pypy[\d.]*|node|nodejs|bun|deno|tsx
                       r"perl|ruby|php|lua|Rscript|pwsh|powershell|PERL5LIB|RUBYLIB)\b|(?:^|\s)\.\s")
 
 
+# Ways a command runs text later, somewhere the reader does not follow: a trap, a shell function or alias, a startup
+# variable a shell reads (BASH_ENV, ENV, PROMPT_COMMAND), eval, source / . of anything.
+_DEFERRED = re.compile(r"\btrap\b|\balias\b|\bfunction\s+[\w.:-]+|[\w.:-]+\s*\(\s*\)\s*[{(]|\bBASH_ENV\b|"
+                       r"(?:^|[\s;&|({])ENV=|\bPROMPT_COMMAND\b|\bZDOTDIR\b|\beval\b|\bsource\b|(?:^|[\s;&|({])\.\s")
+
+
 class _Words:
     """The command's words counted once (names, stems, and whether it starts a program that loads code), so that the
     (a) check stays linear however many files the command writes."""
@@ -3154,6 +3168,8 @@ class _Words:
             stem = w.split(".", 1)[0]
             self.stems[stem] = self.stems.get(stem, 0) + 1
         self.loads = _LOADERS.search(command) is not None
+        self.deferred = _DEFERRED.search(command) is not None
+        self.globs = [g for g in re.findall(r"[^\s'\"`=;|&<>(){}]*[*?\[][^\s'\"`=;|&<>(){}]*", command)][:_MAX_TARGETS]
         self.folders: Dict[str, int] = {}
 
     def folder_count(self, folder: str) -> int:
@@ -3166,8 +3182,10 @@ def _data_file_used(words: "_Words", path: str, word: str) -> bool:
     """(a) is void for a file F the command writes (as data, or from (c)'s inline code) when F may be used later
     without being run by name: its name, stem or folder appears again in the command; it is a file a program picks up
     by itself (startup, hook or project files: sitecustomize.py, *.pth, .bashrc, .npmrc, package.json, Makefile,
-    anything under .git/ or .husky/, a hooks folder or a file named as a git hook); or it is code (.py, .js, .sh …, or
-    a file with no suffix) and the command also starts an interpreter, a shell or a package tool, or imports."""
+    anything under .git/ or .husky/, a hooks folder or a file named as a git hook); the command can run text later
+    where the reader does not follow (a trap, a shell function or alias, BASH_ENV / ENV / PROMPT_COMMAND, eval,
+    source); a glob in it matches F's name; or it is code (.py, .js, .sh …, or a file with no suffix) and the command
+    also starts an interpreter, a shell or a package tool, or imports."""
     if "$" in word or "`" in word:
         return True
     norm = word.replace("\\", "/").rstrip("/")
@@ -3183,6 +3201,10 @@ def _data_file_used(words: "_Words", path: str, word: str) -> bool:
     for p in (path.replace("\\", "/"), norm):
         if _PICKED_UP.search(p) or _HOOK_FILE.search(p):
             return True
+    if words.deferred:  # a trap, function, alias, BASH_ENV / ENV / PROMPT_COMMAND, eval or source may run it later
+        return True
+    if any(fnmatch.fnmatchcase(leaf, g.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]) for g in words.globs):
+        return True  # a glob (source *.md, cat notes/*) can reach it without its name
     return (bool(_CODE_SUFFIX.search(leaf)) or "." not in leaf) and words.loads
 
 

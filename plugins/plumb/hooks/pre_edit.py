@@ -23,8 +23,9 @@ In such a project, in this order:
    Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell, eval), a file
    the command wrote and then runs, and in inline code (python -c, node -e, a here-document fed to an interpreter)
    open(<path>, "w"|"a"|"x"), Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like, with
-   targets put together from the code's constants. A refusal of the earlier reader becomes an allow only when the
-   shell reader proves it (_proven): (a) a here-document / echo / printf / tee text written to a file the same
+   targets put together from the code's constants. A target the reader cannot work out ($( ), backticks, ${…}) is
+   refused when its text (or the value of a variable it uses) names a guarded file or folder. A refusal of the
+   earlier reader becomes an allow only when the shell reader proves it (_proven): (a) a here-document / echo / printf / tee text written to a file the same
    command does not run, import, name again or leave where a program picks it up (a Makefile whose lines run the
    scripts is fine; sitecustomize.py, .bashrc, a git hook are not), (b) a read-only program's words, (c) inline code
    that only reads its guarded literals (json.load, importlib, Path.read_text) or prints them to the screen, and writes
@@ -404,6 +405,13 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     eff = H.shell_effects(command, base, proj.root_s)
     why = (_shell_paths_refusal(proj, eff.writes, False, cwd) or _shell_paths_refusal(proj, eff.removals, True, cwd)
            or _shell_paths_refusal(proj, eff.folder_writes, True, cwd))
+    if why is None and eff.computed:  # a target it cannot work out ($( ), backticks, ${…}) that names a guarded path
+        rule, deadline = _Guarded(proj, cwd), time.monotonic() + NAMES_BUDGET
+        named = next((n for n in (rule.text(text, bases, deadline) for text, bases in eff.computed) if n), None)
+        if named is not None:
+            why = (f"error: this shell command writes to a path Plumb cannot work out, and that path's text names "
+                   f"{named}, a path Plumb guards\nfix: write the target path out in full so Plumb can check it (and "
+                   f"change {named} the way Plumb's own message for it says)")
     hit = None
     if why is None and eff.trouble is not None and eff.trouble[1] in ("crash", "deep"):
         hit = _unread(proj, command, base, cwd)
