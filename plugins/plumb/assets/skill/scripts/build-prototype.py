@@ -509,11 +509,15 @@ _CSS_REMOTE = re.compile(r"url\(\s*['\"]?\s*(?:[a-z][a-z0-9+.-]*:)?//|@import\b"
 _SHARED_SCOPED = re.compile(r"\[\s*data-screen\s*(?:[~|^$*]?=|\])")
 
 
+_JS_REGEX_AFTER = frozenset(("return", "typeof", "case", "in", "of", "delete", "void", "instanceof", "new", "throw",
+                             "yield", "await", "else", "do"))
+
+
 def blank_js(text: str) -> str:
     """The JS with every comment and the inside of every string and template literal turned to spaces (newlines and the
     quote marks kept, so offsets and lines stay): a comment or text that mentions fetch( or an import loads nothing.
-    A template literal's ${...} expressions stay code. A / after an operator, ( , = : [ ! & | ? { } ; or return/typeof
-    starts a regex literal, blanked like a string (a deliberately small reader: after anything else, / divides)."""
+    A template literal's ${...} expressions stay code. A / after an operator, ( , = : [ ! & | ? { } ; or a keyword
+    such as return, typeof or case starts a regex literal, blanked like a string (a deliberately small reader: after anything else, / divides)."""
     out = list(text)
     i, n = 0, len(text)
     depth: List[int] = []  # one entry per open ${...}: the { nesting inside it
@@ -525,16 +529,21 @@ def blank_js(text: str) -> str:
 
     def regex_may_start(k: int) -> bool:
         """A / at k starts a regex literal when the code before it ends in an operator or punctuation (or nothing),
-        or the word return / typeof; after a name, a number or ) ] it divides."""
+        or a keyword that takes an expression (return, typeof, case, in, of, …); after a name, a number, ) ] or a
+        postfix ++ / -- it divides."""
         k -= 1
         while k >= 0 and out[k] in " \t\r\n":
             k -= 1
-        if k < 0 or out[k] in "(,=:[!&|?{};+-*%<>~^":
+        if k < 0:
+            return True
+        if out[k] in "+-":
+            return not (k > 0 and out[k - 1] == out[k])  # i++ / 2 divides
+        if out[k] in "(,=:[!&|?{};*%<>~^":
             return True
         end = k + 1
         while k >= 0 and (out[k].isalnum() or out[k] in "_$"):
             k -= 1
-        return text[k + 1:end] in ("return", "typeof")
+        return text[k + 1:end] in _JS_REGEX_AFTER
 
     def template(j: int) -> int:
         """Blank template text from j to the closing backtick or the next ${; return where code resumes."""

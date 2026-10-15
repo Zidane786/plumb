@@ -1899,6 +1899,10 @@ def test_check_covers_shared_files_and_builds_are_byte_stable(project: Path) -> 
     ("x.js", 'var u = "// not a comment"; fetch("/y");\n', "fetch("),  # a string ends before the code
     ("x.js", "var q = /'/; fetch(\"/x\");\n", "fetch("),  # a quote in a regex literal opens no string
     ("x.js", 'var h = s.replace(/[/"]/g, "") / 2; fetch("/z");\n', "fetch("),  # / in a class; then a division
+    ("x.js", 'var x = i++ / 2; fetch("/x");\n', "fetch("),  # a postfix ++ then / divides
+    ("x.js", 'var y = j-- / 2 / 3; fetch("/y");\n', "fetch("),
+    ("x.js", "switch (k) { case /'/.source: fetch(\"/c\"); }\n", "fetch("),  # a regex after case
+    ("x.js", "if (k in /'/) fetch(\"/i\");\n", "fetch("),
     ("x.css", '</style><script>alert(1)</script>\n', "</style"),
     ("x.css", '@import url("https://example.com/x.css");\n', "@import"),
     ("x.css", '@import "local.css";\n', "@import"),
@@ -1920,7 +1924,9 @@ def test_shared_files_that_load_nothing_are_accepted(project: Path) -> None:
                                           '/* new XMLHttpRequest() was the old way;\n   import("x") too */\n'
                                           'var tip = `\nimport your list from a spreadsheet: fetch("it")`;\n'
                                           "var s = 'see https://example.com/api, fetch(later)';\n"
-                                          "function f(s) { return /fetch(es)?|import(ed)?/.test(s); }\n")
+                                          "function f(s) { return /fetch(es)?|import(ed)?/.test(s); }\n"
+                                          "function g(s) { switch (s) { case /fetch(es)?/.source: throw /import(s)/; "
+                                          "default: return void /fetch(x)/; } }\nvar n = 0; n++ / 2; n-- / 2;\n")
     write(project / SHARED_REL / "ok.css", '/* @import was here */\n[data-screen] .icon { mask: url(#m); '
                                            'background: url(img/bg.png), url("data:image/svg+xml,'
                                            '%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E"); }\n')
