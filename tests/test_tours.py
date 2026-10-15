@@ -3389,14 +3389,16 @@ def test_not_allowed_stops_the_voice_for_the_run_but_keeps_it_available(browser,
         ctx.close()
 
 
-@pytest.mark.parametrize("event", ["pagehide", "beforeunload"])
-def test_leaving_the_page_stops_the_sentence(browser, voiced, event: str) -> None:
+def test_leaving_the_page_stops_the_sentence_and_a_cancelled_unload_does_not(browser, voiced) -> None:
     ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
     try:
         page.evaluate("window.plumbPlayer.setVoice(true)")
         _start(page, "demo", "play", step=1)
         before = _cancels(page)
-        page.evaluate("(e) => window.dispatchEvent(new Event(e))", event)
+        # another script's "stay on page" prompt cancels beforeunload: the voice keeps going
+        page.evaluate("window.dispatchEvent(new Event('beforeunload', {cancelable: true}))")
+        assert _cancels(page) == before and page.evaluate("window.__speech.current") is not None
+        page.evaluate("window.dispatchEvent(new Event('pagehide'))")
         assert _cancels(page) == before + 1
         assert page.evaluate("window.__speech.current") is None
         assert errors == []

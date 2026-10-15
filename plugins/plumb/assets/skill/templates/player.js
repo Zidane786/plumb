@@ -1647,8 +1647,8 @@
   });
   /* Leaving or reloading the page stops the sentence: some engines keep speaking after the document is gone. */
   function silence() { if (T.talk) stopTalk(); }
+  /* pagehide only: a beforeunload that another script cancels ("stay on page") would leave the item stalled */
   window.addEventListener("pagehide", silence);
-  window.addEventListener("beforeunload", silence);
   /* back from the browser's page cache: the stopped item plays again from its start */
   window.addEventListener("pageshow", function (e) {
     if (e.persisted && T.tour && T.mode === "play" && !T.paused && !T.ended && !T.gate) render(T.pos);
