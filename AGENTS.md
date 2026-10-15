@@ -72,6 +72,7 @@ plugins/plumb/                        the installed plugin (only this folder shi
   scripts/                            plugin-side helpers the skills run (not copied into projects)
     detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
     version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install
+    check-tour.py                     plays a tour page headless (guide + play) and checks every step
   hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
                                       (a hook that fails open also logs one line to ~/.plumb/feedback/hooks.md)
   templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,

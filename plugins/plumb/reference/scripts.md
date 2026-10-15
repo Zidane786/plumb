@@ -6,7 +6,7 @@ Skills link here instead of repeating the list. `<script> --help` is the final w
 (`<skill>/scripts/build-tokens.py`, `audit.py`, `build-prototype.py`, `_plumb.py`): those are what `make`, CI and the
 skills run, so everyone applies the same rules. The hooks never run them: they run the plugin's own installed copies
 on the project's files (the trust boundary in `SECURITY.md`). `<skill>` is the `Design system:` path in `PLUMB.md`. The
-plugin's helpers (`detect.py`, `scaffold.py`, `version.py`, `screenshot.py`) run from `<ROOT>/scripts/`, where `ROOT` is
+plugin's helpers (`detect.py`, `scaffold.py`, `version.py`, `screenshot.py`, `check-tour.py`) run from `<ROOT>/scripts/`, where `ROOT` is
 the plugin root (`${CLAUDE_PLUGIN_ROOT}`, or the skill's base directory + `/../..`).
 
 **Python.** Every command starts with the project's Python command from `PLUMB.md` (`Python: \`python3\``; `py -3` or
@@ -87,6 +87,7 @@ Exit codes: 0 no errors (warnings and suggestions allowed) · 1 errors found · 
 
 `python3 <skill>/scripts/build-prototype.py [--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--root SKILL_DIR] [--project PATH]`
 `python3 <skill>/scripts/build-prototype.py --proposal NAME [--check]`
+`python3 <skill>/scripts/build-prototype.py --check-tour FILE`
 
 | Flag | Does |
 |---|---|
@@ -98,6 +99,7 @@ Exit codes: 0 no errors (warnings and suggestions allowed) · 1 errors found · 
 | `--approve ID` | Records the user's approval: git `user.name` (else `$USER`/`%USERNAME%`), today's date, the hash of the screen file plus the shared files that reach it (`_shared/`, when there are any); clears "synced from code". **Never run `--approve` without the user's explicit yes to that screen, given in this conversation** (not for a synced screen, not because a build passed, not for several screens on one general OK). Editing the screen or a shared file afterwards makes the approval stale. |
 | `--synced ID` | Marks a screen updated to match code that was already built (a small fix, code written before Plumb); listed for the user to confirm, never blocking. |
 | `--proposal NAME` | Builds `/plumb:prototype`'s variants instead of the main prototype: for each `<docs>/prototype/proposals/NAME/<variant>/screens/*.html` (+ optional `idea.md`), that variant's `prototype.html`, `app.html` and `screens.html` (light and dark, the token block inlined), and `NAME/index.html` with the variants side by side ("Review: prototype.html · Demo: app.html" per variant). Generated and byte-stable; `screens.json` is not touched. With `--check`, exit 1 when one is stale or missing. Change ids: every `data-guide="F01 · …"` id a variant's screens use must be listed in `NAME/changes.md` (exit 2 naming the screen file and the id, also when there is no `changes.md`; on `--check` too); a listed id no screen uses is a `warning:`; the index lists the changes and where each is used. Use it when: a proposal changes an existing screen and the reviewer should see what changed ([prototypes.md](prototypes.md), "Change ids"). Does not combine with `--map`, `--approve` or `--synced`. The main build (and build-tokens.py) refreshes the token block of every generated proposal page. |
+| `--check-tour FILE` | Checks one tour file (`<docs>/prototype/tours/<id>.json`, or just `<id>`) against the screens exactly as the build does and writes nothing: `ok: <file>: <n> steps (<mode> mode, <view> view) match the screens`, exit 0; a bad field, unknown screen or state, or a selector that matches nothing exits 2 with the line and the fix. It also **warns** (stderr, exit code unchanged) when a step's target, label or action element sits in an element the screen's own CSS hides at some frame widths: `display: none`, `visibility: hidden` or an off-canvas transform (`translateX(-100%)` and the like) in a top-level rule that an `@container plumb-frame (min-width: …)` rule undoes (or the reverse): `warning: <file>:<line>: step 3, steps[2].target ".side-nav a" sits inside nav.side-nav, which the screen's CSS hides (display: none): visible only when the frame is ≥ 48rem`. It reads only the `_shared/*.css` files and the screen's own styles, in the page's order: their top-level rules and `@container plumb-frame` blocks (`min-width`/`max-width`/`width`, also `inline-size`) (cascade by `!important`, specificity, order); a selector or query it cannot read is left out. Use it when: a tour was written or changed, before the browser pass (`check-tour.py`). A warning matters when the tour plays where the frame is narrower than that (the prototype page's frame is narrower than the window). Does not combine with other flags. |
 | `--root`, `--project` | As for build-tokens.py. |
 
 `screens.json` is written only by this script (never by hand). Every command rebuilds the pages. **A broken tour does not
@@ -179,6 +181,19 @@ other check. A `#fragment` that scrolls to an anchor can come out blank in headl
 **Which browser, in order:** (1) the agent's own browser tool, if it has one and the organisation allows it; (2)
 `screenshot.py` (a Chrome, Edge or Chromium already installed); (3) none: skip the visual part with the `note:` and its
 `fix:` line in the report. Playwright is never installed for a project; it is used only in Plumb's own CI.
+
+## check-tour.py (plugin): play a tour page headless and check every step
+
+`python3 "<ROOT>/scripts/check-tour.py" <docs>/tours/<id>.html [--width 1280 --width 1440] [--browser PATH] [--timeout S]`
+
+| Flag | Does |
+|---|---|
+| `PAGE` | A tour page `build-prototype.py` wrote (`<docs>/tours/<id>.html`, either view). |
+| `--width W` | Window width in CSS px, repeatable (default 1280 and 1440; the window is W × 900). |
+| `--browser PATH` | Use this browser executable instead of searching (screenshot.py's search). |
+| `--timeout S` | Stops a browser that hangs, per width (default 120). |
+
+It copies the page into `<project>/.plumb-tmp/` (its `<base>` pointed at the original's folder, so images resolve; a checker script added), runs the browser headless in the light theme with `--dump-dom` and `--virtual-time-budget` once per width, and reads the results the checker wrote into the page. The checker walks every step of the page's tour in guide mode, then in play mode, through the player's API (nothing waits real time) and checks per step: the page shows the step's screen and state; each target, label and action element is laid out (not `display: none`), not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window once the player scrolled to it, and not covered at its centre (by the walkthrough panel or a screen's own fixed or sticky layer); the dock is not covered (`elementFromPoint` at its centre is the dock). The scratch copy and the profile are removed afterwards. **It never installs or downloads a browser.** Output: `ok: <n> steps × guide/play × 1280, 1440` (exit 0), or one line per problem, `step 12 (Users › Invite): the target ".invite" is hidden (visibility: hidden) at 1280 (guide, play)`, page script errors as `page: a script error: …`, and a `fix:` (exit 2). Exit codes: 0 · 1 the browser ran but gave no result (or hung; its `fix:` suggests a longer `--timeout` or another installed browser with `--browser`) · 2 problems or bad input · 3 no browser: `note: tour check skipped: no browser found` + `fix:`; say so and ask the user whether to continue (the static `--check-tour` still ran). Use it when: `/plumb:tour` built a tour page (step 3), or a screen a tour plays on changed. On Linux, a browser that stops with "No usable sandbox" (user namespaces off) is run once more with `--no-sandbox`, said in a `note:` line (a local offline page in a throwaway profile); never otherwise.
 
 ## kiro.py (plugin): Plumb's skills and hooks for Kiro
 

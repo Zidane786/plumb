@@ -167,6 +167,26 @@ selector that matches nothing, or one the check cannot read exits 2 naming the t
 change that broke it: `/plumb:prototype` updates the default tour of the flow it changes; `/plumb:tour <id>` rewrites a
 custom one.
 
+## Checking a tour
+
+Two passes, both evidence for the agent, never a substitute for looking ([scripts.md](scripts.md)):
+
+1. **Static, every machine:** `build-prototype.py --check-tour <docs>/prototype/tours/<id>.json` checks the one file as the
+   build does and writes nothing (exit 0 / 2). It also warns when a step's element sits in something the screen's own
+   CSS hides at some frame widths (`display: none`, `visibility: hidden` or an off-canvas `transform` undone inside an
+   `@container plumb-frame (min-width: …)` rule, or the reverse): `… visible only when the frame is ≥ 48rem`. That
+   matters where the frame is narrower than the window: the prototype page (screens list and rails, and its phone
+   frame); in the app view the frame is the window. Fix by pointing the step at an element shown at every width, or by
+   playing the tour in the app view.
+2. **In a browser, when one is on the machine:** the plugin's `check-tour.py <docs>/tours/<id>.html` plays the tour page
+   headless in guide and play mode at 1280 and 1440 wide and checks, per step: the right screen and state; every target,
+   label and action element laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and
+   not covered by the panel or the screen's own fixed or sticky bar;
+   the dock not covered by the screen. Problems come one line per step, e.g. `step 12 (Users › Invite): the target
+   ".invite" is hidden (visibility: hidden) at 1280 (guide, play)`, exit 2. No browser: exit 3 with a note; Plumb
+   never installs one, so say so and ask the user whether to continue without it. Exit 1 (the browser gave no result): ask whether to try another
+   installed browser (`--browser`) or continue without it.
+
 ## Every tour is also its own page
 
 `build-prototype.py` writes `<docs>/tours/<id>.html` for each tour: one self-contained file with every screen (tokens,

@@ -32,7 +32,7 @@ system wins.
 
 ```
  audience + where it plays + purpose ─▶ screens, states, chapters ─▶ draft steps (table) ─▶ user OKs ─▶ write tours/<id>.json
-   ─▶ build-prototype.py (targets checked) ─▶ show both links ─▶ changes? ─▶ STOP
+   ─▶ build-prototype.py (targets checked) ─▶ --check-tour + check-tour.py (browser) ─▶ show both links ─▶ changes? ─▶ STOP
 ```
 
 ## Step 0: context
@@ -93,6 +93,14 @@ user's explicit yes to that screen** in this conversation.
 - `PY SKILL/scripts/build-prototype.py`. Exit 2 names the tour file, the line and the problem (an unknown screen or
   state, a selector that matches nothing, a bad field): fix the step and run it again until it exits 0.
 - `PY SKILL/scripts/build-prototype.py --check` exits 0.
+- `PY SKILL/scripts/build-prototype.py --check-tour <docs>/prototype/tours/<id>.json`: a `warning:` names a step whose
+  element the screen's CSS shows only at some frame widths ("visible only when the frame is ≥ 48rem"). Fix the ones
+  that matter for where the tour plays (another target, or the app view), or tell the user why it is fine.
+- Then the browser pass: `PY "<ROOT>/scripts/check-tour.py" "<docs>/tours/<id>.html"` (both modes at 1280 and 1440).
+  Exit 2 lists `step <n> (<title>): <problem> at <width> (<mode>)` lines: fix those steps (target, state, words) and
+  rebuild until it exits 0. Exit 3 (no browser): say so, and ask whether to continue without the browser check.
+  Exit 1 (the browser gave no result or hung): show the error and its fix, and ask: another installed browser with
+  `--browser PATH`, or continue without the browser check. Never report the tour as checked then.
 
 ## Step 4: show it, then stop
 

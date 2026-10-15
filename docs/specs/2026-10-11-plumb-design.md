@@ -395,6 +395,26 @@ them to the top of the page). Both shells take the player's `--pl-*` roles from 
 template, `templates/chrome-roles.css`, and `prototype.html` links "Open as app" to
 `app.html#/<screen>[/<state>]`.
 
+**Tour checks (owner amendment, 2026-10-14).** `build-prototype.py --check-tour <file>` validates one tour file against
+the screens, as the build does, and writes nothing (exit 0 / 2). It also **warns** when a step's target, label or
+action element sits in an element the screen's own CSS hides at some frame widths (`display: none`, `visibility:
+hidden` or an off-canvas `transform` outside an `@container plumb-frame (min-width: …)` rule that shows it again, or
+the reverse): "visible only when the frame is ≥ 48rem". It reads the `_shared/*.css` files and the screen's own styles (in the page's order): their top-level rules and
+`@container plumb-frame` blocks with a standard-library reader (cascade by `!important`, specificity and order) and the selector
+subset above; what it cannot read is left out. The runtime pass is plugin-side (ruling B4), `scripts/check-tour.py
+<docs>/tours/<id>.html` (not copied into projects, like `screenshot.py`): with a browser screenshot.py's search finds
+(or `--browser`), it writes a scratch copy under `<project>/.plumb-tmp/` (its `<base>` pointed at the original's
+folder) with a checker script, runs it headless with `--dump-dom` and `--virtual-time-budget` at 1280 and 1440 wide
+(light theme), and the checker walks every step in guide and in play mode through the player's API (play paused at
+once, nothing waits real time). Per step: the page shows the step's screen and state; each target, label and action
+element is laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and not covered at
+its centre (the panel, a screen's fixed or sticky layer); the dock is not
+covered (`elementFromPoint` at its centre). The results come back as JSON in the dumped DOM. Problems: exit 2, one line
+per step and problem with the widths and modes (`step 12 (Users › Invite): the target ".invite" is hidden
+(visibility: hidden) at 1280 (guide, play)`); no result or a hung browser: exit 1; no browser: exit 3 with a note and
+a fix. Nothing is downloaded. `/plumb:tour` runs both after the build, fixes the steps they name, and with no browser
+says so and asks whether to continue.
+
 Turning a tour into in-app onboarding in the live product is out of scope
 for 1.0.0.
 
@@ -826,6 +846,8 @@ hashes are kept so a stale approval names the shared file that changed); `--sync
 from already-built code. `--check` exits 1 when a page (`app.html` included) is stale or missing,
 the token blocks are stale, or a
 walkthrough step names a screen, state or element that does not exist. Same exit-code and error conventions as §6.1.
+`--check-tour <file>` checks one tour file the same way, writes nothing, and warns about a step element the screen's
+CSS hides below or above a frame breakpoint (§3.4.1, "Tour checks"); the browser pass is the plugin's `check-tour.py`.
 
 `--proposal <name>` builds `/plumb:prototype`'s variants instead of the main prototype: from each
 `docs/design/prototype/proposals/<name>/<variant>/screens/*.html` (and an optional `idea.md` with the variant's idea and

@@ -247,6 +247,20 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
 4. Rename `data-test="new"` to `data-test="add"` in `home.html`, then `PY SKILL/scripts/build-prototype.py --check`.
    **Expect:** exit 2 with `error: docs/design/prototype/tours/first-look.json:3: steps[1].target "[data-test=new]"
    matches nothing …` and a `fix:` line. Undo it.
+5. Check the one tour: `PY SKILL/scripts/build-prototype.py --check-tour docs/design/prototype/tours/first-look.json`.
+   **Expect:** `ok: docs/design/prototype/tours/first-look.json: 3 steps (play mode, app view) match the screens`, exit
+   0, nothing written. Now put this at the top of `home.html` (a list shown only from the md breakpoint):
+   `<style>[data-screen="home"] .list { display: none; } @container plumb-frame (min-width: 48rem) { [data-screen="home"] .list { display: block; } }</style>`
+   and run it again. **Expect:** still exit 0, plus
+   `warning: docs/design/prototype/tours/first-look.json:2: step 1, steps[0].target ".list" is hidden by the screen's CSS
+   (display: none): visible only when the frame is ≥ 48rem` and a `fix:` line on stderr.
+6. The browser pass (a Chrome, Edge or Chromium already installed): `PY SKILL/scripts/build-prototype.py`, then
+   `PY <repo>/plugins/plumb/scripts/check-tour.py docs/design/tours/first-look.html`.
+   **Expect:** `ok: 3 steps × guide/play × 1280, 1440`, exit 0, and no `.plumb-tmp/` left behind. With
+   `--width 600` (narrower than the md breakpoint): exit 2 and
+   `step 1 (Today): the target ".list" is hidden (display: none) at 600 (guide, play)`, then a `fix:` line. With no
+   browser installed: exit 3 with `note: tour check skipped: no browser found` and a `fix:` line; nothing is
+   downloaded. Remove the `<style>` line from `home.html` and build again.
 
 ### 3.6 Screenshots with a browser already installed
 
