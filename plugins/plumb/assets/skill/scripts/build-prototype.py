@@ -4,6 +4,7 @@
 Usage: build-prototype.py [--check] [--root SKILL_DIR] [--project PATH]
                           [--map ID --route=ROUTE --files GLOB [GLOB ...]] [--approve ID] [--synced ID]
        build-prototype.py --proposal NAME [--check] [--root SKILL_DIR] [--project PATH]
+       build-prototype.py --check-tour FILE [--root SKILL_DIR] [--project PATH]
 
 Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, default docs/design), the decision log
 <docs>/decisions.md, the walkthroughs in <docs>/prototype/tours/ and the project's tokens, and writes these generated files:
@@ -95,6 +96,16 @@ Commands (every call rebuilds the generated files, so the pages always show the 
                                     a warning names the tour problem (the next build or --check exits 2 on it).
   --check                           write nothing; exit 1 naming each stale or missing file (and a stale token block).
   --proposal NAME [--check]         build the variants of /plumb:prototype instead of the main prototype (below).
+  --check-tour FILE                 validate one tour file (<docs>/prototype/tours/<id>.json, or just its id) against the
+                                    screens, as the build does, and write nothing: exit 0 with an ok: line, 2 on a bad
+                                    tour. It also warns (stderr, `warning:` lines, exit code unchanged) when a step's
+                                    target, label or action element sits in an element the screen's own CSS hides at
+                                    some frame widths: display: none, visibility: hidden or an off-canvas transform
+                                    (translateX(-100%) and the like) in a top-level rule, shown again inside
+                                    `@container plumb-frame (min-width: ...)` (or the reverse): "visible only when the
+                                    frame is ≥ 48rem". It reads the screen's top-level rules and its @container
+                                    plumb-frame blocks (cascade by !important, specificity and order); a selector or
+                                    query it cannot read is left out. The browser pass is the plugin's check-tour.py.
 
 Proposals (/plumb:prototype's variants): <docs>/prototype/proposals/<NAME>/<variant>/screens/*.html are the variant's screen
 files (the same contract) and <variant>/idea.md is optional (`# Title`, a paragraph with the idea, `- ` lines with the
@@ -147,8 +158,8 @@ PLAYER_JS = "player.js"
 ROLES_CSS = "chrome-roles.css"
 SCHEMA = 1
 PAGE_WARN_BYTES = 10 * 1024 * 1024  # a generated page over this (10 MB) gets a size warning (size_warnings)
-USAGE = ("[--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] [--root SKILL_DIR] "
-         "[--project PATH]")
+USAGE = ("[--check] [--map ID --route=ROUTE --files GLOB ...] [--approve ID] [--synced ID] [--proposal NAME] "
+         "[--check-tour FILE] [--root SKILL_DIR] [--project PATH]")
 _ID = re.compile(r"^\w[\w-]*\Z")
 _VOID = frozenset("area base br col embed hr img input link meta param source track wbr".split())
 _OUTSIDE_OK = frozenset(("html", "head", "body", "meta", "title"))
@@ -1130,6 +1141,7 @@ class _TourReader:
         self.id, self.rel, self.text = tid, rel, text
         self.screens, self.screens_rel = screens, screens_rel
         self.lines: Dict[tuple, int] = {}
+        self.raw_steps: List[Tuple[tuple, dict]] = []
 
     def fail(self, path: tuple, what: str, fix: str) -> PlumbError:
         line = None
@@ -1261,6 +1273,7 @@ class _TourReader:
             raise self.fail(("steps",), "the tour has no steps",
                             "add \"steps\": [{\"screen\": \"...\", \"title\": \"...\", \"caption\": \"...\"}]")
         steps = [self.step(path, s, chapter, n) for n, (path, s, chapter) in enumerate(raw, 1)]
+        self.raw_steps = [(path, s) for path, s, _chapter in raw]  # for --check-tour's breakpoint warnings
         return {"id": self.id, "title": title, "audience": audience, "view": view, "purpose": purpose,
                 "mode": "play" if audience in PLAY_AUDIENCES else "guide", "speed": speed, "intro": intro,
                 "closing": closing, "chapters": chapters, "steps": steps}
@@ -1447,6 +1460,282 @@ def load_tours(folder: Path, screens: List[Screen], root: Path, rel, screens_rel
             raise _err(f"{prel}: cannot read the tour file ({exc})", "save it as UTF-8") from None
         tours.append(_TourReader(tid, prel, text, by_id, screens_rel).read())
     return tours
+
+
+# ---------------------------------------------------------------- --check-tour: one tour file, and the frame widths at
+# which a screen's own CSS hides a step's target (a standard-library reader of top-level rules and
+# @container plumb-frame blocks; a selector or query it cannot read is left out, silently)
+
+_LENGTH = r"(\d*\.?\d+)\s*(rem|em|px)"
+_QUERY = re.compile(r"^\(\s*(?:(min|max)-width\s*:\s*" + _LENGTH + r"|width\s*(>=|<=|>|<)\s*" + _LENGTH + r")\s*\)$", re.I)
+_OFF_CANVAS = re.compile(r"translate(x|y|3d)?\(([^()]*)\)")
+_PERCENT = re.compile(r"^([+-]?\d*\.?\d+)%$")
+_EPS = 0.01
+_HUGE = 10.0 ** 6
+
+
+def _frame_query(text: str) -> Optional[List[Tuple[str, bool, float, str]]]:
+    """The parts of `@container plumb-frame <text>` as (min|max, strict, px, as written); None when unreadable."""
+    parts = []
+    for raw in re.split(r"\s+and\s+", text.strip(), flags=re.I):
+        m = _QUERY.match(raw.strip())
+        if not m:
+            return None
+        if m.group(1):
+            kind, strict, num, unit = m.group(1).lower(), False, m.group(2), m.group(3)
+        else:
+            op, num, unit = m.group(4), m.group(5), m.group(6)
+            kind, strict = ("min" if op.startswith(">") else "max"), len(op) == 1
+        parts.append((kind, strict, float(num) * (1 if unit.lower() == "px" else 16), f"{num}{unit.lower()}"))
+    return parts
+
+
+def _holds(cond: Optional[list], width: float) -> bool:
+    for kind, strict, px, _text in cond or ():
+        if kind == "min" and not (width > px if strict else width >= px):
+            return False
+        if kind == "max" and not (width < px if strict else width <= px):
+            return False
+    return True
+
+
+def _declarations(body: str) -> List[Tuple[str, str, bool]]:
+    """(property, value, !important) of a rule body; nested rules and odd pieces are left out."""
+    pieces, depth, quote, cur = [], 0, "", []
+    for ch in body:
+        if quote:
+            quote = "" if ch == quote else quote
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            pieces.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    pieces.append("".join(cur))
+    out = []
+    for piece in pieces:
+        if ":" not in piece or "{" in piece or "}" in piece:
+            continue
+        name, value = piece.split(":", 1)
+        value = " ".join(value.split()).lower()
+        important = bool(re.search(r"!\s*important$", value))
+        out.append((name.strip().lower(), re.sub(r"\s*!\s*important$", "", value), important))
+    return out
+
+
+def css_rules(css: str) -> List[Tuple[str, List[Tuple[str, str, bool]], Optional[list]]]:
+    """(selector list, declarations, frame condition or None) for each top-level style rule and each rule inside an
+    `@container plumb-frame (...)` block, in source order. Other at-rules (@media, @supports, ...) are left out."""
+    css = _CSS_COMMENT.sub(" ", css)
+    rules: list = []
+
+    def walk(pos: int, end: int, cond: Optional[list]) -> None:
+        while pos < end:
+            brace = css.find("{", pos, end)
+            if brace == -1:
+                return
+            semi = css.rfind(";", pos, brace)
+            if semi != -1:
+                pos = semi + 1
+            head = css[pos:brace].strip()
+            close = _close_brace(css, brace)
+            if head.startswith("@"):
+                m = re.match(r"@container\s+plumb-frame\s+(.*)$", head, re.I | re.S)
+                inner = _frame_query(m.group(1)) if m and cond is None else None
+                if inner:
+                    walk(brace + 1, close, inner)
+            elif head:
+                rules.append((head, _declarations(css[brace + 1:close]), cond))
+            pos = close + 1
+
+    walk(0, len(css), None)
+    return rules
+
+
+def _specificity(parts: List[Tuple[Optional[str], dict]]) -> Tuple[int, int, int]:
+    a = b = c = 0
+    for _comb, comp in parts:
+        a += len(comp["ids"])
+        b += len(comp["classes"]) + len(comp["attrs"])
+        c += comp["tag"] not in (None, "*")
+        for name, arg in comp["pseudos"]:
+            if name in ("not", "is"):
+                best = max(_specificity(p) for p in arg)
+                a, b, c = a + best[0], b + best[1], c + best[2]
+            elif name != "where":
+                b += 1
+    return a, b, c
+
+
+def _off_canvas(prop: str, value: str) -> bool:
+    """A transform (or translate) that moves the element its own full width or height away: an off-canvas drawer."""
+    if prop == "translate":
+        args = value.split()[:2]
+    else:
+        args = []
+        for m in _OFF_CANVAS.finditer(value):
+            found = [a.strip() for a in m.group(2).split(",")]
+            args += found[:1] if m.group(1) in ("x", "y") else found[:2]
+    return any(m and abs(float(m.group(1))) >= 100 for m in (_PERCENT.match(a) for a in args))
+
+
+_HIDES = {"display": lambda v: v == "none", "visibility": lambda v: v in ("hidden", "collapse"),
+          "transform": lambda v: _off_canvas("transform", v), "translate": lambda v: _off_canvas("translate", v)}
+
+
+class _ScreenCSS:
+    """The screen's own CSS applied to its markup in one state: for each element, the hiding properties that rules set
+    on it, with their cascade order (!important, specificity, source order) and frame condition."""
+
+    def __init__(self, screen: Screen, state: str) -> None:
+        self.decls: Dict[_Node, Dict[str, list]] = {}
+        self.bounds: Dict[float, str] = {}
+        tree, order = screen.tree(), 0
+        for css in screen.styles:
+            for selectors, decls, cond in css_rules(css):
+                wanted = [d for d in decls if d[0] in _HIDES]
+                if not wanted:
+                    continue
+                for sel in _split_top(selectors):
+                    order += 1
+                    try:
+                        parts = parse_selector(sel)
+                        nodes = select(tree, sel, state)
+                    except SelectorError:
+                        continue
+                    spec = _specificity(parts[0])
+                    for _kind, _strict, px, text in cond or ():
+                        self.bounds.setdefault(px, text)
+                    for node in nodes:
+                        props = self.decls.setdefault(node, {})
+                        for prop, value, important in wanted:
+                            props.setdefault(prop, []).append(((important, spec, order), cond, value))
+
+    def samples(self) -> List[Tuple[float, str, str]]:
+        """(width, how a visible run starting here reads, how one ending here reads), smallest first."""
+        out = [(0.0, "", "")]
+        for px in sorted(self.bounds):
+            text = self.bounds[px]
+            out += [(px - _EPS, f"≥ {text}", f"< {text}"), (px, f"≥ {text}", f"≤ {text}"), (px + _EPS, f"> {text}", f"≤ {text}")]
+        return out + [(_HUGE, "", "")]
+
+    def hidden(self, node: _Node, width: float) -> Optional[Tuple[_Node, str]]:
+        """(the element that hides it, "property: value") when the node or an ancestor is hidden at this frame width."""
+        while node is not None and node.tag != "#root":
+            for prop, cands in self.decls.get(node, {}).items():
+                live = [c for c in cands if _holds(c[1], width)]
+                if live:
+                    value = max(live, key=lambda c: c[0])[2]
+                    if _HIDES[prop](value):
+                        return node, f"{prop}: {value}"
+            node = node.parent
+        return None
+
+
+def _describe(node: _Node) -> str:
+    out = node.tag + (f"#{node.attrs['id']}" if node.attrs.get("id") else "")
+    return out + "".join(f".{c}" for c in node.attrs.get("class", "").split()[:2])
+
+
+def breakpoint_warnings(reader: "_TourReader", tour: dict, screens: Dict[str, Screen]) -> List[str]:
+    """One line per step selector whose elements the screen's own CSS shows only at some frame widths."""
+    cache: Dict[Tuple[str, str], _ScreenCSS] = {}
+    out: List[str] = []
+    for (path, raw), step in zip(reader.raw_steps, tour["steps"]):
+        screen = screens[step["screen"]]
+        key = (screen.id, step["state"])
+        if key not in cache:
+            cache[key] = _ScreenCSS(screen, step["state"])
+        sheet = cache[key]
+        if not sheet.bounds:
+            continue
+        found: List[Tuple[tuple, str]] = []
+        if isinstance(raw.get("targets"), list):
+            found += [(path + ("targets", i), t) for i, t in enumerate(raw["targets"])]
+        elif raw.get("target") is not None:
+            found.append((path + ("target",), raw["target"]))
+        for i, lab in enumerate(raw.get("labels") or []):
+            found.append((path + ("labels", i, "target"), lab["target"]))
+        action = raw.get("action") or {}
+        for key2 in ("click", "target"):
+            if isinstance(action.get(key2), str):
+                found.append((path + ("action", key2), action[key2]))
+        seen = set()
+        for spath, sel in found:
+            sel = sel.strip()
+            if sel in seen:
+                continue
+            seen.add(sel)
+            nodes = select(screen.tree(), sel, step["state"])
+            samples = sheet.samples()
+            shown, why = [], None
+            for width, _lo, _hi in samples:
+                hid = [sheet.hidden(n, width) for n in nodes]
+                shown.append(not all(hid))
+                if all(hid) and why is None:
+                    why = hid[0]
+            if all(shown) or not any(shown) or why is None:
+                continue
+            runs, start = [], None
+            for i, on in enumerate(shown + [False]):
+                if on and start is None:
+                    start = i
+                elif not on and start is not None:
+                    lo, hi = samples[start][1], samples[i - 1][2]
+                    runs.append(" and ".join(t for t in (lo, hi) if t))
+                    start = None
+            node, how = why
+            where = ("is hidden by the screen's CSS" if node in nodes
+                     else f"sits inside {_describe(node)}, which the screen's CSS hides")
+            line = reader.lines.get(spath) or reader.lines.get(path)
+            out.append(f"{reader.rel}:{line}: step {step['n']}, {_label(spath)} {_show(sel)} {where} ({how}): visible only "
+                       f"when the frame is {' or '.join(runs)}")
+    return out
+
+
+def check_tour_file(given: str, root: Path, docs: Path, screens: List[Screen], rel, folder: Path, command: str) -> int:
+    """--check-tour FILE: validate one tour file against the screens and warn about frame widths; writes nothing."""
+    tours_dir = docs / "prototype" / "tours"
+    path = Path(given)
+    if not path.is_file() and not path.is_absolute():
+        for alt in (root / given, tours_dir / given, tours_dir / f"{given}.json"):
+            if alt.is_file():
+                path = alt
+                break
+    example = f"{command} --check-tour {rel(tours_dir, root)}/<id>.json"
+    if not path.is_file():
+        raise _err(f"--check-tour {given}: no such tour file", f"pass the tour file: {example}")
+    tid = path.name[: -len(".json")] if path.name.lower().endswith(".json") else ""
+    prel = rel(path, root)
+    if not tid:
+        raise _err(f"--check-tour {prel}: a tour file is <id>.json", f"pass the tour's .json file: {example}")
+    if not _ID.match(tid):
+        raise _err(f"{prel}: tour id \"{tid}\" may only use letters, digits, _ and -",
+                   "rename the file to an id such as booking-demo.json")
+    try:
+        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _err(f"{prel}: cannot read the tour file ({exc})", "save it as UTF-8") from None
+    by_id = {s.id: s for s in screens}
+    reader = _TourReader(tid, prel, text, by_id, rel(folder, root) + "/")
+    tour = reader.read()
+    warnings = breakpoint_warnings(reader, tour, by_id)
+    for line in warnings:
+        print(f"warning: {line}", file=sys.stderr)
+    if warnings:
+        print("fix: play the tour where the frame is that wide (the app view's frame is the window; the prototype "
+              "page's is its desktop frame), or point those steps at elements the screen shows at every width; "
+              "/plumb:tour then checks it in a browser with check-tour.py", file=sys.stderr)
+    n = len(tour["steps"])
+    extra = f"; {len(warnings)} warning{'s' if len(warnings) != 1 else ''}" if warnings else ""
+    print(f"ok: {prel}: {n} step{'s' if n != 1 else ''} ({tour['mode']} mode, {tour['view']} view) match the "
+          f"screens{extra}")
+    return 0
 
 
 # ---------------------------------------------------------------- pages
@@ -2055,6 +2344,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--synced", metavar="ID", help="mark a screen as updated from already-built code")
     parser.add_argument("--proposal", metavar="NAME",
                         help="build the variants in <docs>/prototype/proposals/NAME/ (both views each + index.html)")
+    parser.add_argument("--check-tour", metavar="FILE",
+                        help="validate one tour file against the screens and warn about frame widths; writes nothing")
     parser.add_argument("--root", metavar="SKILL_DIR", help="the design-system skill folder (default: this script's skill)")
     parser.add_argument("--project", metavar="PATH", help="project root when no PLUMB.md is found above the skill")
     args = parser.parse_args(argv)
@@ -2065,6 +2356,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error(f"--map {args.map} needs {missing}")
     if args.check and (args.map or args.approve or args.synced):
         parser.error("--check writes nothing, so it does not combine with --map, --approve or --synced")
+    if args.check_tour is not None and (args.check or args.map or args.approve or args.synced or args.proposal):
+        parser.error("--check-tour FILE checks one tour file and writes nothing; run it on its own")
     if args.proposal is not None:
         if args.map or args.approve or args.synced:
             parser.error("--proposal builds the variants only; run --map, --approve or --synced on their own")
@@ -2109,6 +2402,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
                    "write the first screen with /plumb:prototype <screen> (one <id>.html per screen)")
     screens = load_screens(folder, root, rel)
     by_id = {s.id: s for s in screens}
+    if args.check_tour is not None:
+        return check_tour_file(args.check_tour, root, docs, screens, rel, folder, command)
     tours_folder, pages_folder = docs / "prototype" / "tours", docs / "tours"
     mutating = bool(args.map or args.approve or args.synced)
     tour_error: Optional[PlumbError] = None
