@@ -20,11 +20,12 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from hook_support import (HOOKS, LAUNCHERS, SKILL_REL, actionable, allowed, denied, hook_env, make_project,
+from hook_support import (HOOKS, LAUNCHERS, PLUGIN, SKILL_REL, actionable, allowed, denied, hook_env, make_project,
                           payload, refused, run_hook)
 
 pytestmark = pytest.mark.skipif(not LAUNCHERS, reason="no hook launcher (sh or PowerShell) on this machine")
@@ -110,9 +111,8 @@ READS = [
 RULED_REFUSED = [
     f"python3 - <<'EOF'\nfrom pathlib import Path\nPath('Makefile').write_text('tokens:\\n\\tpython3 {OWN} > {GEN}\\n')\nEOF",
     f"python3 -c \"import json; print(json.dumps({{'out': '{GEN}'}}))\" > /tmp/plan.json",
-    f"git commit -m 'docs: never write > {GEN} by hand, run tee {OWN}'",
 ]
-REVIEW_RULED_REFUSED = {"git commit heredoc msg", "python write elsewhere via var", "python write func param elsewhere"}
+REVIEW_RULED_REFUSED = {"python write elsewhere via var", "python write func param elsewhere"}
 
 
 @pytest.fixture(params=LAUNCHERS)
@@ -199,6 +199,15 @@ def test_a_project_in_another_folder_shape_reads_the_same(launcher, tmp_path):
 # ---------------------------------------------------------------- in-process: the parser
 
 
+def _targets(H, command: str, cwd: str):
+    """The files a shell command writes, as the guard's reader sees them."""
+    return list(H.shell_effects(command, cwd).writes)
+
+
+def _removals(H, command: str, cwd: str):
+    return list(H.shell_effects(command, cwd).removals)
+
+
 @pytest.fixture(scope="module")
 def H():
     spec = importlib.util.spec_from_file_location("plumb_hooklib_bash_guard", HOOKS / "_hooklib.py")
@@ -219,7 +228,7 @@ def _rel(paths, base: Path):
 
 
 def _effects(H, command: str, base: Path):
-    return _rel(H.shell_targets(command, str(base)), base) + _rel(H.shell_removals(command, str(base)), base)
+    return _rel(_targets(H, command, str(base)), base) + _rel(_removals(H, command, str(base)), base)
 
 
 @pytest.mark.parametrize("form", WRITE_FORMS)
@@ -282,7 +291,7 @@ def test_reads_name_no_guarded_target(H, tmp_path, command):
     ("Set-Content -Path ps.txt -Value 'a > b'", ["ps.txt"]),
 ])
 def test_write_targets(H, tmp_path, command, targets):
-    assert _rel(H.shell_targets(command, str(tmp_path)), tmp_path) == targets
+    assert _rel(_targets(H, command, str(tmp_path)), tmp_path) == targets
 
 
 @pytest.mark.parametrize("command, removed", [
@@ -296,7 +305,7 @@ def test_write_targets(H, tmp_path, command, targets):
     ("python3 -c \"x = [1]; x.remove(1)\"", []),
 ])
 def test_removal_targets_in_inline_code(H, tmp_path, command, removed):
-    assert _rel(H.shell_removals(command, str(tmp_path)), tmp_path) == removed
+    assert _rel(_removals(H, command, str(tmp_path)), tmp_path) == removed
 
 
 def test_a_missing_heredoc_end_keeps_the_rest_as_data(H, tmp_path):
@@ -311,7 +320,7 @@ def test_an_unclosed_quote_runs_nothing_after_it(H, tmp_path):
 
 
 def test_a_subshell_cd_does_not_move_later_commands(H, tmp_path):
-    found = H.shell_targets("(cd sub && echo x > a.txt); echo y > b.txt", str(tmp_path))
+    found = _targets(H, "(cd sub && echo x > a.txt); echo y > b.txt", str(tmp_path))
     assert _rel(found, tmp_path) == ["sub/a.txt", "b.txt"]
 
 
@@ -346,19 +355,18 @@ def test_what_the_reader_follows_leaves_it_sure(H, tmp_path, command):
 
 
 def test_parsing_is_fast_on_a_long_command(H, tmp_path):
-    import time
     command = " && ".join(f"python3 -c \"import json; print(json.load(open('f{i}.json')))\" > /tmp/o{i}.txt"
                           for i in range(200))
     t = time.perf_counter()
-    H.shell_targets(command, str(tmp_path))
-    H.shell_removals(command, str(tmp_path))
+    _targets(H, command, str(tmp_path))
+    _removals(H, command, str(tmp_path))
     assert time.perf_counter() - t < 1.0
     # a long here-document script whose write cannot be followed (the conservative reading, the slowest path)
     body = "".join(f"x{i} = json.load(open('d/f{i}.json')); print(sorted(x{i}.items())[:2], os.path.join('a', 'b'))\n"
                    for i in range(2000))
     command = f"python3 - <<'EOF'\nimport json, os\n{body}def save(p):\n    open(p, 'w').write('x')\nEOF"
     t = time.perf_counter()
-    found = H.shell_targets(command, str(tmp_path))
+    found = _targets(H, command, str(tmp_path))
     assert time.perf_counter() - t < 2.0
     assert not any(p.endswith(".json") for p in found), found[:5]  # read only: never a target
 
@@ -372,7 +380,7 @@ def test_the_hint_lets_no_write_form_through(H):
 
 @pytest.mark.skipif(os.sep != "/", reason="requires POSIX: backslash paths")
 def test_windows_style_paths_are_read_as_paths(H, tmp_path):
-    assert _rel(H.shell_targets("echo x > docs\\design\\screens.html", str(tmp_path)), tmp_path) == [GEN]
+    assert _rel(_targets(H, "echo x > docs\\design\\screens.html", str(tmp_path)), tmp_path) == [GEN]
 
 
 # ---------------------------------------------------------------- the decision, in-process: default deny, prove safe
@@ -399,6 +407,11 @@ class Decider:
     def new(self, command: str, sub: str = "") -> bool:
         cwd = str(self.proj / sub) if sub else str(self.proj)
         return self.pe.shell_refusal(self.project, command, cwd, cwd) is not None
+
+    def proven(self, command: str) -> bool:
+        """Whether the shell reader proves the command's guarded paths are only data or reads (the allows)."""
+        cwd = str(self.proj)
+        return self.pe._proven(self.project, self.pe.H.shell_effects(command, cwd, cwd), cwd)
 
     def old(self, command: str, sub: str = "") -> bool:
         cwd = str(self.proj / sub) if sub else str(self.proj)
@@ -513,11 +526,10 @@ def test_wrapped_writes_never_slip_past_the_earlier_reader(decide):
 
 
 def test_a_command_too_long_to_read_is_refused_when_it_names_a_guarded_file(decide):
-    import time
     filler = "; ".join(f"echo x > /tmp/f{i}" for i in range(6000))
     t = time.perf_counter()
     reason = decide.pe.shell_refusal(decide.project, filler + f"; cat {GEN}", str(decide.proj), str(decide.proj))
-    assert reason and "too long for Plumb to check" in reason and "screens.html" in reason, reason
+    assert reason and "could not check this shell command" in reason and "screens.html" in reason, reason
     actionable(reason)
     assert decide.pe.shell_refusal(decide.project, filler, str(decide.proj), str(decide.proj)) is None
     assert time.perf_counter() - t < 1.0
@@ -531,7 +543,6 @@ def test_the_reviews_reads_and_ours_are_allowed(decide):
 
 
 def test_a_long_for_loop_and_many_cp_arguments_are_fast(decide):
-    import time
     for command in ("python3 -c \"for " + "a , " * 7500 + " open(a,'w')\"",
                     "cp " + " ".join(f"a{i}" for i in range(20000)) + " dest/",
                     "; ".join(f"echo x > /tmp/f{i}" for i in range(3000))):
@@ -562,3 +573,189 @@ def test_past_its_time_budget_the_previous_reader_decides_and_one_line_is_logged
     assert "time budget" in text and "refused: the earlier reader decided" in text and "(failed open) · Given: the shell" not in text
     allowed(run_hook(launcher, "pre_edit.py", payload("claude", "bash", CWD=str(proj), COMMAND=f"cat {GEN}"), proj,
                      env))
+
+
+# ---------------------------------------------------------------- round 3: the allow paths, pinned on both sides
+
+PLUGIN_NEW = "{plugin}/hooks/new_helper.py"  # under the plugin root, not existing
+THEME_NEW = f"{SKILL_REL}/assets/platforms/mobile/ios/NewTheme.swift"  # a generated theme, not built yet
+TOUR_NEW = "docs/design/tours/new-tour.html"  # a tour page, not built yet
+DUMP = "json.dump({}, open('/tmp/plumb-x.json', 'w'))"  # makes the earlier reader count every literal
+
+# (d) git commit messages: allowed (the earlier reader refused each), and the conditions that void it.
+GIT_ALLOW = [
+    f"git commit -m 'docs: never write > {GEN} by hand, run tee {OWN}'",
+    f"git commit -m \"$(cat <<'EOF'\ndocs: never > {GEN} by hand\n\nrun tee {OWN}\nEOF\n)\"",
+    f"git commit -q -m 'never > {GEN} by hand' -F - <<'EOF'\nmore > {GEN} text\nEOF",
+    f"git -C . commit -a --message='never > {GEN} by hand'",
+    f"git commit -am 'never > {GEN} by hand'",  # a short-option cluster ending in m
+    f"git commit -qam'never > {GEN} by hand'",  # the message attached to the cluster
+    f"GIT_AUTHOR_NAME=me git commit -m 'never > {GEN} by hand'",  # author / committer variables are data
+    f"git add -A && git commit -m \"$(cat <<'EOF'\ndocs: never > {GEN} by hand\nEOF\n)\"",
+]
+GIT_REFUSE = [
+    f"git -c core.hooksPath=/tmp/h commit -m 'never > {GEN} by hand'",  # a global option that runs something
+    f"git commit -m 'x' > {GEN}",  # a redirect on git is still a write
+    f"git commit -m 'never > {GEN} by hand' {GEN}",  # other words stay checked
+    f"cat > .git/hooks/pre-commit <<'EOF'\necho x > {GEN}\nEOF\ngit commit -m 'never > {GEN} by hand'",
+    f"git log --grep 'x > {GEN} by hand'",  # not commit
+]
+
+# print: allowed when the literal goes straight to the screen.
+PRINT_ALLOW = [
+    f"python3 -c \"import json; print('{GEN}'); {DUMP}\"",
+    f"python3 -c \"import json; print(json.dumps('{GEN}')); {DUMP}\"",
+    f"node -e \"console.log('{GEN}'); require('fs').writeFileSync('/tmp/plumb-y.txt', 'x')\"",
+]
+PRINT_REFUSE = [
+    f"python3 -c \"import json; print('{GEN}'); {DUMP}\" | sh",  # the output is piped on
+    f"python3 -c \"import json; p = '{GEN}'; print('{GEN}'); {DUMP}\"",  # also bound to a name
+    f"python3 -c \"import json; print('{GEN}' + '.bak'); {DUMP}\"",
+    f"python3 -c \"import json, os; print(os.path.dirname('{GEN}')); {DUMP}\"",
+    f"python3 -c \"import json; print(json.dumps({{'out': '{GEN}'}})); {DUMP}\"",
+]
+
+# (a) data written to a file: allowed, and voided when the file may be used again.
+DATA_ALLOW = [
+    f"cat > notes/plan.md <<'EOF'\nfix: open('{GEN}', 'w') in the old script\nEOF",
+    f"tee notes/todo.md >/dev/null <<'EOF'\nshutil.copy('x', '{OWN}')\nEOF",
+]
+DATA_REFUSE = [
+    f"cat > fixmod.py <<'EOF'\nopen('{GEN}', 'w').write('x')\nEOF\npython3 -c \"import fixmod\"",  # stem imported
+    f"cat > /tmp/m/sitecustomize.py <<'EOF'\nopen('{GEN}', 'w').write('x')\nEOF\npython3 -c \"print(1)\"",  # startup
+    f"cat > ./.bashrc <<'EOF'\nopen('{GEN}', 'w')\nEOF",  # a startup file
+    f"cat > lib/fix.py <<'EOF'\nopen('{GEN}', 'w')\nEOF\nPYTHONPATH=lib python3 -c \"import json\"",  # its folder
+    f"cat > .husky/pre-commit <<'EOF'\nopen('{GEN}', 'w')\nEOF",  # a hook
+    f"cat > package.json <<'EOF'\n{{\"scripts\": {{\"x\": \"python3 -c \\\"open('{GEN}','w')\\\"\"}}}}\nEOF",
+]
+
+# What voids an allow without the earlier reader refusing the command itself: the proof fails, so a refusal by the
+# earlier reader stands. (d), print, (a) and (c) in turn.
+NOT_PROVEN = [
+    f"GIT_EDITOR='sed -i s/a/b/' git commit -e -m 'never > {GEN} by hand'",  # a variable set before git commit
+    f"env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/tmp/h git commit -m 'never > {GEN}'",
+    f"cat > .githooks/pre-commit <<'EOF'\necho x > {GEN}\nEOF\ngit commit -m 'never > {GEN} by hand'",  # a hooksPath
+    f"cp /tmp/x .git/hooks/pre-commit; git commit -m 'never > {GEN} by hand'",
+    f"python3 -c \"open('.git/hooks/pre-commit', 'w').write('x')\"; git commit -m 'never > {GEN} by hand'",
+    f"git --git-dir={SKILL_REL}/templates commit -m 'never > {GEN} by hand'",  # global option values stay checked
+    f"git commit --exec-path=/tmp -m 'never > {GEN} by hand'",
+    f"git commit -m 'never > {GEN} by hand' | sh",
+    f"python3 -c \"import os; print = os.remove; print('{GEN}')\"",  # print rebound
+    f"python3 -c \"import json, sys; sys.stdout = open('/tmp/plumb-x.sh', 'w'); print('echo x > {GEN}')\"",
+    f"python3 -c \"print('echo x > {GEN}')\" > /tmp/plumb-r.sh",  # the output goes to a file
+    f"eval \"$(python3 -c \"print('echo x > {GEN}')\")\"",  # the output is a command's text
+    f"bash -c \"python3 -c \\\"print('{GEN}')\\\"\"",  # not the top-level command
+    f"cat > ~/.curlrc <<'EOF'\noutput = {GEN}\nEOF",  # a file a program picks up
+    f"cat > .githooks/post-commit <<'EOF'\necho x > {GEN}\nEOF",  # a file named as a git hook
+    f"cat > site/x.pth <<'EOF'\nimport os; os.remove('{GEN}')\nEOF",
+    f"cat > notes/fixmod <<'EOF'\nrequire('fs').writeFileSync('{GEN}', 'x')\nEOF\nnode -e \"require('./notes/fix' + 'mod')\"",
+    f"python3 -c \"import json, io; d = json.load(open('{MAP}')); io.open('/tmp/plumb-a', mode=m)\"",
+    f"python3 -c \"import json, os; d = json.load(open('{MAP}')); os.open('/tmp/plumb-a', 577)\"",
+    f"python3 -c \"import json; d = json.load(open('{MAP}')); open('sitecustomize.py', 'w').write('x')\"",
+    f"python3 -c \"import json; d = json.load(open('{MAP}')); open('/tmp/plumb-x.sh', 'w').write('x')\"; "
+    "bash /tmp/plumb-x.sh",  # code writes a file the command then runs
+    f"python3 -c \"import json; d = json.load(open('{MAP}')); x = 'docs'\"",  # a bare folder name (O1)
+]
+
+# (c): opener=, os.open, os.fdopen, /dev/fd targets: no allow.
+CODE_ALLOW = [f"python3 -c \"import json; d = json.load(open('{MAP}')); open('/tmp/plumb-o.json', 'w').write('1')\""]
+CODE_REFUSE = [
+    f"python3 -c \"import json; d = json.load(open('{MAP}', opener=None)); open('/tmp/plumb-o.json', 'w').write('1')\"",
+    f"python3 -c \"import json, os; fd = os.open('{MAP}', os.O_RDONLY); open('/tmp/plumb-o.json', 'w').write('1')\"",
+    f"python3 -c \"import json, os; d = json.load(open('{MAP}')); os.fdopen(3, 'w').write('1')\"",
+    f"python3 -c \"import json; d = json.load(open('{MAP}')); open('/dev/fd/3', 'w').write('1')\"",
+    f"python3 -c \"import json; d = json.load(open('{MAP}')); open('/proc/self/fd/3', 'w').write('1')\"",
+]
+
+
+@pytest.mark.parametrize("command", GIT_ALLOW + PRINT_ALLOW + DATA_ALLOW + CODE_ALLOW)
+def test_the_provable_allows_turn_an_earlier_refusal_into_an_allow(decide, command):
+    assert decide.old(command), "the earlier reader allows it already: the case proves nothing"
+    assert not decide.new(command), command
+
+
+@pytest.mark.parametrize("command", GIT_REFUSE + PRINT_REFUSE + DATA_REFUSE + CODE_REFUSE)
+def test_the_provable_allows_void_when_their_conditions_fail(decide, command):
+    assert decide.new(command), command
+
+
+@pytest.mark.parametrize("command", NOT_PROVEN)
+def test_the_provable_allows_are_not_proved_when_their_conditions_fail(decide, command):
+    assert not decide.proven(command), command
+
+
+def test_git_commit_in_another_folder_is_still_a_message(decide):
+    command = f"git -C '{decide.proj}' commit -m 'never > {GEN} by hand'"
+    assert decide.old(command) and not decide.new(command)
+
+
+@pytest.mark.parametrize("path", [PLUGIN_NEW, THEME_NEW, TOUR_NEW])
+def test_a_guarded_path_that_does_not_exist_yet_is_seen_in_other_text(decide, path):
+    """O1: the guard's own rule (the plugin root, a theme, a tour …) decides what other text may not name, not only the
+    files that exist."""
+    path = path.format(plugin=PLUGIN)
+    command = f"python3 -c \"import json; p = '{path}'; {DUMP}\""
+    assert decide.old(command) and decide.new(command), command
+    elsewhere = f"python3 -c \"import json; p = '/tmp/plumb-other.txt'; {DUMP}\""
+    assert not decide.new(elsewhere)
+
+
+def test_a_command_too_long_to_read_is_refused_when_it_names_a_guarded_folder(decide):
+    """O2: past 64 KB a guarded folder (or a parent of one) among the words refuses too."""
+    filler = "; ".join(f"echo x > /tmp/f{i}" for i in range(6000))
+    for tail in ("cp -r /tmp/x docs/design/", f"cp -r /tmp/x {SKILL_REL}/scripts/", f"cp /tmp/x {PLUGIN}/hooks/"):
+        reason = decide.pe.shell_refusal(decide.project, filler + "; " + tail, str(decide.proj), str(decide.proj))
+        assert reason and "could not check this shell command" in reason, tail
+        actionable(reason)
+    assert decide.pe.shell_refusal(decide.project, filler + "; cp -r /tmp/x /tmp/y/", str(decide.proj),
+                                   str(decide.proj)) is None
+
+
+def test_a_command_the_reader_crashes_on_is_refused_when_it_names_a_guarded_file(decide):
+    """O5: a reader crash (the recursion limit) refuses when the command names a guarded file; else the earlier reader
+    decides."""
+    deep = "python3 -c \"open(" + "f(" * 6000 + "'{t}'" + ")" * 6000 + ", 'w')\""
+    reason = decide.pe.shell_refusal(decide.project, deep.format(t=GEN), str(decide.proj), str(decide.proj))
+    assert reason and "could not check this shell command" in reason and "screens.html" in reason, reason
+    assert decide.pe.shell_refusal(decide.project, deep.format(t="/tmp/plumb-deep.txt"), str(decide.proj),
+                                   str(decide.proj)) is None
+
+
+@pytest.mark.parametrize("nest", ["(" * 300 + "{body}" + ")" * 300, "echo " + "$(" * 300 + "{body}" + ")" * 300,
+                                  "python3 -c \"open(" + "f(" * 300 + "'{t}'" + ")" * 300 + ", 'w')\""])
+def test_brackets_nested_past_the_reader_refuse_a_guarded_path_only(decide, nest):
+    """O5: a command nested deeper than the reader reads is not read; it is refused when it names a guarded path, and
+    nothing goes to the hooks' log (the command's shape, not Plumb's mistake)."""
+    reason = decide.pe.shell_refusal(decide.project, nest.format(body=f"echo x > {GEN}", t=GEN), str(decide.proj),
+                                     str(decide.proj))
+    assert reason and "too complex to read" in reason, reason
+    actionable(reason)
+    assert decide.pe.shell_refusal(decide.project, nest.format(body="echo x > /tmp/plumb-n.txt", t="/tmp/plumb-n.txt"),
+                                   str(decide.proj), str(decide.proj)) is None
+
+
+def test_a_nul_byte_is_read_past(decide):
+    assert decide.new(f"echo x\x00 > {GEN}\x00")
+    assert not decide.new("echo x\x00 > /tmp/plumb-nul.txt")
+
+
+@pytest.mark.parametrize("command, refused_, outcome", [
+    (f"echo x > /tmp/plumb-c.txt; cat {GEN}", True, "refused without reading it"),
+    ("echo x > /tmp/plumb-c.txt", False, "allowed: the earlier reader decided"),
+])
+def test_a_reader_crash_is_logged_once_with_the_real_outcome(decide, monkeypatch, command, refused_, outcome):
+    """O5: on a crash the guarded-path rule decides first; else the earlier reader. One log line, the real outcome."""
+    H = decide.pe.H
+    lines = []
+    monkeypatch.setattr(H, "log_failure", lambda given, expected, **kw: lines.append(kw.get("outcome")))
+
+    def crashed(command, cwd, root=None):
+        eff = H.ShellEffects(root, time.monotonic() + 5)
+        eff.doubt("the reader failed (RecursionError)")
+        eff.trouble = ("the shell reader failed (RecursionError: deep)", "crash", RecursionError("deep"))
+        return eff
+
+    monkeypatch.setattr(H, "shell_effects", crashed)
+    reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    assert bool(reason) is refused_, reason
+    assert len(lines) == 1 and lines[0].startswith(outcome), lines

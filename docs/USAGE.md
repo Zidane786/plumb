@@ -1081,24 +1081,47 @@ Three checks, in this order:
      `bash FILE`, `source FILE`, `make -f FILE`, `python3 - < FILE`).
 
    Otherwise the guard's earlier, stricter reading decides, and its refusal stands unless the command only
-   **mentions** the guarded file in one of three provable ways:
-   - (a) inside a here-document, `echo`, `printf` or `tee` text written to another file, **unless the same command
-     runs that file, pipes it on, or names it again** (`cat > Makefile <<'EOF'` whose lines run `build-tokens.py` is
-     fine; `cat > fix.py <<'EOF' … EOF; python3 fix.py` is code);
+   **mentions** the guarded file in one of four provable ways:
+   - (a) inside a here-document, `echo`, `printf` or `tee` text written to another file, **unless that file may be
+     used again**: the same command runs it, pipes it on, or names it, its stem (`import fixmod`) or its folder again;
+     it is code (`.py`, `.js`, `.sh` …, or a file with no suffix) and the command also starts an interpreter, a shell or
+     a package tool; or it is a file a program picks up by itself (`sitecustomize.py`, `*.pth`, `.bashrc`, `.profile`,
+     `.npmrc`, `.curlrc`, `package.json`, `Makefile`, `conftest.py`, anything under `.git/` or `.husky/`, a hooks
+     folder or a file named as a git hook). `cat > notes/plan.md <<'EOF'` that quotes a guarded path is fine;
+     `cat > fix.py <<'EOF' … EOF; python3 fix.py` is code;
    - (b) as an argument of a read-only program (`cat`, `head`, `tail`, `grep`, `rg`, `wc`, `diff`, `ls`, `stat`,
      `file`, `sha256sum`, `jq` …);
    - (c) in inline code that gives it straight to a read (`open(p)` to read, `json.load(open(p))`,
-     `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`), runs no command or code,
-     and writes only to plain paths that are not guarded and not next to a guarded file.
+     `Path(p).read_text()`, `importlib`'s `spec_from_file_location`, `readFileSync`, `require`), or straight to
+     `print(…)`, `print(json.dumps(…))` or `console.log(…)` when the output goes to the screen (not piped, not
+     redirected to a file, not inside `$( … )` or another shell, the literal not also stored in a variable, and nothing
+     in the code rebinds `print`, `json` or `console` or moves the output). The code runs no command or code, opens no
+     file through `opener=`, `os.open` or `os.fdopen`, imports nothing by a name it builds, and writes only to plain
+     paths that are not guarded, not next to a guarded file, not under `/dev/fd/` or `/proc/`, and not used again (the
+     same test as (a));
+   - (d) in a `git commit` message: only the values of `-m` / `--message` / `-F` / `--file` / `-t` (also in a cluster
+     like `-am`) and a here-document on its stdin are data. Every other word is still checked, a redirect on the
+     command is still a write, and it does not count when git is given an option that runs something (`-c`,
+     `--config-env`, `--exec-path`), a variable is set before it (an editor, a config; author and committer names are
+     fine), or the same command wrote a hook (under `.git/hooks/`, `.husky/`, a hooks folder, or a file named as a
+     git hook).
+
+   Every other word of the command (an unknown program's words, code literals outside those positions, a variable's
+   value) must name no guarded path by the guard's own rule: a guarded file whether it exists yet or not (a theme or
+   tour not built yet, anything under the plugin), a folder that holds one, or a parent of one (`docs`).
 
    Anything else keeps the stricter answer, for example:
-   - a commit message or `echo` to the screen that names a guarded file with a `>`;
+   - an `echo` to the screen that names a guarded file with a `>`;
    - code that passes a guarded path to `dirname`, `join` or an f-string, or writes through a variable;
    - a program the reader doesn't know, a runner (`npx`, `poetry run`, `conda run` …), `xargs` or a script run;
    - a variable or `$( … )` the reader can't resolve in a target or a `cd` (shell variables set in the same command,
      `$PWD` and `$CLAUDE_PROJECT_DIR` are followed);
-   - code piped from a file, very deep nesting, or a reading that would take too long. A command over 64 KB is not
-     read at all: it is refused when it names a guarded file.
+   - code piped from a file, nesting deeper than the reader follows, or a reading that would take too long.
+
+   A command over 64 KB, one whose brackets nest deeper than 200, and one the reader fails on are not read: each is
+   refused when any of its words names a guarded file, a guarded folder or a parent of one, and otherwise the earlier
+   reading decides. A reader failure or a command too long to read adds one line, with the real outcome, to the hooks'
+   log (`/plumb:feedback`).
 
    The guard is a consistency net, not a sandbox. Script files written before the command, `xargs`, `find -exec` on
    the files found, `patch`, `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other
