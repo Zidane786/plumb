@@ -581,6 +581,17 @@ def test_screen_changed_after_approval_does_not_cover_a_new_route(launcher, tmp_
     assert "is not approved yet" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
 
 
+def test_an_approval_covers_the_shared_files_it_saw(launcher, tmp_path, proj):
+    """The screens folder's _shared/*.css and *.js are part of every screen's approval: approved with them, the route
+    is allowed; a shared file changed since, it is not."""
+    write(proj / SCREENS / "billing.html", BILLING_SCREEN)
+    write(proj / SCREENS / "_shared/base.css", "[data-screen] { color: inherit; }\n")
+    assert run_script(proj, "build-prototype.py", "--approve", "billing").returncode == 0
+    allowed(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+    write(proj / SCREENS / "_shared/base.css", "[data-screen] { color: red; }\n")
+    assert "is not approved yet" in refused(write_tool(launcher, tmp_path, proj, "app/billing/page.tsx", BILLING))
+
+
 def test_new_route_in_a_monorepo_frontend_is_refused(launcher, tmp_path, proj):
     """The live-test monorepo: Next.js only in frontend/ (no next.config or next dependency at the repo root, where
     the design system is), Python in backend/. PLUMB.md's Routes: names frontend/src/app; nothing else is read."""
@@ -884,6 +895,39 @@ def test_stop_no_sync_miss_after_approving_the_new_baseline(launcher, tmp_path, 
     assert r.stdout.strip() == "Plumb: 1 UI file checked, consistent", r.stdout
 
 
+def test_stop_asks_again_when_only_a_shared_file_changed(launcher, tmp_path, proj, mode):
+    """An edit to <screens>/_shared/*.css or *.js reaches every screen: their approvals are stale, so the end-of-turn
+    check asks for them again even though no screen file and no UI file changed."""
+    _start(launcher, tmp_path, proj)
+    write(proj / SCREENS / "_shared/base.css", "[data-screen] h2 { letter-spacing: 0.01em; }\n")
+    reason = _block(stop(launcher, tmp_path, proj))
+    assert "screen home" in reason and "not approved" in reason and "--approve home" in reason
+    assert "update prototype screen" not in reason
+
+
+def test_stop_no_drift_when_a_shared_file_mirrors_the_code_change(launcher, tmp_path, proj):
+    _start(launcher, tmp_path, proj)
+    page = proj / "app/page.tsx"
+    write(page, read(page).replace("No tables booked yet", "Nothing booked yet"))
+    write(proj / SCREENS / "_shared/copy.js", 'screen.setAttribute("data-copy", "Nothing booked yet");\n')
+    reason = _block(stop(launcher, tmp_path, proj))
+    assert "update prototype screen" not in reason  # the prototype changed too, through the shared file
+    assert "screen home" in reason and "not approved" in reason and "--approve home" in reason
+    for sid in ("home", "booking", "menü"):  # the shared file reaches every built screen: each needs its own yes
+        assert f"--approve {sid}" in reason, sid
+    for sid in ("home", "booking", "menü"):
+        assert run_script(proj, "build-prototype.py", "--approve", sid).returncode == 0
+    r = stop(launcher, tmp_path, proj)
+    assert r.stdout.strip() == "Plumb: 1 UI file checked, consistent", r.stdout
+
+
+def test_stop_ignores_other_files_in_the_shared_folder(launcher, tmp_path, proj):
+    _start(launcher, tmp_path, proj)
+    write(proj / SCREENS / "_shared/notes.md", "only .css and .js are shared files\n")
+    r = stop(launcher, tmp_path, proj)
+    assert r.returncode == 0 and "decision" not in r.stdout, r.stdout
+
+
 def test_stop_reports_a_new_route_without_a_prototype(launcher, tmp_path, proj):
     _start(launcher, tmp_path, proj)
     write(proj / "app/billing/page.tsx", BILLING)
@@ -1128,6 +1172,23 @@ def test_audit_changed_cli(tmp_path, proj):
     out = json.loads(r.stdout)
     assert out["mode"] == "changed" and out["checked"] == 1
     assert [f["file"] for f in out["findings"] if f["severity"] == "error"] == ["components/widget.tsx"]
+
+
+def test_audit_changed_counts_a_shared_file_as_a_change_to_every_screen(tmp_path, proj):
+    """audit.py --changed, like the stop hook: an edit only to <screens>/_shared/ stales every built screen's approval
+    (screen-unapproved); a code change mirrored in a shared file is not screen-drift."""
+    snap = tmp_path / "snap.json"
+    assert run_script(proj, "audit.py", "--snapshot", str(snap)).returncode == 0
+    write(proj / SCREENS / "_shared/base.css", "[data-screen] h2 { letter-spacing: 0.01em; }\n")
+    r = run_script(proj, "audit.py", "--changed", str(snap), "--json")
+    assert r.returncode == 1, r.stdout + r.stderr
+    rules = [f["rule"] for f in json.loads(r.stdout)["findings"]]
+    assert "screen-unapproved" in rules and "screen-drift" not in rules, rules
+    page = proj / "app/page.tsx"
+    write(page, read(page).replace("No tables booked yet", "Nothing booked yet"))
+    r = run_script(proj, "audit.py", "--changed", str(snap), "--json")
+    rules = [f["rule"] for f in json.loads(r.stdout)["findings"]]
+    assert "screen-drift" not in rules and "screen-unapproved" in rules, rules
 
 
 def test_audit_changed_bad_snapshot_exits_2(tmp_path, proj):

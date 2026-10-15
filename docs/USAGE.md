@@ -833,6 +833,19 @@ Every page opens from disk, with no server and no network.
 `docs/design/prototype/screens/<id>.html`: one file per screen, its states marked with `data-state`, its interactions
 inline, and only the design system's tokens for colours, type, spacing, radius, shadow and motion. Edit a screen file
 and rebuild; every page follows, so they can never disagree. The audit runs on the screen files like on your code.
+The `_shared/` folder beside the screens holds shared files (below); nothing in it is a screen.
+
+**Shared files.** CSS and scripts several screens use (an app shell's layout, a toast helper) go once in
+`docs/design/prototype/screens/_shared/` (and a variant's in its own `screens/_shared/`): only `*.css` and `*.js`, in
+name order. The CSS is in every page once, before the screens' own styles; start its selectors with `[data-screen]` (a
+selector that doesn't is a `warning:`, because it would style the prototype's panels too). Each script runs for every
+screen, before the screen's own script, with the same `screen` and `plumb` (`plumb.screen` names the screen), in
+`prototype.html`, `app.html`, the tour pages and every copy in `screens.html`. A shared file is checked before it is
+inlined: `</script>` or `</style>` inside it, `fetch(`, `new XMLHttpRequest`, `import`, CSS `@import` or a
+`url(https://…)` exit 2 naming the file and line. The shared files are part of every screen's approval: edit one and
+those approvals go stale, and the build says which file, for example `note: screen booking changed since Ana approved it
+on 2026-10-14 (the shared file: docs/design/prototype/screens/_shared/base.css changed; shared files reach every
+screen)`. A project without shared files keeps the approvals it had.
 
 **Links you can share:** `prototype.html#screen-booking` opens a screen; `#screen-booking/error` a screen in one state;
 `#tour-client-demo` a walkthrough; `#tour-client-demo-3` its step 3. In the app view: `app.html#/booking` and
@@ -846,7 +859,7 @@ approval:
 | Command | What it records |
 |---|---|
 | `build-prototype.py --map billing --route=/billing --files "app/billing/**"` | the route and source files, confirmed with you |
-| `build-prototype.py --approve billing` | your approval: who (git `user.name`, else `$USER` / `%USERNAME%`), when, and a hash of the screen file. Editing the screen file afterwards makes the approval stale |
+| `build-prototype.py --approve billing` | your approval: who (git `user.name`, else `$USER` / `%USERNAME%`), when, and a hash of the screen file (and of the shared files, when there are any). Editing the screen file or a shared file afterwards makes the approval stale |
 | `build-prototype.py --synced billing` | the screen file was updated to match code that was already built; listed for you to confirm, never blocking |
 | `build-prototype.py --check` | nothing written; exit 1 when a page (`app.html` included) or token block is stale or missing, exit 2 when a walkthrough step points at something that no longer exists |
 
@@ -868,9 +881,25 @@ docs/design/prototype/proposals/billing/
 The chosen variant's screen file is copied into the main prototype; the others stay in `proposals/` as the record. When
 tokens change, their token block is refreshed so old variants keep rendering.
 
+**Change ids.** So a reviewer can point at what a proposal changed, mark each changed element with an id:
+`data-guide="F01 · Moved the list to the left: regulars scan it first"` (an id is a letter and digits, then `·`), and
+list the ids in `docs/design/prototype/proposals/billing/changes.md`, one line each:
+
+```
+- **F01** List on the left: regulars scan it first
+- **F02** Denser rows: more tables fit on a laptop
+```
+
+`build-prototype.py --proposal billing` (and `--check`) exits 2 when a screen uses an id that isn't listed (or there is
+no `changes.md`), naming the screen file and the id; a listed id no screen uses is a `warning:`; the proposal's
+`index.html` lists the changes and where each one is used. In the Guide panel the id shows as a chip next to its text.
+The main prototype can use ids too: they are checked only when `docs/design/prototype/changes.md` exists. Guide text
+without an id in front is never checked.
+
 **Always in step, both ways.** A screen "to build" stays listed in `/plumb:status` and the audit until its route
 exists. When a screen's source files change and its screen file doesn't, the end-of-turn check stops the agent once and
-the audit reports `screen-drift`. A route with no screen is `route-not-prototyped`.
+the audit reports `screen-drift`. An edit to a `_shared/` file counts as a change to every screen: the end-of-turn check
+asks for the approvals it made stale, and a code change mirrored in a shared file is not reported as drift. A route with no screen is `route-not-prototyped`.
 
 **Figma?** For screens, flows, states and handoff, the prototype replaces it: real HTML on real tokens, audited,
 clickable, and kept in step with the code. Figma stays better for freehand visual exploration, designers editing

@@ -35,8 +35,9 @@ Reads <docs>/prototype/screens/<id>.html (docs = $extensions.plumb.docs_dir, def
                                    scripts and radio groups never meet another copy. The page grows with the screens,
                                    not screens × states. It needs JavaScript (a <noscript> note says so).
   <docs>/prototype/screens.json    the screen map. This script is its only writer: id, title, states, route, files
-                                   (globs relative to the project root), files_hash, approved {by, at, hash} | null,
-                                   synced_from_code, status (to-build | built).
+                                   (globs relative to the project root), files_hash, approved {by, at, hash, shared} | null
+                                   (shared: the shared files' hashes, only when there are any), synced_from_code,
+                                   status (to-build | built).
 
   <docs>/tours/<tour>.html          one per tour file: every screen plus that tour, opening straight into it (play
                                    mode for a client or whats-new audience, guide mode otherwise), in the tour's
@@ -82,13 +83,29 @@ Screen file contract (one per screen, <id>.html):
   ID is the file name without .html (letters, digits, _ and -). The md breakpoint follows the frame the screen sits in
   (phone or desktop; the window in app.html), so responsive screen CSS uses `@container plumb-frame (min-width: 48rem)`.
   data-app-sidebar on an app shell's sidebar keeps it in view in app.html (sticky, full height, from the md breakpoint).
+  The _shared folder beside the screens is reserved for shared files (below); nothing in it is a screen.
+
+Shared files: <screens folder>/_shared/*.css and *.js (the main screens/ and each variant's screens/; other files there
+are not read). CSS is inlined once per page in name order, before the screens' styles (a selector that does not start
+with [data-screen] is a warning). Each JS file runs for every screen (every copy in screens.html) before the screen's own
+script, in name order, as function (screen, plumb) with the same API. Inlined as they are: "</script" in a JS file,
+"</style" in a CSS file, fetch( / new XMLHttpRequest / WebSocket / EventSource / sendBeacon( / import, and in CSS
+@import or url() with a remote or //-address exit 2. They are part of every screen's approval hash (with none it is the
+screen file's own hash, so earlier approvals stand): editing one makes those approvals stale, and the build names it.
+
+Change ids: data-guide="F01 · what changed and why" (a letter and digits, then ·) marks a changed element; the Guide
+panel shows the id as a chip. A proposal lists its ids in <docs>/prototype/proposals/<NAME>/changes.md, one
+`- **F01** title: what and why` line each: --proposal NAME exits 2 when a screen uses an id that is not listed (or there
+is no changes.md), warns about a listed id no screen uses, and the index lists the changes. The main prototype's ids are
+checked the same way only when <docs>/prototype/changes.md exists. data-guide text without a leading id is never checked.
 
 Commands (every call rebuilds the generated files, so the pages always show the current map and approvals):
   --map ID --route=R --files G...   set a screen's route and source files; files_hash is the sha256 of those files
                                     (CRLF-normalised). status is "built" once every glob matches a file.
   --approve ID                      record the approval: git user.name (else $USER / %USERNAME%), today's ISO date,
-                                    the sha256 of the screen file (CRLF-normalised); clears synced_from_code. Editing
-                                    the screen afterwards makes the approval stale: the build reports it. Run it only after the
+                                    the sha256 of the screen file (CRLF-normalised; with shared files, of it and
+                                    theirs); clears synced_from_code. Editing the screen (or a shared file) afterwards
+                                    makes the approval stale: the build reports it. Run it only after the
                                     user said yes to that screen; every message that names it says "ask the user" first.
   --synced ID                       mark a screen as updated to match code that was already built.
   --map, --approve and --synced also refresh files_hash: the source baseline the audit compares against. A broken
@@ -210,6 +227,7 @@ class Screen:
         self.order = order
         self.rel = rel
         self.hash = sha256_text(text)
+        self.own_hash = self.hash  # the screen file alone; hash adds the shared files (load_screens)
         self.states: List[str] = []
         self.section = ""
         self.section_mark = 0
@@ -463,20 +481,330 @@ def unscoped_selectors(css: str) -> List[Tuple[int, str]]:
     return found
 
 
-def load_screens(folder: Path, root: Path, rel) -> List[Screen]:
-    files = sorted(p for p in folder.glob("*.html") if p.is_file())
+def screen_files(folder: Path) -> List[Path]:
+    """The screen files of a screens folder: every <id>.html file directly in it, as always (the _shared folder is a
+    folder, so nothing in it is a screen)."""
+    if not folder.is_dir():
+        return []
+    return sorted(p for p in folder.glob("*.html") if p.is_file())
+
+
+def load_screens(folder: Path, root: Path, rel, shared: Optional[List["Shared"]] = None) -> List[Screen]:
+    """The folder's screens in data-order. Each screen's hash (what an approval records) also covers the folder's
+    shared files (load_shared); with none it is the screen file's own hash, as before shared files existed."""
+    if shared is None:
+        shared = load_shared(folder, root, rel)
     screens: List[Screen] = []
     seen: Dict[str, str] = {}
-    for path in files:
+    for path in screen_files(folder):
         screen = parse_screen(path, rel(path, root))
         key = screen.id.casefold()
         if key in seen:
             raise _err(f"{screen.rel}: duplicate screen id \"{screen.id}\" (also {seen[key]})",
                        "give each screen its own id: rename one of the files and its data-screen")
         seen[key] = screen.rel
+        screen.own_hash = screen.hash
+        screen.hash = combined_hash(screen.own_hash, shared_hashes(shared))
         screens.append(screen)
     screens.sort(key=lambda s: (s.order if s.order is not None else 10 ** 9, s.id.casefold(), s.id))
     return screens
+
+
+# ---------------------------------------------------------------- shared files (<screens>/_shared/*.css, *.js)
+
+SHARED_DIR = "_shared"
+_JS_NETWORK = re.compile(r"(?:(?<![\w$.])|(?<=window\.)|(?<=globalThis\.)|(?<=self\.))(?:fetch|importScripts)\s*\("
+                         r"|\bnew\s+(?:XMLHttpRequest|WebSocket|EventSource)\b|\bsendBeacon\s*\(|(?<![\w$.])import\s*\("
+                         r"|^[ \t]*import\b[^(\n]*(?:\bfrom\b|['\"])", re.M)
+_CSS_REMOTE = re.compile(r"url\(\s*['\"]?\s*(?:[a-z][a-z0-9+.-]*:)?//|@import\b", re.I)
+_SHARED_SCOPED = re.compile(r"\[\s*data-screen\s*(?:[~|^$*]?=|\])")
+
+
+_JS_REGEX_AFTER = frozenset(("return", "typeof", "case", "in", "of", "delete", "void", "instanceof", "new", "throw",
+                             "yield", "await", "else", "do"))
+
+
+def blank_js(text: str) -> str:
+    """The JS with every comment and the inside of every string and template literal turned to spaces (newlines and the
+    quote marks kept, so offsets and lines stay): a comment or text that mentions fetch( or an import loads nothing.
+    A template literal's ${...} expressions stay code. A / after an operator, ( , = : [ ! & | ? { } ; or a keyword
+    such as return, typeof or case starts a regex literal, blanked like a string (a deliberately small reader: after anything else, / divides)."""
+    out = list(text)
+    i, n = 0, len(text)
+    depth: List[int] = []  # one entry per open ${...}: the { nesting inside it
+
+    def blank(a: int, b: int) -> None:
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    def regex_may_start(k: int) -> bool:
+        """A / at k starts a regex literal when the code before it ends in an operator or punctuation (or nothing),
+        or a keyword that takes an expression (return, typeof, case, in, of, …); after a name, a number, ) ] or a
+        postfix ++ / -- it divides."""
+        k -= 1
+        while k >= 0 and out[k] in " \t\r\n":
+            k -= 1
+        if k < 0:
+            return True
+        if out[k] in "+-":
+            return not (k > 0 and out[k - 1] == out[k])  # i++ / 2 divides
+        if out[k] in "(,=:[!&|?{};*%<>~^":
+            return True
+        end = k + 1
+        while k >= 0 and (out[k].isalnum() or out[k] in "_$"):
+            k -= 1
+        return text[k + 1:end] in _JS_REGEX_AFTER
+
+    def template(j: int) -> int:
+        """Blank template text from j to the closing backtick or the next ${; return where code resumes."""
+        start = j
+        while j < n and text[j] != "`" and not text.startswith("${", j):
+            j += 2 if text[j] == "\\" else 1
+        blank(start, j)
+        if text.startswith("${", j):
+            depth.append(0)
+            return j + 2
+        return j + 1
+
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            end = text.find("\n", i)
+            end = n if end == -1 else end
+            blank(i, end)
+            i = end
+        elif c == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            blank(i, end)
+            i = end
+        elif c == "/" and regex_may_start(i):
+            j = i + 1
+            in_class = False
+            while j < n and text[j] != "\n" and (in_class or text[j] != "/"):
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                j += 1
+            blank(i + 1, j)
+            i = j + 1
+        elif c == "`":
+            i = template(i + 1)
+        elif c in "'\"":
+            j = i + 1
+            while j < n and text[j] != c and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            blank(i + 1, j)
+            i = j + 1
+        elif c == "{" and depth:
+            depth[-1] += 1
+            i += 1
+        elif c == "}" and depth:
+            if depth[-1] == 0:
+                depth.pop()
+                i = template(i + 1)  # back in the template's text
+            else:
+                depth[-1] -= 1
+                i += 1
+        else:
+            i += 1
+    return "".join(out)
+
+
+class Shared:
+    """One shared file: `name` is its path inside the screens folder (_shared/base.css), `rel` from the project root."""
+
+    def __init__(self, name: str, rel: str, kind: str, text: str) -> None:
+        self.name, self.rel, self.kind, self.text = name, rel, kind, text.strip("\n")
+        self.hash = sha256_text(text)
+        self.warnings: List[str] = []
+        self.problem: Optional[PlumbError] = None  # why it cannot be inlined (check_shared raises it)
+
+
+def check_shared(shared: List[Shared]) -> None:
+    """Refuse (exit 2) the first shared file that cannot be inlined: </script or </style in it, or a network load."""
+    for s in shared:
+        if s.problem is not None:
+            raise s.problem
+
+
+def load_shared(folder: Path, root: Path, rel) -> List[Shared]:
+    """<folder>/_shared/*.css and *.js in name order (a name starting with . is skipped; other files there are not
+    read). CSS goes into every page once; each JS file runs for every screen before the screen's own script. Each file
+    is checked before it is inlined (`problem`, raised by check_shared): no </script or </style inside, nothing loaded
+    from the network (JS comments and string text do not count). Only a file that cannot be read raises here."""
+    base = folder / SHARED_DIR
+    if not base.is_dir():
+        return []
+    out: List[Shared] = []
+    for path in sorted((p for p in base.iterdir() if p.is_file() and p.suffix in (".css", ".js")
+                        and not p.name.startswith(".")), key=lambda p: p.name):
+        prel = rel(path, root)
+        try:
+            text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _err(f"{prel}: cannot read the shared file ({exc})", "save it as UTF-8") from None
+        kind = path.suffix[1:]
+        shared = Shared(f"{SHARED_DIR}/{path.name}", prel, kind, text)
+        tag = "script" if kind == "js" else "style"
+        close = re.search(rf"</{tag}", text, re.I)
+        found = (_JS_NETWORK if kind == "js" else _CSS_REMOTE).search(
+            blank_js(text) if kind == "js" else _CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text))
+        if close:
+            line = text.count("\n", 0, close.start()) + 1
+            shared.problem = _err(
+                f"{prel}:{line}: \"</{tag}\" inside a shared {kind.upper()} file ends the page's <{tag}> block early",
+                "write it as \"<\\/script\" in a string (the file is inlined as it is)" if kind == "js" else
+                "remove it: a shared CSS file holds CSS rules only, inlined as they are")
+        elif found:
+            line = text.count("\n", 0, found.start()) + 1
+            what = " ".join(found.group(0).split())
+            fix = ("put the rules in this file (an @import is not inlined, and the catalogue loads nothing) and use "
+                   "relative or data: URLs" if kind == "css" else
+                   "keep the data in the script (a constant or JSON in the file): the pages load nothing from the network")
+            shared.problem = _err(f"{prel}:{line}: \"{what}\" loads from the network or another file; a shared file "
+                                  f"must not", fix)
+        if kind == "css":
+            for off, sel in unscoped_selectors(text):
+                if not _SHARED_SCOPED.match(sel):
+                    line = text.count("\n", 0, off) + 1
+                    shared.warnings.append(f"{prel}:{line}: the style rule \"{sel}\" does not start with [data-screen], "
+                                           f"so it also styles the prototype's own panels")
+        out.append(shared)
+    return out
+
+
+def shared_warning_lines(shared: List[Shared]) -> List[str]:
+    """The unscoped-selector warnings of the shared CSS files (at most five per file), each file with its fix."""
+    out: List[str] = []
+    for s in shared:
+        out += [f"warning: {w}" for w in s.warnings[:5]]
+        if len(s.warnings) > 5:
+            out.append(f"warning: {s.rel}: {len(s.warnings) - 5} more style rules like these")
+        if s.warnings:
+            out.append(f"fix: start each selector in {s.rel} with [data-screen] (every screen) or "
+                       f"[data-screen=\"<id>\"] (one screen)")
+    return out
+
+
+def shared_hashes(shared: List[Shared]) -> List[Tuple[str, str]]:
+    return [(s.name, s.hash) for s in shared]
+
+
+def combined_hash(own: str, shared: List[Tuple[str, str]]) -> str:
+    """What an approval records: the screen file's hash, and with shared files the hash of it and theirs (name order)."""
+    if not shared:
+        return own
+    return sha256_text(own + "\n" + "".join(f"{name} {digest}\n" for name, digest in sorted(shared)))
+
+
+def screen_file_hash(path: Path) -> str:
+    """The approval hash of one screen file, from its text and its folder's shared files (read, not checked): what the
+    edit hook compares an approval with. Raises OSError / UnicodeDecodeError when a file cannot be read."""
+    own = sha256_text(path.read_bytes().decode("utf-8-sig"))
+    base = path.parent / SHARED_DIR
+    pairs = []
+    if base.is_dir():
+        for p in base.iterdir():
+            if p.is_file() and p.suffix in (".css", ".js") and not p.name.startswith("."):
+                pairs.append((f"{SHARED_DIR}/{p.name}", sha256_text(p.read_bytes().decode("utf-8-sig"))))
+    return combined_hash(own, pairs)
+
+
+def stale_reason(entry: dict, screen: Screen, shared: List[Shared], folder_rel: str) -> str:
+    """Why an approval went stale, when shared files are part of it: the shared files added, changed or removed since,
+    and whether the screen file changed too. "" when only the screen file changed (or nothing can be said)."""
+    approved = entry.get("approved") or {}
+    recorded = approved.get("shared") if isinstance(approved.get("shared"), dict) else {}
+    recorded = {str(k): str(v) for k, v in recorded.items()}
+    now = dict(shared_hashes(shared))
+    moved = []
+    for name in sorted(set(recorded) | set(now)):
+        if name not in now:
+            moved.append(f"{folder_rel}{name} was removed")
+        elif name not in recorded:
+            moved.append(f"{folder_rel}{name} was added")
+        elif recorded[name] != now[name]:
+            moved.append(f"{folder_rel}{name} changed")
+    if not moved:
+        return ""
+    own_too = combined_hash(screen.own_hash, sorted(recorded.items())) != approved.get("hash")
+    return (f" (the shared {'files' if len(moved) > 1 else 'file'}: {'; '.join(moved)}; shared files reach every "
+            f"screen{'; the screen file changed too' if own_too else ''})")
+
+
+# ---------------------------------------------------------------- change ids (data-guide="F01 · ..." + changes.md)
+
+_CHANGE_ID = re.compile(r"^\s*([A-Za-z]\d+)\s*·")
+_CHANGE_LINE = re.compile(r"^[-*]\s+\*\*([A-Za-z]\d+)\*\*\s*(.*?)\s*$")
+CHANGE_LINE_FORMAT = "- **F01** title: what changed and why"
+
+
+def change_id(text: str) -> Optional[str]:
+    """The change id a data-guide text starts with ("F01 · what changed and why": a letter and digits, then ·)."""
+    m = _CHANGE_ID.match(text or "")
+    return m.group(1) if m else None
+
+
+def guide_ids(screen: Screen) -> List[str]:
+    """The change ids the screen's data-guide texts start with, in document order, each once."""
+    out: List[str] = []
+    for node in screen.tree().walk():
+        cid = change_id(node.attrs.get("data-guide", ""))
+        if cid and cid not in out:
+            out.append(cid)
+    return out
+
+
+def read_changes(path: Path, root: Path, rel) -> Optional[List[dict]]:
+    """changes.md: one `- **F01** title: what and why` line per change, as [{id, title, why}]; other lines are free
+    text. None when the file does not exist."""
+    if not path.is_file():
+        return None
+    prel = rel(path, root)
+    try:
+        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _err(f"{prel}: cannot read the change list ({exc})", "save it as UTF-8") from None
+    out: List[dict] = []
+    lines: Dict[str, int] = {}
+    for n, raw in enumerate(text.split("\n"), 1):
+        m = _CHANGE_LINE.match(raw.strip())
+        if not m:
+            continue
+        cid, rest = m.group(1), m.group(2).lstrip(":·—–- ").strip()
+        if cid in lines:
+            raise _err(f"{prel}:{n}: change id {cid} is listed twice (also line {lines[cid]})",
+                       f"give each change its own id (a letter and digits), one line each: {CHANGE_LINE_FORMAT}")
+        lines[cid] = n
+        title, _sep, why = rest.partition(": ")
+        out.append({"id": cid, "title": title.strip().rstrip(":"), "why": why.strip()})
+    return out
+
+
+def check_change_ids(screens: List[Screen], changes: Optional[List[dict]], changes_rel: str, again: str,
+                     scope: str) -> List[str]:
+    """Every change id a screen's data-guide uses must be listed in changes.md (exit 2 naming the screen, the id and the
+    fix); a listed id no screen uses is a warning (returned). data-guide text without an id is not checked."""
+    listed = {c["id"] for c in changes or []}
+    used: Dict[str, List[str]] = {}
+    for s in screens:
+        for cid in guide_ids(s):
+            used.setdefault(cid, []).append(s.rel)
+    unknown = sorted((r, cid) for cid, rels in used.items() if cid not in listed for r in rels)
+    if unknown:
+        where = ", ".join(f"{r} uses {cid}" for r, cid in unknown)
+        missing = " (no such file)" if changes is None else ""
+        raise _err(f"change id{'s' if len(unknown) > 1 else ''} not listed in {changes_rel}{missing}: {where}",
+                   f"add one line per change to {changes_rel}, e.g. \"- **{unknown[0][1]}** title: what changed and "
+                   f"why\" (or correct the id in the screen file's data-guide), then run {again}")
+    return [f"warning: {changes_rel}: {c['id']} is listed but no screen of {scope} uses it\n"
+            f"fix: mark the changed element data-guide=\"{c['id']} · what changed and why\" in its screen file, or "
+            f"remove the line" for c in changes or [] if c["id"] not in used]
 
 
 # ---------------------------------------------------------------- decisions.md
@@ -684,7 +1012,10 @@ def map_entry(screen: Screen, old: Optional[dict], root: Path, map_rel: str = "s
     files = [safe_glob(f, where) for f in old.get("files") or [] if isinstance(f, str)]
     approved = old.get("approved")
     if isinstance(approved, dict):
+        shared = approved.get("shared")
         approved = {"by": str(approved.get("by", "")), "at": str(approved.get("at", "")), "hash": str(approved.get("hash", ""))}
+        if isinstance(shared, dict) and shared:  # the shared files the approval saw (only when there were any)
+            approved["shared"] = {str(k): str(v) for k, v in sorted(shared.items())}
     else:
         approved = None
     status = files_status(root, files)
@@ -1746,9 +2077,47 @@ def screen_styles(screens: List[Screen]) -> str:
     return "\n".join(blocks)
 
 
-def screen_scripts(screens: List[Screen]) -> str:
+_SHARED_RUNTIME = """window.plumbScreens.shared = [];
+window.plumbScreens.useShared = function (id) {
+  window.plumbScreens.shared.forEach(function (s) {
+    window.plumbScreens.define(id, function (screen, plumb) {
+      try { s[1].call(this, screen, plumb); }
+      catch (err) { console.error("Plumb: the shared script " + s[0] + " failed on screen " + id + ":", err); }
+    });
+  });
+};"""
+
+
+def shared_styles(shared: List[Shared]) -> str:
+    """The shared CSS files, each once, in name order (before the screens' own styles, so a screen can override)."""
+    return "\n".join(f'<style data-shared-style="{_e(s.name)}">\n{s.text}\n</style>' for s in shared if s.kind == "css")
+
+
+def shared_scripts(shared: List[Shared]) -> str:
+    """The shared JS files, each once, as functions every screen runs before its own script (screen_scripts)."""
+    js = [s for s in shared if s.kind == "js"]
+    if not js:
+        return ""
+    out = [f"<script>\n{_SHARED_RUNTIME}\n</script>"]
+    for s in js:
+        out.append(f'<script data-shared-script="{_e(s.name)}">\nwindow.plumbScreens.shared.push([{json_script(s.name)}, '
+                   f"function (screen, plumb) {{\n{s.text}\n}}]);\n</script>")
+    return "\n".join(out)
+
+
+def page_parts(screens: List[Screen], shared: List[Shared]) -> Tuple[str, str]:
+    """(styles, scripts) of a page: the shared files once, then each screen's own."""
+    styles = "\n".join(x for x in (shared_styles(shared), screen_styles(screens)) if x)
+    uses = any(s.kind == "js" for s in shared)
+    scripts = "\n".join(x for x in (shared_scripts(shared), screen_scripts(screens, uses)) if x)
+    return styles, scripts
+
+
+def screen_scripts(screens: List[Screen], shared_js: bool = False) -> str:
     out = []
     for s in screens:
+        if shared_js:  # the shared scripts run for this screen first, as its first definitions
+            out.append(f"<script>\nwindow.plumbScreens.useShared({json_script(s.id)});\n</script>")
         for body in s.scripts:
             out.append(f"<script>\nwindow.plumbScreens.define({json.dumps(s.id, ensure_ascii=False)}, "
                        f"function (screen, plumb) {{\n{body}\n}});\n</script>")
@@ -1977,10 +2346,16 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
     """screens.html: every screen × state × theme as its own iframe copy. A screen's markup, styles and scripts are in
     the page once (three <template>s), shared by all its copies; the page's script builds each copy from them and hides
     every outer state block but the copy's, as Screen.render does. So the page grows with the screens, not with
-    screens × states × 2, and the token block is in it once."""
+    screens × states × 2, and the token block is in it once. The shared files are in it once too (two more templates
+    every copy takes before the screen's own styles and scripts)."""
     screens: List[Screen] = ctx["screens"]
     entries = ctx["entries"]
+    shared: List[Shared] = ctx.get("shared") or []
+    uses_js = any(x.kind == "js" for x in shared)
     nav, body = [], []
+    if shared:
+        body.append(f'<template data-shared-styles>{shared_styles(shared)}</template>'
+                    f'<template data-shared-scripts>{shared_scripts(shared)}</template>')
     for s in screens:
         e = entries[s.id]
         appr = approval_state(e, s)
@@ -2011,7 +2386,7 @@ def build_catalogue(ctx: dict, template: str, bt) -> str:
                     + "".join(blocks)
                     + f'<template data-screen-markup="{_e(s.id)}">{s.section}</template>'
                     + f'<template data-screen-styles="{_e(s.id)}">{screen_styles([s])}</template>'
-                    + f'<template data-screen-scripts="{_e(s.id)}">{screen_scripts([s])}</template>'
+                    + f'<template data-screen-scripts="{_e(s.id)}">{screen_scripts([s], uses_js)}</template>'
                     + "</section>")
     count = sum(len(s.states) for s in screens)
     values = {
@@ -2204,6 +2579,25 @@ def variant_card(name: str, title: str, paras: List[str], trade: List[str], scre
             f'<a class="view" href="{_e(name)}/screens.html">Every state, light and dark</a></p></li>')
 
 
+def changes_list(changes: Optional[List[dict]], used_in: Dict[str, List[str]]) -> str:
+    """The proposal's changes.md as the index's Changes section: each id as a chip, its title and why, and where it is
+    used (variant: screen). Empty when there is no changes.md or it lists nothing."""
+    if not changes:
+        return ""
+    items = []
+    for c in changes:
+        title = f"<strong>{inline(c['title'])}</strong>" if c["title"] else ""
+        why = (": " if title else "") + inline(c["why"]) if c["why"] else ""
+        where = used_in.get(c["id"], [])
+        place = (f'<span class="where">{_e("In " + ", ".join(where))}</span>' if where
+                 else '<span class="where">No screen uses it yet</span>')
+        items.append(f'<li class="change" id="change-{_e(c["id"])}"><span class="chip">{_e(c["id"])}</span>'
+                     f'<span class="change-text">{title}{why}</span>{place}</li>')
+    return ('<section class="changes" aria-labelledby="changes-h"><h2 id="changes-h">Changes</h2>'
+            '<p class="changes-lede">Each id marks the elements it changed (data-guide); the Guide panel of every '
+            'prototype shows it.</p><ul class="change-list" role="list">' + "".join(items) + "</ul></section>")
+
+
 def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dict, settings: dict, docs: Path,
                  command: str, bt, tokens_file: Path) -> int:
     rel = bt.rel
@@ -2230,6 +2624,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     files: Dict[Path, str] = {}
     variant_screens: List[Screen] = []
     cards, summary = [], []
+    shared_warnings: List[str] = []
+    used_in: Dict[str, List[str]] = {}
     for folder in folders:
         if not _ID.match(folder.name):
             raise _err(f"{rel(folder, root)}: a variant folder name may hold only letters, digits, _ and -",
@@ -2237,11 +2633,17 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         screens_dir = folder / "screens"
         inside_or_refuse(folder, base.resolve(), root, rel)
         inside_or_refuse(screens_dir, base.resolve(), root, rel)
-        if not screens_dir.is_dir() or not any(p.is_file() for p in screens_dir.glob("*.html")):
+        if not screen_files(screens_dir):
             raise _err(f"{rel(folder, root)}: variant {folder.name} has no screen files in screens/",
                        f"write its screens as {rel(screens_dir, root)}/<id>.html (or remove the folder), then run {again}")
-        screens = load_screens(screens_dir, root, rel)
+        shared = load_shared(screens_dir, root, rel)
+        check_shared(shared)
+        screens = load_screens(screens_dir, root, rel, shared)
         variant_screens += screens
+        shared_warnings += shared_warning_lines(shared)
+        for s in screens:
+            for cid in guide_ids(s):
+                used_in.setdefault(cid, []).append(f"{folder.name}: {s.title}")
         title, paras, trade = read_idea(folder / "idea.md")
         title = title or state_label(folder.name)
         header = (f"GENERATED by {script_rel} --proposal {name} from {rel(screens_dir, root)}/*.html and {tokens_rel}. "
@@ -2249,11 +2651,11 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         ctx = {
             "screens": screens, "entries": {s.id: proposal_entry(s) for s in screens}, "decisions": [],
             "header": header, "project": f"{project_name} · {title}", "screens_rel": rel(screens_dir, root) + "/",
-            "decisions_rel": rel(docs / "decisions.md", root), "styles": screen_styles(screens),
-            "scripts": screen_scripts(screens), "tours": [], "tours_rel": "", "tokens_rel": tokens_rel,
+            "decisions_rel": rel(docs / "decisions.md", root), "tours": [], "tours_rel": "", "tokens_rel": tokens_rel,
             "script_rel": script_rel, "player_css": player_css, "player_js": player_js, "base_project": project_name,
-            "chrome_roles": chrome_roles,
+            "shared": shared, "chrome_roles": chrome_roles,
         }
+        ctx["styles"], ctx["scripts"] = page_parts(screens, shared)
         ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
         files[folder / "prototype.html"] = build_prototype(ctx, shell)
         files[folder / "app.html"] = build_app(ctx, app_tpl)
@@ -2261,6 +2663,9 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         files[folder / "screens.html"] = build_catalogue(ctx, catalogue_tpl, bt)
         cards.append(variant_card(folder.name, title, paras, trade, screens))
         summary.append(f"{folder.name}: {len(screens)} screen{'s' if len(screens) != 1 else ''}")
+    changes_path = base / "changes.md"
+    changes = read_changes(changes_path, root, rel)
+    id_warnings = check_change_ids(variant_screens, changes, rel(changes_path, root), again, f"proposal {name}")
     values = {
         "header": f"<!-- {_e(f'GENERATED by {script_rel} --proposal {name} from {rel(base, root)}/*/screens/*.html, idea.md and {tokens_rel}. Do not edit: run build-prototype.py --proposal {name}.')} -->",
         "title": _e(f"{project_name}: {name} proposal"),
@@ -2270,6 +2675,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         "plumb_version": _e(P.PLUMB_VERSION),
         "theme_css": bt.prototype_theme_css(doc, scoped=False),
         "variants": "\n".join(cards),
+        "changes": changes_list(changes, used_in),
         "source": _e(rel(base, root) + "/"),
         "rerun": _e(again),
     }
@@ -2278,6 +2684,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     line = f"proposal {name}: {len(folders)} variant{'s' if len(folders) != 1 else ''} ({', '.join(summary)})"
 
     warning = size_warnings(files, root, rel, again, variant_screens)
+    for line_ in shared_warnings + id_warnings:
+        print(line_, file=sys.stderr)
     if args.check:
         stale = []
         for path, text in files.items():
@@ -2393,27 +2801,45 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
     if args.proposal is not None:
         return run_proposal(args, skill_dir, root, doc, settings, docs, command, bt, tokens_file)
-    has_screens = folder.is_dir() and any(p.is_file() for p in folder.glob("*.html"))
+    has_screens = bool(screen_files(folder))
     if not has_screens:
         if args.check:
             print(f"ok: no screen files in {rel(folder, root)}/ yet: no prototype to check")
             return 0
         raise _err(f"no screen files in {rel(folder, root)}/",
                    "write the first screen with /plumb:prototype <screen> (one <id>.html per screen)")
-    screens = load_screens(folder, root, rel)
+    shared = load_shared(folder, root, rel)
+    screens = load_screens(folder, root, rel, shared)
     by_id = {s.id: s for s in screens}
+    changes_path = docs / "prototype" / "changes.md"
     if args.check_tour is not None:
+        check_shared(shared)
         return check_tour_file(args.check_tour, root, docs, screens, rel, folder, command)
     tours_folder, pages_folder = docs / "prototype" / "tours", docs / "tours"
     mutating = bool(args.map or args.approve or args.synced)
     tour_error: Optional[PlumbError] = None
+    blocked_by = "a tour is broken"
+    id_warnings: List[str] = []
+    try:
+        check_shared(shared)
+        changes = read_changes(changes_path, root, rel)
+        # change ids in the main screens are checked only when the prototype keeps a change list
+        if changes is not None:
+            id_warnings = check_change_ids(screens, changes, rel(changes_path, root), command, "the prototype")
+    except PlumbError as exc:
+        if not mutating:
+            raise
+        # like a broken tour: --map / --approve / --synced still record the map; the pages wait for the fix
+        tour_error, blocked_by = exc, "a shared file or a change id is refused"
     try:
         tours = load_tours(tours_folder, screens, root, rel, rel(folder, root) + "/")
     except PlumbError as exc:
         if not mutating:
             raise
         # --map / --approve / --synced change the screen map, not the tours: record the change and say the pages wait
-        tours, tour_error = [], exc
+        tours = []
+        if tour_error is None:
+            tour_error = exc
     old = read_map(map_path, rel(map_path, root))
     for flag in ("map", "approve", "synced"):
         sid = getattr(args, flag)
@@ -2443,6 +2869,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if args.approve:
         e = entries[args.approve]
         e["approved"] = {"by": approver(root), "at": datetime.date.today().isoformat(), "hash": by_id[args.approve].hash}
+        if shared:  # which shared files the approval saw, so a later change to one is named (stale_reason)
+            e["approved"]["shared"] = dict(shared_hashes(shared))
         e["synced_from_code"] = False
         e["files_hash"] = files_state(root, e["files"])[0]
         done.append(f"approved {args.approve} ({e['approved']['by']}, {e['approved']['at']})")
@@ -2474,22 +2902,23 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"wrote {rel(map_path, root)}")
         for line in done:
             print(line)
-        problem = str(tour_error).replace("error: ", "", 1).split("\nfix: ", 1)
-        print(f"warning: the pages were not rebuilt because a tour is broken: {problem[0]}\n"
-              f"fix: {problem[1] if len(problem) > 1 else 'fix the tour file'}, then run {command}", file=sys.stderr)
+        problem = re.sub(r", then run \S.*$", "", str(tour_error).replace("error: ", "", 1)).split("\nfix: ", 1)
+        print(f"warning: the pages were not rebuilt because {blocked_by}: {problem[0]}\n"
+              f"fix: {problem[1] if len(problem) > 1 else 'fix the file it names'}, then run {command}", file=sys.stderr)
         return 0
     project_name = str(settings.get("project") or "").strip() or "Product"
     ctx = {
         "screens": screens, "entries": entries, "decisions": decisions, "header": header, "project": project_name,
         "base_project": project_name,
         "screens_rel": rel(folder, root) + "/", "decisions_rel": rel(decisions_path, root),
-        "styles": screen_styles(screens), "scripts": screen_scripts(screens), "tours": tours,
+        "shared": shared, "tours": tours,
         "tours_rel": rel(tours_folder, root) + "/", "tokens_rel": tokens_rel, "script_rel": rel(skill_dir / SCRIPT_REL, root),
         "player_css": read_template(skill_dir, PLAYER_CSS), "player_js": read_template(skill_dir, PLAYER_JS),
         "chrome_roles": read_template(skill_dir, ROLES_CSS),
         "app_header": (f"GENERATED by {rel(skill_dir / SCRIPT_REL, root)} from {rel(folder, root)}/*.html and "
                        f"{tokens_rel}. Do not edit: edit the screen files, then run build-prototype.py."),
     }
+    ctx["styles"], ctx["scripts"] = page_parts(screens, shared)
     ctx["theme_css"] = bt.prototype_theme_css(doc, scoped=False)
     shell = read_template(skill_dir, SHELL_TEMPLATE)
     proto = build_prototype(ctx, shell)
@@ -2524,6 +2953,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             else:
                 stale.append(f"stale: {rel(path, root)}")
         stale += [f"stale: {rel(path, root)} (its tour file is gone)" for path in orphans]
+        for line in shared_warning_lines(shared) + id_warnings:
+            print(line, file=sys.stderr)
         if size_warning:  # --check builds every page in memory: a page over the limit is said here too (exit code unchanged)
             print(size_warning, file=sys.stderr)
         if stale:
@@ -2540,6 +2971,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"warning: {s.rel}: {len(s.warnings) - 5} more style rules like these", file=sys.stderr)
         if s.warnings:
             print(f"fix: start each selector in {s.rel} with [data-screen=\"{s.id}\"]", file=sys.stderr)
+    for line in shared_warning_lines(shared) + id_warnings:
+        print(line, file=sys.stderr)
     removed = sorted(set(old) - set(by_id))
     for sid in removed:
         print(f"note: screen {sid} has no file any more: removed from {rel(map_path, root)}")
@@ -2577,7 +3010,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     for s in screens:
         appr = entries[s.id]["approved"]
         if states[s.id] == "stale":
-            print(f"note: screen {s.id} changed since {appr['by']} approved it on {appr['at']}\n"
+            why = stale_reason(entries[s.id], s, shared, rel(folder, root) + "/")
+            print(f"note: screen {s.id} changed since {appr['by']} approved it on {appr['at']}{why}\n"
                   f"ask the user: approve screen {s.id} as it is now ({rel(proto_path, root)}#screen-{s.id})? Only after "
                   f"their yes to that screen, record it: {command} --approve {s.id}")
     counts = {k: sum(1 for v in states.values() if v == k) for k in APPROVAL_TEXT}

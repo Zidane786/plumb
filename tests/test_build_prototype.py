@@ -1756,3 +1756,284 @@ def test_padded_state_names_are_read_the_same_everywhere(browser, tmp_path: Path
         assert errors == []
     finally:
         ctx.close()
+
+
+# ---------------------------------------------------------------- shared files (<screens>/_shared/*.css, *.js)
+
+SHARED_REL = f"{SCREENS_REL}/_shared"
+SHARED_A_JS = ('(window.__order = window.__order || []).push("a:" + plumb.screen);\n'
+               'screen.setAttribute("data-shared-catalogue", String(plumb.catalogue));\n')
+SHARED_B_JS = '(window.__order = window.__order || []).push("b:" + plumb.screen + ":" + plumb.state());\n'
+SHARED_CSS = '[data-screen] { outline: 3px solid rgb(1, 2, 3); }\n'
+OWN_HOME_JS = '\n<script data-screen-script>\n(window.__order = window.__order || []).push("own:" + plumb.screen);\n</script>\n'
+
+
+def add_shared(project: Path, folder: str = SHARED_REL) -> None:
+    write(project / folder / "b.js", SHARED_B_JS)
+    write(project / folder / "a.js", SHARED_A_JS)
+    write(project / folder / "z-layout.css", SHARED_CSS)
+    write(project / folder / "a-base.css", '[data-screen] .muted { letter-spacing: 0.01em; }\n')
+    write(project / folder / "notes.md", "not a shared file: only .css and .js are read\n")
+
+
+def test_underscore_screens_stay_screens_and_only_the_shared_folder_is_reserved(tmp_path: Path) -> None:
+    """Backwards compatible: a screen file named _x.html (or _shared.html, a file) is a screen as before, its approval
+    kept; only the _shared folder is reserved, and nothing in it is a screen. The audit reads the same screens."""
+    p = make_project(tmp_path / "p", build=False)
+    menu = read(p / SCREENS_REL / "menu.html")
+    write(p / SCREENS_REL / "_legacy.html", menu.replace('data-screen="menu"', 'data-screen="_legacy"'))
+    write(p / SCREENS_REL / "_shared.html", menu.replace('data-screen="menu"', 'data-screen="_shared"'))
+    assert run(p).returncode == 0
+    assert run(p, "--approve", "_legacy", env=clean_env(tmp_path, USER="Ana", USERNAME="Ana")).returncode == 0
+    approved = entry(p, "_legacy")["approved"]
+    write(p / SHARED_REL / "x.html", menu.replace('data-screen="menu"', 'data-screen="x"'))
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    ids = [s["id"] for s in screens_json(p)["screens"]]
+    assert sorted(ids) == sorted(["home", "booking", "menu", "_legacy", "_shared"]) and "x" not in ids
+    assert entry(p, "_legacy")["approved"] == approved and "has no file any more" not in r.stdout
+    assert 'data-screen="x"' not in read(p / PROTO_REL)
+    assert [s.id for s in BP.load_screens(p / SCREENS_REL, p, BT.rel)] == ids  # what audit.py's fidelity reads
+
+
+def test_only_shared_files_is_no_prototype(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", screens=False, build=False)
+    add_shared(p)
+    assert_refusal(run(p), "no screen files")
+
+
+def test_shared_css_is_inlined_once_per_page_in_name_order(tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", build=False)
+    add_shared(p)
+    shutil.copytree(FIXTURE / "tours", p / DOCS / "prototype/tours")
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    pages = {rel: read(p / rel) for rel in (PROTO_REL, APP_REL, CATALOGUE_REL, f"{DOCS}/tours/demo.html")}
+    for rel, text in pages.items():
+        assert text.count("outline: 3px solid rgb(1, 2, 3)") == 1, rel
+        assert text.count("letter-spacing: 0.01em") == 1, rel
+        assert text.count('(window.__order = window.__order || []).push("a:"') == 1, rel  # each shared JS once
+        assert text.index("letter-spacing: 0.01em") < text.index("outline: 3px solid"), rel  # name order
+        assert "not a shared file" not in text, rel
+        assert not NETWORK.search(text), rel
+    proto = pages[PROTO_REL]
+    assert proto.index('data-shared-style="_shared/z-layout.css"') < proto.index('data-screen-style="home"')
+    assert proto.index('data-shared-script="_shared/a.js"') < proto.index('data-shared-script="_shared/b.js"')
+    # screens.html stores them once, in two templates every copy takes
+    cat = pages[CATALOGUE_REL]
+    assert cat.count("<template data-shared-styles>") == 1 and cat.count("<template data-shared-scripts>") == 1
+
+
+def test_no_shared_folder_changes_nothing(project: Path) -> None:
+    """A project without _shared/ builds the pages it built before: no shared runtime, no extra templates."""
+    for rel in (PROTO_REL, APP_REL, CATALOGUE_REL):
+        text = read(project / rel)
+        assert "useShared" not in text and "data-shared-style=" not in text and "<template data-shared" not in text, rel
+    write(project / SHARED_REL / "readme.md", "only notes here\n")
+    assert run(project, "--check").returncode == 0  # a _shared folder with no .css or .js holds no shared file
+
+
+def test_shared_files_feed_the_approval_hash(project: Path, tmp_path: Path) -> None:
+    env = clean_env(tmp_path, USER="Ana", USERNAME="Ana")
+    assert run(project, "--approve", "home", env=env).returncode == 0
+    approved = entry(project, "home")["approved"]
+    # recorded before any shared file: the screen file's own hash, exactly as before shared files existed
+    assert approved["hash"] == file_hash(project / SCREENS_REL / "home.html") and "shared" not in approved
+    write(project / SHARED_REL / "notes.md", "x\n")
+    r = run(project, env=env)
+    assert r.returncode == 0 and "changed since Ana" not in r.stdout, r.stdout  # no .css/.js: still approved
+    assert BP.screen_file_hash(project / SCREENS_REL / "home.html") == approved["hash"]
+    write(project / SHARED_REL / "base.css", SHARED_CSS)
+    r = run(project, env=env)
+    assert r.returncode == 0
+    assert "screen home changed since Ana approved it" in r.stdout
+    assert f"{SHARED_REL}/base.css was added" in r.stdout and "the screen file changed too" not in r.stdout
+    assert "ask the user: approve screen home" in r.stdout
+    assert run(project, "--approve", "home", env=env).returncode == 0
+    approved = entry(project, "home")["approved"]
+    assert set(approved["shared"]) == {"_shared/base.css"}
+    assert BP.screen_file_hash(project / SCREENS_REL / "home.html") == approved["hash"]
+    assert "changed since Ana" not in run(project, env=env).stdout
+    # editing the shared file makes the approval stale, naming the file
+    write(project / SHARED_REL / "base.css", SHARED_CSS.replace("3px", "4px"))
+    r = run(project, env=env)
+    assert (f"note: screen home changed since Ana approved it on {approved['at']} (the shared file: "
+            f"{SHARED_REL}/base.css changed; shared files reach every screen)") in r.stdout, r.stdout
+    page = read(project / PROTO_REL)
+    assert 'data-approval="stale"' in page[page.index('data-nav="home"'):][:600]
+    # both changed: said too
+    home = project / SCREENS_REL / "home.html"
+    write(home, read(home).replace("No bookings yet today.", "Nothing yet."))
+    assert "the screen file changed too" in run(project, env=env).stdout
+    # both back as they were: approved again
+    write(home, read(home).replace("Nothing yet.", "No bookings yet today."))
+    write(project / SHARED_REL / "base.css", SHARED_CSS)
+    assert "changed since Ana" not in run(project, env=env).stdout
+    (project / SHARED_REL / "base.css").unlink()
+    assert f"{SHARED_REL}/base.css was removed" in run(project, env=env).stdout
+
+
+def test_check_covers_shared_files_and_builds_are_byte_stable(project: Path) -> None:
+    add_shared(project)
+    assert run(project, "--check").returncode == 1
+    assert run(project).returncode == 0
+    before = {rel: (project / rel).read_bytes() for rel in (PROTO_REL, APP_REL, CATALOGUE_REL, JSON_REL)}
+    r = run(project)
+    assert r.returncode == 0 and "up to date" in r.stdout
+    assert {rel: (project / rel).read_bytes() for rel in before} == before
+    assert run(project, "--check").returncode == 0
+    write(project / SHARED_REL / "a.js", SHARED_A_JS + "// changed\n")
+    r = run(project, "--check")
+    assert r.returncode == 1 and PROTO_REL in r.stdout and APP_REL in r.stdout and CATALOGUE_REL in r.stdout
+    assert JSON_REL not in r.stdout  # the map holds no page content
+
+
+@pytest.mark.parametrize("name, text, needle", [
+    ("x.js", 'var s = "</script>";\n', "</script"),
+    ("x.js", 'fetch("/api/tables").then(function (r) { return r.json(); });\n', "fetch("),
+    ("x.js", 'window.fetch("data.json");\n', "fetch("),
+    ("x.js", 'var x = new XMLHttpRequest();\n', "XMLHttpRequest"),
+    ("x.js", 'import("./more.js");\n', "import("),
+    ("x.js", 'import { a } from "./a.js";\n', "import"),
+    ("x.js", 'var t = `rows: ${fetch("/rows")}`;\n', "fetch("),  # a template's ${...} is code
+    ("x.js", 'var u = "// not a comment"; fetch("/y");\n', "fetch("),  # a string ends before the code
+    ("x.js", "var q = /'/; fetch(\"/x\");\n", "fetch("),  # a quote in a regex literal opens no string
+    ("x.js", 'var h = s.replace(/[/"]/g, "") / 2; fetch("/z");\n', "fetch("),  # / in a class; then a division
+    ("x.js", 'var x = i++ / 2; fetch("/x");\n', "fetch("),  # a postfix ++ then / divides
+    ("x.js", 'var y = j-- / 2 / 3; fetch("/y");\n', "fetch("),
+    ("x.js", "switch (k) { case /'/.source: fetch(\"/c\"); }\n", "fetch("),  # a regex after case
+    ("x.js", "if (k in /'/) fetch(\"/i\");\n", "fetch("),
+    ("x.css", '</style><script>alert(1)</script>\n', "</style"),
+    ("x.css", '@import url("https://example.com/x.css");\n', "@import"),
+    ("x.css", '@import "local.css";\n', "@import"),
+    ("x.css", '[data-screen] { background: url(https://example.com/bg.png); }\n', "url(https://"),
+    ("x.css", '[data-screen] { background: url( "//cdn.example.com/bg.png" ); }\n', "//"),
+])
+def test_shared_file_contract_refusals(project: Path, name: str, text: str, needle: str) -> None:
+    write(project / SHARED_REL / name, "/* line one */\n" + text)
+    assert_refusal(run(project), f"{SHARED_REL}/{name}:2", needle)
+    assert_refusal(run(project, "--check"), f"{SHARED_REL}/{name}")
+
+
+def test_shared_files_that_load_nothing_are_accepted(project: Path) -> None:
+    """False positives: a function named prefetch, a method named fetch, a URL in a string, url(#id), relative and
+    data: URLs, @import inside a CSS comment."""
+    write(project / SHARED_REL / "ok.js", 'function prefetch(x) { return x; }\nvar api = { fetch: function () {} };\n'
+                                          'api.fetch(); prefetch(1);\nvar help = "https://example.com/help";\n'
+                                          'var important = 1;\n// never fetch() here: the data is inline\n'
+                                          '/* new XMLHttpRequest() was the old way;\n   import("x") too */\n'
+                                          'var tip = `\nimport your list from a spreadsheet: fetch("it")`;\n'
+                                          "var s = 'see https://example.com/api, fetch(later)';\n"
+                                          "function f(s) { return /fetch(es)?|import(ed)?/.test(s); }\n"
+                                          "function g(s) { switch (s) { case /fetch(es)?/.source: throw /import(s)/; "
+                                          "default: return void /fetch(x)/; } }\nvar n = 0; n++ / 2; n-- / 2;\n")
+    write(project / SHARED_REL / "ok.css", '/* @import was here */\n[data-screen] .icon { mask: url(#m); '
+                                           'background: url(img/bg.png), url("data:image/svg+xml,'
+                                           '%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E"); }\n')
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "warning" not in r.stderr, r.stderr
+
+
+def test_unscoped_shared_css_warns(project: Path) -> None:
+    write(project / SHARED_REL / "loose.css", '.card { padding: 4px; }\n[data-screen="home"] h2, button { margin: 0; }\n'
+                                              '@media (min-width: 40rem) { [data-screen] .x { color: red; } }\n')
+    r = run(project)
+    assert r.returncode == 0
+    assert f'warning: {SHARED_REL}/loose.css:1: the style rule ".card"' in r.stderr, r.stderr
+    assert f'warning: {SHARED_REL}/loose.css:2: the style rule "button"' in r.stderr
+    assert 'rule "[data-screen' not in r.stderr  # scoped rules are fine
+    assert f"fix: start each selector in {SHARED_REL}/loose.css with [data-screen]" in r.stderr
+    r = run(project, "--check")  # --check says it too
+    assert r.returncode == 0 and f'warning: {SHARED_REL}/loose.css:1: the style rule ".card"' in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("problem", ["shared", "change-id"])
+def test_a_refused_shared_file_or_id_does_not_block_the_map(project: Path, tmp_path: Path, problem: str) -> None:
+    """Like a broken tour: --approve (and --map, --synced) still records the map and warns; the build and --check exit
+    2 until it is fixed."""
+    if problem == "shared":
+        write(project / SHARED_REL / "x.js", 'fetch("/x");\n')
+        needle = f"{SHARED_REL}/x.js:1"
+    else:
+        write(project / DOCS / "prototype/changes.md", "- **C1** Heading: clearer\n")
+        home = project / SCREENS_REL / "home.html"
+        write(home, read(home).replace("<h2>", '<h2 data-guide="C2 · Not listed">', 1))
+        needle = "uses C2"
+    before = read(project / PROTO_REL)
+    r = run(project, "--approve", "booking", env=clean_env(tmp_path, USER="Ana", USERNAME="Ana"))
+    assert r.returncode == 0, r.stderr
+    assert entry(project, "booking")["approved"]["by"] == "Ana"
+    assert "warning: the pages were not rebuilt because a shared file or a change id is refused" in r.stderr
+    assert needle in r.stderr and "\nfix: " in r.stderr and r.stderr.count("then run") == 1, r.stderr
+    assert read(project / PROTO_REL) == before
+    assert_refusal(run(project), needle)
+    assert_refusal(run(project, "--check"), needle)
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_shared_js_runs_for_each_screen_before_its_own_script(browser, tmp_path: Path, scheme: str) -> None:
+    """Every page: each shared JS file runs once per screen (per copy in screens.html), in name order, before the
+    screen's own script, with the same API (plumb.screen, plumb.state(), plumb.catalogue); the shared CSS styles every
+    screen."""
+    p = make_project(tmp_path / "p", build=False)
+    add_shared(p)
+    home = p / SCREENS_REL / "home.html"
+    write(home, read(home) + OWN_HOME_JS)
+    tour = json.loads(read(FIXTURE / "tours/demo.json"))
+    for view in ("app", "prototype"):  # both views a tour page plays in
+        write(p / DOCS / f"prototype/tours/in-{view}.json", json.dumps(dict(tour, view=view), ensure_ascii=False))
+    assert run(p).returncode == 0
+    order_of = "window.__order || []"
+    tour_pages = [f"{DOCS}/tours/in-app.html", f"{DOCS}/tours/in-prototype.html"]
+    assert 'id="plumb-guide"' in read(p / tour_pages[1]) and 'id="plumb-guide"' not in read(p / tour_pages[0])
+    for rel in [PROTO_REL, APP_REL] + tour_pages:
+        ctx, page, errors, requests = _open(browser, p / rel, scheme=scheme)
+        try:
+            # the shared CSS is in the page once, the shared JS once (it runs per screen, below)
+            assert page.evaluate("[...document.querySelectorAll('style')]"
+                                 ".filter(s => s.textContent.includes('rgb(1, 2, 3)')).length") == 1, rel
+            assert page.evaluate("[...document.querySelectorAll('script')]"
+                                 ".filter(s => s.textContent.includes('push(\"a:\"')).length") == 1, rel
+            order = page.evaluate(order_of)
+            for sid in ("home", "booking", "menu"):
+                assert order.count(f"a:{sid}") == 1, (rel, order)
+                assert order.index(f"a:{sid}") < next(i for i, x in enumerate(order) if x.startswith(f"b:{sid}:")), order
+            assert order.index("b:home:ready") < order.index("own:home"), order
+            assert order.index("a:home") < order.index("a:booking") < order.index("a:menu"), order  # screen order
+            flags = page.evaluate("[...document.querySelectorAll('#pp-frame > [data-screen]')]"
+                                  ".map(s => s.getAttribute('data-shared-catalogue'))")
+            assert flags == ["false"] * 3, (rel, flags)
+            assert page.evaluate("getComputedStyle(document.querySelector('#pp-frame > [data-screen]')).outlineColor") \
+                == "rgb(1, 2, 3)"
+            assert page.locator('[data-screen="booking"][data-script-ran="yes"]').count() == 1  # its own script too
+            assert errors == [] and requests == [], (rel, errors, requests)
+        finally:
+            ctx.close()
+    ctx, page, errors, requests = _open(browser, p / CATALOGUE_REL, scheme=scheme)
+    try:
+        _copies_ready(page)
+        for state in SCREENS["home"]:
+            for theme in ("light", "dark"):
+                frame = _copy(page, f"home/{state}/{theme}")
+                frame.locator('[data-screen="home"][data-shared-catalogue="true"]').wait_for(state="attached")
+                order = frame.locator("body").evaluate(f"() => {order_of}")
+                assert order == ["a:home", f"b:home:{state}", "own:home"], (state, theme, order)
+                assert frame.locator('[data-screen="home"]').evaluate("s => getComputedStyle(s).outlineColor") \
+                    == "rgb(1, 2, 3)"
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+def test_a_failing_shared_script_is_named_and_the_rest_still_runs(browser, tmp_path: Path) -> None:
+    p = make_project(tmp_path / "p", build=False)
+    add_shared(p)
+    write(p / SHARED_REL / "a0-broken.js", 'throw new Error("boom");\n')
+    assert run(p).returncode == 0
+    ctx, page, errors, _ = _open(browser, p / APP_REL)
+    try:
+        assert "a:home" in page.evaluate("window.__order || []")
+        assert any("the shared script _shared/a0-broken.js failed on screen home" in e for e in errors), errors
+    finally:
+        ctx.close()

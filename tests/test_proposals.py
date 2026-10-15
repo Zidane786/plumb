@@ -310,3 +310,130 @@ def test_each_view_renders_in_both_themes(browser, built: Path, view: str, schem
             assert errors == [] and requests == [], (variant, errors, requests)
         finally:
             ctx.close()
+
+
+# ---------------------------------------------------------------- change ids (changes.md) and shared files
+
+CHANGES = ("# Changes in this proposal\n\nFree text is fine here.\n\n"
+           "- **F01** One list: tonight's tables in one list, the form in a side sheet\n"
+           "- **F02** Denser rows: more tables fit on a laptop screen\n")
+
+
+def mark(project: Path, variant: str, screen: str, text: str, name: str = NAME) -> None:
+    path = project / PROPOSALS / name / variant / "screens" / f"{screen}.html"
+    write(path, read(path).replace("<h2>", f'<h2 data-guide="{text}">', 1))
+
+
+def test_change_ids_listed_in_changes_md_build_and_the_index_lists_them(proposal: Path) -> None:
+    write(proposal / PROPOSALS / NAME / "changes.md", CHANGES)
+    mark(proposal, "a-calm", "home", "F01 · One list of tonight's tables")
+    mark(proposal, "a-calm", "booking", "F01 · The form opens in a side sheet")
+    mark(proposal, "b-dense", "home", "F02 · Denser rows")
+    r = run(proposal, "--proposal", NAME)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "warning" not in r.stderr, r.stderr
+    index = read(proposal / PROPOSALS / NAME / "index.html")
+    changes = index[index.index('class="changes"'):]
+    assert changes.index('id="change-F01"') < changes.index('id="change-F02"')
+    assert '<span class="chip">F01</span>' in changes and "<strong>One list</strong>" in changes
+    assert "tonight&#x27;s tables in one list" in changes or "tonight's tables in one list" in changes
+    assert "In a-calm: Today&#x27;s tables, a-calm: New booking" in changes
+    assert "In b-dense: Tables, dense" in changes
+    assert run(proposal, "--check", "--proposal", NAME).returncode == 0
+
+
+def test_an_unknown_change_id_refuses_naming_the_screen_and_the_id(proposal: Path) -> None:
+    write(proposal / PROPOSALS / NAME / "changes.md", CHANGES)
+    mark(proposal, "b-dense", "home", "F07 · Not listed")
+    changes_rel = f"{PROPOSALS}/{NAME}/changes.md"
+    for args in (("--proposal", NAME), ("--check", "--proposal", NAME)):
+        r = run(proposal, *args)
+        assert_refusal(r, f"{PROPOSALS}/{NAME}/b-dense/screens/home.html uses F07", changes_rel,
+                       '"- **F07** title: what changed and why"', f"--proposal {NAME}")
+    assert not (proposal / PROPOSALS / NAME / "index.html").exists()  # nothing written
+
+
+def test_ids_without_a_changes_file_refuse(proposal: Path) -> None:
+    mark(proposal, "a-calm", "home", "P01 · Moved the list")
+    assert_refusal(run(proposal, "--proposal", NAME), f"{PROPOSALS}/{NAME}/changes.md (no such file)",
+                   "a-calm/screens/home.html uses P01")
+
+
+def test_a_listed_id_no_screen_uses_warns(proposal: Path) -> None:
+    write(proposal / PROPOSALS / NAME / "changes.md", CHANGES)
+    mark(proposal, "a-calm", "home", "F01 · One list")
+    r = run(proposal, "--proposal", NAME)
+    assert r.returncode == 0, r.stderr
+    assert f"warning: {PROPOSALS}/{NAME}/changes.md: F02 is listed but no screen of proposal {NAME} uses it" in r.stderr
+    assert 'fix: mark the changed element data-guide="F02 · what changed and why"' in r.stderr
+    assert "F01 is listed" not in r.stderr
+    assert "No screen uses it yet" in read(proposal / PROPOSALS / NAME / "index.html")
+    r = run(proposal, "--check", "--proposal", NAME)
+    assert r.returncode == 0 and "F02 is listed" in r.stderr
+
+
+def test_a_duplicate_id_in_changes_md_refuses(proposal: Path) -> None:
+    write(proposal / PROPOSALS / NAME / "changes.md", CHANGES + "- **F01** Again: twice\n")
+    assert_refusal(run(proposal, "--proposal", NAME), "changes.md:7: change id F01 is listed twice (also line 5)")
+
+
+@pytest.mark.parametrize("text", ["Start a new booking here", "Q4 revenue at a glance", "AB12 · two letters",
+                                  "F01: a colon, not the id mark", "Step F01 · not at the start"])
+def test_guide_text_without_a_leading_id_is_not_checked(proposal: Path, text: str) -> None:
+    mark(proposal, "a-calm", "home", text)
+    r = run(proposal, "--proposal", NAME)  # no changes.md, and none needed
+    assert r.returncode == 0, r.stderr
+    assert 'class="changes"' not in read(proposal / PROPOSALS / NAME / "index.html")
+
+
+def test_main_prototype_ids_are_checked_only_with_a_changes_file(tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", build=False)
+    home = project / DOCS / "prototype/screens/home.html"
+    write(home, read(home).replace("<h2>", '<h2 data-guide="C1 · New heading">', 1))
+    assert run(project).returncode == 0  # no <docs>/prototype/changes.md: ids are free text
+    write(project / DOCS / "prototype/changes.md", "- **C2** Something else: not C1\n")
+    r = run(project)
+    assert_refusal(r, f"{DOCS}/prototype/screens/home.html uses C1", f"{DOCS}/prototype/changes.md")
+    write(project / DOCS / "prototype/changes.md", "- **C1** New heading: says what the page is for\n- **C2** Other\n")
+    r = run(project)
+    assert r.returncode == 0 and "C2 is listed but no screen of the prototype uses it" in r.stderr, r.stderr
+
+
+def test_a_variant_has_its_own_shared_files(proposal: Path) -> None:
+    shared = proposal / PROPOSALS / NAME / "a-calm/screens/_shared"
+    write(shared / "calm.css", "[data-screen] { outline: 2px solid rgb(9, 8, 7); }\n")
+    write(shared / "calm.js", 'screen.setAttribute("data-calm", plumb.screen);\n')
+    r = run(proposal, "--proposal", NAME)
+    assert r.returncode == 0, r.stderr
+    for view in ("prototype.html", "app.html", "screens.html"):
+        a = read(proposal / PROPOSALS / NAME / "a-calm" / view)
+        b = read(proposal / PROPOSALS / NAME / "b-dense" / view)
+        assert a.count("rgb(9, 8, 7)") == 1 and a.count('setAttribute("data-calm"') == 1, view
+        assert "rgb(9, 8, 7)" not in b and "data-calm" not in b, view
+    assert 'data-variant="a-calm"' in read(proposal / PROPOSALS / NAME / "index.html")
+    assert "2 screens" in read(proposal / PROPOSALS / NAME / "index.html")  # _shared is not a screen
+    write(shared / "calm.js", 'fetch("/x");\n')
+    assert_refusal(run(proposal, "--proposal", NAME), "a-calm/screens/_shared/calm.js:1", "fetch(")
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_index_changes_render_in_both_themes(browser, tmp_path: Path, width: int, scheme: str) -> None:
+    project = make_project(tmp_path / "p")
+    add_variants(project)
+    write(project / PROPOSALS / NAME / "changes.md", CHANGES + "- **F03** " + "A very long title " * 12 + ": why\n")
+    mark(project, "a-calm", "home", "F01 · One list")
+    mark(project, "b-dense", "home", "F02 · Denser rows")
+    mark(project, "a-calm", "booking", "F03 · Long")
+    assert run(project, "--proposal", NAME).returncode == 0
+    ctx, page, errors, requests = _open(browser, project / PROPOSALS / NAME / "index.html", width, scheme)
+    try:
+        assert page.locator(".changes .change").count() == 3
+        assert page.locator("#change-F01 .chip").inner_text() == "F01"
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        chip = page.evaluate("(() => { const s = getComputedStyle(document.querySelector('.chip')); "
+                             "return [s.color, s.backgroundColor]; })()")
+        assert chip[0] != chip[1]
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
