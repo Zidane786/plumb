@@ -187,6 +187,18 @@ def test_defaults_for_a_minimal_tour(tmp_path: Path) -> None:
     assert step["action"] is None and step["yourTurn"] is False and step["hold"] is None
 
 
+def test_say_is_optional_text_for_speech_only(tmp_path: Path) -> None:
+    doc = demo()
+    _step(doc)["say"] = "  Here are   tonight's tables.\n"
+    _step(doc, 1)["say"] = ""
+    p = make_tour_project(tmp_path / "p", {"demo": doc})
+    steps = tours_json(read(p / PROTO_REL))["tours"][0]["steps"]
+    assert steps[0]["say"] == "Here are   tonight's tables.", "trimmed like a caption"
+    assert steps[0]["caption"] == "The host lands on tonight's tables, in time order.", "the caption on screen stays"
+    assert steps[1]["say"] == "" and steps[2]["say"] == "", "no say: the caption is spoken"
+    assert "say" not in json.dumps(demo()), "the fixture itself has no say (the default case above)"
+
+
 def test_tour_text_cannot_inject_markup(tmp_path: Path) -> None:
     doc = demo()
     evil = "</script><script>alert(1)</script><img src=x onerror=alert(2)>"
@@ -373,6 +385,8 @@ REFUSALS = {
     "your-turn-not-bool": (_set(lambda d: _step(d, 1, 1).update(your_turn="yes")), ["your_turn must be true or false"]),
     "bad-hold": (_set(lambda d: _step(d).update(hold=-5)), ["hold -5"]),
     "caption-not-text": (_set(lambda d: _step(d).update(caption=42)), ["caption must be text"]),
+    "say-not-text": (_set(lambda d: _step(d).update(say=["Hello"])), ["say must be text", '"say": "..."']),
+    "say-a-number": (_set(lambda d: _step(d, 1).update(say=7)), ["chapters[0].steps[1].say must be text"]),
     "no-title-or-caption": (_set(lambda d: (_step(d).pop("title"), _step(d).pop("caption"))), ['"title" or a "caption"']),
     "unsupported-selector": (_set(lambda d: _step(d).update(target=".tables li:hover")), [":hover", "class or data attribute"]),
     "unparseable-selector": (_set(lambda d: _step(d).update(target="[data-test=")), ['"[data-test="', "not a CSS selector"]),
