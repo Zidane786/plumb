@@ -605,8 +605,8 @@ FAKE = """window.__said = []; window.speechSynthesis = { getVoices: () => [{name
   speak(u) { __said.push([u.text, u.rate]); setTimeout(() => u.onend && u.onend({}), 50); }, cancel() {},
   addEventListener() {} }; window.SpeechSynthesisUtterance = function (t) { this.text = t; };"""
 page.goto(path.as_uri() + "#tour-first-look")
-page.click("[data-pl=start-voice]")
 page.evaluate("window.plumbPlayer.setSpeed(2)")
+page.click("[data-pl=start-voice]")
 page.wait_for_function("window.plumbPlayer.state().ended", timeout=60000)
 with page.expect_download() as dl:
     page.click(".pl-dock [data-pl=vtt]")
@@ -617,8 +617,9 @@ print("file", dl.value.suggested_filename, "| cues", vtt.count(" --> "), "| rate
 
 **Expected:** `file first-look.vtt`, one cue per card and step of the tour, in order, with the captions shown on
 screen; `rates [1.3]` (2×; 1× would be 0.9); `stored ['plumb.player.voice']` (the caption times stay in the page's
-memory). Without the stand-in (a plain headless browser, no voices), the Voice button is disabled with "Voice isn't
-available in this browser" and the first card offers only Start.
+memory). Without the stand-in, on a browser with no voices (often a headless one on Linux; macOS gives headless
+Chromium its system voices), after about a second the Voice button is disabled with "Voice isn't available in this
+browser" and the first card offers only Start.
 
 ---
 
