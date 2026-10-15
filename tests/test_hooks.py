@@ -847,7 +847,9 @@ def _best_hook(launcher, proj, tmp_path, script: str, stdin: str, check, limit: 
 
 
 def test_non_ui_edit_is_fast(launcher, tmp_path, proj):
-    limit = 0.6 if CI or launcher == "powershell" else 0.15
+    # The budget catches real slow work on an edit that isn't UI (a git call, a tree walk, a big import: those cost
+    # seconds), not a busy machine: Python 3.9 alone takes ~0.2 s to start a hook while other test processes run.
+    limit = 0.6 if CI or launcher == "powershell" else 0.3
     stdin = payload("claude", "edit", CWD=str(proj), FILE=str(proj / "README.md"), OLD="Notes.", NEW="More notes.")
     took = _best_hook(launcher, proj, tmp_path, "pre_edit.py", stdin, allowed, limit)
     assert took < limit, f"non-UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
