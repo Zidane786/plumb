@@ -109,7 +109,8 @@ user's explicit yes to that screen** in this conversation.
     view chosen (the full-window app, or the prototype page); it opens from disk with no network, so it can be emailed
     or put in training material;
   - **in the prototype** `<docs>/prototype.html#tour-<id>` (step n: `#tour-<id>-<n>`), whatever the view.
-  Guide mode: Next/Back or the arrow keys, Esc to leave. Play mode: Space pauses, a marker per chapter, speed 0.5×–2×.
+  Guide mode: Next/Back or the arrow keys, Esc to leave. Play mode: Space pauses, a marker per chapter, speed 0.5×–2×,
+  Voice (or `V`, the browser's own speech; a step's optional `"say"`) and "Save subtitles (.vtt)" ([tours.md](../../reference/tours.md), "Voice and subtitles").
 - If a browser is available (the agent's browser tool, else `PY "<ROOT>/scripts/screenshot.py"
   "<docs>/tours/<id>.html" --out …`), check the first steps render in light and dark.
 - Ask: "Anything to change?" Iterate on the file, rebuild, show again. Done → stop. The user commits.

@@ -418,6 +418,25 @@ says so and asks whether to continue.
 Turning a tour into in-app onboarding in the live product is out of scope
 for 1.0.0.
 
+**Voice and subtitles (owner amendment, 2026-10-15).** Play mode can speak its captions with the browser's built-in
+speech (`speechSynthesis`) and the voices already on the computer: no download, no package, offline. A "Voice" button
+(a toggle, `aria-pressed`) and the `V` key (not while typing, no modifiers, no repeat); off by default (screen-reader
+users must not hear captions twice); the choice is kept in `localStorage` (try/catch). The voice reads the same caption
+line the player shows (cards: title and text; steps: the subtitle); a step's optional `"say"` (validated like
+`caption`) replaces it for speech only. The page's `lang` picks the voice. Rate follows the speed: ≈ 0.9 at 1× (about
+150 words a minute), 0.7 at 0.5×, capped at 1.15 and 1.3 at 1.5× and 2×, with a short pause after each sentence; with
+the voice on a caption stays while it is spoken, then the step's hold, then the next. Pause stops the sentence and
+Play speaks it again; restart, chapter jumps, Back/Next, leaving, Hide panel and a speed change cancel or restart the
+sentence. Browsers speak only after a user gesture, so a tour that opens in play mode with its page waits on its
+first card with **Start with voice** / **Start without voice** (the remembered choice is the default; Play or Space
+starts with it; Next, Back or a scene marker start it without voice). No `speechSynthesis`, no voices after ~1 s, or speech blocked → the Voice button is disabled with
+"Voice isn't available in this browser", the first card offers only Start, captions and today's timing; an error
+mid-run (`onerror`, or no `onend` within a safety time from the sentence's length in words or characters) → one note "Voice stopped: continuing with
+captions", voice off for the rest of the run, never a stall. **Subtitles:** the player records when each caption
+really shows, in memory for the current run only (never stored or sent); "Save subtitles (.vtt)" (in the panel while
+playing and at the end) downloads `<tour id>.vtt` (WebVTT, a Blob made in the page) matching a screen recording of
+that run at any speed. Only the Voice on/off choice is stored.
+
 `/plumb:prototype` **always writes a default walkthrough** for each flow it builds (you review
 its steps and words together with the screens), and updates it when the flow changes.
 `/plumb:tour <flow>` is for extra or custom ones: a client demo, a different audience, or a story

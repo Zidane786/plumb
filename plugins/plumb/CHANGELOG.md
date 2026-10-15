@@ -96,6 +96,15 @@
   would cover at the bottom; title cards stay in the window; a hint or the end of play brings a hidden panel back for
   that moment; the player wears the project's tokens (primary, surface, outline, fonts, radius, shadow) where it has
   them.
+- **Voice for tours and exact subtitles**: in play mode the **Voice** button (or `V`) reads the captions aloud with the
+  browser's own speech and the voices already on the computer (nothing downloaded, works offline). Off by default and
+  remembered; the same caption line the player shows, or a step's optional `"say"` for speech only; a calm pace that
+  follows the speed (0.9 at 1×, capped at 1.3 at 2×) with a pause after each sentence, and each step waits for its
+  speech, then its hold; pause, jumps, Hide panel and speed changes keep voice and screen in step. A tour that opens in
+  play mode with its page starts from its first card: **Start with voice** or **Start without voice**. No speech in the
+  browser: the button is disabled ("Voice isn't available in this browser") and the tour plays with captions; an error
+  mid-tour says "Voice stopped: continuing with captions" and carries on. **Save subtitles (.vtt)** downloads
+  `<tour id>.vtt` with the real times each caption showed in that run (kept in memory only, never stored).
 - **A screen's fixed layers stay in its frame**: in `prototype.html` a `position: fixed` scrim, dialog or toast sits
   inside the screen's frame (as on a device of that width), never over the toolbar or the screens list; a state change
   that opens a dialog scrolls it into view.

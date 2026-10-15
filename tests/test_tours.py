@@ -187,6 +187,18 @@ def test_defaults_for_a_minimal_tour(tmp_path: Path) -> None:
     assert step["action"] is None and step["yourTurn"] is False and step["hold"] is None
 
 
+def test_say_is_optional_text_for_speech_only(tmp_path: Path) -> None:
+    doc = demo()
+    _step(doc)["say"] = "  Here are   tonight's tables.\n"
+    _step(doc, 1)["say"] = ""
+    p = make_tour_project(tmp_path / "p", {"demo": doc})
+    steps = tours_json(read(p / PROTO_REL))["tours"][0]["steps"]
+    assert steps[0]["say"] == "Here are   tonight's tables.", "trimmed like a caption"
+    assert steps[0]["caption"] == "The host lands on tonight's tables, in time order.", "the caption on screen stays"
+    assert steps[1]["say"] == "" and steps[2]["say"] == "", "no say: the caption is spoken"
+    assert "say" not in json.dumps(demo()), "the fixture itself has no say (the default case above)"
+
+
 def test_tour_text_cannot_inject_markup(tmp_path: Path) -> None:
     doc = demo()
     evil = "</script><script>alert(1)</script><img src=x onerror=alert(2)>"
@@ -373,6 +385,8 @@ REFUSALS = {
     "your-turn-not-bool": (_set(lambda d: _step(d, 1, 1).update(your_turn="yes")), ["your_turn must be true or false"]),
     "bad-hold": (_set(lambda d: _step(d).update(hold=-5)), ["hold -5"]),
     "caption-not-text": (_set(lambda d: _step(d).update(caption=42)), ["caption must be text"]),
+    "say-not-text": (_set(lambda d: _step(d).update(say=["Hello"])), ["say must be text", '"say": "..."']),
+    "say-a-number": (_set(lambda d: _step(d, 1).update(say=7)), ["chapters[0].steps[1].say must be text"]),
     "no-title-or-caption": (_set(lambda d: (_step(d).pop("title"), _step(d).pop("caption"))), ['"title" or a "caption"']),
     "unsupported-selector": (_set(lambda d: _step(d).update(target=".tables li:hover")), [":hover", "class or data attribute"]),
     "unparseable-selector": (_set(lambda d: _step(d).update(target="[data-test=")), ['"[data-test="', "not a CSS selector"]),
@@ -555,7 +569,7 @@ document.addEventListener('plumb:tour', function (e) {
 
 
 def _open(browser, path: Path, width: int = 1280, scheme: str = "light", hash_: str = "", reduced: bool = False,
-          height: int = 900):
+          height: int = 900, init: str = ""):
     ctx = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme,
                               reduced_motion="reduce" if reduced else "no-preference")
     page = ctx.new_page()
@@ -565,6 +579,8 @@ def _open(browser, path: Path, width: int = 1280, scheme: str = "light", hash_: 
     requests: list = []
     page.on("request", lambda req: requests.append(req.url) if not req.url.startswith(("file:", "data:", "about:")) else None)
     page.add_init_script(LOG)
+    if init:
+        page.add_init_script(init)
     page.goto(path.resolve().as_uri() + hash_)
     page.wait_for_load_state("load")
     return ctx, page, errors, requests
@@ -590,6 +606,14 @@ def _wait_pos(page, pos: int, timeout: int = 8000) -> None:
 def _visible_screen(page) -> str:
     return page.evaluate("""() => [...document.querySelectorAll('#pp-frame > [data-screen]')]
         .filter(s => !s.hidden).map(s => s.dataset.screen).join(',')""")
+
+
+def _press_start(page) -> None:
+    """A tour that opens in play mode with the page waits on its first card: press its Start (without voice)."""
+    page.wait_for_function("window.plumbPlayer.state().waiting")
+    assert _state(page)["paused"] is True
+    page.click(".pl-card-start [data-pl=start-quiet]")
+    assert _state(page)["waiting"] is False and _state(page)["paused"] is False
 
 
 def _shown(page, selector: str) -> int:
@@ -962,6 +986,7 @@ def test_standalone_pages_open_straight_into_the_tour(browser, built) -> None:
         assert first["tour"] == "demo" and first["mode"] == "play" and first["pos"] == 0
         assert page.evaluate("window.plumbPrototype.view") == "app"
         assert _shown(page, ".pp-side") == 0 and _shown(page, "#pp-rail") == 0 and _shown(page, "#theme-toggle") == 0
+        _press_start(page)
         _wait_pos(page, 1, timeout=3000)
         page.keyboard.press("Escape")
         assert _state(page)["active"] is False
@@ -979,6 +1004,7 @@ def test_standalone_pages_open_straight_into_the_tour(browser, built) -> None:
         page.wait_for_function("window.__log.length > 0")
         first = page.evaluate("window.__log[0]")
         assert first["tour"] == "walk" and first["mode"] == "play" and first["pos"] == 0
+        _press_start(page)
         _wait_pos(page, 1, timeout=3000)
         page.keyboard.press("Escape")
         assert _state(page)["active"] is False
@@ -1020,6 +1046,7 @@ def test_reduced_motion_still_plays_without_the_glide(browser, built) -> None:
     try:
         page.wait_for_function("window.__log.length > 0")
         assert page.evaluate("window.__log[0]")["mode"] == "play"
+        _press_start(page)
         _wait_pos(page, 1, timeout=3000)
         assert errors == []
     finally:
@@ -2363,6 +2390,7 @@ def test_the_app_view_tour_page_plays_by_itself_in_play_mode(browser, apptour) -
     try:
         page.wait_for_function("window.__log.length > 0")
         start = _history(page)
+        _press_start(page)
         page.evaluate("window.plumbPlayer.setSpeed(2)")
         page.wait_for_function("window.plumbPlayer.state().ended", timeout=30000)
         steps = page.evaluate("[...new Set(window.__log.map(e => e.step).filter(n => n !== null))].length")
@@ -2751,6 +2779,628 @@ def test_labels_away_from_a_target_in_view_are_brought_in_with_it(browser, pins,
         assert page.evaluate(IN_WINDOW, WEEK)
         first = [x for x in page.evaluate(LABELS_SHOWN) if x["text"] == "This week"]
         assert first and first[0]["ok"], page.evaluate(LABELS_SHOWN)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# ---------------------------------------------------------------- voice and subtitles (play mode)
+# Headless browsers have no voices: a fake speechSynthesis, injected before the page loads, records every utterance
+# (text, rate, lang, voice) and every cancel, and lets a test end an utterance (__speech.end()), fail it
+# (__speech.fail(code)) or have each one end by itself after a few ms (window.__speechAuto = ms).
+
+FAKE_SPEECH = """
+(() => {
+  const S = window.__speech = { spoken: [], cancels: 0, current: null,
+    voices: window.__voices !== undefined ? window.__voices : [
+      { name: "Other", lang: "fr-FR", default: true, localService: true, voiceURI: "fr" },
+      { name: "Test English", lang: "en-US", default: false, localService: true, voiceURI: "en" }] };
+  const synth = {
+    speaking: false, pending: false, paused: false, onvoiceschanged: null,
+    getVoices() { return S.voices.slice(); },
+    speak(u) {
+      S.spoken.push({ text: u.text, rate: u.rate, lang: u.lang, voice: u.voice ? u.voice.name : null, t: performance.now() });
+      S.current = u; this.speaking = true;
+      if (window.__speechAuto) setTimeout(() => { if (S.current === u) S.end(); }, window.__speechAuto);
+    },
+    cancel() {
+      S.cancels += 1; const u = S.current; S.current = null; this.speaking = false;
+      if (u && u.onerror) u.onerror({ error: "interrupted" });
+    },
+    pause() {}, resume() {}, removeEventListener() {},
+    addEventListener(type, fn) { if (type === "voiceschanged") S.listeners.push(fn); },
+  };
+  S.end = () => { const u = S.current; S.current = null; synth.speaking = false; if (u && u.onend) u.onend({}); return !!u; };
+  S.fail = (code) => { const u = S.current; S.current = null; synth.speaking = false;
+    if (u && u.onerror) u.onerror({ error: code }); return !!u; };
+  S.listeners = [];
+  if (window.__voicesLater) {  /* the voice list arrives late, as in some browsers */
+    const later = S.voices; S.voices = [];
+    setTimeout(() => { S.voices = later; S.listeners.forEach(f => f()); }, window.__voicesLater);
+  }
+  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
+  window.SpeechSynthesisUtterance = function (text) {
+    this.text = text; this.rate = 1; this.lang = ""; this.voice = null; this.onend = null; this.onerror = null; };
+})();
+"""
+NO_VOICES = "window.__voices = [];" + FAKE_SPEECH
+NO_SPEECH = """Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
+window.SpeechSynthesisUtterance = undefined;"""
+AUTO_END = "window.__speechAuto = 60;"
+REMEMBER_VOICE = "try { localStorage.setItem('plumb.player.voice', 'on'); } catch (e) {}"
+STORAGE_WRITES = """
+window.__writes = [];
+['setItem', 'removeItem', 'clear'].forEach(function (name) {
+  var orig = Storage.prototype[name];
+  Storage.prototype[name] = function (key) {
+    window.__writes.push([this === window.localStorage ? 'local' : 'session', name, key === undefined ? null : key]);
+    return orig.apply(this, arguments);
+  };
+});
+"""
+VOICE_BTN = ".pl-dock [data-pl=voice]"
+SAY_1 = "Here are tonight's tables. All of them, in time order."
+ODD_CAPTION = "Back on the list: tables & times <b>now</b> --> next."
+LONG_TOKENS = "Write to front.desk@example-clinic.org or call 004420794600001234567890."  # 6 words, 72 characters
+
+
+def voiced_tour() -> dict:
+    doc = demo()
+    _step(doc, 0, 0)["say"] = SAY_1
+    _step(doc, 1, 0)["say"] = "Look."
+    _step(doc, 3, 1)["caption"] = ODD_CAPTION
+    _step(doc, 2, 1)["say"] = LONG_TOKENS
+    return doc
+
+
+@pytest.fixture(scope="module")
+def voiced(tmp_path_factory) -> Path:
+    return make_tour_project(tmp_path_factory.mktemp("voice") / "Voice Ünïcode", {"demo": voiced_tour()})
+
+
+def _spoken(page) -> list:
+    return page.evaluate("window.__speech.spoken.map(s => s.text)")
+
+
+def _cancels(page) -> int:
+    return page.evaluate("window.__speech.cancels")
+
+
+def _voice_note(page) -> str:
+    return page.evaluate("(() => { var n = document.querySelector('.pl-voice-note'); return n.hidden ? '' : n.textContent; })()")
+
+
+def _live(page) -> str:
+    return page.evaluate("[...document.querySelectorAll('[aria-live]')].map(e => e.textContent).join(' | ')")
+
+
+def _visible_start_buttons(page) -> list:
+    return page.evaluate("""[...document.querySelectorAll('.pl-card-start button')].filter(b => !b.hidden &&
+        b.getClientRects().length).map(b => [b.textContent, b.classList.contains('pl-primary'), b.type])""")
+
+
+def test_voice_is_off_by_default_a_toggle_and_remembered(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        _start(page, "demo", "play", step=1)
+        page.wait_for_timeout(300)
+        assert _spoken(page) == [] and _state(page)["voice"] is False, "off by default: captions are not read twice"
+        assert page.evaluate(f"document.querySelector('{VOICE_BTN}').tagName") == "BUTTON"
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
+        assert page.get_attribute(VOICE_BTN, "aria-keyshortcuts") == "V"
+        page.click(VOICE_BTN)
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true" and _state(page)["voice"] is True
+        said = page.evaluate("window.__speech.spoken")
+        assert [s["text"] for s in said] == ["Here are tonight's tables."], "the step again, from its start"
+        assert said[0]["rate"] == 0.9 and said[0]["lang"] == "en", said
+        assert said[0]["voice"] == "Test English", "the page's lang picks the voice"
+        assert _state(page)["step"] == 1
+        assert "Voice on." in _live(page)
+        assert page.inner_text(".pl-subtitle") == "The host lands on tonight's tables, in time order.", \
+            "say is for speech only: the subtitle on screen stays the caption"
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") == "on"
+        before = _cancels(page)
+        page.keyboard.press("v")
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false" and _cancels(page) == before + 1
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") is None
+        page.keyboard.press("v")
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true"
+        page.reload()
+        page.wait_for_load_state("load")
+        _start(page, "demo", "play", step=2)
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true", "remembered across reloads"
+        assert _spoken(page) == ["Look."], "a step's say replaces its caption for speech"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_v_key_is_ignored_while_typing_with_modifiers_held_or_repeated(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        _start(page, "demo", "play", step=3)
+        page.evaluate("window.plumbPlayer.pause()")
+        page.focus("#pp-frame [data-test=guest]")
+        page.keyboard.press("v")
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false", "typing a v is not the V key"
+        page.evaluate("document.activeElement.blur()")
+        for combo in ("Control+v", "Alt+v", "Meta+v"):
+            page.keyboard.press(combo)
+            assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false", combo
+        page.evaluate("document.body.dispatchEvent(new KeyboardEvent('keydown', {key: 'v', repeat: true, bubbles: true}))")
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false", "a held key toggles once"
+        _start(page, "demo", "guide", step=1)
+        page.keyboard.press("v")
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") is None, "voice is for play mode"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_pace_follows_the_speed_control(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        rates = []
+        for speed in (0.5, 1, 1.5, 2):
+            _start(page, "demo", "play", step=1, speed=speed)
+            rates.append(page.evaluate("window.__speech.spoken.at(-1).rate"))
+        assert rates == [0.7, 0.9, 1.15, 1.3], "calm at 1x, slower at 0.5x, capped at 1.5x and 2x"
+        # a speed change restarts the sentence at the new pace
+        before, n = _cancels(page), len(_spoken(page))
+        page.click(".pl-dock [data-speed='1.5']")
+        said = page.evaluate("window.__speech.spoken")
+        assert _cancels(page) == before + 1 and len(said) == n + 1
+        assert said[-1]["text"] == said[-2]["text"] and said[-1]["rate"] == 1.15
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_step_waits_for_its_speech_then_a_pause_then_its_hold(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)  # hold 700 ms
+        page.wait_for_timeout(1500)
+        assert _state(page)["pos"] == 2 and _spoken(page) == ["Here are tonight's tables."], "still speaking: it waits"
+        ended = page.evaluate("(() => { window.__speech.end(); return performance.now(); })()")
+        page.wait_for_function("window.__speech.spoken.length === 2")
+        said = page.evaluate("window.__speech.spoken")
+        assert said[1]["text"] == "All of them, in time order."
+        assert said[1]["t"] - ended >= 300, "a short pause after each sentence"
+        page.wait_for_timeout(1200)
+        assert _state(page)["pos"] == 2, "the second sentence is still being spoken"
+        ended = page.evaluate("(() => { window.__speech.end(); return performance.now(); })()")
+        _wait_pos(page, 3, timeout=4000)
+        moved = page.evaluate("window.__log.filter(e => e.pos === 3).at(-1).t")
+        assert moved - ended >= 350 + 700 - 50, "then the pause and the step's hold, as today"
+        # a card speaks its title, then its text
+        n = len(_spoken(page))
+        _start(page, "demo", "play")
+        assert _spoken(page)[n:] == ["Taking a booking"]
+        page.evaluate("window.__speech.end()")
+        page.wait_for_function("(n) => window.__speech.spoken.length === n + 2", arg=n)
+        assert _spoken(page)[-1] == "What you'll see: tonight's tables, a new booking typed in, and the confirmation."
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_pause_and_resume_stop_and_speak_the_sentence_again(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        before = _cancels(page)
+        page.click(".pl-dock [data-pl=play]")
+        assert _state(page)["paused"] is True and _cancels(page) == before + 1
+        page.wait_for_timeout(1200)
+        assert _spoken(page) == ["Here are tonight's tables."] and _state(page)["pos"] == 2
+        page.keyboard.press("Space")
+        assert _state(page)["paused"] is False
+        assert _spoken(page) == ["Here are tonight's tables."] * 2, "Play speaks that sentence again"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("how", ["next", "back", "jump", "restart", "hide", "mode", "leave"])
+def test_every_move_cancels_the_sentence_so_voice_and_screen_stay_in_step(browser, voiced, how: str) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        before = _cancels(page)
+        if how == "next":
+            page.keyboard.press("ArrowRight")
+            want = "Look."
+        elif how == "back":
+            page.keyboard.press("ArrowLeft")
+            want = "Tonight at a glance"
+        elif how == "jump":
+            page.click(".pl-marks button >> nth=1")
+            want = "Take the booking"
+        elif how == "restart":
+            page.click(".pl-dock [data-pl=restart]")
+            want = "Taking a booking"
+        elif how == "hide":
+            page.keyboard.press("h")
+            want = "Here are tonight's tables."
+        elif how == "mode":
+            page.click(".pl-dock [data-pl=mode]")
+            want = None
+        else:
+            page.keyboard.press("Escape")
+            want = None
+        assert _cancels(page) == before + 1, how
+        said = _spoken(page)
+        if want:
+            assert said[-1] == want and len(said) == 2, (how, said)
+        else:
+            page.wait_for_timeout(500)
+            assert len(said) == 1 and _spoken(page) == said, "guide mode and leaving are silent"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_reduced_motion_still_speaks(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH, reduced=True)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        assert _spoken(page) == ["Here are tonight's tables."], "a voice is not motion"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_a_tour_that_opens_in_play_mode_waits_on_its_first_card_for_start(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=FAKE_SPEECH)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        assert _visible_start_buttons(page) == [["Start with voice", False, "button"], ["Start without voice", True, "button"]]
+        assert _state(page)["pos"] == 0 and _state(page)["card"] == "intro"
+        assert page.evaluate("document.activeElement === document.body"), "no focus move on load"
+        assert "Choose Start with voice or Start without voice." in _live(page)
+        page.wait_for_timeout(1200)
+        assert _state(page)["pos"] == 0 and _spoken(page) == [], "nothing plays or speaks before the click"
+        page.click("[data-pl=start-voice]")
+        assert _state(page)["waiting"] is False and _state(page)["paused"] is False
+        assert _visible_start_buttons(page) == []
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true"
+        assert _spoken(page) == ["Taking a booking"]
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") == "on"
+        assert page.evaluate("document.activeElement.getAttribute('data-pl')") == "play"
+        # the remembered choice is the default; Space (or Play) starts with it
+        page.reload()
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        assert _visible_start_buttons(page) == [["Start with voice", True, "button"], ["Start without voice", False, "button"]]
+        page.keyboard.press("Space")
+        assert _state(page)["waiting"] is False and _spoken(page) == ["Taking a booking"]
+        # without voice: no speech, and the choice is remembered
+        page.reload()
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        page.click("[data-pl=start-quiet]")
+        page.wait_for_timeout(300)
+        assert _spoken(page) == [] and page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") is None
+        _wait_pos(page, 1, timeout=3000)
+        assert errors == []
+    finally:
+        ctx.close()
+    # a deep link that opens a step in play mode waits too, on a card of its own
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH, hash_="#tour-demo-3")
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        assert _state(page)["step"] == 3 and page.inner_text(".pl-card-box h2") == "Taking a booking at Café Ünïcode"
+        page.click("[data-pl=start-quiet]")
+        assert _state(page)["waiting"] is False and _shown(page, ".pl-card") == 0
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("init", [NO_SPEECH, NO_VOICES], ids=["no-api", "no-voices"])
+def test_without_speech_the_voice_is_disabled_and_captions_keep_todays_timing(browser, voiced, init: str) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=REMEMBER_VOICE + init)
+    try:
+        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
+        assert _voice_note(page) == "Voice isn't available in this browser"
+        assert page.get_attribute(VOICE_BTN, "title") == "Voice isn't available in this browser"
+        assert page.get_attribute(VOICE_BTN, "aria-describedby") == "pl-voice-note"
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
+        assert _visible_start_buttons(page) == [["Start", True, "button"]], "only Start"
+        assert "Press Start to play." in _live(page) and "Start with voice" not in _live(page), \
+            "the announcement names only the button that is there"
+        page.keyboard.press("v")
+        page.click("[data-pl=start-quiet]")
+        assert _state(page)["voice"] is False
+        _wait_pos(page, 1, timeout=3000)  # the intro's 600 ms hold, as today
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_an_error_mid_run_says_so_once_and_continues_with_captions(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        page.evaluate("window.__speech.fail('synthesis-failed')")
+        assert _voice_note(page) == "Voice stopped: continuing with captions"
+        assert "Voice stopped: continuing with captions" in _live(page)
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
+        assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled")
+        _wait_pos(page, 3, timeout=4000)  # the step's own timing
+        page.wait_for_timeout(300)
+        assert _spoken(page) == ["Here are tonight's tables."], "voice off for the rest of the run"
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") == "on", "the viewer's choice stays"
+        _start(page, "demo", "play", step=2)
+        assert _spoken(page)[-1] == "Look.", "a new run speaks again"
+        assert _voice_note(page) == ""
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_speech_that_never_ends_falls_back_after_a_safety_timer(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        started = page.evaluate("performance.now()")
+        _start(page, "demo", "play", step=2)  # say "Look.": one word
+        assert _spoken(page) == ["Look."]
+        page.wait_for_function("document.querySelector('.pl-voice-note').textContent === "
+                               "'Voice stopped: continuing with captions'", timeout=6000)
+        noted = page.evaluate("performance.now()")
+        assert noted - started >= 1500, "the safety timer allows the expected time and a margin first"
+        _wait_pos(page, 4, timeout=6000)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+VTT_CUE = re.compile(r"(\d+)\n(\d\d):(\d\d):(\d\d)\.(\d{3}) --> (\d\d):(\d\d):(\d\d)\.(\d{3})\n((?:.+\n)+)")
+
+
+def _cues(vtt: str) -> list:
+    assert vtt.startswith("WEBVTT\n\n1\n"), vtt[:40]
+    body = vtt[len("WEBVTT\n\n"):]
+    out, at = [], 0
+    for m in VTT_CUE.finditer(body):
+        assert m.start() == at, ("a stray line in the file", body[at:m.start()])
+        g = m.groups()
+        out.append({"n": int(g[0]), "start": ((int(g[1]) * 60 + int(g[2])) * 60 + int(g[3])) * 1000 + int(g[4]),
+                    "end": ((int(g[5]) * 60 + int(g[6])) * 60 + int(g[7])) * 1000 + int(g[8]), "text": g[9][:-1]})
+        at = m.end() + 1
+    assert at >= len(body), ("unparsed", body[at:])
+    return out
+
+
+@pytest.mark.parametrize("voice", [True, False], ids=["voice", "captions"])
+def test_subtitles_are_exact_from_a_play_through(browser, voiced, voice: bool) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=AUTO_END + FAKE_SPEECH)
+    try:
+        page.evaluate("(v) => window.plumbPlayer.setVoice(v)", voice)
+        _start(page, "demo", "play", speed=2)
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=30000)
+        vtt = page.evaluate("window.plumbPlayer.subtitles()")
+        cues = _cues(vtt)
+        doc = voiced_tour()
+        steps = [s for c in doc["chapters"] for s in c["steps"]]
+        odd = ODD_CAPTION.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        want = ([f"{doc['intro']['title']}\n{doc['intro']['text']}", doc["chapters"][0]["title"]] +
+                [s["caption"] for s in steps[:2]] + [doc["chapters"][1]["title"]] +
+                [s["caption"] if s["caption"] != ODD_CAPTION else odd for s in steps[2:]] +
+                [f"{doc['closing']['title']}\n{doc['closing']['text']}"])
+        assert [c["text"] for c in cues] == want, "the captions on screen, in order (say is never shown)"
+        assert [c["n"] for c in cues] == list(range(1, len(want) + 1))
+        assert "tables &amp; times &lt;b&gt;now&lt;/b&gt; --&gt; next." in vtt
+        log = page.evaluate("window.__log")
+        first = {}
+        for e in log:
+            if e["active"] and not e["ended"] and e["pos"] not in first:
+                first[e["pos"]] = e["t"]
+        t0 = first[0]
+        for i, c in enumerate(cues):
+            assert abs(c["start"] - (first[i] - t0)) <= 25, (i, c, first[i] - t0)
+            assert c["end"] > c["start"]
+            if i + 1 < len(cues):
+                assert abs(cues[i + 1]["start"] - c["end"]) <= 2, "back to back: one caption ends as the next shows"
+        ended = next(e["t"] for e in log if e["ended"])
+        assert abs(cues[-1]["end"] - (ended - t0)) <= 25
+        if voice:
+            assert len(_spoken(page)) > len(cues), "every card and step was spoken (cards say two sentences)"
+        with page.expect_download() as dl:
+            page.click(".pl-dock [data-pl=vtt]")
+        assert dl.value.suggested_filename == "demo.vtt"
+        assert Path(dl.value.path()).read_text(encoding="utf-8") == vtt
+        assert "Saved the subtitles as demo.vtt." in _live(page)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_save_subtitles_is_in_the_panel_while_playing(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        _start(page, "demo", "guide", step=1)
+        assert _shown(page, ".pl-dock [data-pl=vtt]") == 0, "subtitles come from play mode"
+        _start(page, "demo", "play", step=1)
+        assert _shown(page, ".pl-dock [data-pl=vtt]") == 1
+        page.wait_for_timeout(400)
+        with page.expect_download() as dl:
+            page.click(".pl-dock [data-pl=vtt]")
+        cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
+        assert [c["text"] for c in cues] == ["The host lands on tonight's tables, in time order."]
+        assert cues[0]["start"] == 0 and cues[0]["end"] >= 350, "the caption on screen, up to now"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_only_the_voice_choice_is_written_to_storage(browser, voiced) -> None:
+    ctx, page, errors, requests = _open(browser, voiced / DEMO_PAGE, init=STORAGE_WRITES + AUTO_END + FAKE_SPEECH)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        page.click("[data-pl=start-voice]")
+        page.evaluate("window.plumbPlayer.setSpeed(2)")
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=30000)
+        with page.expect_download():
+            page.click(".pl-dock [data-pl=vtt]")
+        writes = page.evaluate("window.__writes")
+        assert writes and all(w[0] == "local" and w[2] == "plumb.player.voice" for w in writes), writes
+        assert page.evaluate("Object.keys(localStorage)") == ["plumb.player.voice"]
+        assert page.evaluate("sessionStorage.length") == 0
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+def _rgb(text: str) -> tuple:
+    m = re.match(r"rgba?\((\d+), (\d+), (\d+)", text)
+    assert m, text
+    return tuple(int(x) for x in m.groups())
+
+
+def _contrast(a: tuple, b: tuple) -> float:
+    def lum(c):
+        def ch(v):
+            v = v / 255
+            return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b_ = (ch(x) for x in c)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b_
+    hi, lo = sorted((lum(a), lum(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_voice_controls_render_in_both_themes(browser, voiced, scheme: str, width: int) -> None:
+    ctx, page, errors, requests = _open(browser, voiced / DEMO_PAGE, init=REMEMBER_VOICE + FAKE_SPEECH,
+                                        scheme=scheme, width=width)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        for sel in ("[data-pl=start-voice]", "[data-pl=start-quiet]"):
+            box = page.evaluate(f"JSON.parse(JSON.stringify(document.querySelector('{sel}').getBoundingClientRect()))")
+            assert box["left"] >= 0 and box["right"] <= width and box["bottom"] <= 900, (sel, box)
+            fg, bg = page.evaluate(f"(() => {{ var s = getComputedStyle(document.querySelector('{sel}')); "
+                                   f"return [s.color, s.backgroundColor]; }})()")
+            assert _contrast(_rgb(fg), _rgb(bg)) >= 4.5, (sel, fg, bg)
+        page.click("[data-pl=start-voice]")
+        assert page.evaluate("document.documentElement.scrollWidth - window.innerWidth") <= 0
+        fg, bg = page.evaluate(f"(() => {{ var s = getComputedStyle(document.querySelector('{VOICE_BTN}')); "
+                               "return [s.color, s.backgroundColor]; })()")
+        accent = page.evaluate("""(() => { var p = document.createElement('span'); p.style.background = 'var(--pl-accent)';
+            document.querySelector('.pl-dock').appendChild(p); var c = getComputedStyle(p).backgroundColor; p.remove();
+            return c; })()""")
+        assert bg == accent and _contrast(_rgb(fg), _rgb(bg)) >= 4.5, "pressed: the accent, readable"
+        assert _shown(page, ".pl-dock [data-pl=vtt]") == 1
+        assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("how", ["next", "back", "marker"])
+def test_leaving_the_start_card_another_way_starts_the_run_without_voice(browser, voiced, how: str) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=REMEMBER_VOICE + FAKE_SPEECH, hash_="#tour-demo-3")
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        if how == "next":
+            page.keyboard.press("ArrowRight")
+            want = "Your turn: book the table."
+        elif how == "back":
+            page.keyboard.press("ArrowLeft")
+            want = "Take the booking"
+        else:
+            page.click(".pl-marks button >> nth=0")
+            want = "Tonight at a glance"
+        s = _state(page)
+        assert s["waiting"] is False and s["paused"] is False and s["voice"] is False, s
+        page.wait_for_timeout(300)
+        assert _spoken(page) == [], "as Start without voice"
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") == "on", "the remembered choice stays"
+        assert not page.evaluate("document.querySelector('.pl-dock [data-pl=vtt]').disabled")
+        with page.expect_download() as dl:
+            page.click(".pl-dock [data-pl=vtt]")
+        cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
+        assert cues[0]["text"] == want and cues[0]["start"] == 0, cues
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_safety_timer_allows_for_long_tokens(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=5, speed=2)
+        assert _spoken(page) == [LONG_TOKENS]
+        # by words alone (6) the timer would fire after 1500 + 2 x 6 x 400 x 0.9 / 1.3 = 4.8 s; by characters, 8.1 s
+        page.wait_for_timeout(5500)
+        assert _voice_note(page) == "" and _state(page)["voice"] is True, "an e-mail address and a long number take longer"
+        page.evaluate("window.__speech.end()")
+        _wait_pos(page, 8, timeout=4000)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_start_with_voice_speaks_inside_the_click_while_voices_load(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init="window.__voicesLater = 600;" + FAKE_SPEECH)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        page.click("[data-pl=start-voice]")
+        assert _spoken(page) == ["Taking a booking"], "the first sentence starts in the click, default voice"
+        page.wait_for_timeout(1300)
+        assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled")
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true" and _voice_note(page) == ""
+        assert errors == []
+    finally:
+        ctx.close()
+    # no voices ever come: the voice stops with one note, and the tour goes on with captions
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=NO_VOICES)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        page.click("[data-pl=start-voice]")
+        assert _spoken(page) == ["Taking a booking"]
+        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
+        assert _voice_note(page) == "Voice stopped: continuing with captions"
+        _wait_pos(page, 1, timeout=3000)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_not_allowed_stops_the_voice_for_the_run_but_keeps_it_available(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        page.evaluate("window.__speech.fail('not-allowed')")
+        assert _voice_note(page) == "Voice stopped: continuing with captions"
+        assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled"), "a click can turn it on again"
+        page.click(VOICE_BTN)
+        assert _spoken(page)[-1] == "Here are tonight's tables."
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_leaving_the_page_stops_the_sentence_and_a_cancelled_unload_does_not(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        before = _cancels(page)
+        # another script's "stay on page" prompt cancels beforeunload: the voice keeps going
+        page.evaluate("window.dispatchEvent(new Event('beforeunload', {cancelable: true}))")
+        assert _cancels(page) == before and page.evaluate("window.__speech.current") is not None
+        page.evaluate("window.dispatchEvent(new Event('pagehide'))")
+        assert _cancels(page) == before + 1
+        assert page.evaluate("window.__speech.current") is None
         assert errors == []
     finally:
         ctx.close()

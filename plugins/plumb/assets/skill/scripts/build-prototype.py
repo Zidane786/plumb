@@ -52,7 +52,8 @@ which reads as step n of that tour in a #tour- link). Every prototype.html carri
   {"title", "audience": client|training|review|team|whats-new (default review), "view": app|prototype (default app:
    where tours/<id>.html plays it), "purpose", "speed": 0.5|1|1.5|2,
    "intro": {"title", "text", "hold"}, "closing": {...}, "chapters": [{"title", "text", "hold", "steps": [...]}] | "steps": [...]}
-  step: {"screen", "state" (default: the screen's first), "title", "caption", "target": SEL | "targets": [SEL, ...],
+  step: {"screen", "state" (default: the screen's first), "title", "caption", "say" (spoken instead of the caption
+         when the viewer turns the voice on in play mode; never shown), "target": SEL | "targets": [SEL, ...],
          "point": spotlight|ring|arrow|beacon|zoom|cursor|none | {"style", "label"}, "callout": {"text", "side"},
          "labels": [{"target", "text"}], "note": {"text", "x", "y"} (percent of the screen),
          "action": {"click": SEL|true} | {"type": TEXT, "target"?} | {"choose": VALUE, "target"?} | {"wait": MS},
@@ -1382,7 +1383,7 @@ TOUR_FIELDS = ("title", "audience", "view", "purpose", "speed", "intro", "closin
 VIEWS = ("app", "prototype")
 CARD_FIELDS = ("title", "text", "hold")
 CHAPTER_FIELDS = ("title", "text", "hold", "steps")
-STEP_FIELDS = ("screen", "state", "title", "caption", "target", "targets", "point", "callout", "labels", "note", "action",
+STEP_FIELDS = ("screen", "state", "title", "caption", "say", "target", "targets", "point", "callout", "labels", "note", "action",
                "your_turn", "hint", "hold")
 TOUR_FIX = "see the tour format in the design-system skill's references (or run /plumb:tour <flow> to rewrite it)"
 
@@ -1635,6 +1636,7 @@ class _TourReader:
         if not title and not caption:
             raise self.fail(path, f"{name} needs a \"title\" or a \"caption\"",
                             "add \"title\": \"...\" (the step's name) and \"caption\": \"...\" (what to notice)")
+        say = self.text_field(s, "say", path, name)  # spoken instead of the caption when the voice is on; never shown
         if s.get("target") is not None and s.get("targets") is not None:
             raise self.fail(path + ("targets",), f"{name} has both \"target\" and \"targets\"",
                             "keep one: \"target\": \".x\" for one element, \"targets\": [\".x\", \".y\"] for several")
@@ -1709,7 +1711,7 @@ class _TourReader:
         if your_turn and (action is None or action["kind"] == "wait"):
             raise self.fail(path + ("your_turn",), f"{name}: your_turn needs an action the learner does: click, type or choose",
                             "add \"action\": {\"click\": \"<selector>\"} (or type / choose), or drop \"your_turn\"")
-        return {"n": n, "screen": screen.id, "state": state, "title": title, "caption": caption, "targets": targets,
+        return {"n": n, "screen": screen.id, "state": state, "title": title, "caption": caption, "say": say, "targets": targets,
                 "point": point, "pointLabel": point_label, "callout": callout, "labels": labels, "note": note,
                 "action": action, "yourTurn": your_turn, "hint": self.text_field(s, "hint", path, name),
                 "hold": self.ms(s, "hold", path), "chapter": chapter}
