@@ -4424,7 +4424,8 @@ def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Itera
     changed = {c.rel for c in changes}
     sources = [c.rel for c in changes if not c.screen]
     screens_dir = f"{_docs_rel(proj.settings)}/prototype/screens/"
-    shared_changed = any(_is_shared_screen_file(r, screens_dir) for r in changed)  # it reaches every screen
+    shared = sorted(r for r in changed if _is_shared_screen_file(r, screens_dir))
+    shared_changed = bool(shared)  # a shared file reaches every screen
     built_then = snapshot.get("screens") if isinstance(snapshot.get("screens"), dict) else {}
     try:
         for s in _screens(fid):
@@ -4442,10 +4443,15 @@ def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Itera
                                  f"{fid.command}, then ")))
             elif ((mine or screen_changed) and e["status"] == "built" and not e["synced_from_code"]
                   and not fid.approved_now(s)):
+                if mine or s.file in changed:
+                    what = f"screen {s.id} ({s.file}) changed this session"
+                else:  # only a shared file changed: name it, since the screen file itself did not change
+                    what = (f"screen {s.id} ({s.file}): its shared file{'s' if len(shared) > 1 else ''} "
+                            f"{_list_names(shared)} changed this session (shared files reach every screen)")
                 yield _finding("screen-unapproved", XHit(
                     s.file, s.line, s.id,
-                    f"screen {s.id} ({s.file}) changed this session and its current prototype is not approved: the code "
-                    f"must follow a screen the user approved",
+                    f"{what} and its current prototype is not approved: the code must follow a screen the user "
+                    f"approved",
                     _ask_approve(fid, s)))
     except _UNEXPECTED as exc:
         raise _fidelity_error(exc, fid.where) from None

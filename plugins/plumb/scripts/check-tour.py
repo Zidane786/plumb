@@ -121,9 +121,14 @@ CHECKER_JS = """<script>
       return "outside the viewport (at " + Math.round(r.left) + ", " + Math.round(r.top) + ")";
     }
     /* what paints on top at the centre of its part above the walkthrough panel: the panel itself, or a screen's own
-       fixed or sticky layer (the player's overlays take no clicks and are left out) */
+       fixed or sticky layer (the player's overlays take no clicks and are left out). The panel is centred with a
+       maximum width, so it clips the target only where the two boxes really overlap (across and down): a corner
+       toast or button beside the panel is not covered by it */
     var dock = document.getElementById("pl-dock"), floor = vh;
-    if (dock && !dock.hidden && dock.getClientRects().length) floor = Math.min(floor, dock.getBoundingClientRect().top);
+    if (dock && !dock.hidden && dock.getClientRects().length) {
+      var d = dock.getBoundingClientRect();
+      if (r.right > d.left && r.left < d.right && r.bottom > d.top && r.top < d.bottom) floor = Math.min(floor, d.top);
+    }
     var top = Math.max(r.top, 0), bottom = Math.min(r.bottom, floor), left = Math.max(r.left, 0), right = Math.min(r.right, vw);
     if (bottom <= top) return "covered by the walkthrough panel";
     var hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);

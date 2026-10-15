@@ -43,6 +43,13 @@
 - **The main prototype**: `prototype.html` (the whole product, clickable, with a state switcher, phone/desktop and
   light/dark toggles, the decisions behind each screen and a guide panel) and `screens.html` (every screen in every
   state, light and dark side by side), both built from one file per screen and kept in step with the code both ways.
+  `screens.html` stays small on a large prototype: each screen is stored once and drawn in every state and both themes
+  by the page (a 20-screen × 10-state prototype stays under half a MB), every copy with its own state, theme and
+  scripts. A state name written with spaces around it (`data-state=" ready "`) is read the same way in every page.
+- **A size warning for large pages**: any page `build-prototype.py` writes (`prototype.html`, `app.html`,
+  `screens.html`, the tour pages, the proposal pages) over 10 MB prints one `warning: <page> is <N> MB …` line naming
+  every such page, also on `--check`, with the heaviest screen files and what helps: smaller screen files (inline
+  `data:` images moved into image files), or git-ignoring the pages and running the build in CI instead of `--check`.
 - **The app view**: `app.html`, every screen full window with no prototype panels, for a demo (prototype.html to
   review, app.html to demo). Links `#/screen` and `#/screen/state` (the prototype's `#screen-…` links work too), the
   screens' own scripts and theme toggle (the choice is remembered in the browser), the md breakpoint following the
@@ -58,7 +65,7 @@
   as a chip (main screens are checked only when `<docs>/prototype/changes.md` exists). CSS and scripts several screens
   use go once in `screens/_shared/*.css` and `*.js` (main and each variant): the CSS is in every page once, each
   script runs for every screen before its own, and editing one makes those screens' approvals stale, named in the
-  build output; the end-of-turn check counts a shared edit as a change to every screen.
+  build output; the end-of-turn check counts a shared edit as a change to every screen and names the shared file.
 - **Walkthroughs and `/plumb:tour`**: guide mode (step by step) and play mode (plays like a video, with speeds 0.5×
   to 2×, pause and scene markers), captions, callouts, labels, notes, title cards, spotlight, ring, arrow, beacon,
   zoom and a cursor, chapters, and "your turn" steps for training. Every tour is also a standalone page that opens
@@ -73,8 +80,10 @@
   anything, and warns when a step points at something the screen's own CSS shows only at some frame widths ("visible
   only when the frame is ≥ 48rem"). The plugin's `check-tour.py` plays a tour page headless in guide and play mode at
   1280 and 1440 wide with a Chrome, Edge or Chromium already on the machine, and names every step whose screen or
-  state is wrong, whose element is hidden, zero-size or off the window, or whose panel is covered. `/plumb:tour` runs
-  both after the build and fixes what they name; with no browser it says so and asks (nothing is installed).
+  state is wrong, whose element is hidden, zero-size, off the window or covered (by the screen's own fixed layer, or
+  by the walkthrough panel only where the two overlap, so a corner toast beside the panel passes), or whose panel is
+  covered. `/plumb:tour` runs both after the build and fixes what they name; with no browser it says so and asks
+  (nothing is installed).
 - **The walkthrough player gets out of the way**: **Hide panel** (or the `H` key) swaps the panel for a small pill
   (the step's title in guide mode; in play mode the subtitle keeps narrating), remembered in the browser. While a tour
   runs, the screens list and the side rail fold away so screens keep their desktop layout. The panel, subtitle,
@@ -110,11 +119,13 @@
   and why, append-only with collision-free ids so several teams can add decisions on separate branches. The prototype
   shows each screen's decisions.
 - **Three hooks**, in Claude Code and Copilot CLI: a status line at session start (with an upgrade nudge), a check
-  before each edit and shell write (refuses hand edits to, or removal of, generated files and Plumb's own files, a new page with no
-  approved prototype, and an edit that adds design-system errors), and an end-of-turn check of the files changed in
-  the session that stops the agent once when there are new errors. The edit, prototype-first and end-of-turn checks
+  before each edit and shell write (refuses hand edits to, or removal of, generated files and Plumb's own files, a new
+  page with no approved prototype, and an edit that adds design-system errors), and an end-of-turn check of the files
+  changed in the session that stops the agent once when there are new errors. The edit, prototype-first and end-of-turn checks
   are switched in `PLUMB.md` (`Edit check`, `Prototype sync`, `End-of-turn check`); the session-start line and the
-  guard on generated and Plumb's own files are always on in a project with a `PLUMB.md`.
+  guard on generated and Plumb's own files are always on in a project with a `PLUMB.md`. The generated pages it guards
+  include the app view, the tour pages and each proposal's pages (`index.html` and a variant's `prototype.html`,
+  `app.html`, `screens.html`); a page in those places without the header Plumb's build writes is yours and left alone.
 - **Screenshots without installing anything**: `screenshot.py` uses a Chrome, Edge or Chromium already on the machine,
   headless; with none, the visual part is skipped with a note and every other check still runs.
 - **You confirm what you can see, at every checkpoint**: what you are asked to confirm (the setup Plumb found, the
@@ -139,20 +150,20 @@
 - **Setup in progress is marked**: `.plumb-tmp/setup-in-progress` lives from the placement OK to the end of setup
   (the end-of-turn check stands down meanwhile, for at most 6 hours; init offers to resume a stopped setup); every
   temporary file stays in `<project>/.plumb-tmp/`, never in `/tmp` or next to the repo.
-- **The guard reads more shell**: `bash -c "…"`, `sh -c`, `zsh -c`, `pwsh -c` and `powershell -Command` scripts are
-  checked like any other command, here-documents are read as their command's input, and an arithmetic `$((a<<b))` is
-  never mistaken for one.
+- **The guard reads shell the way a shell runs it**: `bash -c "…"`, `sh -c`, `zsh -c`, `pwsh -c` and
+  `powershell -Command` scripts are checked like any other command, here-documents are read as their command's input,
+  and an arithmetic `$((a<<b))` is never mistaken for one.
 - **The guard refuses real writes, not mentions**: a shell command is refused when a guarded file is a real write
   target (a redirect, `tee`, `sed -i`, `perl -i`, the destination of `cp` / `mv` / `install` / `rsync` / `ln`, `rm`,
-  `truncate`, `dd of=`, and in inline code `open("…", "w")`, `Path("…").write_text` and the like). The earlier,
-  stricter reading still decides, and its refusal becomes an allow only in three provable cases and a commit message:
-  a here-document, `echo`, `printf` or `tee` text written to a file the same command doesn't run, import, name again
-  or leave where a program picks it up by itself (`sitecustomize.py`, `.bashrc`, a git hook …); a read-only program's
-  words (`cat`, `grep`, `diff` …); inline code that only reads its guarded paths (`json.load` of `screens.json`,
-  `importlib` on a Plumb script) and writes only to plain paths away from them; and a `git commit` message (`-m`,
-  `-F`, a here-document), unless git is given an option that runs something, a variable is set before it, or the
-  command wrote a hook. Every other word must name no guarded path, file or folder, even one not built yet. A file a
-  command writes and then runs is read as code. It also catches writes it missed: `eval`, `find -exec`, `curl -o` /
+  `truncate`, `dd of=`, and in inline code `open("…", "w")`, `Path("…").write_text` and the like). A stricter first
+  reading decides, and its refusal becomes an allow only in four provable cases: a here-document, `echo`, `printf` or
+  `tee` text written to a file the same command doesn't run, import, name again or leave where a program picks it up
+  by itself (`sitecustomize.py`, `.bashrc`, a git hook …); a read-only program's words (`cat`, `grep`, `diff` …);
+  inline code that only reads its guarded paths (`json.load` of `screens.json`, `importlib` on a Plumb script) and
+  writes only to plain paths away from them; and a `git commit` message (`-m`, `-F`, a here-document), unless git is
+  given an option that runs something, a variable is set before it, or the command wrote a hook. Every other word must
+  name no guarded path, file or folder, even one not built yet. A file a command writes and then runs is read as code.
+  It also reads the writes that are easy to miss: `eval`, `find -exec`, `curl -o` /
   `--output-dir`, `wget -O`, `perl -0pi`, `sort -o`, `uniq IN OUT`, sed's `w FILE`, `sh -c '… "$1"'`, `source <(echo
   …)`, a copy into the folder of a guarded file, a recursive copy or move into a folder that holds one, shell
   variables (`OUT=…; echo > "$OUT"`), `$PWD`, `$'…'` escapes, globs and braces, write targets put together in code
@@ -178,37 +189,21 @@
   quality bar otherwise; `/plumb:init` and `/plumb:status` say which is in use.
 - Works on macOS, Linux and Windows (`py -3`, `python` or `python3`), over SSH and in tmux; every generated page opens
   offline (no CDN, no hosted fonts).
-- **Token mapping and contrast fixes from the field:** `build-tokens.py --overrides` maps shadcn's `--sidebar-<x>`
-  names onto the project's own `color.sidebar-<role>` / `color.on-sidebar-<role>` token when there is one (`accent`
-  and `active` are synonyms) before the generic role; it tells you when a next/font variable is applied on `<body>`
-  instead of `<html>` (the font stack would be undefined on `:root`), read from the recorded `Routes:` (Next.js app
-  router only; no `Routes:`, no check); and a failing white-or-black (or near-white or near-black) text on its own fill (`on-X` on `X`) now offers
-  two fixes with their ratios per theme, the fill stepped (same hue, text unchanged) first, then the text, in
-  `--contrast` and the audit's `contrast` fix.
-
-### Fixed
-
-- `Allowed raw values:` in `PLUMB.md` now defaults to the folder where your UI primitives really are (for example
-  `web/src/components/ui/**` for a UI package in `web/`), read from the package's `components.json` and `tsconfig`
-  instead of always `components/ui/**` from the repo root. Your own answer still wins. `scaffold.py --verify` warns
-  (with a fix) when an allowed pattern matches no file.
-- `audit.py --inventory` reads a Tailwind `rounded-*` class at the project's own `@theme` radius (a base `--radius`
-  with `calc()` steps renders `rounded-lg` as that value, not 8px); Tailwind's defaults remain for sizes the project
-  does not define.
-- `audit.py --inventory` no longer merges a named CSS variable's colour (a theme or chart colour) with Tailwind
-  palette-class colours: clusters stay within one source kind and say which.
-- `screens.html` stays small on a large prototype: each screen is stored once and drawn in every state and both
-  themes by the page, instead of one full copy per screen × state × theme (a 20-screen × 10-state prototype went from
-  several MB to under half a MB). Every copy still shows its own state, in its own theme, with its own scripts.
-- Any page `build-prototype.py` writes (`prototype.html`, `app.html`, `screens.html`, the tour pages, the proposal
-  pages) over 10 MB prints one `warning: <page> is <N> MB …` line naming every such page, also on `--check`, with
-  the heaviest screen files and what helps: smaller screen files (inline `data:` images moved into image files), or
-  git-ignoring the pages and running the build in CI instead of `--check`.
-- A state name written with spaces around it (`data-state=" ready "`) now shows in prototype.html, app.html and
-  every catalogue copy, as the build already read it.
-- Hooks failing at the same moment no longer lose or interleave lines in `~/.plumb/feedback/hooks.md` on Windows
-  (where appends from several processes are not atomic): each append holds a short exclusive lock, waits for it at
-  most half a second, and otherwise leaves its line out, so the log still never blocks a hook.
+- **Token mapping and contrast fixes**: `build-tokens.py --overrides` maps shadcn's `--sidebar-<x>` names onto the
+  project's own `color.sidebar-<role>` / `color.on-sidebar-<role>` token when there is one (`accent` and `active` are
+  synonyms) before the generic role; it tells you when a next/font variable is applied on `<body>` rather than on
+  `<html>` (the font stack would be undefined on `:root`), read from the recorded `Routes:` (Next.js app router only;
+  no `Routes:`, no check); and a failing white-or-black (or near-white or near-black) text on its own fill (`on-X` on
+  `X`) gets two fixes with their ratios per theme, the fill stepped (same hue, text unchanged) first, then the text,
+  in `--contrast` and the audit's `contrast` fix.
+- **`Allowed raw values:` where your primitives are**: in `PLUMB.md` it defaults to the folder your UI primitives
+  really live in (for example `web/src/components/ui/**` for a UI package in `web/`), read from the package's
+  `components.json` and `tsconfig`. Your own answer wins, and `scaffold.py --verify` warns (with a fix) when an
+  allowed pattern matches no file.
+- **The inventory reads your theme**: `audit.py --inventory` reads a Tailwind `rounded-*` class at the project's own
+  `@theme` radius (a base `--radius` with `calc()` steps renders `rounded-lg` as that value), with Tailwind's defaults
+  only for sizes the project does not define; its colour clusters stay within one source kind and say which, so a
+  named CSS variable's colour (a theme or chart colour) is never merged with Tailwind palette-class colours.
 
 ### Security
 
@@ -224,5 +219,7 @@
   `~/.plumb/feedback/hooks.md`, never into the project: the folders are kept 0700 (your own wider ones are tightened)
   and the file 0600, nothing is written through a symlink or into someone else's folder, the message is redacted
   (quoted literals, absolute paths outside the project, token-like strings and secret values), the log stops at
-  512 KB, and a problem with it never fails or blocks the hook.
+  512 KB, and a problem with it never fails or blocks the hook. Each append holds a short exclusive lock (waiting at
+  most half a second, else leaving its line out), so hooks failing at the same moment never lose or interleave lines,
+  also on Windows, where appends from several processes are not atomic.
 - Nothing is installed or downloaded, and no network call is made at run time.
