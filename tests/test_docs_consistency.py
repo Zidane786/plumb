@@ -286,7 +286,7 @@ def test_quoted_messages_are_real() -> None:
 
 # TEST.md's expected output (level 3) next to the code that prints it: (what TEST.md says, the script, the code text).
 TEST_EXPECTS = [
-    ("done: 38 written, 0 kept", "scripts/scaffold.py", 'f"done: {wrote} written, {kept} kept"'),
+    ("done: 40 written, 0 kept", "scripts/scaffold.py", 'f"done: {wrote} written, {kept} kept"'),
     ("confirm: show the user this list; after their OK run the same command without --dry-run, plus --confirm",
      "scripts/scaffold.py", 'confirm: show the user this list; after their OK run the same command without --dry-run, '
                             'plus "'),
