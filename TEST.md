@@ -236,8 +236,8 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
 2. `PY SKILL/scripts/build-prototype.py` → also `wrote docs/design/tours/first-look.html` and
    `1 tour: first-look (3 steps, play mode)`.
 3. Open `docs/design/tours/first-look.html` from disk: the Home screen full window with the player on top (the app
-   view, the default when a tour has no `"view"`: no screens list, switcher or decisions), and it starts playing (a
-   client tour opens in play mode). Check pause and resume (Space), the speeds 0.5×–2×, jumping to a step marker, and
+   view, the default when a tour has no `"view"`: no screens list, switcher or decisions), and it waits on its first
+   card: press **Start** (a client tour opens in play mode; "Start with voice" reads the captions aloud). Check pause and resume (Space), the speeds 0.5×–2×, jumping to a step marker, and
    switching to guide mode (Next/Back, the arrow keys, Esc leaves). With the OS set to reduce motion, play mode still
    plays by itself. `docs/design/prototype.html#tour-first-look` plays the same tour in the prototype.
    Then add `"view": "prototype"` after `"audience": "client",` and build again → `wrote docs/design/tours/first-look.html`;
@@ -596,15 +596,21 @@ print("panel at the top for a pinned element:", pinned)
 for that step (it would cover the pinned element at the bottom) and the page does not scroll. Reload: every step
 without a pinned element keeps the panel at the bottom.
 
-**Voice and subtitles:** headless browsers usually have no voices, so give the page a stand-in speech engine that
-ends each sentence after 50 ms (`page.add_init_script(FAKE)` before `page.goto`), open the same tour page in play mode,
-and play it through with the voice on at 2×:
+**Voice and subtitles:** headless browsers may have no voices (or, on macOS, real ones that would speak aloud), so
+give a fresh page a stand-in speech engine that ends each sentence after 50 ms. Install it before the page loads
+(`add_init_script`, then a real navigation to the tour page, which opens in play mode on its Start card) and play it
+through with the voice on at 2×:
 
 ```python
-FAKE = """window.__said = []; window.speechSynthesis = { getVoices: () => [{name: 'Test', lang: 'en-US', default: true}],
-  speak(u) { __said.push([u.text, u.rate]); setTimeout(() => u.onend && u.onend({}), 50); }, cancel() {},
-  addEventListener() {} }; window.SpeechSynthesisUtterance = function (t) { this.text = t; };"""
-page.goto(path.as_uri() + "#tour-first-look")
+FAKE = """window.__said = []; Object.defineProperty(window, 'speechSynthesis', {configurable: true, value: {
+  getVoices: () => [{name: 'Test', lang: 'en-US', default: true}], cancel() {}, addEventListener() {},
+  speak(u) { __said.push([u.text, u.rate]); setTimeout(() => u.onend && u.onend({}), 50); }}});
+window.SpeechSynthesisUtterance = function (t) { this.text = t; };"""
+tour = Path("plumb-scratch/docs/design/tours/first-look.html").resolve()
+page = browser.new_page(viewport={"width": 1280, "height": 900})
+page.add_init_script(FAKE)
+page.goto(tour.as_uri())
+page.wait_for_function("window.plumbPlayer.state().waiting")
 page.evaluate("window.plumbPlayer.setSpeed(2)")
 page.click("[data-pl=start-voice]")
 page.wait_for_function("window.plumbPlayer.state().ended", timeout=60000)
@@ -613,6 +619,7 @@ with page.expect_download() as dl:
 vtt = open(dl.value.path(), encoding="utf-8").read()
 print("file", dl.value.suggested_filename, "| cues", vtt.count(" --> "), "| rates", sorted({r for _, r in page.evaluate("__said")}),
       "| stored", page.evaluate("Object.keys(localStorage)"))
+page.close()
 ```
 
 **Expected:** `file first-look.vtt`, one cue per card and step of the tour, in order, with the captions shown on

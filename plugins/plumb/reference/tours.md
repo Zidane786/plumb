@@ -110,12 +110,15 @@ the frame holds those layers, so zoom works as always.
   never drift.
 - **Start:** a browser speaks only after a click or key press, so a tour that opens in play mode with its page (a tour
   page, a `#tour-…` link) waits on its first card with **Start with voice** and **Start without voice** (the
-  remembered choice is the primary button; Play or Space starts with it). Started from a button on the page, it plays at
-  once. Guide mode is silent.
+  remembered choice is the primary button; Play or Space starts with it). Leaving that card by Next, Back or a scene
+  marker starts the run as Start without voice does (the remembered choice stays). "Start with voice" speaks its first
+  sentence at once, in the browser's default voice while the voice list is still loading. Started from a button on the
+  page, it plays at once. Guide mode is silent. Leaving or reloading the page stops the sentence.
 - **No voice:** no `speechSynthesis`, no voices within about a second, or speech blocked: the Voice button is disabled
   with "Voice isn't available in this browser", the first card offers only **Start**, and the tour plays with captions
-  and today's timing. An error during a tour (or speech that never ends: a safety timer from the word count) shows and
-  announces once "Voice stopped: continuing with captions"; the voice stays off for the rest of that run and the tour
+  and today's timing. An error during a tour (including speech the browser does not allow, or speech that never ends:
+  a safety timer from the sentence's length in words or characters, whichever is longer, so a spelled-out e-mail
+  address or long number gets its time) shows and announces once "Voice stopped: continuing with captions"; the voice stays off for the rest of that run and the tour
   goes on with its own timing, never stalling.
 - **Subtitles (.vtt):** while a tour plays, the player notes when each caption really appears and goes, from the start
   of play; "Save subtitles (.vtt)" (in the panel while playing and at the end) downloads `<tour id>.vtt`, a WebVTT file

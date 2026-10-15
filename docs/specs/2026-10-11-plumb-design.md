@@ -429,9 +429,9 @@ the voice on a caption stays while it is spoken, then the step's hold, then the 
 Play speaks it again; restart, chapter jumps, Back/Next, leaving, Hide panel and a speed change cancel or restart the
 sentence. Browsers speak only after a user gesture, so a tour that opens in play mode with its page waits on its
 first card with **Start with voice** / **Start without voice** (the remembered choice is the default; Play or Space
-starts with it). No `speechSynthesis`, no voices after ~1 s, or speech blocked → the Voice button is disabled with
+starts with it; Next, Back or a scene marker start it without voice). No `speechSynthesis`, no voices after ~1 s, or speech blocked → the Voice button is disabled with
 "Voice isn't available in this browser", the first card offers only Start, captions and today's timing; an error
-mid-run (`onerror`, or no `onend` within a safety time from the word count) → one note "Voice stopped: continuing with
+mid-run (`onerror`, or no `onend` within a safety time from the sentence's length in words or characters) → one note "Voice stopped: continuing with
 captions", voice off for the rest of the run, never a stall. **Subtitles:** the player records when each caption
 really shows, in memory for the current run only (never stored or sent); "Save subtitles (.vtt)" (in the panel while
 playing and at the end) downloads `<tour id>.vtt` (WebVTT, a Blob made in the page) matching a screen recording of
