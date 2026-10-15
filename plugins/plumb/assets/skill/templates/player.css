@@ -130,6 +130,9 @@ body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
   box-shadow: var(--pl-chrome-shadow);
 }
 .pl-pill[hidden], .pl-pill [hidden] { display: none; }
+/* For a step whose target the panel would cover at the bottom of the window (a toast fixed to a bottom corner), the
+   dock or the pill moves to the top, below the shell's sticky bar (--pl-top, set by the player). */
+.pl-dock.pl-at-top, .pl-pill.pl-at-top { top: calc(var(--pl-top, 0px) + 8px); bottom: auto; }
 .pl-pill-title { min-width: 0; padding-left: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .pl-pill .pl-btn { flex: none; }
 .pl-dock .pl-title { margin: 0; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }

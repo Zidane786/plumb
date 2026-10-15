@@ -72,9 +72,16 @@ the frame holds those layers, so zoom works as always.
   the screen, and a redraw never undoes it. A
   `display: contents` element is pointed at through its first child that has a box.
 - **Long pages:** a step scrolls its element into the room between the top bar and the panel, at once (whatever
-  `scroll-behavior` the page sets). For an element taller than that room, its top edge and its topmost label come into
-  view together when they fit, else the topmost label; with no labels it scrolls only when none of it is in view.
-  Title cards stay pinned in the window.
+  `scroll-behavior` the page sets). Its labels come into view with it, also when the element already was (one in a
+  sticky sidebar, labels on the page header after a step lower down): the element and every label together when they
+  fit, else the element and its first label. For an element taller than that room, its top edge and its topmost label
+  come into view together when they fit, else the topmost label; with no labels it scrolls only when none of it is in
+  view. Title cards stay pinned in the window.
+- **Out of the way of the step:** an element fixed to the window (a toast in a bottom corner, in the app view) is never
+  scrolled to, since scrolling cannot move it (only its labels are brought in). When the panel, or its pill, would
+  cover a step's element at the bottom of the window, it moves to the top of the window for that step (below the top
+  bar) and the subtitle follows it; the next step puts it back at the bottom. So a tour can point at a standard
+  bottom-corner toast as it is.
 - **Room for the screen:** while a tour runs, the screens list and the "Why it looks like this" / Guide rail fold away,
   so the frame keeps the width the screens' desktop layout needs (their `@container plumb-frame (min-width: 48rem)`
   rules); they come back when the tour ends.

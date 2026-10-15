@@ -2752,6 +2752,10 @@ class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:  # shaped like every other refusal
         self.exit(2, f"error: {message}\nfix: {_script_command()} {USAGE}\n")
 
+    def refuse(self, message: str, fix: str) -> None:
+        """A refusal whose fix is one exact command rather than the usage line."""
+        self.exit(2, f"error: {message}\nfix: {fix}\n")
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     P.utf8_stdio()
@@ -2783,7 +2787,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.map or args.approve or args.synced:
             parser.error("--proposal builds the variants only; run --map, --approve or --synced on their own")
         if not _ID.match(args.proposal):
-            parser.error(f"--proposal takes the proposal's folder name (letters, digits, _ and -), got {args.proposal!r}")
+            # the name cleaned up into a folder name ("nav refresh" -> nav-refresh), or an example when nothing is left
+            fixed = re.sub(r"[^\w-]+", "-", args.proposal).strip("-") or "nav-refresh"
+            fixed = fixed if _ID.match(fixed) else "nav-refresh"
+            parser.refuse(f"--proposal takes the proposal's folder name (letters, digits, _ and -), got {args.proposal!r}",
+                          f"use a proposal name of letters, digits, _ and -, e.g. {_script_command()} --proposal {fixed}")
     skill_dir = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[1]
     project = Path(args.project) if args.project else None
     try:

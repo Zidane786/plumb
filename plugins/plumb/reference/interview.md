@@ -383,7 +383,9 @@ and must clean up their own files when it ends (and the folder, when it created 
   and your corrections. A note that says **"the look changes; ask the user"** (a variable keeps its role token because
   no token has the app's exact colours) goes inside the question on its own line, with both values (the app's today,
   the token's): offer keep the role token (the look changes as shown) · add a token with the app's colours (asked,
-  through the token set) · map it to another token you name. Ask once: move them into the tokens (Recommended: the app's utilities keep working and the
+  through the token set) · map it to another token you name. The same note on a `kind` token variable (the app sets
+  that token's own name to other colours, or another length, e.g. a radius): offer keep the token's value (the look
+  changes as shown) · set the token to the app's value (asked, through the token set). Ask once: move them into the tokens (Recommended: the app's utilities keep working and the
   audit can pass) · leave them for now (the audit fails until then). Only on yes: apply your corrections to the tokens
   file, then `build-tokens.py --overrides --apply && build-tokens.py && audit.py --json`. Files in each
   `project_variables` entry's `used_in` still read a removed variable: show them and, asked first, point them at the

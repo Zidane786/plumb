@@ -89,8 +89,12 @@
   runs, the screens list and the side rail fold away so screens keep their desktop layout. The panel, subtitle,
   cursor and labels always sit above a screen's own dialogs and toasts; hidden and off-canvas elements are never
   pointed at, and one scrolled away inside a table or list is scrolled into view; tall elements scroll so their first
-  label shows; title cards stay in the window; a hint or the end of play brings a hidden panel back for that moment;
-  the player wears the project's tokens (primary, surface, outline, fonts, radius, shadow) where it has them.
+  label shows; a step's labels come into view with its element (all of them when they fit, else the first), also when
+  the element already was (a sticky sidebar); an element fixed to the window (a bottom-corner toast) is never scrolled
+  to, and the panel (or its pill) moves to the top of the window, with the subtitle, for a step whose element it
+  would cover at the bottom; title cards stay in the window; a hint or the end of play brings a hidden panel back for
+  that moment; the player wears the project's tokens (primary, surface, outline, fonts, radius, shadow) where it has
+  them.
 - **A screen's fixed layers stay in its frame**: in `prototype.html` a `position: fixed` scrim, dialog or toast sits
   inside the screen's frame (as on a device of that width), never over the toolbar or the screens list; a state change
   that opens a dialog scrolls it into view.
@@ -193,9 +197,12 @@
   project's own `color.sidebar-<role>` / `color.on-sidebar-<role>` token when there is one (`accent` and `active` are
   synonyms) before the generic role; it tells you when a next/font variable is applied on `<body>` rather than on
   `<html>` (the font stack would be undefined on `:root`), read from the recorded `Routes:` (Next.js app router only;
-  no `Routes:`, no check); and a failing white-or-black (or near-white or near-black) text on its own fill (`on-X` on
-  `X`) gets two fixes with their ratios per theme, the fill stepped (same hue, text unchanged) first, then the text,
-  in `--contrast` and the audit's `contrast` fix.
+  no `Routes:`, no check); a variable named after a token whose value in the app differs from the token's (its
+  colours, or a length such as `--radius-md` worked out from the app's `--radius`) gets a "the look changes" note
+  with both values, so the skill asks before the token takes over; and a failing white-or-black (or near-white or
+  near-black) text on its own fill (`on-X` on `X`) gets two fixes with their ratios per theme, the fill stepped (same
+  hue, text unchanged) first, then the text, in `--contrast` and the audit's `contrast` fix. `build-prototype.py
+  --proposal` with a name that is not a folder name answers with one exact command.
 - **`Allowed raw values:` where your primitives are**: in `PLUMB.md` it defaults to the folder your UI primitives
   really live in (for example `web/src/components/ui/**` for a UI package in `web/`), read from the package's
   `components.json` and `tsconfig`. Your own answer wins, and `scaffold.py --verify` warns (with a fix) when an

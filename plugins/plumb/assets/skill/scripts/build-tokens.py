@@ -2131,6 +2131,24 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
             values.setdefault(mode, text[d.start(1):d.end(1)].strip())
         return src, decls, values
 
+    def app_px(value: str) -> Optional[float]:
+        """A length the app sets, in px: 6px / 0.5rem, var(--x), or calc(var(--x) ± Npx) with --x set outside @theme."""
+        calc = _CALC_RADIUS.match(value)
+        base_var = (calc.group(1) or calc.group(2)) if calc else None
+        base = None
+        if base_var:
+            for d in re.finditer(r"(?<![\w-])" + re.escape(base_var) + r"\s*:\s*([^;{}]*);?", code):
+                if not in_theme(d.start()):
+                    base = _px(text[d.start(1):d.end(1)])
+                    break
+        if base is None and _px(value) is not None:
+            base, calc = _px(value), None
+        if base is None:
+            return None
+        px = base if not (calc and calc.group(3)) else (
+            base + float(calc.group(4)) if calc.group(3) == "+" else base - float(calc.group(4)))
+        return max(px, 0)
+
     # The app's colours, by name, so each role is checked against them (a role whose token has other colours would
     # change the app's look) and a sidebar-<x> name follows what <x> becomes.
     app: Dict[str, Optional[Tuple[tuple, tuple]]] = {}
@@ -2226,6 +2244,20 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                     note = (f"line {line}: the app loads its font through var({src}), but {token} is {first!r}: "
                             f"ask the user which font to keep; to keep the app's, put var({src}) first in {token} "
                             f"(/plumb:update)")
+            # the line goes and the token's value takes over: when the app's value is another, the look changes
+            elif ttype == "color":
+                mine, theirs = _app_colours(values, value), _token_colours(doc, token)
+                if mine is not None and theirs is not None and not (
+                        _same_colour(mine[0], theirs[0]) and _same_colour(mine[1], theirs[1])):
+                    notes.append(f"line {line}: {name} is {{{token}}}, whose colours differ from the app's "
+                                 f"({_show(mine)} today, {_show(theirs)} in the tokens): the look changes; ask the "
+                                 f"user, or set {token} to the app's colours with /plumb:update")
+            elif ttype == "dimension":
+                mine_px, their_px = app_px(value), P._px(P.resolve(doc, token))
+                if mine_px is not None and their_px is not None and abs(mine_px - their_px) > 0.01:
+                    notes.append(f"line {line}: {name} is {{{token}}}, whose size differs from the app's "
+                                 f"({num(mine_px)}px today, {num(their_px)}px in the tokens): the look changes; ask "
+                                 f"the user, or set {token} to {num(mine_px)}px with /plumb:update")
         else:
             kind, token = "new-name", f"{group}.{rest}"
             if ns == "color" and rest:
@@ -2249,20 +2281,9 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
                     except PlumbError:
                         change = None
             elif ns == "radius" and rest:
-                calc = _CALC_RADIUS.match(value)
-                base_var = (calc.group(1) or calc.group(2)) if calc else None
-                base = None
-                if base_var:
-                    for d in re.finditer(r"(?<![\w-])" + re.escape(base_var) + r"\s*:\s*([^;{}]*);?", code):
-                        if not in_theme(d.start()):
-                            base = _px(text[d.start(1):d.end(1)])
-                            break
-                if base is None and _px(value) is not None:
-                    base, calc = _px(value), None
-                if base is not None:
-                    px = base if not (calc and calc.group(3)) else (
-                        base + float(calc.group(4)) if calc.group(3) == "+" else base - float(calc.group(4)))
-                    change = {"add": token, "$value": f"{num(max(px, 0))}px"}
+                px = app_px(value)
+                if px is not None:
+                    change = {"add": token, "$value": f"{num(px)}px"}
             elif ns == "font" and rest:
                 if src and not decls:
                     change = {"add": token, "$value": [f"var({src})"] + _font_stack(rest)}
