@@ -1110,10 +1110,17 @@ Three checks, in this order:
    value) must name no guarded path by the guard's own rule: a guarded file whether it exists yet or not (a theme or
    tour not built yet, anything under the plugin), a folder that holds one, or a parent of one (`docs`).
 
-   A write or removal target the reader can't work out is refused outright when it is built from a guarded path: its
-   text (`$( … )`, backticks, `${…}`), the value of a variable it uses, or the words a loop variable takes (`for f in
-   docs/design/*.html; do sed -i … "$f"; done`, `$(ls …)`, `ls … | while read f`; an indirect `${!N}` or a `read`
-   from anywhere else is checked against the whole command) names a guarded file or a guarded folder (the docs folder,
+   Loop variables are followed: `for VAR in WORDS` (and `select`) takes each word, resolved like a target (variables,
+   `$PWD`, `$(pwd)`, `~`, braces, a glob by the files it matches, the paths a `$(ls …)` / `$(find …)` prints), and
+   `ls … | while read VAR` / `find … | while read VAR` take what the producer prints. Each value is put into each
+   target that uses the variable and checked as a written-out path, so `for f in docs/design/*.html; do sed -i …
+   "$f"; done` and `for p in screens specimen; do sed -i … "docs/design/$p.html"; done` are refused, while `for f in
+   app/*.tsx; do sed -i … "$f"; done` and a loop that copies guarded files out to `/tmp` are allowed.
+
+   A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`, a loop with more than 200 values
+   to try, a `read` from anywhere else, an indirect `${!N}`) is refused outright when it is built from a guarded path:
+   one of its words, the value of a variable it uses, a word inside its `$( … )` (or, for the last three, any word
+   of the command) names a guarded file, a file a glob there can match, or a folder Plumb owns whole (the docs folder,
    the design-system skill, its `scripts/` or `templates/`) by its full path. A bare file name (`README.md`,
    `globals.css`) or `.` is not enough: `echo x > "$(mktemp -d)/README.md"` is allowed.
 
@@ -1137,7 +1144,9 @@ Three checks, in this order:
    - script files written before the command, `xargs`, `find -exec` on the files found, `patch`, `tar -x`, `unzip`,
      `prettier --write`, editors like `ed`, and commands run through other tools;
    - the project's own git hooks (`git commit` runs them);
-   - a computed target whose text names no guarded path (`> "$(cat target.txt)"`);
+   - a computed target whose text names no guarded path in full (`> "$(cat target.txt)"`), including one built from a
+     bare folder name or a prefix (`rm -rf "$(echo docs)"`, `> "${ROOT:-.}/docs/design/screens.html"`,
+     `> "$(realpath docs)/design/screens.html"`);
    - a write or removal called through another name (`f = os.remove`, `print = os.remove`, `getattr(os, 'remove')`,
      `const u = fs.unlinkSync`);
    - a shell text written to a file and run later through a function, `alias`, `trap`, `BASH_ENV` / `ENV` /

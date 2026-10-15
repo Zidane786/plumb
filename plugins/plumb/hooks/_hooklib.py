@@ -56,6 +56,7 @@ import fnmatch
 import glob
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import re
@@ -1162,9 +1163,11 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 # xargs, a script run, a variable or $( ) it cannot resolve in a target or a cd, code piped from a file, an f-string,
 # nesting deeper than it reads, too many globbed paths, a parse error, or the time budget. Brackets nested past
 # _MAX_NESTING are not read at all, and pre_edit refuses such a command (and one the reader crashed on) when it names
-# a guarded path. A write target it cannot work out ($( ), backticks, ${…}, a for / read loop variable) is kept in
-# eff.computed with the text it is built from (variable values, the words a loop variable takes; the whole command
-# for ${!N} or a read from an unknown source), and pre_edit refuses it when that text names a guarded path in full.
+# a guarded path. A for / select / while-read loop variable takes its resolved words (_bind_loop), and each value is
+# tried in the targets that use it (ShellEffects._add, up to _MAX_COMBINATIONS). A write target it cannot work out
+# ($( ), backticks, ${…}) is kept in eff.computed as the separate words it is built from (variable values, the words
+# inside its substitutions; the whole command's words for ${!N}, an unknown read or too many loop values), and
+# pre_edit refuses it when one of those words names a guarded path in full.
 #
 # A small lexer (quotes, escapes, here-documents, $( ), backticks, process substitution, subshells, comments, the
 # operators) splits the command into simple commands. Their write targets: a redirect (>, >>, 1>, 2>, &>, >|, <>),
@@ -1636,15 +1639,8 @@ class ShellEffects:
             w = w.replace("\\", "/")
         w = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", w))
         if strict and ("$" in w or "`" in w):
-            if target and len(self.computed) < _MAX_TARGETS:
-                used: List[str] = []
-                for m in re.finditer(r"\$\{?#?(!?)([A-Za-z_]\w*)", word):
-                    name = m.group(2)
-                    used += [scope.vars[name]] if name in scope.vars else []
-                    used += scope.loops.get(name, [])
-                    if m.group(1) or scope.loops.get(name) == [_ANY]:  # ${!N}, read from an unknown source
-                        used.append(self.command)
-                self.computed.append((" ".join([word, w] + used), scope.bases))
+            if target:
+                self.compute(word, w, scope)
             self.doubt("a variable or a command the reader cannot resolve in a path")
         out: List[str] = []
         for x in (_braces(w) if strict else [w]):
@@ -1658,7 +1654,47 @@ class ShellEffects:
                     out += [os.path.normpath(p) for p in matches[:_MAX_GLOB]]
         return out
 
-    def _add(self, kind: int, word: str, scope: _Scope) -> List[str]:
+    def compute(self, word: str, w: str, scope: _Scope, whole: bool = False) -> None:
+        """Keep a target the reader cannot work out, as the separate words it is built from (never joined and split
+        again, so a path with a space stays whole): the word, the paths inside its $( ) / backticks, the values of the
+        variables it uses (and their $( ) words); the whole command's words for ${!N}, a read from an unknown source or
+        a loop with more values than the reader tries."""
+        if len(self.computed) >= _MAX_TARGETS:
+            return
+        words = [word, w] + _inner_words(word) + _inner_words(w)
+        for m in re.finditer(r"\$\{?#?(!?)([A-Za-z_]\w*)", word):
+            value = scope.vars.get(m.group(2))
+            if value is not None:
+                words += [value] + _inner_words(value)
+            whole = whole or bool(m.group(1)) or scope.loops.get(m.group(2)) == [_ANY]
+        if whole:
+            words += _text_words(self.command)
+        self.computed.append((words, scope.bases))
+
+    def _add(self, kind: int, word: str, scope: _Scope, loops: bool = True) -> List[str]:
+        if loops and kind < 3 and scope.loops:  # a loop variable: try each value it takes (as the shell would)
+            names = [n for n in dict.fromkeys(m.group(1) or m.group(2) for m in
+                                              re.finditer(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)", word))
+                     if n in scope.loops]
+            if names:
+                if any(scope.loops[n] == [_ANY] for n in names):
+                    self.compute(word, word, scope, whole=True)
+                    self.doubt("a loop variable whose values the reader does not know")
+                    return []
+                count = 1
+                for n in names:
+                    count *= max(1, len(scope.loops[n]))
+                if count > _MAX_COMBINATIONS:
+                    self.compute(word, word, scope, whole=True)
+                    self.doubt("a loop with more values than the reader tries")
+                    return []
+                found: List[str] = []
+                for combo in itertools.product(*(scope.loops[n] or [""] for n in names)):
+                    value = word
+                    for n, v in zip(names, combo):
+                        value = re.sub(r"\$\{" + n + r"\}|\$" + n + r"(?![\w])", lambda _m, v=v: v, value)
+                    found += self._add(kind, value, scope, loops=False)
+                return found
         lst = (self.writes, self.removals, self.folder_writes, self.code_writes)[kind]
         seen = self._seen[kind]
         found = self._paths(word, scope, True, kind < 3)
@@ -2411,43 +2447,140 @@ def _assign(words: List[str], scope: _Scope, eff: ShellEffects) -> bool:
     return True
 
 
-_ANY = "\x00any"  # a read variable whose source the reader does not know
+_ANY = "\x00any"  # a loop / read variable whose values the reader does not know
+_MAX_COMBINATIONS = 200  # loop values tried in one target; past it the target is checked against the whole command
 
 
 def _bind_loop(words: List[str], cmd: _Simple, before: Optional[_Simple], scope: _Scope, eff: ShellEffects) -> None:
-    """`for VAR in WORDS`: VAR may take each word (a glob expanded in the folder, the paths named inside a $( ) such as
-    $(ls docs/*.html)); `PRODUCER | while read VAR`: the producer's words; a read with any other source: unknown (its
-    target is then checked against the whole command)."""
-    if len(words) >= 2 and words[0] == "for" and re.fullmatch(r"[A-Za-z_]\w*", words[1]):
-        values = words[3:] if words[2:3] == ["in"] else []
-        scope.loops[words[1]] = _loop_words(values, scope)
+    """`for VAR in WORDS` (and `select`): VAR takes each word, resolved like a target (variables, $PWD, ~, braces, a
+    glob by its matches, the paths inside $(ls …) / $(find …)); `PRODUCER | while read VAR`: the producer's words; a
+    loop over anything else, or a read with any other source, is unknown (its targets are checked against the whole
+    command)."""
+    if len(words) >= 2 and words[0] in ("for", "select") and re.fullmatch(r"[A-Za-z_]\w*", words[1]):
+        scope.loops[words[1]] = _loop_words(words[3:], scope) if words[2:3] == ["in"] else [_ANY]
     elif words and _command_name(words[0]) == "read":
         names = [w for w in words[1:] if re.fullmatch(r"[A-Za-z_]\w*", w)]
+        source = [_ANY]
         if cmd.piped and before is not None:
-            source = _loop_words(before.words[_command_start(before.words, eff) + 1:] + list(before.stdin), scope)
-        else:
-            source = [_ANY]
+            prev = before.words[_command_start(before.words, eff):]
+            source = _producer_words(prev, list(before.stdin), scope)
         for name in names:
             scope.loops[name] = source
 
 
-def _loop_words(values: List[str], scope: _Scope) -> List[str]:
+def _producer_words(cmd_words: List[str], stdin: List[str], scope: _Scope) -> List[str]:
+    """The words a command prints, when the reader can tell: ls / echo / printf of its arguments, find's files, cat of a
+    here-document; else unknown."""
+    if not cmd_words:
+        return [_ANY]
+    name = _command_name(cmd_words[0])
+    args = [a for a in cmd_words[1:] if not a.startswith("-")]
+    if name in ("ls", "echo", "printf"):
+        return _loop_words(args, scope)
+    if name == "find":
+        out: List[str] = []
+        for a in cmd_words[1:]:
+            if a.startswith(("-", "(", "!")):
+                break
+            out += _loop_words([a], scope, below=True)
+        return out or [_ANY]
+    if name == "cat" and stdin and len(cmd_words) == 1:
+        return _loop_words([ln for text in stdin for ln in text.split("\n") if ln.strip()], scope)
+    return [_ANY]
+
+
+def _loop_words(values: List[str], scope: _Scope, below: bool = False) -> List[str]:
+    """Resolve a loop's words: $(pwd) / $PWD, variables and ~ expanded, braces expanded, a glob replaced by what it
+    matches (left as it is when it matches nothing, as the shell does), a $( ) by the words it prints when the reader
+    can tell. below: a folder also takes the files under it (find). Unknown when a word cannot be resolved."""
     out: List[str] = []
     for v in values:
-        inner = re.findall(r"\$\((.*?)\)|`(.*?)`", v, re.S)
-        parts = [x for pair in inner for x in pair if x] or [v]
-        for part in parts:
-            for word in part.split() if part is not v else [v]:
-                if word.startswith("-"):
-                    continue
-                out.append(word)
-                if re.search(r"[*?\[]", word):
-                    for base in scope.bases:
-                        full = word if os.path.isabs(word) else os.path.join(base, word)
-                        out += glob.glob(full)[:_MAX_GLOB]
+        inner = _inner_texts(v)
+        if inner and not re.fullmatch(r"(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`)(?:[/\\].*)?", v, re.S):
+            for text in inner:
+                for event in _commands(_lex(text)):
+                    if event[0] == "cmd":
+                        words = event[1].words[_command_start(event[1].words, ShellEffects(None, float("inf"))):]
+                        out += _producer_words(words, list(event[1].stdin), scope)
+            continue
+        w = re.sub(r"^(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`|\$\{PWD\}|\$PWD)", lambda _m: scope.bases[0], v)
+        w = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", scope.expand(w)))
+        if "$" in w or "`" in w:
+            return [_ANY]
+        for x in _braces(w):
+            if re.search(r"[*?\[]", x):
+                matched = False
+                for base in scope.bases:
+                    for hit in sorted(glob.glob(x if os.path.isabs(x) else os.path.join(base, x)))[:_MAX_GLOB]:
+                        matched = True
+                        out.append(hit if os.path.isabs(x) else os.path.relpath(hit, base))
+                if not matched:
+                    out.append(x)
+            else:
+                out.append(x)
+            if below:
+                for base in scope.bases:
+                    folder = x if os.path.isabs(x) else os.path.join(base, x)
+                    if os.path.isdir(folder):
+                        for hit in sorted(glob.glob(os.path.join(folder, "**", "*"), recursive=True))[:_MAX_GLOB]:
+                            out.append(hit if os.path.isabs(x) else os.path.relpath(hit, base))
         if len(out) > _MAX_TARGETS:
             break
+    if _ANY in out:
+        return [_ANY]
     return out[:_MAX_TARGETS]
+
+
+def _inner_texts(word: str) -> List[str]:
+    """The texts inside a word's $( … ) and backticks (balanced parentheses), outermost first."""
+    out: List[str] = []
+    i = 0
+    while i < len(word):
+        if word.startswith("$(", i) and not word.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < len(word) and depth:
+                depth += {"(": 1, ")": -1}.get(word[j], 0)
+                j += 1
+            out.append(word[i + 2:j - 1] if depth == 0 else word[i + 2:])
+            i = j
+        elif word[i] == "`":
+            j = word.find("`", i + 1)
+            out.append(word[i + 1:j] if j > 0 else word[i + 1:])
+            i = j + 1 if j > 0 else len(word)
+        else:
+            i += 1
+    return out
+
+
+def _inner_words(word: str, depth: int = 0) -> List[str]:
+    """The words of the commands inside a word's $( … ) / backticks, quoting respected (a path with a space stays
+    one word)."""
+    out: List[str] = []
+    for text in _inner_texts(word):
+        out += _text_words(text, depth + 1)
+    return out
+
+
+def _text_words(text: str, depth: int = 0) -> List[str]:
+    """Every word of a shell text (its commands' words, redirect targets, here-document lines, and the words inside its
+    substitutions), quoting respected."""
+    out: List[str] = []
+    try:
+        events = _commands(_lex(text))
+    except Exception:  # noqa: BLE001 - a text the lexer cannot read: its plain words
+        return text.split()
+    for event in events:
+        if event[0] != "cmd":
+            continue
+        c = event[1]
+        out += c.words + c.redirs + [ln.strip() for t in c.stdin for ln in t.split("\n") if ln.strip()]
+        out += [w.split("=", 1)[1] for w in c.words if re.match(r"^[A-Za-z_]\w*=", w)]
+        if depth < 3:
+            for sub in c.subs:
+                out += _text_words(sub, depth + 1)
+        if len(out) > 20000:
+            break
+    return out
 
 
 def _script(text: str, scope: _Scope, eff: ShellEffects, depth: int = 0) -> None:

@@ -789,6 +789,13 @@ COMPUTED_ALLOW = [
     "cat a > \"$(realpath .)/notes/out.txt\"",
     "for f in notes/*.md; do sed -i 's/a/b/' \"$f\"; done",  # a loop over files that are not guarded
     "ls notes/*.md | while read f; do cp \"$f\" /tmp/; rm \"$f\"; done",
+    # N1: a loop over the app's own files, in the folder of a file Plumb writes a block into (app/globals.css)
+    "for f in app/*.tsx; do sed -i 's/a/b/' \"$f\"; done",
+    "ls app/*.tsx | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    # N3: each loop value is tried in the target
+    "for p in a b; do sed -i 's/a/b/' \"notes/$p.md\"; done",
+    # each value is a written-out target: copying guarded files out to a folder that is not guarded
+    "for f in docs/design/*.html; do cp \"$f\" /tmp/plumb-bak/; done",
     "D=$(mktemp -d); echo x > \"$D/notes.txt\"",
     "cp /tmp/a \"`mktemp`\"",
 ]
@@ -807,7 +814,43 @@ COMPUTED_REFUSE += [
     "ls docs/design/*.html | while read f; do sed -i 's/a/b/' \"$f\"; done",
     f"while read f; do rm \"$f\"; done <<'EOF'\n{GEN}\nEOF",
     f"G={GEN}; N=G; echo x > \"${{!N}}\"",
+    "for f in app/*.css; do sed -i 's/a/b/' \"$f\"; done",  # N1: decided by what the glob matches
+    "cd docs/design && for f in *.html; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in docs/*/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    "D=docs/design; for f in $D/*.html; do sed -i 's/a/b/' \"$f\"; done",  # N3: loop words resolved like targets
+    "for f in \"$PWD\"/docs/design/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in \"$(pwd)\"/docs/design/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in screens.html specimen.html; do sed -i 's/a/b/' docs/design/$f; done",  # N3: values put in the target
+    "for p in screens specimen; do sed -i 's/a/b/' \"docs/design/$p.html\"; done",
+    "select f in docs/design/*.html; do rm \"$f\"; break; done",
+    "find docs/design -name '*.html' | while read f; do rm \"$f\"; done",
 ]
+
+
+# N2: absolute paths with a space (and non-ASCII letters) in the project folder stay whole.
+ABSOLUTE_REFUSE = [
+    "cd docs/design && for f in *.html; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in docs/*/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in \"{abs}\"/docs/design/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    "cat a > \"$(dirname '{abs}/docs/design/screens.html')/screens.html\"",
+    "for f in $(ls \"{abs}\"/docs/design/*.html); do rm \"$f\"; done",
+]
+
+
+@pytest.mark.parametrize("name", ["My Proj", "Café Ünïcode"])
+@pytest.mark.parametrize("form", ABSOLUTE_REFUSE)
+def test_loop_and_computed_targets_with_a_space_in_the_project_path(tmp_path, monkeypatch, name, form):
+    proj = make_project(tmp_path, name)
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(proj.parent))
+    monkeypatch.setenv("USERPROFILE", str(proj.parent))
+    d = Decider(proj)
+    command = form.format(abs=proj)
+    assert " " in str(proj) or "é" in str(proj)
+    reason = d.pe.shell_refusal(d.project, command, str(proj), str(proj))
+    assert reason, command
+    actionable(reason)
 
 
 @pytest.mark.parametrize("command", COMPUTED_REFUSE)

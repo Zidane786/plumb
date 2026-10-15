@@ -59,6 +59,7 @@ stderr line. Standard library only.
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 import sys
@@ -309,6 +310,7 @@ def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: 
 
 SHELL_HUGE = 64 * 1024  # characters: a longer command is not read; it is refused when it names a guarded path
 NAMES_BUDGET = 3.0  # seconds to look for guarded paths in a command the reader could not read; past it: refused
+_DOCS_PAGES = ("specimen.html", "prototype.html", "app.html", "screens.html", "prototype/screens.json")
 _FIXED_NAMES = ("specimen.html", "prototype.html", "app.html", "screens.html", "screens.json", "build-tokens.py",
                 "build-prototype.py")
 _WORD_SPLIT = re.compile(r"[\s'\"`=,;()<>|&{}\[\]]+")
@@ -326,13 +328,16 @@ class _Guarded:
         self.names = sorted(set(_FIXED_NAMES) | {os.path.basename(f) for f in self.files if os.path.isfile(f)})
         self.seen: dict = {}
         root = os.path.realpath(proj.root_s)
-        folders = {os.path.dirname(f) for f in self.files if os.path.isfile(f)}
-        folders.add(os.path.realpath(os.path.join(proj.root_s, proj.docs_rel)))
+        # the folders Plumb owns whole: the docs folder (its generated pages), the design-system skill, its scripts/
+        # and templates/ (never the project root or a folder above it, never the folder of a project file Plumb
+        # writes a block into, such as app/ for app/globals.css)
+        folders = {os.path.realpath(os.path.join(proj.root_s, proj.docs_rel))}
         if proj.skill_dir is not None:
             skill = os.path.realpath(str(proj.skill_dir))
             folders |= {skill, os.path.join(skill, "scripts"), os.path.join(skill, "templates")}
-        # a guarded folder: one that holds guarded files itself (never the project root or a folder above it)
         self.folders = {f for f in folders if H.under(root, f) is None}
+        self.patterns = [f for f in self.files if os.path.isfile(f)] + [
+            os.path.realpath(os.path.join(proj.root_s, proj.docs_rel, n)) for n in _DOCS_PAGES]
 
     def path(self, path: str) -> bool:
         try:
@@ -344,27 +349,38 @@ class _Guarded:
         except (OSError, ValueError):
             return True  # a path the system cannot even look up: not proved safe
 
-    def target(self, text: str, bases, deadline: float) -> Optional[str]:
-        """For a target the reader could not work out: the first guarded file or guarded folder that a word of text
-        names by its full path (from one of bases, or absolute; a glob by its folder), shown from the project root, or
-        None. A bare file name, `.` and the project root never count."""
-        for word in dict.fromkeys(w for w in _WORD_SPLIT.split(text) if w and not w.startswith(("$", "-"))):
+    def glob_hit(self, pattern: str) -> Optional[str]:
+        """A guarded file a glob pattern (an absolute path) can match: an existing one, a generated page, or a file not
+        built yet that guard() would protect (the pattern with its wildcards filled in)."""
+        hit = next((f for f in self.patterns if fnmatch.fnmatchcase(f, pattern)), None)
+        if hit is None:
+            sample = re.sub(r"\[[^\]]*\]", "x", pattern).replace("*", "x").replace("?", "x")
+            hit = sample if guard(self.proj, sample) else None
+        return hit
+
+    def target(self, words: List[str], bases, deadline: float) -> Optional[str]:
+        """For a target the reader could not work out: the first guarded file or guarded folder (one Plumb owns whole)
+        that one of its words names by its full path (from one of bases, or absolute; a glob by what it can match),
+        shown from the project root, or None. Each word is a path as it stands (never split again). A bare file name,
+        `.` and the project root never count."""
+        root = os.path.realpath(self.proj.root_s)
+        for word in dict.fromkeys(w for w in words if w and not w.startswith(("$", "-", "\x00"))):
             if time.monotonic() > deadline:
                 return "a path Plumb ran out of time to check"
             w = os.path.expanduser(word.replace("\\", "/") if os.sep == "/" else word).rstrip("/\\")
-            if not w or not re.search(r"[/\\]", w):
-                continue  # a bare name: only a full path counts
-            globbed = re.search(r"[*?\[]", w) is not None
+            if not w or not re.search(r"[/\\]", w) or "$" in w or "`" in w:
+                continue  # a bare name, or a word with a part still unknown: only a full path counts
             for base in bases:
-                full = os.path.normpath(w if os.path.isabs(w) else os.path.join(base, w))
-                candidates = [os.path.dirname(full)] if globbed else [full]
-                for c in candidates:
-                    try:
-                        real = os.path.realpath(c)
-                    except (OSError, ValueError):
-                        continue
-                    if real in self.folders or (not globbed and guard(self.proj, real)):
-                        return H.under(real, os.path.realpath(self.proj.root_s)) or real
+                try:
+                    real = os.path.realpath(os.path.normpath(w if os.path.isabs(w) else os.path.join(base, w)))
+                except (OSError, ValueError):
+                    continue
+                if re.search(r"[*?\[]", w):
+                    hit = self.glob_hit(real)
+                    if hit:
+                        return H.under(hit, root) or hit
+                elif real in self.folders or guard(self.proj, real):
+                    return H.under(real, root) or real
         return None
 
     def text(self, text: str, bases, deadline: float) -> Optional[str]:
@@ -409,7 +425,8 @@ def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str, rule: Optional[_Gu
 def _unread(proj: H.Project, command: str, base: str, cwd: str, rule: Optional[_Guarded] = None) -> Optional[str]:
     """For a command the reader could not read: the first of its words that names a guarded file or folder (or a
     parent of one) by the guard's rule, or None."""
-    return (rule or _Guarded(proj, cwd)).text(command, tuple(dict.fromkeys((base, cwd))), time.monotonic() + NAMES_BUDGET)
+    bases = tuple(dict.fromkeys((base, cwd)))
+    return (rule or _Guarded(proj, cwd)).text(command, bases, time.monotonic() + NAMES_BUDGET)
 
 
 def _unread_refusal(hit: str, why: str) -> str:
@@ -424,8 +441,8 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     data or reads (_proven). A command it does not read (over SHELL_HUGE, brackets nested past the reader's depth) or
     one the reader failed on (a crash, the recursion limit) is refused when any of its words names a guarded file or
     folder; a write or removal target it cannot work out is refused when it names a guarded path in full
-    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. A crash, a timeout and a command
-    too long to read are logged once, with the real outcome."""
+    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. A crash, a timeout
+    and a command too long to read are logged once, with the real outcome."""
     command = command.replace("\x00", "")  # a NUL byte never reaches a shell: read the rest
     if not H.WRITE_HINT.search(command):
         return None
@@ -447,11 +464,11 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
            or _shell_paths_refusal(proj, eff.folder_writes, True, cwd))
     if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one
         deadline = time.monotonic() + NAMES_BUDGET
-        named = next((n for n in (rule().target(text, bases, deadline) for text, bases in eff.computed) if n), None)
+        named = next((n for n in (rule().target(words, bases, deadline) for words, bases in eff.computed) if n), None)
         if named is not None:
-            why = (f"error: this shell command writes to a path Plumb cannot work out, and that path is built from "
-                   f"{named}, a path Plumb guards\nfix: write each target path out in full so Plumb can check it (and "
-                   f"change {named} the way Plumb's own message for it says)")
+            why = (f"error: this shell command writes to or removes a path Plumb cannot work out, and that path is "
+                   f"built from {named}, a path Plumb guards\nfix: write each target path out in full so Plumb can "
+                   f"check it (and change {named} the way Plumb's own message for it says)")
     hit = None
     if why is None and eff.trouble is not None and eff.trouble[1] in ("crash", "deep"):
         hit = _unread(proj, command, base, cwd, rule())
