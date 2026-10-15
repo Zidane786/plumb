@@ -1075,6 +1075,47 @@ def _create_with(path: Path, data: bytes) -> bool:
             pass
 
 
+# Every hook holds a short exclusive lock while it checks and appends to hooks.md, so hooks failing at the same moment
+# never lose or interleave a line (Windows emulates O_APPEND with a seek and then a write, which races between
+# processes). The operating system drops the lock when its holder ends: there is never a stale lock to clean up.
+LOG_LOCK_WAIT = 0.5  # seconds a hook waits for another hook's append; then its own line is left out
+_LOG_LOCK_AT = 1 << 30  # Windows locks a byte range: one byte far past any hooks.md (FEEDBACK_MAX_BYTES), never read
+
+
+def _lock_log(fd: int, wait: float = LOG_LOCK_WAIT) -> bool:
+    """Take hooks.md's exclusive lock on `fd` (msvcrt.locking on Windows, flock elsewhere), retrying for at most
+    `wait` seconds. False when another hook kept it that long (or the file system has no locks): log nothing."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                os.lseek(fd, _LOG_LOCK_AT, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except (OSError, ImportError):
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.005)
+
+
+def _unlock_log(fd: int) -> None:
+    """Let go of the lock _lock_log took (closing the file would too)."""
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, _LOG_LOCK_AT, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except (OSError, ImportError):
+        pass
+
+
 def log_failure(given: str, expected: str, category: str = "crash", exc: Optional[BaseException] = None,
                 exit_code: int = 0) -> None:
     """Append one line about a hook that failed open to ~/.plumb/feedback/hooks.md (Plumb's own mistakes, for Plumb's
@@ -1113,23 +1154,31 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
         now = time.localtime()
         day = time.strftime("%Y-%m-%d", now)
         path = folder / FEEDBACK_HOOKS
-        if os.path.lexists(str(path)):
-            st = os.lstat(str(path))
-            if not _ours(st, folder=False) or st.st_size >= FEEDBACK_MAX_BYTES:
-                return
-            text = read_private(path) or ""
-            if any(ln.split(" ", 3)[3:] == [rest] and (category == "timeout" or ln.startswith(f"- {day} "))
-                   for ln in text.splitlines()):
-                return  # said already (today; for a timeout, on this Plumb version)
         line = f"- {day} {time.strftime('%H:%M', now)} {rest}\n"
         if not os.path.lexists(str(path)) and _create_with(path, (FEEDBACK_HEADER + line).encode("utf-8")):
             return
+        if not _ours(os.lstat(str(path)), folder=False):
+            return
         flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
         fd = os.open(str(path), flags)
-        with os.fdopen(fd, "ab") as fh:
-            if not _ours(os.fstat(fh.fileno()), folder=False):
+        try:
+            if not _ours(os.fstat(fd), folder=False) or not _lock_log(fd):
                 return
-            fh.write(line.encode("utf-8"))
+            try:  # under the lock: the size and the lines are what the last hook left, and nobody writes meanwhile
+                if os.fstat(fd).st_size >= FEEDBACK_MAX_BYTES:
+                    return
+                text = read_private(path) or ""
+                if any(ln.split(" ", 3)[3:] == [rest] and (category == "timeout" or ln.startswith(f"- {day} "))
+                       for ln in text.splitlines()):
+                    return  # said already (today; for a timeout, on this Plumb version)
+                os.lseek(fd, 0, os.SEEK_END)
+                data = line.encode("utf-8")
+                while data:
+                    data = data[os.write(fd, data):]
+            finally:
+                _unlock_log(fd)
+        finally:
+            os.close(fd)
     except Exception:  # noqa: BLE001 - the log never fails a hook
         return
 

@@ -1248,7 +1248,9 @@ project, never committed, never sent anywhere.
   redacted: quoted literals become `'<redacted>'`, absolute paths outside the project keep only their base name, and
   token-like strings and secret values become `<redacted>`. It is private: `~/.plumb` and `feedback/` are kept 0700
   (your own folders with wider permissions are tightened, e.g. after a umask of 002) and `hooks.md` is 0600; nothing
-  is written through a symlink or into someone else's folder (see `SECURITY.md`). A problem with the log never blocks or fails a hook. Your
+  is written through a symlink or into someone else's folder (see `SECURITY.md`). Hooks failing at the same moment each
+  get a whole line (a short lock; a hook waits at most half a second for it, then leaves its line out). A problem with
+  the log never blocks or fails a hook. Your
   project's own broken files (a tokens file that is not JSON) are not Plumb mistakes and are not logged.
 - `handled.md`: the index `/plumb:feedback` keeps when you mark a group handled (`handled in <version>`).
 

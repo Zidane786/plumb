@@ -64,7 +64,9 @@ and write files in the project.
   session start and the hooks change them to 0700 (through a handle opened without following symlinks). If either
   folder is a symlink (or on Windows any reparse point), someone else's, or still writable by others, or `hooks.md` is
   a symlink, the hooks write nothing. A new `hooks.md` appears with its header already in it (a private temporary file
-  linked into place), so two hooks never write it twice. A problem with the log never fails or blocks a hook. Nothing
+  linked into place), so two hooks never write it twice, and each append holds a short exclusive lock (`flock`, on
+  Windows `msvcrt.locking`; at most half a second, then the line is left out), so hooks failing at once never lose or
+  interleave a line. A problem with the log never fails or blocks a hook. Nothing
   in it leaves the machine: `/plumb:feedback` reads it and drafts issue text that you post yourself, if you want to
   (projects named only by their shape).
 - **Windows launcher.** `hooks/run.cmd` sets `NoDefaultCurrentDirectoryInExePath`, so cmd.exe never runs a `py`,

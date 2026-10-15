@@ -182,6 +182,9 @@
   git-ignoring the pages and running the build in CI instead of `--check`.
 - A state name written with spaces around it (`data-state=" ready "`) now shows in prototype.html, app.html and
   every catalogue copy, as the build already read it.
+- Hooks failing at the same moment no longer lose or interleave lines in `~/.plumb/feedback/hooks.md` on Windows
+  (where appends from several processes are not atomic): each append holds a short exclusive lock, waits for it at
+  most half a second, and otherwise leaves its line out, so the log still never blocks a hook.
 
 ### Security
 
