@@ -56,7 +56,6 @@ import fnmatch
 import glob
 import hashlib
 import importlib.util
-import itertools
 import json
 import os
 import re
@@ -1163,11 +1162,11 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 # xargs, a script run, a variable or $( ) it cannot resolve in a target or a cd, code piped from a file, an f-string,
 # nesting deeper than it reads, too many globbed paths, a parse error, or the time budget. Brackets nested past
 # _MAX_NESTING are not read at all, and pre_edit refuses such a command (and one the reader crashed on) when it names
-# a guarded path. A for / select / while-read loop variable takes its resolved words (_bind_loop), and each value is
-# tried in the targets that use it (ShellEffects._add, up to _MAX_COMBINATIONS). A write target it cannot work out
+# a guarded path. A for / select / while-read loop variable keeps its source (_bind_loop: literals, globs, ls / find of
+# a folder), and a target that uses it goes to eff.loop_targets: pre_edit asks, against the guarded paths only, what
+# the source could yield and whether the target then names a guarded path. A write target it cannot work out
 # ($( ), backticks, ${…}) is kept in eff.computed as the separate words it is built from (variable values, the words
-# inside its substitutions; the whole command's words for ${!N}, an unknown read or too many loop values), and
-# pre_edit refuses it when one of those words names a guarded path in full.
+# inside its substitutions), and pre_edit refuses it when one of those words names a guarded path in full.
 #
 # A small lexer (quotes, escapes, here-documents, $( ), backticks, process substitution, subshells, comments, the
 # operators) splits the command into simple commands. Their write targets: a redirect (>, >>, 1>, 2>, &>, >|, <>),
@@ -1592,7 +1591,12 @@ class ShellEffects:
         # targets the reader cannot work out ($( ), backticks, ${…}): their text (with the values of the variables
         # they use) and the folders they were in; pre_edit refuses one that names a guarded path
         self.computed: List[Tuple[str, Tuple[str, ...]]] = []
-        self.command = ""  # the whole command (an indirect ${!N} target is checked against all of it)
+        self.command = ""  # the whole command (a loop target with an unknown source is checked against all of it)
+        # targets that use a loop variable (or ${!N}): (kind, the word, {variable: its source items}, the scope);
+        # pre_edit asks of each whether the variable could hold a guarded path, or a name the target turns into one
+        self.loop_targets: List[Tuple[int, str, Dict[str, List[Tuple]], "_Scope"]] = []
+        self._loop_seen: set = set()
+        self._words: Optional[List[str]] = None
         self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
     def doubt(self, why: str) -> None:
@@ -1654,47 +1658,46 @@ class ShellEffects:
                     out += [os.path.normpath(p) for p in matches[:_MAX_GLOB]]
         return out
 
-    def compute(self, word: str, w: str, scope: _Scope, whole: bool = False) -> None:
+    def compute(self, word: str, w: str, scope: _Scope) -> None:
         """Keep a target the reader cannot work out, as the separate words it is built from (never joined and split
-        again, so a path with a space stays whole): the word, the paths inside its $( ) / backticks, the values of the
-        variables it uses (and their $( ) words); the whole command's words for ${!N}, a read from an unknown source or
-        a loop with more values than the reader tries."""
+        again, so a path with a space stays whole): the word, the words inside its $( ) / backticks, and the values of
+        the variables it uses (and their $( ) words)."""
         if len(self.computed) >= _MAX_TARGETS:
             return
         words = [word, w] + _inner_words(word) + _inner_words(w)
-        for m in re.finditer(r"\$\{?#?(!?)([A-Za-z_]\w*)", word):
-            value = scope.vars.get(m.group(2))
+        for m in re.finditer(r"\$\{?#?([A-Za-z_]\w*)", word):
+            value = scope.vars.get(m.group(1))
             if value is not None:
                 words += [value] + _inner_words(value)
-            whole = whole or bool(m.group(1)) or scope.loops.get(m.group(2)) == [_ANY]
-        if whole:
-            words += _text_words(self.command)
         self.computed.append((words, scope.bases))
 
-    def _add(self, kind: int, word: str, scope: _Scope, loops: bool = True) -> List[str]:
-        if loops and kind < 3 and scope.loops:  # a loop variable: try each value it takes (as the shell would)
-            names = [n for n in dict.fromkeys(m.group(1) or m.group(2) for m in
-                                              re.finditer(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)", word))
+    def command_words(self) -> List[str]:
+        """Every word of the whole command, lexed once."""
+        if self._words is None:
+            self._words = _text_words(self.command)
+        return self._words
+
+    def _add(self, kind: int, word: str, scope: _Scope) -> List[str]:
+        if kind < 3 and "$" in word:  # a loop variable or ${!N}: pre_edit decides it against the guarded paths
+            names = [n for n in dict.fromkeys(m.group(1) or m.group(2) for m in _VAR_USE.finditer(word))
                      if n in scope.loops]
-            if names:
-                if any(scope.loops[n] == [_ANY] for n in names):
-                    self.compute(word, word, scope, whole=True)
-                    self.doubt("a loop variable whose values the reader does not know")
-                    return []
-                count = 1
-                for n in names:
-                    count *= max(1, len(scope.loops[n]))
-                if count > _MAX_COMBINATIONS:
-                    self.compute(word, word, scope, whole=True)
-                    self.doubt("a loop with more values than the reader tries")
-                    return []
-                found: List[str] = []
-                for combo in itertools.product(*(scope.loops[n] or [""] for n in names)):
-                    value = word
-                    for n, v in zip(names, combo):
-                        value = re.sub(r"\$\{" + n + r"\}|\$" + n + r"(?![\w])", lambda _m, v=v: v, value)
-                    found += self._add(kind, value, scope, loops=False)
-                return found
+            if names or "${!" in word:
+                self.tick()
+                self.doubt("a target that uses a loop variable")
+                sources = {n: scope.loops[n] for n in names}
+                if "${!" in word:
+                    sources["!"] = [_ANY]
+                key = (kind, word, tuple(sorted((n, id(v)) for n, v in sources.items())), scope.bases)
+                if key not in self._loop_seen:
+                    if len(self.loop_targets) >= _MAX_TARGETS:
+                        self.doubt("more paths than the reader checks")
+                        sources = {"!": [_ANY]}
+                        key = (kind, "", (), scope.bases)
+                        if key in self._loop_seen:
+                            return []
+                    self._loop_seen.add(key)
+                    self.loop_targets.append((kind, word, sources, scope.copy()))
+                return []
         lst = (self.writes, self.removals, self.folder_writes, self.code_writes)[kind]
         seen = self._seen[kind]
         found = self._paths(word, scope, True, kind < 3)
@@ -2075,6 +2078,13 @@ def _cd(words: List[str], scope: _Scope, eff: ShellEffects) -> bool:
     if target == "-":
         eff.doubt("cd - goes back to a folder the reader does not track")
         return True
+    names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
+    if names and all(n in scope.loops for n in names) and len(names) == 1 and \
+            all(i[0] == "lit" for i in scope.loops[names[0]]) and scope.loops[names[0]]:
+        folders = [p for i in scope.loops[names[0]] for p in substitute(target, {names[0]: i[1]}, scope, eff.root)]
+        if folders:  # for d in docs/design; do cd "$d": the loop's folders
+            scope.bases = tuple(dict.fromkeys(folders))
+            return True
     expanded = scope.expand(target)
     if ("$" in expanded or "`" in expanded) and not (_HERE_PREFIX.match(expanded) or _ROOT_PREFIX.match(expanded)) \
             and not _HOME_VAR.match(expanded):
@@ -2442,93 +2452,142 @@ def _assign(words: List[str], scope: _Scope, eff: ShellEffects) -> bool:
     if not rest or not all(pairs):
         return False
     for m in pairs:
+        copy = re.fullmatch(r"\$\{?([A-Za-z_]\w*)\}?", m.group(2))
+        if copy and copy.group(1) in scope.loops:  # g="$f": g takes f's values
+            scope.loops[m.group(1)] = scope.loops[copy.group(1)]
+            continue
+        scope.loops.pop(m.group(1), None)  # a plain assignment ends a loop binding
         scope.vars[m.group(1)] = scope.expand(m.group(2))
         eff.note(scope, m.group(2))
     return True
 
 
-_ANY = "\x00any"  # a loop / read variable whose values the reader does not know
-_MAX_COMBINATIONS = 200  # loop values tried in one target; past it the target is checked against the whole command
+_ANY = ("any", "", ())  # a loop / read variable whose values the reader does not know
+# a use of a variable in a word: $NAME, ${NAME}, ${NAME%…}, ${NAME:-…}, ${#NAME} …
+_VAR_USE = re.compile(r"\$\{[#!]?([A-Za-z_]\w*)[^}]*\}|\$([A-Za-z_]\w*)")
+_FIND_KNOWN = ("-name", "-iname", "-type", "-maxdepth", "-mindepth", "-print", "-print0", "-follow", "-xdev",
+               "-mount")
 
 
 def _bind_loop(words: List[str], cmd: _Simple, before: Optional[_Simple], scope: _Scope, eff: ShellEffects) -> None:
-    """`for VAR in WORDS` (and `select`): VAR takes each word, resolved like a target (variables, $PWD, ~, braces, a
-    glob by its matches, the paths inside $(ls …) / $(find …)); `PRODUCER | while read VAR`: the producer's words; a
-    loop over anything else, or a read with any other source, is unknown (its targets are checked against the whole
-    command)."""
+    """`for VAR in WORDS` and `select`: VAR's source items (a literal, a glob, the files `ls DIR` / `find DIR …` print);
+    `PRODUCER | while read VAR`: the producer's items; a source the reader does not model is unknown. pre_edit later
+    asks, against the guarded paths only (never by listing the file system), what each item could yield."""
     if len(words) >= 2 and words[0] in ("for", "select") and re.fullmatch(r"[A-Za-z_]\w*", words[1]):
-        scope.loops[words[1]] = _loop_words(words[3:], scope) if words[2:3] == ["in"] else [_ANY]
+        scope.loops[words[1]] = _loop_items(words[3:], scope, eff) if words[2:3] == ["in"] else [_ANY]
     elif words and _command_name(words[0]) == "read":
         names = [w for w in words[1:] if re.fullmatch(r"[A-Za-z_]\w*", w)]
         source = [_ANY]
         if cmd.piped and before is not None:
-            prev = before.words[_command_start(before.words, eff):]
-            source = _producer_words(prev, list(before.stdin), scope)
+            source = _producer_items(before.words[_command_start(before.words, eff):], list(before.stdin), scope, eff)
         for name in names:
             scope.loops[name] = source
 
 
-def _producer_words(cmd_words: List[str], stdin: List[str], scope: _Scope) -> List[str]:
-    """The words a command prints, when the reader can tell: ls / echo / printf of its arguments, find's files, cat of a
-    here-document; else unknown."""
+def _producer_items(cmd_words: List[str], stdin: List[str], scope: _Scope, eff: ShellEffects) -> List[Tuple]:
+    """What a command prints, as source items: ls (a folder's entries, or the paths given), echo / printf (their words),
+    find DIR [-name PAT] [-type f|d], cat of a here-document; anything else is unknown."""
     if not cmd_words:
         return [_ANY]
     name = _command_name(cmd_words[0])
-    args = [a for a in cmd_words[1:] if not a.startswith("-")]
-    if name in ("ls", "echo", "printf"):
-        return _loop_words(args, scope)
+    args = cmd_words[1:]
+    if name == "ls":
+        opts = "".join(a[1:] for a in args if a.startswith("-") and not a.startswith("--"))
+        paths = [a for a in args if not a.startswith("-")] or ["."]
+        items = _loop_items(paths, scope, eff)
+        if "d" in opts or items == [_ANY]:
+            return items
+        return items + [("ls", i[1], i[2]) for i in items if i[0] == "lit"]
+    if name in ("echo", "printf"):
+        return _loop_items([a for a in args if not a.startswith("-")], scope, eff)
     if name == "find":
-        out: List[str] = []
-        for a in cmd_words[1:]:
-            if a.startswith(("-", "(", "!")):
-                break
-            out += _loop_words([a], scope, below=True)
-        return out or [_ANY]
+        dirs: List[str] = []
+        k = 0
+        while k < len(args) and not args[k].startswith(("-", "(", "!")):
+            dirs.append(args[k])
+            k += 1
+        pattern, icase, kind = "", False, ""
+        while k < len(args):
+            a = args[k]
+            if a not in _FIND_KNOWN:
+                return [_ANY]
+            if a in ("-name", "-iname", "-type", "-maxdepth", "-mindepth"):
+                if k + 1 >= len(args):
+                    return [_ANY]
+                if a in ("-name", "-iname"):
+                    if pattern:
+                        return [_ANY]
+                    pattern, icase = args[k + 1], a == "-iname"
+                elif a == "-type":
+                    kind = args[k + 1]
+                k += 2
+            else:
+                k += 1
+        items = _loop_items(dirs or ["."], scope, eff)
+        if items == [_ANY]:
+            return items
+        return [("find", (i[1], pattern, icase, kind), i[2]) for i in items]
     if name == "cat" and stdin and len(cmd_words) == 1:
-        return _loop_words([ln for text in stdin for ln in text.split("\n") if ln.strip()], scope)
+        return _loop_items([ln.strip() for text in stdin for ln in text.split("\n") if ln.strip()], scope, eff)
     return [_ANY]
 
 
-def _loop_words(values: List[str], scope: _Scope, below: bool = False) -> List[str]:
-    """Resolve a loop's words: $(pwd) / $PWD, variables and ~ expanded, braces expanded, a glob replaced by what it
-    matches (left as it is when it matches nothing, as the shell does), a $( ) by the words it prints when the reader
-    can tell. below: a folder also takes the files under it (find). Unknown when a word cannot be resolved."""
-    out: List[str] = []
+def _loop_items(values: List[str], scope: _Scope, eff: ShellEffects) -> List[Tuple]:
+    """A loop's words as source items, (kind, value, folders): "lit" a word ($(pwd) / $PWD, variables, ~ and braces
+    resolved), "glob" a pattern, and what a $( ) inside prints (_producer_items). Unknown when a word can't be
+    resolved."""
+    out: List[Tuple] = []
     for v in values:
+        eff.tick()
         inner = _inner_texts(v)
         if inner and not re.fullmatch(r"(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`)(?:[/\\].*)?", v, re.S):
             for text in inner:
                 for event in _commands(_lex(text)):
                     if event[0] == "cmd":
-                        words = event[1].words[_command_start(event[1].words, ShellEffects(None, float("inf"))):]
-                        out += _producer_words(words, list(event[1].stdin), scope)
+                        words = event[1].words[_command_start(event[1].words, eff):]
+                        out += _producer_items(words, list(event[1].stdin), scope, eff)
             continue
         w = re.sub(r"^(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`|\$\{PWD\}|\$PWD)", lambda _m: scope.bases[0], v)
         w = os.path.expanduser(_HOME_VAR.sub(lambda _m: "~", scope.expand(w)))
         if "$" in w or "`" in w:
             return [_ANY]
         for x in _braces(w):
-            if re.search(r"[*?\[]", x):
-                matched = False
-                for base in scope.bases:
-                    for hit in sorted(glob.glob(x if os.path.isabs(x) else os.path.join(base, x)))[:_MAX_GLOB]:
-                        matched = True
-                        out.append(hit if os.path.isabs(x) else os.path.relpath(hit, base))
-                if not matched:
-                    out.append(x)
-            else:
-                out.append(x)
-            if below:
-                for base in scope.bases:
-                    folder = x if os.path.isabs(x) else os.path.join(base, x)
-                    if os.path.isdir(folder):
-                        for hit in sorted(glob.glob(os.path.join(folder, "**", "*"), recursive=True))[:_MAX_GLOB]:
-                            out.append(hit if os.path.isabs(x) else os.path.relpath(hit, base))
+            out.append(("glob" if re.search(r"[*?\[]", x) else "lit", x, scope.bases))
         if len(out) > _MAX_TARGETS:
-            break
-    if _ANY in out:
-        return [_ANY]
-    return out[:_MAX_TARGETS]
+            return [_ANY]
+    return [_ANY] if _ANY in out else out
+
+
+def substitute(word: str, values: Dict[str, str], scope: "_Scope", root: Optional[str]) -> List[str]:
+    """The absolute paths a target word names once each loop variable in it holds the given value: $V, ${V}, and the
+    expansions ${V%P} ${V%%P} ${V#P} ${V##P} ${V:-X} ${V-X} ${V:=X} ${V:+X} ${V/…}, the rest resolved as a target."""
+    def one(m: "re.Match") -> str:
+        name = m.group(1) or m.group(2)
+        if name not in values:
+            return m.group(0)
+        v = values[name]
+        op = m.group(0)[2 + len(name):-1] if m.group(1) else ""
+        for sym, longest, front in (("%%", True, False), ("%", False, False), ("##", True, True), ("#", False, True)):
+            if op.startswith(sym):
+                pat = op[len(sym):]
+                cuts = range(len(v), -1, -1) if longest == front else range(0, len(v) + 1)
+                for i in cuts:
+                    part = v[:i] if front else v[i:]
+                    if fnmatch.fnmatchcase(part, pat):
+                        return v[i:] if front else v[:i]
+                return v
+        if op.startswith((":+", "+")):
+            return op.lstrip(":+")
+        return v
+    word = re.sub(r"\$\{(?!#)([A-Za-z_]\w*)[^}]*\}|\$([A-Za-z_]\w*)", one, word)
+    if "$" in word or "`" in word:
+        return []
+    return ShellEffects(root, float("inf"))._paths(word, scope, False)
+
+
+def literal_part(word: str) -> str:
+    """A target word without its variables and substitutions (`docs/design/$f` → `docs/design/`)."""
+    return re.sub(r"\$\{[^}]*\}|\$\([^)]*\)|`[^`]*`|\$[A-Za-z_]\w*", "", word)
 
 
 def _inner_texts(word: str) -> List[str]:
@@ -2617,7 +2676,10 @@ def _script(text: str, scope: _Scope, eff: ShellEffects, depth: int = 0) -> None
                 _script(sub, here.copy(), eff, depth + 1)
         words = cmd.words[_command_start(cmd.words, eff):]
         _bind_loop(words, cmd, before, here, eff)
-        if not cmd.redirs and _assign(cmd.words, here, eff):
+        bare = cmd.words
+        while bare and bare[0] in _RESERVED:  # `do g="$f"`, `then X=…`: still an assignment
+            bare = bare[1:]
+        if not cmd.redirs and bare and _assign(bare, here, eff):
             pass
         elif not _cd(words, here, eff):
             _simple(cmd, here, eff, depth, before, after)

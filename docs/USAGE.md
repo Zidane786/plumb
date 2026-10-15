@@ -1110,18 +1110,20 @@ Three checks, in this order:
    value) must name no guarded path by the guard's own rule: a guarded file whether it exists yet or not (a theme or
    tour not built yet, anything under the plugin), a folder that holds one, or a parent of one (`docs`).
 
-   Loop variables are followed: `for VAR in WORDS` (and `select`) takes each word, resolved like a target (variables,
-   `$PWD`, `$(pwd)`, `~`, braces, a glob by the files it matches, the paths a `$(ls …)` / `$(find …)` prints), and
-   `ls … | while read VAR` / `find … | while read VAR` take what the producer prints. Each value is put into each
-   target that uses the variable and checked as a written-out path, so `for f in docs/design/*.html; do sed -i …
-   "$f"; done` and `for p in screens specimen; do sed -i … "docs/design/$p.html"; done` are refused, while `for f in
-   app/*.tsx; do sed -i … "$f"; done` and a loop that copies guarded files out to `/tmp` are allowed.
+   Loop variables are followed by one question, asked against the guarded paths only (never by listing your files):
+   could the variable of a `for` / `select` loop or of `… | while read` hold a guarded path, or a name the target turns
+   into one? Its words are literals, globs (the guarded paths they match), `ls DIR` (the guarded files in DIR, as bare
+   names too), `find DIR -name PAT -type f` (the guarded files under DIR that match); each of those is put into the
+   target (`$f`, `${f%.html}.html`, `docs/design/$f`, a copy `g="$f"`, a `cd "$d"`). So `for f in docs/design/*.html;
+   do sed -i … "$f"; done` and `ls docs/design | while read f; do rm "docs/design/$f"; done` are refused, while `for f
+   in app/*.tsx; …`, `find app -name '*.tsx' | while read f; …` and a loop that copies guarded files out to `/tmp` are
+   allowed. With a source the reader can't read (`$(cat list.txt)`, a `read` from a file, `${!N}`), the target is
+   refused when its own text names a guarded folder or file, or the command names a guarded path anywhere.
 
-   A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`, a loop with more than 200 values
-   to try, a `read` from anywhere else, an indirect `${!N}`) is refused outright when it is built from a guarded path:
-   one of its words, the value of a variable it uses, a word inside its `$( … )` (or, for the last three, any word
-   of the command) names a guarded file, a file a glob there can match, or a folder Plumb owns whole (the docs folder,
-   the design-system skill, its `scripts/` or `templates/`) by its full path. A bare file name (`README.md`,
+   A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`) is refused outright when it is
+   built from a guarded path: one of its words, the value of a variable it uses or a word inside its `$( … )` names a
+   guarded file, a file a glob there can match, or a folder Plumb owns whole (the docs folder, the design-system
+   skill, its `scripts/` or `templates/`) by its full path. A bare file name (`README.md`,
    `globals.css`) or `.` is not enough: `echo x > "$(mktemp -d)/README.md"` is allowed.
 
    Anything else keeps the stricter answer, for example:
@@ -1144,6 +1146,8 @@ Three checks, in this order:
    - script files written before the command, `xargs`, `find -exec` on the files found, `patch`, `tar -x`, `unzip`,
      `prettier --write`, editors like `ed`, and commands run through other tools;
    - the project's own git hooks (`git commit` runs them);
+   - a loop whose source the reader models only roughly: `find` with predicates other than `-name` / `-iname` /
+     `-type` (and `ls -R`, `git ls-files`, a file read line by line) count as unknown sources;
    - a computed target whose text names no guarded path in full (`> "$(cat target.txt)"`), including one built from a
      bare folder name or a prefix (`rm -rf "$(echo docs)"`, `> "${ROOT:-.}/docs/design/screens.html"`,
      `> "$(realpath docs)/design/screens.html"`);

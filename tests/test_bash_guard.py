@@ -796,6 +796,14 @@ COMPUTED_ALLOW = [
     "for p in a b; do sed -i 's/a/b/' \"notes/$p.md\"; done",
     # each value is a written-out target: copying guarded files out to a folder that is not guarded
     "for f in docs/design/*.html; do cp \"$f\" /tmp/plumb-bak/; done",
+    # O2: find's -name / -type decide what it yields
+    "find app -name '*.tsx' | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in $(find app -name '*.tsx'); do sed -i 's/a/b/' \"$f\"; done",
+    "find . -name '*.tsx' | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    "ls notes | while read f; do rm \"notes/$f\"; done",
+    "for f in docs/design/*.html; do :; done; f=notes/a.md; rm \"$f\"",  # a plain assignment ends the binding
+    "for f in $(cat plumb-list.txt); do rm \"notes/$f\"; done",  # unknown source, nothing guarded named
+    "for f in " + " ".join(f"notes/n{i}.md" for i in range(201)) + "; do rm \"$f\"; done",  # many values
     "D=$(mktemp -d); echo x > \"$D/notes.txt\"",
     "cp /tmp/a \"`mktemp`\"",
 ]
@@ -824,6 +832,21 @@ COMPUTED_REFUSE += [
     "for p in screens specimen; do sed -i 's/a/b/' \"docs/design/$p.html\"; done",
     "select f in docs/design/*.html; do rm \"$f\"; break; done",
     "find docs/design -name '*.html' | while read f; do rm \"$f\"; done",
+    "find . -name '*.html' | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    # O3: ls DIR / a bare ls after cd yield the folder's entries, as bare names too
+    "ls docs/design | while read f; do rm \"docs/design/$f\"; done",
+    "for f in $(ls -1 docs/design/); do rm \"docs/design/$f\"; done",
+    "cd docs/design && ls | while read f; do rm \"$f\"; done",
+    # O4: expansions of the loop variable, a copy of it, a cd into it
+    "for f in docs/design/*.html; do rm \"${f%.html}.html\"; done",
+    "for f in docs/design/*.html; do rm \"${f:-x}\"; done",
+    "for p in screens specimen; do rm \"docs/design/${p%x}.html\"; done",
+    "for f in docs/design/*.html; do g=\"$f\"; rm \"$g\"; done",
+    "for d in docs/design; do cd \"$d\" && rm screens.html; done",
+    # an unknown source: the target's own folder, or a guarded path elsewhere in the command
+    "for f in $(cat plumb-list.txt); do rm \"docs/design/$f\"; done",
+    "for f in $(cat plumb-list.txt); do rm \"$f\"; done; cat docs/design/screens.html",
+    "for f in " + " ".join(f"notes/n{i}.md" for i in range(200)) + f" {GEN}; do rm \"$f\"; done",  # many values
 ]
 
 
@@ -956,3 +979,17 @@ def test_a_voided_allow_is_refused_in_the_real_decision(decide, command):
 @pytest.mark.parametrize("command", VOIDED_END_TO_END[:2] + VOIDED_END_TO_END[7:8])
 def test_a_voided_allow_is_refused_through_the_launchers(launcher, tmp_path, proj, command):
     actionable(refused(claude(launcher, tmp_path, proj, command)))
+
+
+def test_a_long_loop_command_is_read_in_time_and_its_guarded_rm_refused(launcher, tmp_path, proj):
+    """O1: thousands of loop targets with an unknown source, under 64 KB, then a guarded rm: refused well inside the
+    hook's timeout (the command's words are lexed once, the time budget is checked in every loop)."""
+    command = "for f in $(cat plumb-list.txt); do " + " ".join('rm "$f";' for _ in range(6500)) + f" done; rm {GEN}"
+    assert 50 * 1024 < len(command) < 64 * 1024
+    pe = Decider(proj).pe
+    t = time.perf_counter()
+    assert pe.shell_refusal(pe.H.Project(proj), command, str(proj), str(proj))
+    assert time.perf_counter() - t < 1.0
+    t = time.perf_counter()
+    actionable(refused(claude(launcher, tmp_path, proj, command)))
+    assert time.perf_counter() - t < 5.0
