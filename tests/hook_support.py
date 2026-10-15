@@ -153,6 +153,19 @@ def make_project(tmp_path: Path, name: str = "Café Ünïcode") -> Path:
     return dest
 
 
+PROPOSALS = "docs/design/prototype/proposals"
+
+
+def build_proposal(project: Path, name: str = "nav") -> None:
+    """A real proposal in the project: variant a-calm (a copy of the main screens), built by the project's
+    build-prototype.py --proposal (NAME/index.html and a-calm/{prototype,app,screens}.html)."""
+    for screen in sorted((project / SCREENS).glob("*.html")):
+        write(project / PROPOSALS / name / "a-calm/screens" / screen.name, read(screen))
+    write(project / PROPOSALS / name / "a-calm/idea.md", "# Calm\n\nOne list.\n")
+    r = run_script(project, "build-prototype.py", "--proposal", name)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
 def git_init(project: Path) -> None:
     env = _clean_env({"GIT_CEILING_DIRECTORIES": str(project.parent)})
     for args in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "Tester"],
