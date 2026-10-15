@@ -42,7 +42,7 @@ screens (and through the clicks it makes) without adding browser history entries
 **In the app view the page scrolls**, not a frame, so the player treats what the screen keeps at the top of the window
 as part of the window's edge: a step's element is brought into view below the screen's own fixed or sticky headers,
 bars and banners (only those across the element's columns, sticking to the window, and less than half the window tall;
-several stacked bars add up), never under them. A **zoom** step there scales the page's frame, which would pull the
+a sticky one only when its section reaches the element; several stacked bars add up), never under them. A **zoom** step there scales the page's frame, which would pull the
 screen's fixed layers (a fixed header, a toast, a dialog) to the top of the page while it lasts; so on a screen showing
 a fixed layer the app view points with a spotlight instead of zooming. In `prototype.html` (and a prototype-view page)
 the frame holds those layers, so zoom works as always.
@@ -139,7 +139,7 @@ One tour per file, `<docs>/prototype/tours/<id>.json`; `<id>` is letters, digits
 | `state` | One of that screen's `data-state` names (default: its first). |
 | `title`, `caption` | The coach-mark title and the subtitle / narration line. Use the project's vocabulary and the audience's tone. |
 | `target` or `targets` | One CSS selector, or several (several rings or labels in one step). |
-| `point` | How to point at the target: `spotlight` (dims the rest), `ring` (outline, rest visible), `arrow`, `beacon` (a pulsing dot; static with reduced motion), `zoom` (enlarges the area), `cursor` (moves and clicks in play mode), `none`; or `{"style": "arrow", "label": "Start here"}`. |
+| `point` | How to point at the target: `spotlight` (dims the rest), `ring` (outline, rest visible), `arrow`, `beacon` (a pulsing dot; static with reduced motion), `zoom` (enlarges the area and outlines it; an area that already fills the view is only outlined), `cursor` (moves and clicks in play mode), `none`; or `{"style": "arrow", "label": "Start here"}`. |
 | `callout` | A bubble attached to the target: `{"text", "side": "top" \| "right" \| "bottom" \| "left"}`. |
 | `labels` | Numbered or named tags on several elements: `[{"target", "text"}]`. |
 | `note` | Text placed anywhere: `{"text", "x", "y"}` (percent of the screen). |

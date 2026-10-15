@@ -659,7 +659,7 @@ docs/design/
 ├── prototype/screens/<id>.html         [Y] one source per screen (states + interactions)
 ├── prototype/screens.json              [G] screen → route, source files, states, sync status
 ├── prototype/tours/<flow>.json         [Y] walkthrough scripts (guide mode + play mode)
-├── tours/<tour>.html                   [G] one shareable file per tour: the prototype + that tour
+├── tours/<tour>.html                   [G] one shareable file per tour, in its view (app, default, or prototype)
 ├── prototype/proposals/<name>/         variants from /plumb:prototype (both views) + index.html
 └── audit-*.html · ux-review-*.html · extract.html
 ```
@@ -784,9 +784,12 @@ navigation, hash routing between screens, a state switcher, phone/desktop and li
 each screen's own interactions, the per-screen decisions panel plus a Decisions page from
 `docs/design/decisions.md`, the per-screen guide panel, and the walkthrough player for every file
 in `tours/`), `app.html` (the app view of §3.4.2: every screen full window, hash routes `#/ID` and
-`#/ID/STATE`, the same screen-script API, no panels, from `templates/app-shell.html.tmpl`) and
+`#/ID/STATE`, the same screen-script API, no panels, from `templates/app-shell.html.tmpl`),
+`tours/<id>.html` per tour file (in the tour's `view`: the app shell with the player on top, the
+default, or the prototype shell; §3.4.1) and
 `screens.html` (sidebar navigation, every screen × every `data-state`, and the control-state sheet
-generated from the tokens and components). It inlines `build-tokens.py --css-vars`, a small
+generated from the tokens and components). The two shells take the `--pl-*` roles of Plumb's own
+chrome from one shared template, `templates/chrome-roles.css`. It inlines `build-tokens.py --css-vars`, a small
 dependency-free runtime, and each screen's scripts, so every page is a single file that opens from
 disk. In `screens.html` each screen's markup, styles and scripts are in the page once (one
 `<template>` each), shared by its light and dark copies in every state; the page builds each copy's
