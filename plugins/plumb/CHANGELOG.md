@@ -82,8 +82,9 @@
   1280 and 1440 wide with a Chrome, Edge or Chromium already on the machine, and names every step whose screen or
   state is wrong, whose element is hidden, zero-size, off the window or covered (by the screen's own fixed layer, or
   by the walkthrough panel only where the two overlap, read where the player put it, at the bottom or the top, so a
-  corner toast beside the panel passes), or whose panel is covered. `/plumb:tour` runs both after the build and fixes what they name; with no browser it says so and asks
-  (nothing is installed).
+  corner toast beside the panel passes), or whose panel is covered. It judges the element the player points at (its
+  first match on show), so one class used in several states is fine. `/plumb:tour` runs both after the build and
+  fixes what they name; with no browser it says so and asks (nothing is installed).
 - **The walkthrough player gets out of the way**: **Hide panel** (or the `H` key) swaps the panel for a small pill
   (the step's title in guide mode; in play mode the subtitle keeps narrating), remembered in the browser. While a tour
   runs, the screens list and the side rail fold away so screens keep their desktop layout. The panel, subtitle,

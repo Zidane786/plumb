@@ -15,8 +15,9 @@ every step of the page's tour in guide mode, then in play mode, through window.p
 play paused at once: nothing waits real time), and per step checks:
 
   - the page shows the step's screen in the step's state (window.plumbPrototype.current());
-  - each target, label target and action element: one of its matches is laid out (not display: none), not
-    visibility: hidden, not opacity: 0, not zero-size, inside the window once the player has scrolled to it, and not
+  - each target, label target and action element: the match the player points at (window.plumbPlayer.node: its first
+    match the player can show; with none, the reason is given for a match in the step's state) is laid out (not
+    display: none), not visibility: hidden, not opacity: 0, not zero-size, inside the window once the player has scrolled to it, and not
     covered at the centre of its part clear of the panel (above it; below it while the panel is at the top of the
     window) by the walkthrough panel or a screen's own fixed or sticky layer (elementFromPoint; the player's own
     overlays are left out);
@@ -160,6 +161,22 @@ CHECKER_JS = """<script>
       var list;
       try { list = section.querySelectorAll(w[1]); } catch (err) { problems.push(w[0] + " is not a selector the browser reads"); return; }
       if (!list.length) { problems.push(w[0] + " matches nothing on the page"); return; }
+      var P = window.plumbPlayer;
+      if (P && typeof P.node === "function") {
+        /* the match the player points at (the first one it can show) is the one judged */
+        var at = P.node(w[1]);
+        if (at) { var bad = why(at); if (bad) problems.push(w[0] + " is " + bad); return; }
+        /* it can show none: why, for a match in the step's state first (not one in another state) */
+        var mine = [], rest = [], reason = "";
+        Array.prototype.forEach.call(list, function (n) {
+          var st = n.closest("[data-state]");
+          (st && st.getAttribute("data-state") !== step.state ? rest : mine).push(n);
+        });
+        mine.concat(rest).forEach(function (n) { if (!reason) reason = why(n); });
+        problems.push(w[0] + " is " + (reason || "not pointed at (the walkthrough finds no match it can show)"));
+        return;
+      }
+      /* a page from a player without node(): any match that passes will do */
       var first = "";
       for (var i = 0; i < list.length; i++) {
         var r = why(list[i]);

@@ -187,7 +187,7 @@ Two passes, both evidence for the agent, never a substitute for looking ([script
    playing the tour in the app view.
 2. **In a browser, when one is on the machine:** the plugin's `check-tour.py <docs>/tours/<id>.html` plays the tour page
    headless in guide and play mode at 1280 and 1440 wide and checks, per step: the right screen and state; every target,
-   label and action element laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and
+   label and action element (the match the player points at, so one class in several states is fine) laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and
    not covered by the panel (only where the two overlap: a corner toast beside it is fine; the panel is read where the
    player put it, at the top for a pinned element) or the screen's own fixed or sticky bar;
    the dock not covered by the screen. Problems come one line per step, e.g. `step 12 (Users › Invite): the target
