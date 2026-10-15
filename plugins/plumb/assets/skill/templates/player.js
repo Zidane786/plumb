@@ -1476,7 +1476,13 @@
     resume: function () { setPaused(false); },
     setSpeed: setSpeed,
     setMode: setMode,
-    state: state
+    state: state,
+    /* the element the step on show points at for a selector (its first match the player can show), or null: what
+       check-tour.py judges */
+    node: function (sel) {
+      var item = T.tour ? T.seq[T.pos] : null;
+      return item && item.kind === "step" ? find(item.step, sel) : null;
+    }
   };
   if (!fromHash(location.hash) && config.autostart && byId[config.autostart.tour]) {
     /* no focus move on load: nobody asked for it; the first Tab lands on "Skip to the walkthrough" */

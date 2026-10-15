@@ -625,41 +625,100 @@ def test_check_tour_for_real(tmp_path: Path) -> None:
     assert not (p / ".plumb-tmp").exists()
 
 
-# A fixed toast in the bottom-right corner sits beside the centred walkthrough panel (not covered), and a fixed bar
-# centred at the bottom sits under it (covered). Another shape too: a floating button in the bottom-left corner.
+# The walkthrough panel is centred at the bottom of the window; for a step whose pinned (position: fixed) target it would
+# cover there, the player moves it to the top (pl-at-top) and the check reads it there. A fixed toast in the bottom-right
+# corner sits beside the panel (not covered, the panel stays at the bottom), and so does a floating button in the
+# bottom-left corner. A status bar centred at the bottom would be under the panel: the panel moves to the top and the
+# step passes. A narrow rail pinned from below the top of the window with that bar: the panel at the top covers a little
+# of the rail, the part below it is clear and the step passes. The bar with a band across the top half of the window
+# (both targets of one step) cannot be avoided: at the top the panel would cover more of the band than it covers of the
+# bar at the bottom, so it stays at the bottom and the bar is reported.
+# The bar is one class in three states: the check judges the match the player points at (the one in the state on show),
+# not the selector's first match (in a hidden state). The toast state holds one too, hidden by the screen's CSS: with no
+# match the player can show, the bar is reported hidden, for the reason of the one in the step's state (display: none
+# on itself), not of the first match (its state's display: none).
 CORNER_REL = f"{DOCS}/prototype/screens/corner.html"
 CORNER = """<style>
 [data-screen="corner"] .toast { position: fixed; right: 16px; bottom: 16px; width: 3rem; height: 3rem; margin: 0; z-index: 5; }
 [data-screen="corner"] .fab { position: fixed; left: 12px; bottom: 12px; z-index: 5; }
-[data-screen="corner"] .bottom-bar { position: fixed; left: 50%; bottom: 24px; width: 8rem; margin: 0 0 0 -4rem; z-index: 5; }
+[data-screen="corner"] .bottom-bar { position: fixed; left: 50%; bottom: 24px; width: 16rem; height: 3rem;
+  margin: 0 0 0 -8rem; z-index: 5; }
+[data-screen="corner"] .rail { position: fixed; left: 50%; top: 4rem; width: 1.5rem; height: 40vh; margin: 0 0 0 -0.75rem;
+  z-index: 5; }
+[data-screen="corner"] .top-band { position: fixed; left: 0; right: 0; top: 0; height: 50vh; margin: 0; z-index: 5; }
+[data-screen="corner"] [data-state="toast"] .bottom-bar { display: none; }
 </style>
 <section data-screen="corner" data-title="Corners" data-order="6">
   <h2>Corners</h2>
-  <div data-state="toast"><p class="toast" role="status">Saved</p><button type="button" class="fab">New</button></div>
-  <div data-state="under"><p class="bottom-bar">Under the panel</p></div>
+  <div data-state="under"><p class="bottom-bar" role="status">Saved</p></div>
+  <div data-state="rail"><p class="bottom-bar" role="status">Saved</p><p class="rail">Rail</p></div>
+  <div data-state="both"><p class="bottom-bar" role="status">Saved</p><p class="top-band">A band across the top</p></div>
+  <div data-state="toast"><p class="toast" role="status">Saved</p><button type="button" class="fab">New</button>
+    <p class="bottom-bar" role="status">Saved</p></div>
 </section>
 """
+CORNER_TOUR = {"title": "Corners", "audience": "training", "steps": [
+    {"screen": "corner", "state": "toast", "title": "Toast", "caption": "Beside the panel.", "target": ".toast",
+     "point": "beacon"},
+    {"screen": "corner", "state": "toast", "title": "Button", "caption": "Beside the panel too.", "target": ".fab"},
+    {"screen": "corner", "state": "under", "title": "Bar", "caption": "The panel moves to the top.",
+     "target": ".bottom-bar"},
+    {"screen": "corner", "state": "rail", "title": "Rail", "caption": "Clear below the panel at the top.",
+     "targets": [".bottom-bar", ".rail"]},
+    {"screen": "corner", "state": "both", "title": "Both", "caption": "Under the panel either way.",
+     "targets": [".bottom-bar", ".top-band"]},
+    {"screen": "corner", "state": "toast", "title": "No bar", "caption": "Not in this state.", "target": ".bottom-bar"},
+]}
+# per step: its number, the panel at the top, the panel's top and bottom edges, and the state holding the bar the player
+# points at (null: none)
+DOCK_AT = """() => { var d = document.getElementById('pl-dock'), r = d.getBoundingClientRect();
+  var bar = window.plumbPlayer.node('.bottom-bar'), at = bar && bar.closest('[data-state]');
+  return [window.plumbPlayer.state().step, d.classList.contains('pl-at-top'), Math.round(r.top), Math.round(r.bottom),
+          at ? at.getAttribute('data-state') : null]; }"""
 
 
 def test_check_tour_for_real_reports_the_panel_only_where_it_overlaps(tmp_path: Path) -> None:
     browser = _real_browser()
-    tour = {"title": "Corners", "audience": "training", "steps": [
-        {"screen": "corner", "state": "toast", "title": "Toast", "caption": "Beside the panel.",
-         "target": ".toast", "point": "beacon"},
-        {"screen": "corner", "state": "toast", "title": "Button", "caption": "Beside the panel too.", "target": ".fab"},
-        {"screen": "corner", "state": "under", "title": "Bar", "caption": "Under the panel.", "target": ".bottom-bar"},
-    ]}
+    from playwright.sync_api import sync_playwright
     p = make_tour_project(tmp_path / "Corner Ünïcode", {"demo": demo()}, build=False)
     write(p / CORNER_REL, CORNER)
-    put_tour(p, "corner", tour)
+    put_tour(p, "corner", CORNER_TOUR)
     r = run(p)
     assert r.returncode == 0, r.stdout + r.stderr
+    # where the player puts the panel in each step, and which bar it points at, in both modes (headless, the window
+    # check-tour.py uses)
+    with sync_playwright() as pw:
+        b = pw.chromium.launch(headless=True)
+        try:
+            for width in (1280, 1440):
+                page = b.new_page(viewport={"width": width, "height": 900})
+                page.goto((p / PAGES_REL / "corner.html").as_uri())
+                page.wait_for_function("window.plumbPlayer && window.plumbPrototype")
+                for mode in ("guide", "play"):
+                    seen = []
+                    for pos in range(6):
+                        page.evaluate("([m, p]) => { window.plumbPlayer.start('corner', {mode: m, pos: p, focus: false});"
+                                      " if (m === 'play') window.plumbPlayer.pause(); }", [mode, pos])
+                        page.wait_for_timeout(150)
+                        seen.append(page.evaluate(DOCK_AT))
+                    assert [s[:2] + s[4:] for s in seen] == [
+                        [1, False, None], [2, False, None], [3, True, "under"], [4, True, "rail"], [5, False, "both"],
+                        [6, False, None]], seen
+                    assert all(s[2] < 900 / 2 for s in seen if s[1]) and all(s[3] > 900 / 2 for s in seen if not s[1])
+                page.evaluate("window.plumbPlayer.leave()")
+                assert page.evaluate("window.plumbPlayer.node('.bottom-bar')") is None, "no step on show: no node"
+                page.close()
+        finally:
+            b.close()
     out = subprocess.run([sys.executable, str(CHECK), str(p / PAGES_REL / "corner.html"), "--browser", browser,
                           "--timeout", "90"], capture_output=True, text=True, encoding="utf-8", cwd=str(p), timeout=300)
     assert out.returncode == 2, out.stdout + out.stderr
     lines = out.stdout.strip().splitlines()
-    assert lines[0] == ('step 3 (Bar): the target ".bottom-bar" is covered by the walkthrough panel '
-                        'at 1280 (guide, play), 1440 (guide, play)'), out.stdout
-    assert lines[1].startswith(f"fix: change those steps in {TOURS_REL}/corner.json")
-    assert not any("Toast" in line or "Button" in line for line in lines), out.stdout
+    assert lines[:2] == [
+        'step 5 (Both): the target ".bottom-bar" is covered by the walkthrough panel at 1280 (guide, play), 1440 '
+        '(guide, play)',
+        'step 6 (No bar): the target ".bottom-bar" is hidden (display: none) at 1280 (guide, play), 1440 (guide, play)',
+    ], out.stdout
+    assert lines[2].startswith(f"fix: change those steps in {TOURS_REL}/corner.json")
+    assert len(lines) == 3, out.stdout
     assert not (p / ".plumb-tmp").exists()

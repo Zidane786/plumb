@@ -569,6 +569,30 @@ Press `h` again: the panel is back. Reload: a panel you hid stays hidden until y
 and the rail fold away while the tour runs), and after Esc they come back. In guide mode on a "your turn" step with the panel hidden, the pill offers "Do it for
 me", and a wrong click brings the panel back with the hint.
 
+**A pinned element:** with the panel shown, pin the first step's element to the bottom of the window and replay that
+step:
+
+```python
+pinned = page.evaluate("""() => { var P = window.plumbPlayer, d = JSON.parse(document.getElementById('plumb-tours').textContent);
+  var id = d.autostart.tour, steps = d.tours.find(t => t.id === id).steps;
+  for (var pos = 0; pos < P.state().total; pos++) {
+    P.start(id, {mode: 'guide', pos: pos, focus: false});
+    var s = steps.find(x => x.n === P.state().step);
+    var n = s && s.targets.length && [...document.querySelectorAll('#pp-frame [data-screen="' + s.screen + '"] ' +
+      s.targets[0])].find(e => e.getClientRects().length);
+    if (!n) continue;
+    n.style.cssText += ';position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5';
+    P.start(id, {mode: 'guide', pos: pos, focus: false});
+    return document.querySelector('.pl-dock').classList.contains('pl-at-top');
+  }
+  return null; }""")
+print("panel at the top for a pinned element:", pinned)
+```
+
+**Expected:** `panel at the top for a pinned element: True` at both widths: the panel moves to the top of the window
+for that step (it would cover the pinned element at the bottom) and the page does not scroll. Reload: every step
+without a pinned element keeps the panel at the bottom.
+
 ---
 
 ## Report format

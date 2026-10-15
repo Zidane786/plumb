@@ -15,10 +15,12 @@ every step of the page's tour in guide mode, then in play mode, through window.p
 play paused at once: nothing waits real time), and per step checks:
 
   - the page shows the step's screen in the step's state (window.plumbPrototype.current());
-  - each target, label target and action element: one of its matches is laid out (not display: none), not
-    visibility: hidden, not opacity: 0, not zero-size, inside the window once the player has scrolled to it, and not
-    covered at the centre of its part above the panel (by the walkthrough panel, or a screen's own fixed or sticky
-    layer: elementFromPoint; the player's own overlays are left out);
+  - each target, label target and action element: the match the player points at (window.plumbPlayer.node: its first
+    match the player can show; with none, the reason is given for a match in the step's state) is laid out (not
+    display: none), not visibility: hidden, not opacity: 0, not zero-size, inside the window once the player has scrolled to it, and not
+    covered at the centre of its part clear of the panel (above it; below it while the panel is at the top of the
+    window) by the walkthrough panel or a screen's own fixed or sticky layer (elementFromPoint; the player's own
+    overlays are left out);
   - the dock is not covered: elementFromPoint at its centre is the dock or inside it (unless the panel is hidden).
 
 It writes the results into the page as JSON (<pre id="plumb-tour-check">), which this script reads from the dumped DOM.
@@ -120,16 +122,20 @@ CHECKER_JS = """<script>
     if (r.right <= 0 || r.left >= vw || r.bottom <= 0 || r.top >= vh) {
       return "outside the viewport (at " + Math.round(r.left) + ", " + Math.round(r.top) + ")";
     }
-    /* what paints on top at the centre of its part above the walkthrough panel: the panel itself, or a screen's own
-       fixed or sticky layer (the player's overlays take no clicks and are left out). The panel is centred with a
+    /* what paints on top at the centre of its part clear of the walkthrough panel: the panel itself, or a screen's
+       own fixed or sticky layer (the player's overlays take no clicks and are left out). The panel is centred with a
        maximum width, so it clips the target only where the two boxes really overlap (across and down): a corner
-       toast or button beside the panel is not covered by it */
-    var dock = document.getElementById("pl-dock"), floor = vh;
+       toast or button beside the panel is not covered by it. The panel sits at the bottom of the window, or at its
+       top for a step whose pinned target it would cover there: where it is now is read from the page, and at the
+       top the part clear of it starts below its bottom edge */
+    var dock = document.getElementById("pl-dock"), ceiling = 0, floor = vh;
     if (dock && !dock.hidden && dock.getClientRects().length) {
       var d = dock.getBoundingClientRect();
-      if (r.right > d.left && r.left < d.right && r.bottom > d.top && r.top < d.bottom) floor = Math.min(floor, d.top);
+      if (r.right > d.left && r.left < d.right && r.bottom > d.top && r.top < d.bottom) {
+        if (d.top + d.bottom < vh) ceiling = d.bottom; else floor = d.top;
+      }
     }
-    var top = Math.max(r.top, 0), bottom = Math.min(r.bottom, floor), left = Math.max(r.left, 0), right = Math.min(r.right, vw);
+    var top = Math.max(r.top, ceiling), bottom = Math.min(r.bottom, floor), left = Math.max(r.left, 0), right = Math.min(r.right, vw);
     if (bottom <= top) return "covered by the walkthrough panel";
     var hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
     if (hit && hit !== s && !s.contains(hit) && !node.contains(hit) && !hit.contains(s) && !hit.closest(".pl-layer, .pl-card")) {
@@ -155,6 +161,22 @@ CHECKER_JS = """<script>
       var list;
       try { list = section.querySelectorAll(w[1]); } catch (err) { problems.push(w[0] + " is not a selector the browser reads"); return; }
       if (!list.length) { problems.push(w[0] + " matches nothing on the page"); return; }
+      var P = window.plumbPlayer;
+      if (P && typeof P.node === "function") {
+        /* the match the player points at (the first one it can show) is the one judged */
+        var at = P.node(w[1]);
+        if (at) { var bad = why(at); if (bad) problems.push(w[0] + " is " + bad); return; }
+        /* it can show none: why, for a match in the step's state first (not one in another state) */
+        var mine = [], rest = [], reason = "";
+        Array.prototype.forEach.call(list, function (n) {
+          var st = n.closest("[data-state]");
+          (st && st.getAttribute("data-state") !== step.state ? rest : mine).push(n);
+        });
+        mine.concat(rest).forEach(function (n) { if (!reason) reason = why(n); });
+        problems.push(w[0] + " is " + (reason || "not pointed at (the walkthrough finds no match it can show)"));
+        return;
+      }
+      /* a page from a player without node(): any match that passes will do */
       var first = "";
       for (var i = 0; i < list.length; i++) {
         var r = why(list[i]);
