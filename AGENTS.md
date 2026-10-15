@@ -67,7 +67,8 @@ plugins/plumb/                        the installed plugin (only this folder shi
                                       build-prototype.py: copied into projects, tested here
     templates/                        specimen, audit report, prototype shell, app shell (app.html, the
                                       full-window app view), screens page and proposal index templates,
-                                      player.js / player.css (the walkthrough player)
+                                      player.js / player.css (the walkthrough player), chrome-roles.css
+                                      (the --pl-* roles both shells share)
   scripts/                            plugin-side helpers the skills run (not copied into projects)
     detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
     version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install

@@ -51,7 +51,7 @@ in each project (the session-start line says when). What changed: [CHANGELOG.md]
 | `/plumb:create` | A new project | Product interview → design decisions → 2–3 directions → the design system → key screens |
 | `/plumb:extract` | A project with UI already | Inventory of every value in use → token groups you confirm → the same design system and a prototype of every route |
 | `/plumb:prototype` | A new or changed screen, tab, flow or interaction | 2–3 variants, each clickable with every state → you pick and approve → joins the main prototype |
-| `/plumb:tour` | A demo, training or onboarding walkthrough | A custom walkthrough in guide or play mode, plus a shareable offline page |
+| `/plumb:tour` | A demo, training or onboarding walkthrough | A custom walkthrough in guide or play mode, plus a shareable offline page that plays it full window |
 | `/plumb:audit [fix \| improve]` | Any time | Rules, contrast, drift, prototype fidelity and an agent review; `fix` repairs with your OK; `improve` makes it better |
 | `/plumb:ux` | After building a screen or flow | Deep UX review against the prototype, UX rules, heuristics, accessibility and visual polish |
 | `/plumb:update` | The design changes | Tokens, components, a new platform, the audit's system suggestions; regenerate, record, audit |

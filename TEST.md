@@ -156,7 +156,8 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
 3. Open `docs/design/prototype.html` from disk: the Home screen, the state switcher (ready, empty, error), the
    phone/desktop and light/dark toggles. Open `docs/design/screens.html`: every state in light and dark side by side.
    Open `docs/design/app.html`: the Home screen full window, with no screens list, switcher, toggles or decisions;
-   `app.html#/home/empty` shows the empty state and `app.html#/nope` the Home screen. Delete `app.html`, run
+   `app.html#/home/empty` shows the empty state and `app.html#/nope` the Home screen. In `prototype.html`, pick the
+   empty state and click **Open as app**: `app.html#/home/empty` opens on that state. Delete `app.html`, run
    `PY SKILL/scripts/build-prototype.py --check` → exit 1 with `stale: docs/design/app.html (missing)`; build again.
    In `docs/design/screens.html` the screen's markup is there once, shared by its six copies:
    `grep -c 'data-screen-markup="home"' docs/design/screens.html` → `1`.
@@ -213,9 +214,15 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    ```
 2. `PY SKILL/scripts/build-prototype.py` → also `wrote docs/design/tours/first-look.html` and
    `1 tour: first-look (3 steps, play mode)`.
-3. Open `docs/design/tours/first-look.html` from disk: it starts playing (a client tour opens in play mode). Check
-   pause and resume (Space), the speeds 0.5×–2×, jumping to a step marker, and switching to guide mode (Next/Back,
-   the arrow keys, Esc leaves). With the OS set to reduce motion, play mode still plays by itself.
+3. Open `docs/design/tours/first-look.html` from disk: the Home screen full window with the player on top (the app
+   view, the default when a tour has no `"view"`: no screens list, switcher or decisions), and it starts playing (a
+   client tour opens in play mode). Check pause and resume (Space), the speeds 0.5×–2×, jumping to a step marker, and
+   switching to guide mode (Next/Back, the arrow keys, Esc leaves). With the OS set to reduce motion, play mode still
+   plays by itself. `docs/design/prototype.html#tour-first-look` plays the same tour in the prototype.
+   Then add `"view": "prototype"` after `"audience": "client",` and build again → `wrote docs/design/tours/first-look.html`;
+   the page is now the prototype page (screens list and rail, folded away while the tour runs). Set it to
+   `"view": "slides"` → exit 2 with `error: docs/design/prototype/tours/first-look.json:1: view "slides" is not one of
+   app, prototype` and a `fix:` line. Remove the `"view"` again and build.
 4. Rename `data-test="new"` to `data-test="add"` in `home.html`, then `PY SKILL/scripts/build-prototype.py --check`.
    **Expect:** exit 2 with `error: docs/design/prototype/tours/first-look.json:3: steps[1].target "[data-test=new]"
    matches nothing …` and a `fix:` line. Undo it.
@@ -340,8 +347,9 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] `/plumb:prototype reports` → 2–3 variants, `proposals/reports/index.html` side by side, both views each; you pick
       one; it asks before writing it to main; `prototype.html#screen-reports` shows it with a default walkthrough; it
       asks you to approve it, then records the decision. Now the agent can create the page.
-- [ ] `/plumb:tour` → asks who is watching; shows the steps as a table; writes `tours/<id>.json` only on your OK;
-      `docs/design/tours/<id>.html` plays offline.
+- [ ] `/plumb:tour` → asks who is watching, then "Where should it play?" (Full-window app recommended, or the
+      prototype page); shows the steps as a table; writes `tours/<id>.json` only on your OK; shows both links:
+      `docs/design/tours/<id>.html` plays offline in the view you chose, `prototype.html#tour-<id>` in the prototype.
 - [ ] Map the built screen (`build-prototype.py --map reports --route=/reports --files "app/reports/**"`), then ask the
       agent to change what the reports page shows **without** touching its screen file → at the end of the turn the
       agent is stopped once with `Plumb end-of-turn check: …`; it updates the screen file and asks you to approve it.
@@ -502,10 +510,11 @@ dock = page.evaluate("document.querySelector('.pl-dock').hidden")
 print("frame", frame, "| side columns shown", cols, "| pill", pill, "| dock hidden", dock)
 ```
 
-**Expected:** `frame` at least 768 at both widths (the screens list and the rail fold away while the tour runs),
+**Expected:** `frame` at least 768 at both widths (the app view: the window is the frame; no screens list or rail),
 `side columns shown 0`, `pill Show panel` (play mode: only the button; the subtitle keeps playing), `dock hidden True`.
-Press `h` again: the panel is back. Reload: a panel you hid stays hidden until you show it. Press Esc: the screens
-list and the rail come back. In guide mode on a "your turn" step with the panel hidden, the pill offers "Do it for
+Press `h` again: the panel is back. Reload: a panel you hid stays hidden until you show it. Open
+`plumb-scratch/docs/design/prototype.html#tour-first-look` the same way: `frame` at least 768 too (the screens list
+and the rail fold away while the tour runs), and after Esc they come back. In guide mode on a "your turn" step with the panel hidden, the pill offers "Do it for
 me", and a wrong click brings the panel back with the hint.
 
 ---

@@ -95,6 +95,12 @@ list, state switcher, toggles, decisions or player). Use it to demo; use `protot
 - Screens may use `position: fixed`: toasts and bars sit on the window, as in the product. (For Plumb's own pages:
   never give the frame or stage `transform`, `filter` or `contain`, which would pin them to the page.)
 - Generated and offline like the other pages; each proposal variant has its own `app.html`.
+- `prototype.html`'s **Open as app** link (in its top bar) opens `app.html` on the screen and state on show there.
+- A tour plays in this view by default: its page `<docs>/tours/<id>.html` is the app view with the walkthrough player
+  on top (a tour's `"view": "prototype"` plays it on the prototype page instead; [tours.md](tours.md), "Where it
+  plays"). `app.html` itself never carries the player.
+- Plumb's own page chrome on both shells takes its `--pl-*` colour, font, radius and shadow roles from one template,
+  `templates/chrome-roles.css` (the project's tokens first, Plumb's neutral look as the fallback).
 
 ## The quality bar (Effective HTML)
 

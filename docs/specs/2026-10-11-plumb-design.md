@@ -361,6 +361,25 @@ network, so it can be emailed to a client or put in training material; viewers c
 and click around the prototype. It is generated: the guard blocks hand edits, `--check` fails when
 it is stale, and it is rebuilt whenever a screen or the tour changes.
 
+**Where a tour plays (owner amendment, 2026-10-14).** Each tour file has `"view": "app" | "prototype"`;
+**missing means `app`**, and anything else exits 2 naming the tour file, the line and the fix.
+`tours/<id>.html` follows it: `app` is the app view (§3.4.2) with the player on top, a `<base
+href="../">`, opening straight into the tour, its closing card linking "Open the prototype";
+`prototype` is the prototype page (its screens list and decisions rail fold away while the tour
+runs). `prototype.html#tour-<id>` keeps playing every tour in the prototype, and `app.html` itself
+carries no player. `/plumb:tour` asks **"Where should it play?"** right after the audience
+question (*Full-window app (Recommended)* · *Prototype page (with the screens list and the decisions
+rail, for a design review)*), records it and shows both links at the end; `/plumb:prototype`'s
+default tours are written without `view`. In both views `#tour-<id>[-<n>]` links work and the
+player moves between screens (also through the clicks it makes) without adding history entries.
+Because the page scrolls in the app view, a step's element is brought into view clear of the
+screen's own top-anchored fixed or sticky bars (those across its columns, sticking to the window,
+under half its height), and a zoom step on a screen showing a fixed layer points with a spotlight
+instead (a transform on the frame would make it the containing block of those layers and pull
+them to the top of the page). Both shells take the player's `--pl-*` roles from one shared
+template, `templates/chrome-roles.css`, and `prototype.html` links "Open as app" to
+`app.html#/<screen>[/<state>]`.
+
 Turning a tour into in-app onboarding in the live product is out of scope
 for 1.0.0.
 
@@ -640,7 +659,7 @@ docs/design/
 ├── prototype/screens/<id>.html         [Y] one source per screen (states + interactions)
 ├── prototype/screens.json              [G] screen → route, source files, states, sync status
 ├── prototype/tours/<flow>.json         [Y] walkthrough scripts (guide mode + play mode)
-├── tours/<tour>.html                   [G] one shareable file per tour: the prototype + that tour
+├── tours/<tour>.html                   [G] one shareable file per tour, in its view (app, default, or prototype)
 ├── prototype/proposals/<name>/         variants from /plumb:prototype (both views) + index.html
 └── audit-*.html · ux-review-*.html · extract.html
 ```
@@ -765,9 +784,12 @@ navigation, hash routing between screens, a state switcher, phone/desktop and li
 each screen's own interactions, the per-screen decisions panel plus a Decisions page from
 `docs/design/decisions.md`, the per-screen guide panel, and the walkthrough player for every file
 in `tours/`), `app.html` (the app view of §3.4.2: every screen full window, hash routes `#/ID` and
-`#/ID/STATE`, the same screen-script API, no panels, from `templates/app-shell.html.tmpl`) and
+`#/ID/STATE`, the same screen-script API, no panels, from `templates/app-shell.html.tmpl`),
+`tours/<id>.html` per tour file (in the tour's `view`: the app shell with the player on top, the
+default, or the prototype shell; §3.4.1) and
 `screens.html` (sidebar navigation, every screen × every `data-state`, and the control-state sheet
-generated from the tokens and components). It inlines `build-tokens.py --css-vars`, a small
+generated from the tokens and components). The two shells take the `--pl-*` roles of Plumb's own
+chrome from one shared template, `templates/chrome-roles.css`. It inlines `build-tokens.py --css-vars`, a small
 dependency-free runtime, and each screen's scripts, so every page is a single file that opens from
 disk. In `screens.html` each screen's markup, styles and scripts are in the page once (one
 `<template>` each), shared by its light and dark copies in every state; the page builds each copy's

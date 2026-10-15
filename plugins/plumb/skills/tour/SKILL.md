@@ -31,7 +31,7 @@ Effective HTML guides craft only (content, states, interactions, accessibility, 
 system wins.
 
 ```
- audience + purpose ─▶ screens, states, chapters ─▶ draft steps (table) ─▶ user OKs ─▶ write tours/<id>.json
+ audience + where it plays + purpose ─▶ screens, states, chapters ─▶ draft steps (table) ─▶ user OKs ─▶ write tours/<id>.json
    ─▶ build-prototype.py (targets checked) ─▶ show both links ─▶ changes? ─▶ STOP
 ```
 
@@ -61,10 +61,14 @@ Ask, one at a time:
 1. **Audience:** a client or stakeholder demo (`client`, opens in play mode) · training for users (`training`, guide
    mode, with your-turn steps) · a design review (`review`) · teammate onboarding (`team`) · what's new (`whats-new`,
    play mode). Recommend from what the user said.
-2. **Purpose:** one sentence: what they should take away.
-3. **Scope:** which flows, screens and states (list them from `screens.json`), across one flow or several; which
+2. **Where should it play?** *Full-window app (Recommended)* (`"view": "app"`, the default: the screens full window
+   with the player on top, for a demo or training) · *Prototype page (with the screens list and the decisions rail, for
+   a design review)* (`"view": "prototype"`). Record the answer as `"view"` in the tour file
+   ([tours.md](../../reference/tours.md), "Where it plays").
+3. **Purpose:** one sentence: what they should take away.
+4. **Scope:** which flows, screens and states (list them from `screens.json`), across one flow or several; which
    non-happy states are worth showing (an error, an empty state).
-4. Only when it matters: pacing (default speed, steps that need a longer hold), chapters (named parts of the story),
+5. Only when it matters: pacing (default speed, steps that need a longer hold), chapters (named parts of the story),
    the intro and closing cards ("what you'll see", "what to try next"), and which steps are `your_turn` (training: the
    learner does it on the real control; a wrong click gets the `hint`).
 
@@ -73,8 +77,8 @@ Ask, one at a time:
 Show a short table, one row per step: chapter · screen/state · target (what is pointed at) · title and caption ·
 pointer (spotlight, ring, arrow, beacon, zoom, cursor; labels, callout, note) · action (click, type, choose, wait) ·
 your turn. Captions in the product's words (`SKILL/references/vocabulary.md`) and the audience's tone, one sentence
-each; one pointer per step plus at most a callout or a set of labels. Ask: "Write this tour to
-`<docs>/prototype/tours/<id>.json`?" — Write it / Change steps.
+each; one pointer per step plus at most a callout or a set of labels. Ask: "Write this tour (it plays in <the
+full-window app | the prototype page>) to `<docs>/prototype/tours/<id>.json`?" — Write it / Change steps.
 
 Every target must exist in that screen file's markup (it may be hidden in its state). Prefer the hooks the screen
 already has (`[data-test=…]`, a class). If a step needs an element the screen file lacks, say so: adding a hook changes
@@ -92,12 +96,14 @@ user's explicit yes to that screen** in this conversation.
 
 ## Step 4: show it, then stop
 
-- In the prototype: `<docs>/prototype.html#tour-<id>` (step n: `#tour-<id>-<n>`). Guide mode: Next/Back or the arrow
-  keys, Esc to leave. Play mode: Space pauses, a marker per chapter, speed 0.5×–2×.
-- The shareable page: `<docs>/tours/<id>.html`, one file with the whole prototype and this tour, opening straight into
-  it; it opens from disk with no network, so it can be emailed or put in training material.
+- Show both links:
+  - **the tour page** `<docs>/tours/<id>.html`: one file with every screen and this tour, opening straight into it in the
+    view chosen (the full-window app, or the prototype page); it opens from disk with no network, so it can be emailed
+    or put in training material;
+  - **in the prototype** `<docs>/prototype.html#tour-<id>` (step n: `#tour-<id>-<n>`), whatever the view.
+  Guide mode: Next/Back or the arrow keys, Esc to leave. Play mode: Space pauses, a marker per chapter, speed 0.5×–2×.
 - If a browser is available (the agent's browser tool, else `PY "<ROOT>/scripts/screenshot.py"
-  "<docs>/prototype.html#tour-<id>" --out …`), check the first steps render in light and dark.
+  "<docs>/tours/<id>.html" --out …`), check the first steps render in light and dark.
 - Ask: "Anything to change?" Iterate on the file, rebuild, show again. Done → stop. The user commits.
 
 **A tour that broke** (a screen changed and `build-prototype.py` exits 2 on it): show the failing step and what changed
