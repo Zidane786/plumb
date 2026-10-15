@@ -73,7 +73,9 @@
   anything, and warns when a step points at something the screen's own CSS shows only at some frame widths ("visible
   only when the frame is ≥ 48rem"). The plugin's `check-tour.py` plays a tour page headless in guide and play mode at
   1280 and 1440 wide with a Chrome, Edge or Chromium already on the machine, and names every step whose screen or
-  state is wrong, whose element is hidden, zero-size or off the window, or whose panel is covered. `/plumb:tour` runs
+  state is wrong, whose element is hidden, zero-size, off the window or covered (by the screen's own fixed layer, or
+  by the walkthrough panel only where the two overlap, so a corner toast beside the panel passes), or whose panel is
+  covered. `/plumb:tour` runs
   both after the build and fixes what they name; with no browser it says so and asks (nothing is installed).
 - **The walkthrough player gets out of the way**: **Hide panel** (or the `H` key) swaps the panel for a small pill
   (the step's title in guide mode; in play mode the subtitle keeps narrating), remembered in the browser. While a tour

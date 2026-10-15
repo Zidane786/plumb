@@ -623,3 +623,43 @@ def test_check_tour_for_real(tmp_path: Path) -> None:
     ], bad.stdout
     assert lines[5].startswith(f"fix: change those steps in {TOURS_REL}/broken.json")
     assert not (p / ".plumb-tmp").exists()
+
+
+# A fixed toast in the bottom-right corner sits beside the centred walkthrough panel (not covered), and a fixed bar
+# centred at the bottom sits under it (covered). Another shape too: a floating button in the bottom-left corner.
+CORNER_REL = f"{DOCS}/prototype/screens/corner.html"
+CORNER = """<style>
+[data-screen="corner"] .toast { position: fixed; right: 16px; bottom: 16px; width: 3rem; height: 3rem; margin: 0; z-index: 5; }
+[data-screen="corner"] .fab { position: fixed; left: 12px; bottom: 12px; z-index: 5; }
+[data-screen="corner"] .bottom-bar { position: fixed; left: 50%; bottom: 24px; width: 8rem; margin: 0 0 0 -4rem; z-index: 5; }
+</style>
+<section data-screen="corner" data-title="Corners" data-order="6">
+  <h2>Corners</h2>
+  <div data-state="toast"><p class="toast" role="status">Saved</p><button type="button" class="fab">New</button></div>
+  <div data-state="under"><p class="bottom-bar">Under the panel</p></div>
+</section>
+"""
+
+
+def test_check_tour_for_real_reports_the_panel_only_where_it_overlaps(tmp_path: Path) -> None:
+    browser = _real_browser()
+    tour = {"title": "Corners", "audience": "training", "steps": [
+        {"screen": "corner", "state": "toast", "title": "Toast", "caption": "Beside the panel.",
+         "target": ".toast", "point": "beacon"},
+        {"screen": "corner", "state": "toast", "title": "Button", "caption": "Beside the panel too.", "target": ".fab"},
+        {"screen": "corner", "state": "under", "title": "Bar", "caption": "Under the panel.", "target": ".bottom-bar"},
+    ]}
+    p = make_tour_project(tmp_path / "Corner Ünïcode", {"demo": demo()}, build=False)
+    write(p / CORNER_REL, CORNER)
+    put_tour(p, "corner", tour)
+    r = run(p)
+    assert r.returncode == 0, r.stdout + r.stderr
+    out = subprocess.run([sys.executable, str(CHECK), str(p / PAGES_REL / "corner.html"), "--browser", browser,
+                          "--timeout", "90"], capture_output=True, text=True, encoding="utf-8", cwd=str(p), timeout=300)
+    assert out.returncode == 2, out.stdout + out.stderr
+    lines = out.stdout.strip().splitlines()
+    assert lines[0] == ('step 3 (Bar): the target ".bottom-bar" is covered by the walkthrough panel '
+                        'at 1280 (guide, play), 1440 (guide, play)'), out.stdout
+    assert lines[1].startswith(f"fix: change those steps in {TOURS_REL}/corner.json")
+    assert not any("Toast" in line or "Button" in line for line in lines), out.stdout
+    assert not (p / ".plumb-tmp").exists()

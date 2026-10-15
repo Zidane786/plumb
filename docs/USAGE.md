@@ -537,8 +537,9 @@ adding it (which makes that screen's approval stale until you approve it again).
 the screens and warns about a step whose element the screen's CSS shows only at some frame widths ("visible only when
 the frame is ≥ 48rem"). Then, when a Chrome, Edge or Chromium is already on the machine, the plugin's `check-tour.py`
 plays the tour page headless in guide and play mode at 1280 and 1440 wide and names each step whose screen or state is
-wrong, whose element is hidden, zero-size or off the window, or whose player panel is covered; it fixes those steps
-and checks again. No browser: it says so and asks whether to go on without that check (nothing is installed).
+wrong, whose element is hidden, zero-size, off the window or covered (by a fixed layer of the screen, or by the
+player panel where the two really overlap: a corner toast beside the centred panel is fine), or whose player panel is
+covered; it fixes those steps and checks again. No browser: it says so and asks whether to go on without that check (nothing is installed).
 
 ```
 you   /plumb:tour client-demo
