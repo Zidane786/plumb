@@ -402,6 +402,9 @@
       } else {
         from = parseFloat(cs.top);
         if (isNaN(from) || !sticksToWindow(n)) return;
+        /* it sticks only within its parent: one whose parent ends above the target has scrolled away by then */
+        var cb = n.parentElement && n.parentElement.getBoundingClientRect();
+        if (cb && cb.bottom <= r.top) return;
       }
       bands.push([from, from + b.height]);
     });
@@ -511,7 +514,8 @@
       boxes.forEach(function (b) { ring("pl-edge", b); });
     }
     if (point === "ring") boxes.forEach(function (b) { ring("pl-ring", b); });
-    if (point === "zoom" && frame.style.transform) boxes.forEach(function (b) { ring("pl-edge", b); });
+    /* zoomed or not (an area that already fills the view, or near the window's edge, is not enlarged), it is outlined */
+    if (point === "zoom") boxes.forEach(function (b) { ring("pl-edge", b); });
     if (point === "beacon") boxes.forEach(function (b) { put(addOverlay(el("span", "pl-beacon")), b.x + b.w - 2, b.y + 2); });
     var reserved = { top: 0, bottom: 0 };
     if (point === "arrow" && boxes.length) {
@@ -1038,13 +1042,21 @@
       var hash = (appView ? "#/" : "#screen-") + cur.screen + (info && cur.state !== info.states[0] ? "/" + cur.state : "");
       try { history.replaceState(null, "", location.href.split("#")[0] + hash); } catch (err) { /* ignore */ }
     }
-    live.textContent = message || "Left the walkthrough. The prototype is yours to click around.";
+    live.textContent = message || (appView ? "Left the walkthrough. The app is yours to click around."
+      : "Left the walkthrough. The prototype is yours to click around.");
     note("Left the walkthrough “" + title + "”");
     emit();
     var back = T.opener;
     T.opener = null;
     if (back && document.contains(back) && back.getClientRects().length) back.focus({ preventScroll: true });
-    else { var h = $("pp-title"); if (h) h.focus({ preventScroll: true }); }
+    else {
+      /* the prototype's screen title; in the app view (no title) the screen on show */
+      var h = $("pp-title") || (cur.screen ? api.screen(cur.screen) : null);
+      if (h) {
+        if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+        h.focus({ preventScroll: true });
+      }
+    }
   }
   function next() {
     if (!T.tour) return;

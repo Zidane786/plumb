@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from test_build_prototype import (  # noqa: F401 - shared helpers of the prototype suite
+    APP_REL,
     BP,
     BT,
     DOCS,
@@ -768,10 +769,15 @@ def test_typed_text_is_letter_by_letter_in_play_and_instant_in_guide(browser, bu
         ctx.close()
 
 
-def test_your_turn_waits_for_the_real_click_and_hints_on_a_wrong_one(browser, built) -> None:
-    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+# The prototype, the app-view tour page (the default) and the prototype-view tour page each run the same tour.
+ON_EVERY_PAGE = pytest.mark.parametrize("rel, tour", [(PROTO_REL, "demo"), (DEMO_PAGE, "demo"), (WALK_PAGE, "walk")])
+
+
+@ON_EVERY_PAGE
+def test_your_turn_waits_for_the_real_click_and_hints_on_a_wrong_one(browser, built, rel: str, tour: str) -> None:
+    ctx, page, errors, _ = _open(browser, built / rel)
     try:
-        _start(page, "demo", "guide", step=3)
+        _start(page, tour, "guide", step=3)
         page.click(".pl-dock [data-pl=next]")
         s = _state(page)
         assert s["step"] == 4 and s["yourTurn"] is True
@@ -1546,10 +1552,11 @@ def _pill(page) -> dict:
                 button: p.querySelector('[data-pl=show]').textContent}; }""")
 
 
-def test_hide_panel_button_and_pill_in_guide_mode(browser, built) -> None:
-    ctx, page, errors, _ = _open(browser, built / PROTO_REL)
+@ON_EVERY_PAGE
+def test_hide_panel_button_and_pill_in_guide_mode(browser, built, rel: str, tour: str) -> None:
+    ctx, page, errors, _ = _open(browser, built / rel)
     try:
-        _start(page, "demo", "guide", step=1)
+        _start(page, tour, "guide", step=1)
         assert _dock_shown(page) and not _pill(page)["shown"]
         assert page.inner_text(".pl-dock-top [data-pl=hide]") == "Hide panel"
         page.click(".pl-dock [data-pl=hide]")
@@ -2105,9 +2112,6 @@ def test_the_marks_follow_the_viewers_scrolling_inside_a_list(browser, staged) -
 
 # ---------------------------------------------------------------- where a tour plays: "view" (app, the default, or prototype)
 
-APP_REL_T = f"{DOCS}/app.html"
-
-
 def _roles_block() -> str:
     return read(REPO_TEMPLATES / "chrome-roles.css").strip()
 
@@ -2130,7 +2134,7 @@ def test_view_defaults_to_app_and_the_tour_page_is_the_app_with_the_player(tmp_p
     assert "<title>Taking a booking at Café Ünïcode · Café Ünïcode walkthrough</title>" in app_page
     assert 'class="pp-side pp-ui"' in proto_page and 'id="theme-toggle"' in proto_page
     assert tours_json(proto_page)["autostart"] == {"tour": "walk", "mode": "play"}
-    assert "window.plumbPlayer" not in read(p / APP_REL_T), "app.html itself is a clean demo: no player"
+    assert "window.plumbPlayer" not in read(p / APP_REL), "app.html itself is a clean demo: no player"
 
 
 def test_view_change_makes_the_page_stale_and_a_rebuild_follows_it(project: Path) -> None:
@@ -2171,7 +2175,7 @@ def test_both_shells_carry_the_one_shared_role_block(tmp_path: Path) -> None:
                      ':where(:root:not([data-theme="light"]))'):
         assert selector in roles, selector
     p = make_tour_project(tmp_path / "p", {"demo": demo(), "walk": walk()})
-    for rel in (PROTO_REL, APP_REL_T, DEMO_PAGE, WALK_PAGE):
+    for rel in (PROTO_REL, APP_REL, DEMO_PAGE, WALK_PAGE):
         assert read(p / rel).count(roles) == 1, rel
 
 
@@ -2194,8 +2198,9 @@ def test_the_prototype_links_to_the_app_on_the_first_screen(tmp_path: Path) -> N
 BARS_REL = f"{DOCS}/prototype/screens/bars.html"
 STUCK_REL = f"{DOCS}/prototype/screens/stuck.html"
 PLAIN_REL = f"{DOCS}/prototype/screens/plain.html"
-# No bar at the top of the window: a sticky head inside a scrolling box sticks to that box, not the window, and a
-# sticky panel taller than half the window is no header: neither may push a target down.
+# No bar at the top of the window: a sticky head inside a scrolling box sticks to that box, not the window; a sticky
+# group head whose group ends above the target has scrolled away; and a sticky panel taller than half the window is no
+# header: none of them may push a target down.
 PLAIN = """<style>
 [data-screen="plain"] { padding: var(--spacing-4); }
 [data-screen="plain"] .box { height: 200px; overflow: auto; }
@@ -2204,10 +2209,13 @@ PLAIN = """<style>
 [data-screen="plain"] .panel { position: sticky; top: 0; height: 80vh; background: var(--color-sunk); }
 [data-screen="plain"] .gap { height: 1600px; }
 [data-screen="plain"] .spot { height: 80px; }
+[data-screen="plain"] .ghead { position: sticky; top: 0; height: 40px; margin: 0; background: var(--color-surface); }
+[data-screen="plain"] .group .rows { height: 300px; }
 </style>
 <section data-screen="plain" data-title="Plain" data-order="9">
   <div data-state="ready">
     <div class="box"><div class="head">Head</div><div class="rows"></div></div>
+    <div class="group"><h3 class="ghead">An earlier group</h3><div class="rows"></div></div>
     <div class="gap"></div>
     <div class="spot">Here</div>
     <div class="gap"></div>
@@ -2495,6 +2503,59 @@ def test_the_prototype_page_links_to_the_app_and_keeps_screen_and_state(browser,
     try:  # one folder down, the link still reaches the docs folder's app.html
         href = page.evaluate("document.getElementById('pp-app-link').href")
         assert href.split("#")[0].endswith("/docs/design/app.html"), href
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("rel", [DEMO_PAGE, WALK_PAGE])
+def test_the_skip_link_stays_off_the_window_until_it_has_focus(browser, built, rel: str) -> None:
+    """The player's "Skip to the walkthrough" takes no room on any page with the player (the app view included): the
+    screen does not move when the tour starts or ends, and the link shows only while focused."""
+    ctx, page, errors, _ = _open(browser, built / rel)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        page.evaluate("window.plumbPlayer.pause()")
+        skip = page.evaluate(RECT, ".pl-skip")
+        assert skip[1] + skip[3] <= 0, f"the skip link is in the window: {skip}"
+        stage = page.evaluate(RECT, "#pp-stage")
+        if rel == DEMO_PAGE:
+            assert stage[1] == 0, "the app view's window is the frame: nothing above it"
+        page.keyboard.press("Tab")
+        assert page.evaluate("document.activeElement.textContent") == "Skip to the walkthrough"
+        shown = page.evaluate(RECT, ".pl-skip")
+        assert shown[1] >= 0 and shown[1] + shown[3] <= 900, shown
+        assert page.evaluate(RECT, "#pp-stage")[1] == stage[1], "focusing it moves nothing"
+        page.keyboard.press("Escape")
+        assert page.evaluate(RECT, "#pp-stage")[1] == stage[1], "the screen does not shift when the tour ends"
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_a_zoom_step_is_outlined_whether_or_not_it_can_zoom(browser, apptour, width: int) -> None:
+    ctx, page, errors, _ = _open(browser, apptour / f"{PAGES_REL}/bars.html", width=width)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        _start(page, "bars", "guide", step=5)
+        page.wait_for_timeout(500)
+        assert _shown(page, ".pl-edge") == 1, page.evaluate(FRAME_T)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_leaving_an_app_view_tour_keeps_focus_on_the_screen(browser, apptour) -> None:
+    ctx, page, errors, _ = _open(browser, apptour / DEMO_PAGE)
+    try:
+        page.wait_for_function("window.__log.length > 0")
+        page.keyboard.press("Escape")
+        assert not _state(page)["active"]
+        assert page.evaluate("document.getElementById('pp-frame').contains(document.activeElement)"), \
+            page.evaluate("document.activeElement.outerHTML.slice(0, 80)")
+        assert page.evaluate("document.activeElement.getAttribute('data-screen')") == "home"
+        assert "The app is yours to click around" in page.inner_text(".pl-live")
         assert errors == []
     finally:
         ctx.close()
