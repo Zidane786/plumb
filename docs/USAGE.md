@@ -1112,13 +1112,18 @@ Three checks, in this order:
 
    Loop variables are followed by one question, asked against the guarded paths only (never by listing your files):
    could the variable of a `for` / `select` loop or of `… | while read` hold a guarded path, or a name the target turns
-   into one? Its words are literals, globs (the guarded paths they match), `ls DIR` (the guarded files in DIR, as bare
-   names too), `find DIR -name PAT -type f` (the guarded files under DIR that match); each of those is put into the
-   target (`$f`, `${f%.html}.html`, `docs/design/$f`, a copy `g="$f"`, a `cd "$d"`). So `for f in docs/design/*.html;
+   into one? Its words are literals, globs (the guarded paths they match; `*`, `?` and `[…]` never cross a `/`, so
+   `for f in *.md` stays in the folder), `ls DIR` (the guarded files in DIR, as bare names too), `find DIR -name PAT
+   -type f -maxdepth N` (the guarded files under DIR that match); each of those is put into the target (`$f`,
+   `${f%.html}.html`, `docs/design/$f`, `$D/$f` with `D` set earlier, `$PWD/…`, `$HOME/…`, a copy `g="$f"`, a
+   `cd "$d"`). So `for f in docs/design/*.html;
    do sed -i … "$f"; done` and `ls docs/design | while read f; do rm "docs/design/$f"; done` are refused, while `for f
    in app/*.tsx; …`, `find app -name '*.tsx' | while read f; …` and a loop that copies guarded files out to `/tmp` are
    allowed. With a source the reader can't read (`$(cat list.txt)`, a `read` from a file, `${!N}`), the target is
-   refused when its own text names a guarded folder or file, or the command names a guarded path anywhere.
+   refused when its own text names a guarded folder or file, or the command names a guarded path anywhere. A loop
+   with more values than the guard tries (20,000 across the command), or one it can't finish in time, is decided the
+   same way as a command too long to read: refused when the command names a guarded path, else the earlier reading
+   decides.
 
    A write or removal target the reader can't work out (`$( … )`, backticks, `${…}`) is refused outright when it is
    built from a guarded path: one of its words, the value of a variable it uses or a word inside its `$( … )` names a
@@ -1147,7 +1152,12 @@ Three checks, in this order:
      `prettier --write`, editors like `ed`, and commands run through other tools;
    - the project's own git hooks (`git commit` runs them);
    - a loop whose source the reader models only roughly: `find` with predicates other than `-name` / `-iname` /
-     `-type` (and `ls -R`, `git ls-files`, a file read line by line) count as unknown sources;
+     `-type` / `-maxdepth` / `-mindepth` (and `ls -R`, `git ls-files`, a file read line by line) count as unknown
+     sources; `ls DIR` and `find DIR -type d` yield guarded files and the folders Plumb owns whole, not a folder that
+     only holds one (`ls docs | while read f; do rm -rf "docs/$f"; done`); a `cd "$d"` into a loop variable is
+     followed only over literal words, not globs (`for d in docs/*; do cd "$d" && rm screens.html; done`); a
+     conditional reassignment inside the loop (`[ -n "$x" ] && f=notes/a.md`) ends the loop binding; and an unknown
+     source used as a prefix (`for f in $(cat x); do rm "$f/docs/design/screens.html"; done`);
    - a computed target whose text names no guarded path in full (`> "$(cat target.txt)"`), including one built from a
      bare folder name or a prefix (`rm -rf "$(echo docs)"`, `> "${ROOT:-.}/docs/design/screens.html"`,
      `> "$(realpath docs)/design/screens.html"`);

@@ -27,17 +27,17 @@ In such a project, in this order:
    refused when the variable could hold a guarded path, or a name the target turns into one (_loop_refusal, against
    the guarded paths only); a target the reader cannot work out ($( ), backticks, ${…}) when its text or the value of
    a variable it uses names a guarded file or folder by its full path (_Guarded.target). A refusal of the earlier
-   reader becomes an allow only when the shell reader proves it (_proven): (a) a here-document / echo / printf / tee text written to a
-   file the same command does not run, import, name again or leave where a program picks it up (a Makefile whose
-   lines run the scripts is fine; sitecustomize.py, .bashrc, a git hook are not), (b) a read-only program's words,
-   (c) inline code that only reads its guarded literals (json.load, importlib, Path.read_text) and writes only to
-   plain literals away from them, (d) a git commit message (-m / -F / -t values, a here-document on stdin),
-   unless git is given an option that runs something, a variable is set before it, or the command wrote a hook. Every
-   other word must name no guarded path by guard()'s own rule (files that do not exist yet, the plugin root, a
+   reader becomes an allow only when the shell reader proves it (_proven): (a) a here-document / echo / printf / tee
+   text written to a file the same command does not run, import, name again or leave where a program picks it up (a
+   Makefile whose lines run the scripts is fine; sitecustomize.py, .bashrc, a git hook are not), (b) a read-only
+   program's words, (c) inline code that only reads its guarded literals (json.load, importlib, Path.read_text) and
+   writes only to plain literals away from them, (d) a git commit message (-m / -F / -t values, a here-document on
+   stdin), unless git is given an option that runs something, a variable is set before it, or the command wrote a hook.
+   Every other word must name no guarded path by guard()'s own rule (files that do not exist yet, the plugin root, a
    folder that holds a guarded file or a parent of one). Running build-tokens.py or build-prototype.py, and anything
-   that writes elsewhere, is
-   allowed. Removing or moving away a guarded file (rm, rmdir, unlink, del, Remove-Item, git rm, the sources of mv /
-   Move-Item / git mv, os.remove, shutil.rmtree), or a folder that holds one, is refused the same way; ~, $HOME,
+   that writes elsewhere, is allowed. Removing or moving away a guarded file (rm, rmdir, unlink, del, Remove-Item, git
+   rm, the sources of mv / Move-Item / git mv, os.remove, shutil.rmtree), or a folder that holds one, is refused the
+   same way; ~, $HOME,
    ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder. A command longer than SHELL_HUGE, one
    whose brackets nest deeper than the reader reads, and one the reader fails on (a crash, the recursion limit) are
    not read: refused when a word names a guarded file or folder (or a parent of one), else the earlier reader decides;
@@ -318,6 +318,12 @@ _WORD_SPLIT = re.compile(r"[\s'\"`=,;()<>|&{}\[\]]+")
 _MAX_WORDS = 20000
 
 
+def _glob_match(path: str, pattern: str) -> bool:
+    """A glob match the way the shell does it: *, ? and [...] never cross a /, so both have the same number of parts."""
+    a, b = path.replace("\\", "/").split("/"), pattern.replace("\\", "/").split("/")
+    return len(a) == len(b) and all(fnmatch.fnmatchcase(x, y) for x, y in zip(a, b))
+
+
 class _Guarded:
     """The guard's own rule, for the words of a command: a path is guarded when guard() protects it (whether it exists
     or not: the plugin root, the skill's [P] files, a theme, a tour …) or it is a folder that holds a guarded file (a
@@ -353,7 +359,7 @@ class _Guarded:
     def glob_hit(self, pattern: str) -> Optional[str]:
         """A guarded file a glob pattern (an absolute path) can match: an existing one, a generated page, or a file not
         built yet that guard() would protect (the pattern with its wildcards filled in)."""
-        hit = next((f for f in self.patterns if fnmatch.fnmatchcase(f, pattern)), None)
+        hit = next((f for f in self.patterns if _glob_match(f, pattern)), None)
         if hit is None:
             sample = re.sub(r"\[[^\]]*\]", "x", pattern).replace("*", "x").replace("?", "x")
             hit = sample if guard(self.proj, sample) else None
@@ -362,7 +368,7 @@ class _Guarded:
     def could_yield(self, items, deadline: float) -> List[str]:
         """What a loop source could hold that matters: for each item, the guarded paths it could yield, in the form the
         shell would give them (a literal as written; a glob's guarded matches; `ls DIR`'s guarded entries as bare names
-        and as DIR/name; `find DIR`'s guarded files, filtered by -name / -type). Only the guarded paths are matched,
+        and as DIR/name; `find DIR`'s guarded files, filtered by -name / -type / -mindepth / -maxdepth). Only the guarded paths are matched,
         never the file system."""
         out: List[str] = []
         for kind, value, bases in items:
@@ -379,7 +385,7 @@ class _Guarded:
                     continue
                 if kind == "glob":
                     sample = re.sub(r"\[[^\]]*\]", "x", full).replace("*", "x").replace("?", "x")
-                    hits = [g for g in self.patterns if fnmatch.fnmatchcase(g, full)]
+                    hits = [g for g in self.patterns if _glob_match(g, full)]
                     hits += [sample] if guard(self.proj, sample) else []
                     real_base = os.path.realpath(base)
                     out += [h if os.path.isabs(folder) else os.path.relpath(h, real_base) for h in hits]
@@ -388,10 +394,14 @@ class _Guarded:
                         if os.path.dirname(g) == full:
                             out += [os.path.basename(g), os.path.join(folder, os.path.basename(g))]
                 else:  # find DIR [-name PAT] [-type f|d] prints DIR/relative
-                    _dir, pattern, icase, ftype = value
+                    _dir, pattern, icase, ftype, mindepth, maxdepth = value
                     pool = sorted(self.folders) if ftype == "d" else (self.patterns if ftype in ("", "f") else [])
                     for g in pool:
-                        if H.under(g, full) is None:
+                        rel = H.under(g, full)
+                        if rel is None:
+                            continue
+                        depth = len(rel.split("/")) if rel else 0
+                        if depth < mindepth or (maxdepth is not None and depth > maxdepth):
                             continue
                         name = os.path.basename(g)
                         if pattern and not fnmatch.fnmatchcase(name.lower() if icase else name,
@@ -464,47 +474,79 @@ def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str, rule: Optional[_Gu
     return True
 
 
+_MAX_TRIES = 20000  # loop values tried in the targets of one command; past it the command-wide rule decides
+
+
 def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd: str) -> Optional[str]:
     """A write or removal target that uses a loop variable (or ${!N}): refused when the variable could hold a guarded
-    path, or a name the target turns into one (each value _Guarded.could_yield gives is put into the target); with a
-    source the reader does not know, when the target's own text names a guarded folder or file, or the command names
-    a guarded path anywhere."""
+    path, or a name the target turns into one (each value _Guarded.could_yield gives is put into the target, after the
+    command's other variables); with a source the reader does not know, or a target that still has an unknown part,
+    when the target's own text names a guarded folder or file, or the command names a guarded path anywhere. Past the
+    number of tries or the time the check has, the command-wide rule decides alone: refused when the command names a
+    guarded path, else the earlier reader decides."""
     deadline = time.monotonic() + NAMES_BUDGET
     command_hit: List[Optional[str]] = []
     literal_seen: dict = {}
     yields: dict = {}
+    tries = 0
+
+    def in_command() -> Optional[str]:
+        if not command_hit:
+            command_hit.append(rule.target(eff.command_words(), tuple(dict.fromkeys((cwd, proj.root_s))),
+                                           time.monotonic() + NAMES_BUDGET))
+        return command_hit[0]
+
+    def unknown(word: str, scope) -> Optional[str]:
+        literal = H.literal_part(word)
+        if literal not in literal_seen:
+            literal_seen[literal] = rule.target([literal], scope.bases, deadline) if literal.strip("/.") else None
+        hit = literal_seen[literal] or in_command()
+        if hit is None:
+            return None
+        return (f"error: this shell command writes to or removes a path that comes from a source Plumb cannot read "
+                f"({word}), and it names {hit}, a path Plumb guards\nfix: write each target path out in full so "
+                f"Plumb can check it (and change {hit} the way Plumb's own message for it says)")
+
+    def past_limits() -> Optional[str]:
+        hit = in_command()
+        if hit is None:
+            return None  # nothing guarded is named: the earlier reader decides
+        return (f"error: this shell command has more loop values than Plumb can check in time, and it names {hit}, a "
+                f"path Plumb guards\nfix: split it into shorter loops, or write each target path out in full (and "
+                f"change {hit} the way Plumb's own message for it says)")
+
     for kind, word, sources, scope in eff.loop_targets:
         if time.monotonic() > deadline:
-            return _unread_refusal("a path Plumb ran out of time to check", "too many loop targets to check in time")
-        removal = kind in (1, 2)
+            return past_limits()
         if any(items == [H._ANY] for items in sources.values()):
-            literal = H.literal_part(word)
-            if literal not in literal_seen:
-                literal_seen[literal] = rule.target([literal], scope.bases, deadline) if literal.strip("/.") else None
-            hit = literal_seen[literal]
-            if hit is None:
-                if not command_hit:
-                    command_hit.append(rule.target(eff.command_words(), tuple(dict.fromkeys((cwd,) + scope.bases)),
-                                                   deadline))
-                hit = command_hit[0]
-            if hit is not None:
-                return (f"error: this shell command writes to or removes a path that comes from a source Plumb cannot "
-                        f"read ({word}), and it names {hit}, a path Plumb guards\nfix: write each target path out in "
-                        f"full so Plumb can check it (and change {hit} the way Plumb's own message for it says)")
+            why = unknown(word, scope)
+            if why:
+                return why
             continue
         choices = []
         for name, items in sources.items():
-            key = id(items)
-            if key not in yields:
-                yields[key] = rule.could_yield(items, deadline)
-            choices.append([(name, v) for v in yields[key]])
+            if id(items) not in yields:
+                yields[id(items)] = rule.could_yield(items, deadline)
+            choices.append([(name, v) for v in yields[id(items)]])
+        count = 1
+        for options in choices:
+            count *= len(options)
+        tries += count
+        if tries > _MAX_TRIES:
+            return past_limits()
         combos = [[]]
-        for options in choices:  # the could-yield sets are small: only guarded paths and literal words
-            combos = [c + [o] for c in combos for o in options][:_MAX_WORDS]
+        for options in choices:
+            combos = [c + [o] for c in combos for o in options]
         for combo in combos:
             if time.monotonic() > deadline:
+                return past_limits()
+            paths = H.substitute(word, dict(combo), scope, proj.root_s)
+            if paths is None:  # a part still unknown after the variables: the unknown-source rule
+                why = unknown(word, scope)
+                if why:
+                    return why
                 break
-            why = _shell_paths_refusal(proj, H.substitute(word, dict(combo), scope, proj.root_s), removal, cwd)
+            why = _shell_paths_refusal(proj, paths, kind in (1, 2), cwd)
             if why:
                 return why
     return None

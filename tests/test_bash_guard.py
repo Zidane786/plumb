@@ -804,6 +804,16 @@ COMPUTED_ALLOW = [
     "for f in docs/design/*.html; do :; done; f=notes/a.md; rm \"$f\"",  # a plain assignment ends the binding
     "for f in $(cat plumb-list.txt); do rm \"notes/$f\"; done",  # unknown source, nothing guarded named
     "for f in " + " ".join(f"notes/n{i}.md" for i in range(201)) + "; do rm \"$f\"; done",  # many values
+    # P1: a glob's *, ? and [...] never cross a / (root-level loops)
+    "for f in *.md; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in *.py; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in *.css; do sed -i 's/a/b/' \"$f\"; done",
+    "for f in *.html; do sed -i 's/a/b/' \"$f\"; done",
+    "ls *.md | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    # P3: find -maxdepth / -mindepth
+    "find . -maxdepth 1 -name '*.md' | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    "find . -maxdepth 1 -name '*.css' | while read f; do sed -i 's/a/b/' \"$f\"; done",
+    "find docs -mindepth 3 -name '*.html' | while read f; do rm \"$f\"; done",
     "D=$(mktemp -d); echo x > \"$D/notes.txt\"",
     "cp /tmp/a \"`mktemp`\"",
 ]
@@ -847,6 +857,12 @@ COMPUTED_REFUSE += [
     "for f in $(cat plumb-list.txt); do rm \"docs/design/$f\"; done",
     "for f in $(cat plumb-list.txt); do rm \"$f\"; done; cat docs/design/screens.html",
     "for f in " + " ".join(f"notes/n{i}.md" for i in range(200)) + f" {GEN}; do rm \"$f\"; done",  # many values
+    "for f in */*.css; do sed -i 's/a/b/' \"$f\"; done",  # P1: a glob per part still matches app/globals.css
+    "for f in docs/*/*.html; do sed -i 's/a/b/' \"$f\"; done",
+    # P2: the command's other variables are expanded in a loop target
+    "D=docs/design; for f in screens.html; do rm \"$D/$f\"; done",
+    "for f in screens.html; do rm \"$PWD/docs/design/$f\"; done",
+    "find . -maxdepth 3 -name '*.html' | while read f; do sed -i 's/a/b/' \"$f\"; done",  # P3: deep enough
 ]
 
 
@@ -993,3 +1009,40 @@ def test_a_long_loop_command_is_read_in_time_and_its_guarded_rm_refused(launcher
     t = time.perf_counter()
     actionable(refused(claude(launcher, tmp_path, proj, command)))
     assert time.perf_counter() - t < 5.0
+
+
+def test_a_loop_target_under_home_expands_home(decide):
+    """P2: $HOME in a loop target is the real home folder."""
+    rel = os.path.relpath(decide.proj, os.environ["HOME"])
+    command = f"for f in screens.html; do rm \"$HOME/{rel}/docs/design/$f\"; done"
+    assert decide.new(command), command
+
+
+def test_the_loop_check_runs_in_time_on_a_long_command(launcher, tmp_path, proj):
+    """Nit 2: thousands of loop targets with an unknown source and a guarded path only read (cat), so the loop check
+    itself decides: refused in well under a second."""
+    command = "for f in $(cat plumb-list.txt); do " + " ".join('rm "$f";' for _ in range(6500)) + f" done; cat {GEN}"
+    assert 50 * 1024 < len(command) < 64 * 1024
+    pe = Decider(proj).pe
+    t = time.perf_counter()
+    reason = pe.shell_refusal(pe.H.Project(proj), command, str(proj), str(proj))
+    assert reason and "cannot read" in reason, reason
+    assert time.perf_counter() - t < 1.0
+    actionable(refused(claude(launcher, tmp_path, proj, command)))
+
+
+def test_past_its_limits_the_loop_check_leaves_it_to_the_command_wide_rule(decide):
+    """P6: too many loop values to try (or no time left) is not a refusal by itself: the command is refused only when
+    it names a guarded path, with a clean message; otherwise the earlier reader decides."""
+    big = "for f in " + " ".join(f"notes/n{i}" for i in range(1999)) + "; do " + \
+        " ".join(f'rm "$f.{j}";' for j in range(300)) + " done"
+    t = time.perf_counter()
+    assert decide.pe.shell_refusal(decide.project, big, str(decide.proj), str(decide.proj)) is None
+    assert time.perf_counter() - t < 5.0
+    reason = decide.pe.shell_refusal(decide.project, big + f"; cat {GEN}", str(decide.proj), str(decide.proj))
+    assert reason and "more loop values than Plumb can check" in reason and "docs/design/screens.html" in reason
+    actionable(reason)
+    assert "ran out of time to check, a path" not in reason
+    many = "for a in " + " ".join(f"n{i}" for i in range(150)) + " docs; do for b in " + \
+        " ".join(f"w{i}" for i in range(150)) + " design/screens.html; do rm \"$a/$b\"; done; done"
+    assert decide.pe.shell_refusal(decide.project, many + f"; cat {GEN}", str(decide.proj), str(decide.proj))

@@ -2081,7 +2081,8 @@ def _cd(words: List[str], scope: _Scope, eff: ShellEffects) -> bool:
     names = [m.group(1) or m.group(2) for m in _VAR_USE.finditer(target)]
     if names and all(n in scope.loops for n in names) and len(names) == 1 and \
             all(i[0] == "lit" for i in scope.loops[names[0]]) and scope.loops[names[0]]:
-        folders = [p for i in scope.loops[names[0]] for p in substitute(target, {names[0]: i[1]}, scope, eff.root)]
+        folders = [p for i in scope.loops[names[0]]
+                   for p in (substitute(target, {names[0]: i[1]}, scope, eff.root) or [])]
         if folders:  # for d in docs/design; do cd "$d": the loop's folders
             scope.bases = tuple(dict.fromkeys(folders))
             return True
@@ -2475,6 +2476,7 @@ def _bind_loop(words: List[str], cmd: _Simple, before: Optional[_Simple], scope:
     asks, against the guarded paths only (never by listing the file system), what each item could yield."""
     if len(words) >= 2 and words[0] in ("for", "select") and re.fullmatch(r"[A-Za-z_]\w*", words[1]):
         scope.loops[words[1]] = _loop_items(words[3:], scope, eff) if words[2:3] == ["in"] else [_ANY]
+        scope.vars.pop(words[1], None)
     elif words and _command_name(words[0]) == "read":
         names = [w for w in words[1:] if re.fullmatch(r"[A-Za-z_]\w*", w)]
         source = [_ANY]
@@ -2482,6 +2484,7 @@ def _bind_loop(words: List[str], cmd: _Simple, before: Optional[_Simple], scope:
             source = _producer_items(before.words[_command_start(before.words, eff):], list(before.stdin), scope, eff)
         for name in names:
             scope.loops[name] = source
+            scope.vars.pop(name, None)
 
 
 def _producer_items(cmd_words: List[str], stdin: List[str], scope: _Scope, eff: ShellEffects) -> List[Tuple]:
@@ -2506,7 +2509,7 @@ def _producer_items(cmd_words: List[str], stdin: List[str], scope: _Scope, eff: 
         while k < len(args) and not args[k].startswith(("-", "(", "!")):
             dirs.append(args[k])
             k += 1
-        pattern, icase, kind = "", False, ""
+        pattern, icase, kind, mindepth, maxdepth = "", False, "", 0, None
         while k < len(args):
             a = args[k]
             if a not in _FIND_KNOWN:
@@ -2520,13 +2523,19 @@ def _producer_items(cmd_words: List[str], stdin: List[str], scope: _Scope, eff: 
                     pattern, icase = args[k + 1], a == "-iname"
                 elif a == "-type":
                     kind = args[k + 1]
+                elif not args[k + 1].isdigit():
+                    return [_ANY]
+                elif a == "-maxdepth":
+                    maxdepth = int(args[k + 1])
+                else:
+                    mindepth = int(args[k + 1])
                 k += 2
             else:
                 k += 1
         items = _loop_items(dirs or ["."], scope, eff)
         if items == [_ANY]:
             return items
-        return [("find", (i[1], pattern, icase, kind), i[2]) for i in items]
+        return [("find", (i[1], pattern, icase, kind, mindepth, maxdepth), i[2]) for i in items]
     if name == "cat" and stdin and len(cmd_words) == 1:
         return _loop_items([ln.strip() for text in stdin for ln in text.split("\n") if ln.strip()], scope, eff)
     return [_ANY]
@@ -2558,9 +2567,11 @@ def _loop_items(values: List[str], scope: _Scope, eff: ShellEffects) -> List[Tup
     return [_ANY] if _ANY in out else out
 
 
-def substitute(word: str, values: Dict[str, str], scope: "_Scope", root: Optional[str]) -> List[str]:
-    """The absolute paths a target word names once each loop variable in it holds the given value: $V, ${V}, and the
-    expansions ${V%P} ${V%%P} ${V#P} ${V##P} ${V:-X} ${V-X} ${V:=X} ${V:+X} ${V/…}, the rest resolved as a target."""
+def substitute(word: str, values: Dict[str, str], scope: "_Scope", root: Optional[str]) -> Optional[List[str]]:
+    """The absolute paths a target word names once each loop variable in it holds the given value: the command's plain
+    variables first, then the loop variables ($V, ${V}, ${V%P} ${V%%P} ${V#P} ${V##P} ${V:-X} ${V-X} ${V:=X} ${V:+X}
+    ${V/…}), then $PWD / $(pwd), $HOME / ~ and $CLAUDE_PROJECT_DIR as for any target. None when a part is still
+    unknown."""
     def one(m: "re.Match") -> str:
         name = m.group(1) or m.group(2)
         if name not in values:
@@ -2579,10 +2590,12 @@ def substitute(word: str, values: Dict[str, str], scope: "_Scope", root: Optiona
         if op.startswith((":+", "+")):
             return op.lstrip(":+")
         return v
+    word = scope.expand(word)
     word = re.sub(r"\$\{(?!#)([A-Za-z_]\w*)[^}]*\}|\$([A-Za-z_]\w*)", one, word)
-    if "$" in word or "`" in word:
-        return []
-    return ShellEffects(root, float("inf"))._paths(word, scope, False)
+    paths = ShellEffects(root, float("inf"))._paths(word, scope, False)
+    if any("$" in p or "`" in p for p in paths):
+        return None
+    return paths
 
 
 def literal_part(word: str) -> str:
