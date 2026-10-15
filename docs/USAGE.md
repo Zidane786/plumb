@@ -415,7 +415,10 @@ plumb Done. Commit these files, start a new session here so the hooks load. UI w
   override the tokens), the token each maps onto and the lines that go, asked once with "move them into the tokens"
   recommended (`build-tokens.py --overrides`, then `--overrides --apply` on your yes; a `--sidebar-<x>` name goes to the
   project's own sidebar token when it has one, and a next/font variable applied on `<body>` is listed as something to
-  move to `<html>` by hand, read from the recorded `Routes:`); each contrast fix; which
+  move to `<html>` by hand, read from the recorded `Routes:`; a variable that keeps a token's name but has another
+  value in the app, its light or dark colours or a length such as a radius from `calc(var(--radius) - 2px)` worked
+  out in px, is noted with "the look changes" and both values: keep the token's value, or set the token to the
+  app's with `/plumb:update`); each contrast fix; which
   starter components, in which framework, where. If you choose keep fades for reduced motion in a plain-CSS app, add
   the class `motion-fade` to elements whose transition is only a fade.
 - **F. Prototypes** of the key screens (or later, with `/plumb:prototype`).
@@ -938,7 +941,9 @@ field or hold a modifier key. Your choice is remembered in this browser.
 layout, not a squeezed phone one); they return when the tour ends. The panel, subtitle, cursor and labels always sit on
 top of the screen's own dialogs and toasts, which stay inside the screen's frame; a hidden or off-canvas element is
 never pointed at, and one scrolled away inside a table or list is scrolled into view; long elements scroll so their
-first label shows, and title cards stay in the window. The player wears the project's tokens (primary colour,
+first label shows, and title cards stay in the window. When the panel (or its pill) would cover an element pinned to
+the window (`position: fixed`, e.g. a toast or a bar at the bottom), that step moves it to the top of the window, below
+the top bar, with the subtitle; the pinned element is never scrolled to. The player wears the project's tokens (primary colour,
 surface, outline, fonts, radius, shadow) where it has them, and Plumb's neutral look otherwise.
 
 **Adding text:** a caption (the subtitle line), a callout bubble on a chosen side of an element, numbered or named
