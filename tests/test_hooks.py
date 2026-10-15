@@ -987,6 +987,10 @@ def test_stop_asks_again_when_only_a_shared_file_changed(launcher, tmp_path, pro
     reason = _block(stop(launcher, tmp_path, proj))
     assert "screen home" in reason and "not approved" in reason and "--approve home" in reason
     assert "update prototype screen" not in reason
+    # the message names the shared file, not the screen file (which did not change)
+    assert (f"screen home ({SCREENS}/home.html): its shared file {SCREENS}/_shared/base.css changed this session "
+            f"(shared files reach every screen)") in reason, reason
+    assert f"({SCREENS}/home.html) changed this session" not in reason
 
 
 def test_stop_no_drift_when_a_shared_file_mirrors_the_code_change(launcher, tmp_path, proj):
@@ -1277,6 +1281,15 @@ def test_audit_changed_counts_a_shared_file_as_a_change_to_every_screen(tmp_path
     assert r.returncode == 1, r.stdout + r.stderr
     rules = [f["rule"] for f in json.loads(r.stdout)["findings"]]
     assert "screen-unapproved" in rules and "screen-drift" not in rules, rules
+    write(proj / SCREENS / "_shared/util.js", "/* shared */\n")
+    write(proj / SCREENS / "home.html", read(proj / SCREENS / "home.html") + "\n")
+    out = json.loads(run_script(proj, "audit.py", "--changed", str(snap), "--json").stdout)["findings"]
+    says = {f["file"]: f["message"] for f in out if f["rule"] == "screen-unapproved"}
+    assert says[f"{SCREENS}/booking.html"].startswith(
+        f"screen booking ({SCREENS}/booking.html): its shared files {SCREENS}/_shared/base.css, "
+        f"{SCREENS}/_shared/util.js changed this session (shared files reach every screen) and its current prototype "
+        f"is not approved"), says
+    assert says[f"{SCREENS}/home.html"].startswith(f"screen home ({SCREENS}/home.html) changed this session and"), says
     page = proj / "app/page.tsx"
     write(page, read(page).replace("No tables booked yet", "Nothing booked yet"))
     r = run_script(proj, "audit.py", "--changed", str(snap), "--json")
