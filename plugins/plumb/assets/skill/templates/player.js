@@ -7,6 +7,12 @@
    Reduced motion keeps play playing; only the cursor glide and other animation go. Every text is set with textContent.
    Hide panel (its button or H) swaps the dock for a small pill, remembered per viewer. While a tour runs, body has
    .pl-touring (the shell folds its side columns away so the frame keeps its desktop width).
+   Voice (play mode, off by default, the Voice button or V, remembered per viewer): the browser's own speechSynthesis
+   reads each card and the subtitle on screen (or a step's "say"), at a calm rate that follows the speed; a step waits
+   for the end of its speech, then its hold. No speech, no voices or an error: captions and today's timing. A tour
+   that opens in play mode with the page waits on its first card for Start (browsers speak only after a click).
+   Subtitles: while a tour plays, the player keeps in memory (never in storage) when each caption really starts and
+   ends; "Save subtitles (.vtt)" downloads them as WebVTT, made in the page.
    It drives the shell through window.plumbPrototype and exposes window.plumbPlayer. */
 (function () {
   "use strict";
@@ -19,6 +25,13 @@
   tours.forEach(function (t) { byId[t.id] = t; });
   var SPEEDS = [0.5, 1, 1.5, 2];
   var STEP_HOLD = 3200, CARD_HOLD = 2600, GLIDE = 700, TAP = 320, AFTER = 450, LETTER = 70, LEAD = 450;
+  /* Voice: the speech rate per speed (0.9 is about 150 words a minute, a calm demo; faster speeds are capped so the
+     words stay clear), the pause after each sentence (ms at 1x, scaled by the speed), the time a word takes at rate 0.9
+     (for the progress bar and the safety timer), and how long to wait for the browser's voices to load. */
+  var RATES = { "0.5": 0.7, "1": 0.9, "1.5": 1.15, "2": 1.3 };
+  var SENTENCE_PAUSE = 350, WORD_MS = 400, VOICES_WAIT = 1000;
+  var VOICE_KEY = "plumb.player.voice";
+  var NO_VOICE = "Voice isn't available in this browser", VOICE_STOPPED = "Voice stopped: continuing with captions";
   var SVG = "http://www.w3.org/2000/svg";
   var motionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
   function calm() { return !!(motionQuery && motionQuery.matches); }
@@ -66,6 +79,14 @@
   var cardLink = el("a", "pl-card-link", "Open the prototype", { href: "prototype.html" });
   cardLink.hidden = true;
   cardBox.appendChild(cardLink);
+  /* A tour that opens in play mode with the page starts here: browsers speak only after the viewer's click. The
+     remembered voice choice is the primary button; without speech there is only Start. */
+  var cardStart = el("div", "pl-group pl-card-start");
+  var startVoice = button("pl-btn", "Start with voice", { "data-pl": "start-voice" });
+  var startQuiet = button("pl-btn", "Start without voice", { "data-pl": "start-quiet" });
+  cardStart.appendChild(startVoice); cardStart.appendChild(startQuiet);
+  cardStart.hidden = true;
+  cardBox.appendChild(cardStart);
   card.appendChild(cardBox);
   card.hidden = true;
   if (stage) { stage.appendChild(layer); stage.appendChild(card); }
@@ -101,12 +122,18 @@
     speeds.appendChild(b);
     return b;
   });
-  playGroup.appendChild(playBtn); playGroup.appendChild(speeds);
+  var voiceBtn = button("pl-btn", "Voice", { "data-pl": "voice", "aria-pressed": "false", "aria-keyshortcuts": "V" });
+  /* Why the voice is off: no speech in this browser, or it stopped during the tour (also said in the live region). */
+  var voiceNote = el("span", "pl-voice-note", null, { id: "pl-voice-note" });
+  voiceNote.hidden = true;
+  playGroup.appendChild(playBtn); playGroup.appendChild(speeds); playGroup.appendChild(voiceBtn);
+  playGroup.appendChild(voiceNote);
   var restartBtn = button("pl-btn", "Restart", { "data-pl": "restart" });
   var modeBtn = button("pl-btn", "Play from here", { "data-pl": "mode" });
+  var vttBtn = button("pl-btn", "Save subtitles (.vtt)", { "data-pl": "vtt" });
   controls.appendChild(navGroup); controls.appendChild(playGroup);
   controls.appendChild(el("span", "pl-spacer"));
-  controls.appendChild(restartBtn); controls.appendChild(modeBtn);
+  controls.appendChild(vttBtn); controls.appendChild(restartBtn); controls.appendChild(modeBtn);
   [dockTop, dTitle, dCaption, hint, progress, controls].forEach(function (n) { dock.appendChild(n); });
   /* Hide panel: the dock steps aside and this pill is what is left (the step's title in guide mode, with "Do it for me"
      on a your-turn step; play mode keeps narrating in the subtitle). H or the pill's button brings the dock back; the
@@ -145,7 +172,8 @@
   /* ------------------------------------------------------------ the player's state */
   var T = { tour: null, mode: null, seq: [], scenes: [], pos: 0, speed: 1, paused: false, ended: false, run: 0, timer: null,
             wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, zoomTimer: null,
-            panelHidden: storedHidden(), reveal: false, step: null };
+            panelHidden: storedHidden(), reveal: false, step: null,
+            gate: false, talk: null, cues: [], cue: null, t0: null };
 
   function sequence(tour) {
     var seq = [];
@@ -174,7 +202,8 @@
       active: !!T.tour, tour: T.tour ? T.tour.id : null, mode: T.mode, pos: T.tour ? T.pos : null, total: T.seq.length,
       step: item && item.kind === "step" ? item.step.n : null, card: item && item.kind === "card" ? item.card : null,
       paused: T.paused, speed: T.speed, ended: T.ended,
-      yourTurn: !!(item && item.kind === "step" && item.step.yourTurn && T.mode === "guide")
+      yourTurn: !!(item && item.kind === "step" && item.step.yourTurn && T.mode === "guide"),
+      waiting: !!(T.tour && T.gate), voice: !!(T.tour && voiceOn())
     };
   }
   function emit() {
@@ -183,8 +212,8 @@
   }
 
   /* ------------------------------------------------------------ timers that pause and follow the speed */
-  function wait(ms, fn) {
-    var w = { left: ms, total: ms, fn: fn, run: T.run, at: null, rate: T.speed };
+  function wait(ms, fn, talking) {
+    var w = { left: ms, total: ms, fn: fn, run: T.run, at: null, rate: T.speed, talk: !!talking };
     T.wait = w;
     if (!T.paused) arm();
   }
@@ -207,10 +236,250 @@
     if (w && w.at !== null) { w.left = Math.max(0, w.left - (now() - w.at) * w.rate); w.at = null; }
   }
   function stopTimers() {
+    stopTalk();
     clearTimeout(T.timer);
     clearTimeout(T.zoomTimer);
     T.timer = null;
     T.wait = null;
+  }
+
+  /* ------------------------------------------------------------ voice: the browser's own speech, nothing downloaded */
+  var synth = null, Utterance = null;
+  try { synth = window.speechSynthesis || null; Utterance = window.SpeechSynthesisUtterance || null; }
+  catch (err) { synth = null; }
+  /* avail: "wait" while the browser loads its voices (up to VOICES_WAIT), then "yes" or "no". on: the viewer's choice
+     (remembered). off: the voice stopped during this run (an error), until the viewer turns it on again. noted: the
+     viewer was told so (once a run). */
+  var V = { avail: "wait", on: storedVoice(), off: false, noted: false, voices: [] };
+  function storedVoice() {
+    try { return window.localStorage.getItem(VOICE_KEY) === "on"; } catch (err) { return false; }
+  }
+  function storeVoice(on) {
+    try {
+      if (on) window.localStorage.setItem(VOICE_KEY, "on");
+      else window.localStorage.removeItem(VOICE_KEY);
+    } catch (err) { /* storage off (private window, blocked site data): the choice lasts for this page only */ }
+  }
+  function lookVoices() {
+    var list = [];
+    try { list = synth.getVoices() || []; } catch (err) { list = []; }
+    if (list.length) { V.voices = list; setAvail(true); }
+    return list.length > 0;
+  }
+  function detectVoice() {
+    if (!synth || typeof Utterance !== "function" || typeof synth.speak !== "function") { setAvail(false); return; }
+    if (lookVoices()) return;
+    try { synth.addEventListener("voiceschanged", lookVoices); }
+    catch (err) { try { synth.onvoiceschanged = lookVoices; } catch (err2) { /* no event: the timer decides */ } }
+    setTimeout(function () { if (V.avail === "wait" && !lookVoices()) setAvail(false); }, VOICES_WAIT);
+  }
+  function setAvail(yes) {
+    var was = V.avail;
+    V.avail = yes ? "yes" : "no";
+    if (was !== V.avail) paintVoice();
+  }
+  /* True when this item is spoken: the viewer turned the voice on, the browser has voices, nothing failed this run. */
+  function voiceOn() { return V.on && !V.off && V.avail === "yes" && T.mode === "play" && !T.gate; }
+  /* The voice for the page's lang (exact, else the same language; the system's default among equals), or null for the
+     browser's default voice. */
+  function pickVoice(lang) {
+    if (!lang) return null;
+    var want = lang.toLowerCase().replace(/_/g, "-"), base = want.split("-")[0], exact = null, near = null;
+    V.voices.forEach(function (v) {
+      var l = String(v.lang || "").toLowerCase().replace(/_/g, "-");
+      if (l === want) { if (!exact || (v["default"] && !exact["default"])) exact = v; }
+      else if (l.split("-")[0] === base) { if (!near || (v["default"] && !near["default"])) near = v; }
+    });
+    return exact || near;
+  }
+  /* A text as sentences, each spoken on its own with a short pause after it. */
+  function sentences(text) {
+    var t = String(text || "").replace(/\s+/g, " ").trim(), out = [], from = 0, m;
+    var re = /[.!?…]+["'”’)\]]*(?= |$)/g;
+    while ((m = re.exec(t))) { out.push(t.slice(from, m.index + m[0].length)); from = m.index + m[0].length; }
+    out.push(t.slice(from));
+    return out.map(function (s) { return s.trim(); }).filter(function (s) { return /[^\s.!?…"'”’)\]]/.test(s); });
+  }
+  /* What an item says: a card's title and text; a step's "say", else the subtitle on screen. */
+  function speechOf(item) {
+    if (item.kind === "card") return sentences(item.title).concat(sentences(item.text));
+    return sentences(item.step.say || item.step.caption || itemTitle(item));
+  }
+  function words(text) { return String(text).split(/\s+/).filter(Boolean).length || 1; }
+  /* The time an item's speech takes, in ms at 1x (the progress bar's unit). */
+  function talkPlan(item) {
+    return speechOf(item).reduce(function (sum, s) { return sum + words(s) * WORD_MS + SENTENCE_PAUSE; }, 0);
+  }
+  /* Speaks an item sentence by sentence, then done() (the item's timeline: its action and hold). */
+  function talk(item, done) {
+    var parts = speechOf(item);
+    if (!parts.length) { done(); return; }
+    T.talk = { run: T.run, parts: parts, i: 0, done: done, utter: null, token: null, safety: 0, at: null, rate: 0.9 };
+    say();
+  }
+  function say() {
+    var k = T.talk;
+    if (!k || k.run !== T.run || T.paused) return;  /* paused: Play speaks this sentence again */
+    var text = k.parts[k.i], rate = RATES[String(T.speed)] || 0.9, token = {}, u;
+    try {
+      u = new Utterance(text);
+      u.rate = rate;
+      var lang = document.documentElement.getAttribute("lang") || "";
+      if (lang) u.lang = lang;
+      var v = pickVoice(lang);
+      if (v) u.voice = v;
+    } catch (err) { failVoice("blocked"); return; }
+    k.token = token;
+    k.utter = u;  /* held: some browsers drop the events of an utterance nothing refers to */
+    k.at = now();
+    k.rate = rate;
+    u.onend = function () {
+      if (T.talk !== k || k.token !== token) return;
+      clearTimeout(k.safety);
+      k.utter = null; k.at = null; k.token = null;
+      T.spent += words(text) * WORD_MS;
+      wait(SENTENCE_PAUSE, function () {
+        k.i += 1;
+        if (k.i < k.parts.length) say();
+        else { T.talk = null; k.done(); }
+      }, true);
+    };
+    u.onerror = function (e) {
+      if (T.talk !== k || k.token !== token) return;
+      var code = e && e.error;
+      if (code === "interrupted" || code === "canceled") return;  /* the player's own cancel */
+      failVoice(code || "error");
+    };
+    /* onend that never comes (a stuck engine) must not stall the tour: twice the expected time, plus a margin */
+    clearTimeout(k.safety);
+    k.safety = setTimeout(function () { if (T.talk === k && k.token === token) failVoice("no end"); },
+      1500 + 2 * words(text) * WORD_MS * 0.9 / rate);
+    try { synth.speak(u); } catch (err) { failVoice("blocked"); }
+  }
+  /* Stops the sentence being spoken; the item's speech stays, so say() can speak that sentence again. */
+  function hush() {
+    var k = T.talk;
+    if (!k) return;
+    clearTimeout(k.safety);
+    k.token = null;
+    if (k.utter) {
+      k.utter = null; k.at = null;
+      try { synth.cancel(); } catch (err) { /* nothing to stop */ }
+    }
+  }
+  function stopTalk() {
+    hush();
+    T.talk = null;
+    if (T.wait && T.wait.talk) { clearTimeout(T.timer); T.wait = null; }
+  }
+  /* The sentence again from its start (a speed change, Hide panel): voice and screen stay in step. */
+  function respeak() {
+    if (T.talk && T.talk.utter && !T.paused) { hush(); say(); }
+  }
+  /* The voice failed (an error, blocked, or no end): one note, captions for the rest of this run, and the item goes on
+     with its own timing. */
+  function failVoice(code) {
+    var k = T.talk;
+    hush();
+    T.talk = null;
+    V.off = true;
+    if (code === "not-allowed" || code === "synthesis-unavailable" || code === "blocked") V.avail = "no";
+    if (!V.noted) { V.noted = true; live.textContent = VOICE_STOPPED; }
+    paintVoice();
+    if (k && k.run === T.run) k.done();
+  }
+  function paintVoice() {
+    var none = V.avail === "no", text = V.off && V.noted ? VOICE_STOPPED : none ? NO_VOICE : "";
+    voiceBtn.disabled = none;
+    voiceBtn.setAttribute("aria-pressed", String(!none && V.on && !V.off));
+    voiceBtn.title = none ? NO_VOICE : "Read the captions aloud (V)";
+    voiceNote.textContent = text;
+    voiceNote.hidden = !text;
+    if (text) voiceBtn.setAttribute("aria-describedby", "pl-voice-note");
+    else voiceBtn.removeAttribute("aria-describedby");
+    startVoice.hidden = none;
+    startQuiet.textContent = none ? "Start" : "Start without voice";
+    var withVoice = !none && V.on;
+    startVoice.classList.toggle("pl-primary", withVoice);
+    startQuiet.classList.toggle("pl-primary", !withVoice);
+  }
+  /* The viewer's Voice button or V. On: this item again, spoken from its start. Off: the speech stops and the item
+     goes on with its own timing. */
+  function setVoice(on) {
+    if (V.avail === "no") return;
+    V.on = !!on;
+    V.off = false;
+    V.noted = false;
+    storeVoice(V.on);
+    paintVoice();
+    if (T.tour && T.mode === "play" && !T.ended && !T.gate) {
+      if (V.on) render(T.pos);
+      else if (T.talk) {
+        var k = T.talk;
+        stopTalk();
+        if (!T.paused && k.run === T.run) k.done();  /* paused: Play goes on with captions */
+      }
+    }
+    if (T.tour) live.textContent = V.on ? "Voice on." : "Voice off.";
+  }
+
+  /* ------------------------------------------------------------ subtitles: when each caption really shows */
+  /* Kept in memory for this run only (never in storage, never sent): T.t0 is when play started, T.cues the captions
+     shown since (text, start, end), T.cue the one on screen. */
+  function record() { T.cues = []; T.cue = null; T.t0 = now(); }
+  function cueText(item) {
+    if (item.kind === "card") return item.title + (item.text ? "\n" + item.text : "");
+    return item.step.caption || itemTitle(item);
+  }
+  function closeCue() {
+    if (!T.cue) return;
+    T.cue.end = now();
+    T.cues.push(T.cue);
+    T.cue = null;
+  }
+  function openCue(item) {
+    closeCue();
+    if (T.t0 === null) return;
+    var text = cueText(item), last = T.cues[T.cues.length - 1];
+    /* the same item shown again at once (the voice turned on): one cue */
+    if (last && last.pos === T.pos && last.text === text && now() - last.end < 50) { T.cue = T.cues.pop(); return; }
+    T.cue = { pos: T.pos, text: text, start: now(), end: null };
+  }
+  function vttTime(ms) {
+    ms = Math.max(0, Math.round(ms));
+    function pad(n, w) { n = String(n); while (n.length < w) n = "0" + n; return n; }
+    return pad(Math.floor(ms / 3600000), 2) + ":" + pad(Math.floor(ms / 60000) % 60, 2) + ":" +
+      pad(Math.floor(ms / 1000) % 60, 2) + "." + pad(ms % 1000, 3);
+  }
+  function vttText(text) {
+    return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").split(/\r?\n/)
+      .map(function (l) { return l.replace(/\s+/g, " ").trim(); }).filter(Boolean).join("\n");
+  }
+  /* The run's captions as WebVTT: times from the start of play, so they match a screen recording of this run. */
+  function subtitles() {
+    var list = T.cues.slice(), out = "WEBVTT\n", n = 0;
+    if (T.t0 === null) return out;
+    if (T.cue) list.push({ text: T.cue.text, start: T.cue.start, end: now() });
+    list.forEach(function (c) {
+      var a = Math.round(c.start - T.t0), b = Math.round(c.end - T.t0), text = vttText(c.text);
+      if (b <= a || !text) return;
+      n += 1;
+      out += "\n" + n + "\n" + vttTime(a) + " --> " + vttTime(b) + "\n" + text + "\n";
+    });
+    return out;
+  }
+  function saveSubtitles() {
+    if (!T.tour || T.t0 === null) return;
+    var name = T.tour.id + ".vtt", url;
+    try { url = URL.createObjectURL(new Blob([subtitles()], { type: "text/vtt;charset=utf-8" })); }
+    catch (err) { live.textContent = "This browser cannot save the subtitles."; return; }
+    var a = el("a", null, null, { href: url, download: name });
+    a.hidden = true;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+    live.textContent = "Saved the subtitles as " + name + ".";
   }
 
   /* ------------------------------------------------------------ finding and drawing */
@@ -977,12 +1246,15 @@
     doBtn.hidden = !turn;
     playGroup.hidden = guide;
     playBtn.textContent = T.ended ? "Play again" : T.paused ? "Play" : "Pause";
+    vttBtn.hidden = guide;
+    vttBtn.disabled = T.t0 === null;
+    paintVoice();
     speedBtns.forEach(function (b) { b.setAttribute("aria-pressed", String(parseFloat(b.getAttribute("data-speed")) === T.speed)); });
     modeBtn.textContent = guide ? "Play from here" : "Guide me from here";
     var current = -1;
     T.scenes.forEach(function (sc, i) { if (sc.pos <= T.pos) current = i; });
     marks.forEach(function (m, i) { if (i === current) m.setAttribute("aria-current", "step"); else m.removeAttribute("aria-current"); });
-    badge.hidden = guide || T.ended;
+    badge.hidden = guide || T.ended || T.gate;
     badge.textContent = (T.paused ? "❚❚ Paused" : "▶ Playing") + " · " + times(T.speed);
     paintProgress();
   }
@@ -990,8 +1262,10 @@
     if (!T.tour) return;
     var len = T.seq.length, part = 1;
     if (T.mode === "play" && !T.ended) {
-      var w = T.wait, used = T.spent;
+      var w = T.wait, used = T.spent, k = T.talk;
       if (w) used += w.total - (w.at === null ? w.left : Math.max(0, w.left - (now() - w.at) * w.rate));
+      /* the sentence being spoken, in ms at 1x */
+      if (k && k.at !== null) used += Math.min(words(k.parts[k.i]) * WORD_MS, (now() - k.at) * k.rate / 0.9);
       part = calm() ? 0 : clamp(used / Math.max(1, T.plan), 0, 1);
     }
     fill.style.width = ((T.pos + part) / len * 100).toFixed(2) + "%";
@@ -1018,9 +1292,13 @@
     T.ended = false;
     T.spent = 0;
     T.reveal = false;
+    /* waiting on the first card for Start: only when the tour opened with the page; any other move ends the wait */
+    T.gate = !!opts.gate;
     if (T.panelHidden && !dock.hidden) showPanel();  /* back to the viewer's choice after a hint or the end of play */
     var item = T.seq[T.pos];
-    T.plan = planOf(item);
+    T.plan = planOf(item) + (voiceOn() ? talkPlan(item) : 0);
+    if (T.mode === "play" && !T.gate) openCue(item);
+    else closeCue();
     if (item.kind === "step") api.go(item.step.screen, item.step.state, { history: null });
     writeHash();
     paintDock();
@@ -1047,13 +1325,32 @@
       else if (s.yourTurn) armTurn(s);
       else if (s.action && (s.action.kind === "type" || s.action.kind === "choose")) actNow(s);
     }
+    cardStart.hidden = !T.gate;
+    if (T.gate && item.kind !== "card") {
+      /* a tour that starts on a step: a card of its own for the start buttons */
+      cardEyebrow.textContent = "Walkthrough";
+      cardTitle.textContent = T.tour.title;
+      cardText.textContent = T.tour.purpose || "";
+      cardText.hidden = !T.tour.purpose;
+      cardLink.hidden = true;
+      card.hidden = false;
+      placeCard();
+    }
     announce(item);
+    if (T.gate) live.textContent += V.avail === "no" ? " Press Start to play." : " Choose Start with voice or Start without voice.";
     var active = document.activeElement;
     if (opts.focus || (inChrome(active) && (active.hidden || active.disabled || !active.getClientRects().length))) focusPrimary();
     emit();
     if (T.mode === "play" && !T.paused) { playItem(item); if (!T.raf && !calm()) T.raf = requestAnimationFrame(tick); }
   }
+  /* With the voice on, an item is spoken first; then its own timeline (its action, then its hold), as without voice. */
   function playItem(item) {
+    if (voiceOn()) {
+      var run = T.run;
+      talk(item, function () { if (run === T.run) timeline(item); });
+    } else timeline(item);
+  }
+  function timeline(item) {
     var run = T.run;
     function next() { advance(run); }
     if (item.kind === "card") { wait(planOf(item), next); return; }
@@ -1075,6 +1372,7 @@
     T.ended = true;
     T.paused = true;
     subtitle.hidden = true;
+    closeCue();
     paintDock();
     var had = inChrome(document.activeElement);
     showPanel();  /* Play again and Leave are in the panel: it comes back at the end, the choice stays */
@@ -1106,8 +1404,16 @@
     T.seq = sequence(tour);
     T.scenes = scenesOf(tour, T.seq);
     T.speed = SPEEDS.indexOf(opts.speed) >= 0 ? opts.speed : tour.speed;
-    T.paused = false;
+    /* opened with the page in play mode (no click yet): wait on the first card for Start */
+    var gate = !!opts.gate && T.mode === "play" && !activated();
+    T.paused = gate;
     T.ended = false;
+    V.off = false;
+    V.noted = false;
+    T.t0 = null;
+    T.cue = null;
+    T.cues = [];
+    if (T.mode === "play" && !gate) record();
     var pos = 0;
     if (typeof opts.pos === "number") pos = opts.pos;
     else if (opts.step) {
@@ -1125,14 +1431,32 @@
     document.body.classList.add("pl-docked", "pl-touring");
     showPanel();
     if (!wasActive) note("Started the walkthrough “" + tour.title + "”");
-    render(pos, { focus: opts.focus !== false });
+    render(pos, { focus: opts.focus !== false, gate: gate });
     return true;
+  }
+  /* True while the page has the viewer's click or key press (a browser speaks only then). */
+  function activated() {
+    try { return !!(navigator.userActivation && navigator.userActivation.isActive); } catch (err) { return false; }
+  }
+  /* The first card's Start buttons (and Play or Space while it waits): the viewer's click starts play, with or without
+     the voice, and the choice is remembered. */
+  function begin(withVoice) {
+    if (!T.tour || !T.gate) return;
+    if (V.avail !== "no" && V.on !== !!withVoice) { V.on = !!withVoice; storeVoice(V.on); }
+    V.off = false;
+    V.noted = false;
+    T.paused = false;
+    record();
+    render(T.pos, { focus: true });
   }
   function leave(message) {
     if (!T.tour) return;
     T.run += 1;
     stopTimers();
     clearStep();
+    closeCue();
+    T.gate = false;
+    cardStart.hidden = true;
     cursor.hidden = true;
     badge.hidden = true;
     dock.hidden = true;
@@ -1180,12 +1504,14 @@
   function jump(pos) { if (T.tour) { if (T.ended) T.paused = false; render(pos); } }
   function setPaused(on) {
     if (!T.tour || T.mode !== "play") return;
-    if (T.ended) { T.paused = false; render(0); return; }
+    if (T.gate) { if (!on) begin(V.on); return; }  /* Play (or Space) on the first card: Start with the choice */
+    if (T.ended) { T.paused = false; record(); render(0); return; }
     if (T.paused === on) return;
     T.paused = on;
-    if (on) { freeze(); if (T.raf) cancelAnimationFrame(T.raf); T.raf = 0; }
+    /* paused speech stops; Play speaks that sentence again (pausing an utterance is unreliable across browsers) */
+    if (on) { freeze(); hush(); if (T.raf) cancelAnimationFrame(T.raf); T.raf = 0; }
     else {
-      if (T.wait) arm(); else playItem(T.seq[T.pos]);
+      if (T.wait) arm(); else if (T.talk) say(); else playItem(T.seq[T.pos]);
       if (!T.raf && !calm()) T.raf = requestAnimationFrame(tick);
     }
     paintDock();
@@ -1198,12 +1524,14 @@
     if (T.wait && !T.paused) freeze();
     T.speed = v;
     if (T.tour && T.mode === "play" && !T.paused && T.wait) arm();
+    respeak();  /* the sentence again at the new pace */
     if (T.tour) { paintDock(); emit(); }
   }
   function setMode(mode) {
     if (!T.tour || (mode !== "play" && mode !== "guide")) return;
     T.mode = mode;
     T.paused = false;
+    if (mode === "play") record();
     render(T.pos, { focus: true });
   }
   /* The page keeps room at its bottom for the dock, or for the pill while the panel is hidden. */
@@ -1229,6 +1557,7 @@
     T.panelHidden = !!hide;
     storeHidden(T.panelHidden);
     showPanel();
+    respeak();  /* voice and screen stay in step */
     if (had) {
       var to = T.panelHidden ? showBtn : hideBtn;
       try { to.focus({ preventScroll: true }); } catch (err) { to.focus(); }
@@ -1251,7 +1580,16 @@
   doBtn.addEventListener("click", doItForMe);
   pillDo.addEventListener("click", doItForMe);
   playBtn.addEventListener("click", function () { setPaused(!T.paused); });
-  restartBtn.addEventListener("click", function () { if (T.tour) { T.paused = false; render(0, { focus: true }); } });
+  restartBtn.addEventListener("click", function () {
+    if (!T.tour) return;
+    T.paused = false;
+    if (T.mode === "play") record();
+    render(0, { focus: true });
+  });
+  voiceBtn.addEventListener("click", function () { setVoice(!(V.on && !V.off)); });
+  vttBtn.addEventListener("click", saveSubtitles);
+  startVoice.addEventListener("click", function () { begin(true); });
+  startQuiet.addEventListener("click", function () { begin(false); });
   modeBtn.addEventListener("click", function () { setMode(T.mode === "guide" ? "play" : "guide"); });
   speedBtns.forEach(function (b) { b.addEventListener("click", function () { setSpeed(b.getAttribute("data-speed")); }); });
 
@@ -1267,6 +1605,10 @@
     else if ((e.key === "h" || e.key === "H") && !e.shiftKey) {
       e.preventDefault();
       if (!e.repeat) setPanel(!dock.hidden);  /* holding H toggles once */
+    }
+    else if ((e.key === "v" || e.key === "V") && !e.shiftKey && T.mode === "play") {
+      e.preventDefault();
+      if (!e.repeat) setVoice(!(V.on && !V.off));
     }
     else if ((e.key === " " || e.key === "Spacebar") && T.mode === "play") {
       if (t && t.closest && t.closest("button, a[href], [role=button], summary")) return;
@@ -1296,14 +1638,15 @@
   }
 
   /* ------------------------------------------------------------ links: #tour-<id> and #tour-<id>-<n> */
-  function fromHash(hash) {
+  /* gate: the hash came with the page (or was typed): a tour in play mode waits on its first card for Start */
+  function fromHash(hash, gate) {
     var h;
     try { h = decodeURIComponent(String(hash || "").replace(/^#/, "")); } catch (err) { h = String(hash || "").replace(/^#/, ""); }
     if (h.indexOf("tour-") !== 0) return false;
     var rest = h.slice(5);
-    if (byId[rest]) return start(rest, {});
+    if (byId[rest]) return start(rest, { gate: gate });
     var m = /^(.*)-(\d+)$/.exec(rest);
-    if (m && byId[m[1]]) return start(m[1], { step: parseInt(m[2], 10) });
+    if (m && byId[m[1]]) return start(m[1], { step: parseInt(m[2], 10), gate: gate });
     return false;
   }
   document.addEventListener("click", function (e) {
@@ -1317,7 +1660,7 @@
       writeHash();
     }
   }, true);
-  window.addEventListener("hashchange", function () { fromHash(location.hash); });
+  window.addEventListener("hashchange", function () { fromHash(location.hash, true); });
 
   /* ------------------------------------------------------------ the per-screen guide panel */
   var guide = api.guide;
@@ -1476,6 +1819,11 @@
     resume: function () { setPaused(false); },
     setSpeed: setSpeed,
     setMode: setMode,
+    /* the viewer's voice choice (as the Voice button); the browser speaks only after a click or key press */
+    setVoice: setVoice,
+    /* this run's captions as WebVTT text, and the download "Save subtitles (.vtt)" makes */
+    subtitles: subtitles,
+    saveSubtitles: saveSubtitles,
     state: state,
     /* the element the step on show points at for a selector (its first match the player can show), or null: what
        check-tour.py judges */
@@ -1484,8 +1832,11 @@
       return item && item.kind === "step" ? find(item.step, sel) : null;
     }
   };
-  if (!fromHash(location.hash) && config.autostart && byId[config.autostart.tour]) {
-    /* no focus move on load: nobody asked for it; the first Tab lands on "Skip to the walkthrough" */
-    start(config.autostart.tour, { mode: config.autostart.mode, focus: false });
+  detectVoice();
+  paintVoice();
+  if (!fromHash(location.hash, true) && config.autostart && byId[config.autostart.tour]) {
+    /* no focus move on load: nobody asked for it; the first Tab lands on "Skip to the walkthrough". A tour in play
+       mode waits on its first card for Start (with or without voice). */
+    start(config.autostart.tour, { mode: config.autostart.mode, focus: false, gate: true });
   }
 })();
