@@ -1846,28 +1846,58 @@ def test_the_header_is_written_once_when_another_writer_creates_the_file_first(H
     assert not [p for p in log_home.parent.iterdir() if p.name != "hooks.md"], "no temporary file left"
 
 
-def test_two_hooks_writing_at_once_give_one_header(tmp_path, proj):
-    home = tmp_path / "race-home"
-    home.mkdir()
-    go = tmp_path / "go"
+def _race_writers(tmp_path, proj, home, name, count):
+    """`count` separate processes call log_failure at the same instant (one Given each); waits for all of them."""
+    go = tmp_path / f"go-{name}"
     script = tmp_path / "writer.py"
     script.write_text(
         "import importlib.util, os, sys, time\n"
         f"spec = importlib.util.spec_from_file_location('h', {str(HOOKS / '_hooklib.py')!r})\n"
         "H = importlib.util.module_from_spec(spec); spec.loader.exec_module(H)\n"
         f"H._LOG_CONTEXT['project'] = H.Project(H.Path({str(proj)!r}))\n"
-        f"while not os.path.exists({str(go)!r}): time.sleep(0.001)\n"
-        "H.log_failure('writer ' + sys.argv[1], 'y')\n", encoding="utf-8")
+        "while not os.path.exists(sys.argv[2]): time.sleep(0.001)\n"
+        "H.log_failure(sys.argv[1], 'y')\n", encoding="utf-8")
     import subprocess as sp
     env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
-    procs = [sp.Popen([sys.executable, str(script), str(n)], env=env) for n in range(8)]
-    time.sleep(0.5)
+    procs = [sp.Popen([sys.executable, str(script), f"{name}-{n:02d}", str(go)], env=env) for n in range(count)]
+    time.sleep(1.0)
     go.write_text("", encoding="utf-8")
-    assert all(p.wait(timeout=60) == 0 for p in procs)
-    text = read(home / ".plumb" / "feedback" / "hooks.md")
+    assert all(p.wait(timeout=120) == 0 for p in procs)
+
+
+def test_two_hooks_writing_at_once_give_one_header(tmp_path, proj):
+    home = tmp_path / "race-home"
+    home.mkdir()
+    log = home / ".plumb" / "feedback" / "hooks.md"
+    # first round: hooks.md does not exist yet (one header); second round: every writer appends to it at once
+    # (Windows emulates O_APPEND with a seek and a write, so unlocked appends there lose lines)
+    for name in ("create", "append"):
+        _race_writers(tmp_path, proj, home, name, 16)
+    text = read(log)
     assert text.startswith("# Plumb hook failures") and text.count("# Plumb hook failures") == 1, text
-    assert sorted(ln.rsplit("Given: writer ", 1)[1][0] for ln in text.splitlines() if "Given: writer " in ln) == \
-        [str(n) for n in range(8)]
+    given = [ln.rsplit("Given: ", 1)[1].split(" ", 1)[0] for ln in text.splitlines() if ln.startswith("- ")]
+    assert sorted(given) == sorted(f"{name}-{n:02d}" for name in ("create", "append") for n in range(16)), text
+    body = text.split("\n\n", 2)[2].splitlines()  # after the title and the intro paragraph
+    assert len(body) == 32 and all(ln.startswith("- ") and ln.count("Given: ") == 1 for ln in body), text
+    assert not [p for p in log.parent.iterdir() if p.name != "hooks.md"], "no temporary or lock file left"
+
+
+def test_a_hook_never_waits_long_for_the_log_lock(H, log_home):
+    H.log_failure("first", "y")
+    fd = os.open(str(log_home), os.O_WRONLY | getattr(os, "O_BINARY", 0))
+    try:
+        assert H._lock_log(fd)  # another hook is appending right now (and never lets go)
+        start = time.monotonic()
+        H.log_failure("second", "y")  # never raises, never blocks: the line is left out
+        took = time.monotonic() - start
+        assert took < 1.0, took
+        assert "Given: second" not in read(log_home)
+    finally:
+        H._unlock_log(fd)
+        os.close(fd)
+    H.log_failure("third", "y")  # the lock is free again
+    text = read(log_home)
+    assert "Given: first" in text and "Given: third" in text and "Given: second" not in text
 
 
 def test_the_suite_never_sees_the_real_home():
