@@ -29,7 +29,7 @@
      words stay clear), the pause after each sentence (ms at 1x, scaled by the speed), the time a word takes at rate 0.9
      (for the progress bar and the safety timer), and how long to wait for the browser's voices to load. */
   var RATES = { "0.5": 0.7, "1": 0.9, "1.5": 1.15, "2": 1.3 };
-  var SENTENCE_PAUSE = 350, WORD_MS = 400, VOICES_WAIT = 1000;
+  var SENTENCE_PAUSE = 350, WORD_MS = 400, VOICES_WAIT = 1000, CHARS_PER_WORD = 6, SAFETY_FLOOR = 3000;
   var VOICE_KEY = "plumb.player.voice";
   var NO_VOICE = "Voice isn't available in this browser", VOICE_STOPPED = "Voice stopped: continuing with captions";
   var SVG = "http://www.w3.org/2000/svg";
@@ -276,10 +276,19 @@
   function setAvail(yes) {
     var was = V.avail;
     V.avail = yes ? "yes" : "no";
-    if (was !== V.avail) paintVoice();
+    if (was === V.avail) return;
+    /* spoken with the browser's default voice while the list loaded, and there is none: captions from here */
+    if (!yes && T.talk) failVoice("unavailable");
+    paintVoice();
+    if (T.tour && T.gate) live.textContent = gateHint();  /* the Start card's buttons changed */
   }
-  /* True when this item is spoken: the viewer turned the voice on, the browser has voices, nothing failed this run. */
-  function voiceOn() { return V.on && !V.off && V.avail === "yes" && T.mode === "play" && !T.gate; }
+  function gateHint() {
+    return V.avail === "no" ? "Press Start to play." : "Choose Start with voice or Start without voice.";
+  }
+  /* True when this item is spoken: the viewer turned the voice on, the browser has speech (while its voice list is
+     still loading, the default voice speaks: the first sentence must start inside the viewer's click), nothing failed
+     this run. */
+  function voiceOn() { return V.on && !V.off && V.avail !== "no" && T.mode === "play" && !T.gate; }
   /* The voice for the page's lang (exact, else the same language; the system's default among equals), or null for the
      browser's default voice. */
   function pickVoice(lang) {
@@ -306,6 +315,13 @@
     return sentences(item.step.say || item.step.caption || itemTitle(item));
   }
   function words(text) { return String(text).split(/\s+/).filter(Boolean).length || 1; }
+  /* How long a sentence may take before its missing onend counts as a stuck engine: twice the expected time plus a
+     margin, at least SAFETY_FLOOR. Expected by words or by characters, whichever is longer, since an engine spells out
+     a long token (an e-mail address, a long number) letter by letter or digit by digit. */
+  function safety(text, rate) {
+    var units = Math.max(words(text), Math.ceil(String(text).length / CHARS_PER_WORD));
+    return Math.max(SAFETY_FLOOR, 1500 + 2 * units * WORD_MS * 0.9 / rate);
+  }
   /* The time an item's speech takes, in ms at 1x (the progress bar's unit). */
   function talkPlan(item) {
     return speechOf(item).reduce(function (sum, s) { return sum + words(s) * WORD_MS + SENTENCE_PAUSE; }, 0);
@@ -352,8 +368,7 @@
     };
     /* onend that never comes (a stuck engine) must not stall the tour: twice the expected time, plus a margin */
     clearTimeout(k.safety);
-    k.safety = setTimeout(function () { if (T.talk === k && k.token === token) failVoice("no end"); },
-      1500 + 2 * words(text) * WORD_MS * 0.9 / rate);
+    k.safety = setTimeout(function () { if (T.talk === k && k.token === token) failVoice("no end"); }, safety(text, rate));
     try { synth.speak(u); } catch (err) { failVoice("blocked"); }
   }
   /* Stops the sentence being spoken; the item's speech stays, so say() can speak that sentence again. */
@@ -383,7 +398,8 @@
     hush();
     T.talk = null;
     V.off = true;
-    if (code === "not-allowed" || code === "synthesis-unavailable" || code === "blocked") V.avail = "no";
+    /* no speech engine at all; "not-allowed" (no click yet, a policy) only stops the voice for this run */
+    if (code === "synthesis-unavailable" || code === "blocked") V.avail = "no";
     if (!V.noted) { V.noted = true; live.textContent = VOICE_STOPPED; }
     paintVoice();
     if (k && k.run === T.run) k.done();
@@ -1294,6 +1310,7 @@
     T.reveal = false;
     /* waiting on the first card for Start: only when the tour opened with the page; any other move ends the wait */
     T.gate = !!opts.gate;
+    if (T.mode === "play" && !T.gate && T.t0 === null) record();  /* play began some other way: its captions count */
     if (T.panelHidden && !dock.hidden) showPanel();  /* back to the viewer's choice after a hint or the end of play */
     var item = T.seq[T.pos];
     T.plan = planOf(item) + (voiceOn() ? talkPlan(item) : 0);
@@ -1337,7 +1354,7 @@
       placeCard();
     }
     announce(item);
-    if (T.gate) live.textContent += V.avail === "no" ? " Press Start to play." : " Choose Start with voice or Start without voice.";
+    if (T.gate) live.textContent += " " + gateHint();
     var active = document.activeElement;
     if (opts.focus || (inChrome(active) && (active.hidden || active.disabled || !active.getClientRects().length))) focusPrimary();
     emit();
@@ -1442,6 +1459,7 @@
      the voice, and the choice is remembered. */
   function begin(withVoice) {
     if (!T.tour || !T.gate) return;
+    if (V.avail === "wait") lookVoices();  /* still loading: the first sentence speaks now, in the browser's default voice */
     if (V.avail !== "no" && V.on !== !!withVoice) { V.on = !!withVoice; storeVoice(V.on); }
     V.off = false;
     V.noted = false;
@@ -1491,6 +1509,7 @@
   }
   function next() {
     if (!T.tour) return;
+    ungate();
     var item = T.seq[T.pos];
     if (T.mode === "guide" && item.kind === "step") {
       if (item.step.yourTurn) { showHint(item.step, find(item.step, item.step.action.target)); return; }
@@ -1500,8 +1519,18 @@
     else if (T.mode === "guide") leave("The walkthrough is finished.");
     else end();
   }
-  function back() { if (T.tour && T.pos > 0) render(T.pos - 1); }
-  function jump(pos) { if (T.tour) { if (T.ended) T.paused = false; render(pos); } }
+  function back() { if (T.tour && T.pos > 0) { ungate(); render(T.pos - 1); } }
+  function jump(pos) { if (T.tour) { ungate(); if (T.ended) T.paused = false; render(pos); } }
+  /* Leaving the Start card by Next, Back or a scene marker starts the run as "Start without voice" does (playing,
+     subtitles recorded), without changing the viewer's remembered voice choice. */
+  function ungate() {
+    if (!T.gate) return;
+    T.gate = false;
+    T.paused = false;
+    if (V.on) V.off = true;
+    V.noted = false;
+    record();
+  }
   function setPaused(on) {
     if (!T.tour || T.mode !== "play") return;
     if (T.gate) { if (!on) begin(V.on); return; }  /* Play (or Space) on the first card: Start with the choice */
@@ -1615,6 +1644,14 @@
       e.preventDefault();
       setPaused(!T.paused);
     }
+  });
+  /* Leaving or reloading the page stops the sentence: some engines keep speaking after the document is gone. */
+  function silence() { if (T.talk) stopTalk(); }
+  window.addEventListener("pagehide", silence);
+  window.addEventListener("beforeunload", silence);
+  /* back from the browser's page cache: the stopped item plays again from its start */
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted && T.tour && T.mode === "play" && !T.paused && !T.ended && !T.gate) render(T.pos);
   });
   window.addEventListener("resize", function () {
     if (T.step) placeChrome(T.step, null);

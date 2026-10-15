@@ -2807,11 +2807,17 @@ FAKE_SPEECH = """
       S.cancels += 1; const u = S.current; S.current = null; this.speaking = false;
       if (u && u.onerror) u.onerror({ error: "interrupted" });
     },
-    pause() {}, resume() {}, addEventListener() {}, removeEventListener() {},
+    pause() {}, resume() {}, removeEventListener() {},
+    addEventListener(type, fn) { if (type === "voiceschanged") S.listeners.push(fn); },
   };
   S.end = () => { const u = S.current; S.current = null; synth.speaking = false; if (u && u.onend) u.onend({}); return !!u; };
   S.fail = (code) => { const u = S.current; S.current = null; synth.speaking = false;
     if (u && u.onerror) u.onerror({ error: code }); return !!u; };
+  S.listeners = [];
+  if (window.__voicesLater) {  /* the voice list arrives late, as in some browsers */
+    const later = S.voices; S.voices = [];
+    setTimeout(() => { S.voices = later; S.listeners.forEach(f => f()); }, window.__voicesLater);
+  }
   Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
   window.SpeechSynthesisUtterance = function (text) {
     this.text = text; this.rate = 1; this.lang = ""; this.voice = null; this.onend = null; this.onerror = null; };
@@ -2835,6 +2841,7 @@ window.__writes = [];
 VOICE_BTN = ".pl-dock [data-pl=voice]"
 SAY_1 = "Here are tonight's tables. All of them, in time order."
 ODD_CAPTION = "Back on the list: tables & times <b>now</b> --> next."
+LONG_TOKENS = "Write to front.desk@example-clinic.org or call 004420794600001234567890."  # 6 words, 72 characters
 
 
 def voiced_tour() -> dict:
@@ -2842,6 +2849,7 @@ def voiced_tour() -> dict:
     _step(doc, 0, 0)["say"] = SAY_1
     _step(doc, 1, 0)["say"] = "Look."
     _step(doc, 3, 1)["caption"] = ODD_CAPTION
+    _step(doc, 2, 1)["say"] = LONG_TOKENS
     return doc
 
 
@@ -3104,6 +3112,8 @@ def test_without_speech_the_voice_is_disabled_and_captions_keep_todays_timing(br
         assert page.get_attribute(VOICE_BTN, "aria-describedby") == "pl-voice-note"
         assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
         assert _visible_start_buttons(page) == [["Start", True, "button"]], "only Start"
+        assert "Press Start to play." in _live(page) and "Start with voice" not in _live(page), \
+            "the announcement names only the button that is there"
         page.keyboard.press("v")
         page.click("[data-pl=start-quiet]")
         assert _state(page)["voice"] is False
@@ -3289,5 +3299,106 @@ def test_the_voice_controls_render_in_both_themes(browser, voiced, scheme: str, 
         assert bg == accent and _contrast(_rgb(fg), _rgb(bg)) >= 4.5, "pressed: the accent, readable"
         assert _shown(page, ".pl-dock [data-pl=vtt]") == 1
         assert errors == [] and requests == [], (errors, requests)
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("how", ["next", "back", "marker"])
+def test_leaving_the_start_card_another_way_starts_the_run_without_voice(browser, voiced, how: str) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=REMEMBER_VOICE + FAKE_SPEECH, hash_="#tour-demo-3")
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        if how == "next":
+            page.keyboard.press("ArrowRight")
+            want = "Your turn: book the table."
+        elif how == "back":
+            page.keyboard.press("ArrowLeft")
+            want = "Take the booking"
+        else:
+            page.click(".pl-marks button >> nth=0")
+            want = "Tonight at a glance"
+        s = _state(page)
+        assert s["waiting"] is False and s["paused"] is False and s["voice"] is False, s
+        page.wait_for_timeout(300)
+        assert _spoken(page) == [], "as Start without voice"
+        assert page.evaluate("localStorage.getItem('plumb.player.voice')") == "on", "the remembered choice stays"
+        assert not page.evaluate("document.querySelector('.pl-dock [data-pl=vtt]').disabled")
+        with page.expect_download() as dl:
+            page.click(".pl-dock [data-pl=vtt]")
+        cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
+        assert cues[0]["text"] == want and cues[0]["start"] == 0, cues
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_the_safety_timer_allows_for_long_tokens(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=5, speed=2)
+        assert _spoken(page) == [LONG_TOKENS]
+        # by words alone (6) the timer would fire after 1500 + 2 x 6 x 400 x 0.9 / 1.3 = 4.8 s; by characters, 8.1 s
+        page.wait_for_timeout(5500)
+        assert _voice_note(page) == "" and _state(page)["voice"] is True, "an e-mail address and a long number take longer"
+        page.evaluate("window.__speech.end()")
+        _wait_pos(page, 8, timeout=4000)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_start_with_voice_speaks_inside_the_click_while_voices_load(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init="window.__voicesLater = 600;" + FAKE_SPEECH)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        page.click("[data-pl=start-voice]")
+        assert _spoken(page) == ["Taking a booking"], "the first sentence starts in the click, default voice"
+        page.wait_for_timeout(1300)
+        assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled")
+        assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true" and _voice_note(page) == ""
+        assert errors == []
+    finally:
+        ctx.close()
+    # no voices ever come: the voice stops with one note, and the tour goes on with captions
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=NO_VOICES)
+    try:
+        page.wait_for_function("window.plumbPlayer.state().waiting")
+        page.click("[data-pl=start-voice]")
+        assert _spoken(page) == ["Taking a booking"]
+        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
+        assert _voice_note(page) == "Voice stopped: continuing with captions"
+        _wait_pos(page, 1, timeout=3000)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+def test_not_allowed_stops_the_voice_for_the_run_but_keeps_it_available(browser, voiced) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        page.evaluate("window.__speech.fail('not-allowed')")
+        assert _voice_note(page) == "Voice stopped: continuing with captions"
+        assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled"), "a click can turn it on again"
+        page.click(VOICE_BTN)
+        assert _spoken(page)[-1] == "Here are tonight's tables."
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("event", ["pagehide", "beforeunload"])
+def test_leaving_the_page_stops_the_sentence(browser, voiced, event: str) -> None:
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=FAKE_SPEECH)
+    try:
+        page.evaluate("window.plumbPlayer.setVoice(true)")
+        _start(page, "demo", "play", step=1)
+        before = _cancels(page)
+        page.evaluate("(e) => window.dispatchEvent(new Event(e))", event)
+        assert _cancels(page) == before + 1
+        assert page.evaluate("window.__speech.current") is None
+        assert errors == []
     finally:
         ctx.close()
