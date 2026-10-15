@@ -156,7 +156,14 @@ def test_proposals_need_no_main_screens(tmp_path: Path) -> None:
 
 def test_refusals(proposal: Path) -> None:
     assert_refusal(run(proposal, "--proposal", "nothing-here"), "nothing-here", "/plumb:prototype")
-    assert_refusal(run(proposal, "--proposal", "../x"), "--proposal")
+    # a name that is not a folder name: one exact command as the fix (the name cleaned up, or an example)
+    for given, suggested in (("../x", "x"), ("nav refresh", "nav-refresh"), ("../..", "nav-refresh")):
+        r = run(proposal, "--proposal", given)
+        assert_refusal(r, "--proposal")
+        fix = r.stderr.split("\nfix: ", 1)[1].rstrip("\n")
+        assert "\n" not in fix and "[--check]" not in fix, r.stderr
+        assert fix.startswith("use a proposal name of letters, digits, _ and -, e.g. python3 "), fix
+        assert fix.endswith(f"build-prototype.py --proposal {suggested}"), fix
     (proposal / PROPOSALS / "empty").mkdir(parents=True)
     assert_refusal(run(proposal, "--proposal", "empty"), "no variant")
     write(proposal / PROPOSALS / NAME / "c-broken/screens/x.html", "<p>no section</p>\n")
