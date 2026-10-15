@@ -16,7 +16,9 @@ play paused at once: nothing waits real time), and per step checks:
 
   - the page shows the step's screen in the step's state (window.plumbPrototype.current());
   - each target, label target and action element: one of its matches is laid out (not display: none), not
-    visibility: hidden, not opacity: 0, not zero-size, and inside the window once the player has scrolled to it;
+    visibility: hidden, not opacity: 0, not zero-size, inside the window once the player has scrolled to it, and not
+    covered at the centre of its part above the panel (by the walkthrough panel, or a screen's own fixed or sticky
+    layer: elementFromPoint; the player's own overlays are left out);
   - the dock is not covered: elementFromPoint at its centre is the dock or inside it (unless the panel is hidden).
 
 It writes the results into the page as JSON (<pre id="plumb-tour-check">), which this script reads from the dumped DOM.
@@ -31,6 +33,9 @@ Output: `ok: <n> steps × guide/play × 1280, 1440` (exit 0); else one line per 
 `step 12 (Chapter › Title): the target ".x" is hidden (visibility: hidden) at 1280 (guide, play)`, and a fix: line
 (exit 2). Exit codes: 0 every step passed · 1 the browser ran but gave no result (or hung) · 2 problems found or bad
 input (error: then fix:) · 3 no browser found (a note: line and a fix:; the static check still runs).
+On Linux, a browser that stops with "No usable sandbox" (user namespaces off, no setuid helper) is run once more with
+--no-sandbox, said in a note: line (the page is a local offline copy in a throwaway profile); never otherwise, except
+as root (as screenshot.py).
 Python 3.9+, standard library only; no shell. Plugin-side (not copied into projects), like screenshot.py.
 """
 
@@ -61,6 +66,7 @@ NO_BROWSER = ("note: tour check skipped: no browser found (looked for Chrome, Ed
               "check (build-prototype.py --check-tour) still runs.")
 TOURS_DATA = re.compile(r'<script type="application/json" id="plumb-tours">(.*?)</script>', re.S)
 RESULT = re.compile(r'<pre id="plumb-tour-check"[^>]*>(.*?)</pre>', re.S)
+SANDBOX = re.compile(r"no usable sandbox|setuid sandbox|without --no-sandbox", re.I)
 DONE = re.compile(r'<pre id="plumb-tour-check"[^>]*>\{"done":\s*true')
 BASE = re.compile(r'<base\s+href="([^"]*)"\s*/?>', re.I)
 
@@ -113,6 +119,16 @@ CHECKER_JS = """<script>
     var vw = document.documentElement.clientWidth || window.innerWidth, vh = window.innerHeight;
     if (r.right <= 0 || r.left >= vw || r.bottom <= 0 || r.top >= vh) {
       return "outside the viewport (at " + Math.round(r.left) + ", " + Math.round(r.top) + ")";
+    }
+    /* what paints on top at the centre of its part above the walkthrough panel: the panel itself, or a screen's own
+       fixed or sticky layer (the player's overlays take no clicks and are left out) */
+    var dock = document.getElementById("pl-dock"), floor = vh;
+    if (dock && !dock.hidden && dock.getClientRects().length) floor = Math.min(floor, dock.getBoundingClientRect().top);
+    var top = Math.max(r.top, 0), bottom = Math.min(r.bottom, floor), left = Math.max(r.left, 0), right = Math.min(r.right, vw);
+    if (bottom <= top) return "covered by the walkthrough panel";
+    var hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+    if (hit && hit !== s && !s.contains(hit) && !node.contains(hit) && !hit.contains(s) && !hit.closest(".pl-layer, .pl-card")) {
+      return hit.closest("#pl-dock, .pl-pill") ? "covered by the walkthrough panel" : "covered by " + describe(hit);
     }
     return "";
   }
@@ -256,6 +272,10 @@ def budget_ms(tour: dict) -> int:
 
 
 # ---------------------------------------------------------------- the browser
+
+
+def _linux() -> bool:
+    return sys.platform.startswith("linux")
 
 
 def command(browser: Path, url: str, profile: Path, width: int, budget: int) -> List[str]:
@@ -434,15 +454,29 @@ def check(browser: Path, page: Path, text: str, tour: dict, widths: List[int], t
             raise Refusal(f"cannot write the scratch copy in {tmp} ({exc.strerror or exc})",
                           "check the project folder is writable, then run this again", 1) from None
         url, budget, results = copy.resolve().as_uri(), budget_ms(tour), {}
+        no_sandbox = False
+        fix = ("open the tour page in a browser to see whether it plays, then run this again; or pass a longer --timeout, "
+               "or another Chrome, Edge or Chromium already on this machine with --browser PATH")
         for width in widths:
-            dom, log = tmp / f"dom-{width}.html", tmp / f"browser-{width}.log"
-            code = run_browser(command(browser, url, tmp / f"profile-{width}", width, budget), dom, log, timeout)
-            fix = "open the tour page in a browser to see whether it plays, then run this again; or pass a longer --timeout"
-            if code is None:
-                raise Refusal(f"{browser.name} did not finish within {timeout:g} s at width {width}", fix, 1)
-            data = parse_result(dom.read_text(encoding="utf-8", errors="replace") if dom.is_file() else "")
+            for attempt in (1, 2):
+                dom, log = tmp / f"dom-{width}-{attempt}.html", tmp / f"browser-{width}-{attempt}.log"
+                args = command(browser, url, tmp / f"profile-{width}-{attempt}", width, budget)
+                if no_sandbox and "--no-sandbox" not in args:
+                    args.insert(-1, "--no-sandbox")
+                code = run_browser(args, dom, log, timeout)
+                if code is None:
+                    raise Refusal(f"{browser.name} did not finish within {timeout:g} s at width {width}", fix, 1)
+                data = parse_result(dom.read_text(encoding="utf-8", errors="replace") if dom.is_file() else "")
+                said = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+                if data is None and attempt == 1 and "--no-sandbox" not in args and _linux() and SANDBOX.search(said):
+                    # Linux without unprivileged user namespaces (or the setuid helper): Chrome cannot sandbox itself
+                    print(f"note: {browser.name} has no usable sandbox on this machine: ran it again with --no-sandbox "
+                          f"(the page is a local offline copy in a throwaway profile)", file=sys.stderr)
+                    no_sandbox = True
+                    continue
+                break
             if data is None:
-                said = S._last_line(log.read_bytes() if log.is_file() else b"")
+                said = S._last_line(said.encode("utf-8"))
                 raise Refusal(f"{browser.name} gave no tour check result at width {width} (exit {code})"
                               + (f": {said}" if said else ""), fix, 1)
             if data.get("fatal"):

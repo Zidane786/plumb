@@ -99,6 +99,8 @@ user's explicit yes to that screen** in this conversation.
 - Then the browser pass: `PY "<ROOT>/scripts/check-tour.py" "<docs>/tours/<id>.html"` (both modes at 1280 and 1440).
   Exit 2 lists `step <n> (<title>): <problem> at <width> (<mode>)` lines: fix those steps (target, state, words) and
   rebuild until it exits 0. Exit 3 (no browser): say so, and ask whether to continue without the browser check.
+  Exit 1 (the browser gave no result or hung): show the error and its fix, and ask: another installed browser with
+  `--browser PATH`, or continue without the browser check. Never report the tour as checked then.
 
 ## Step 4: show it, then stop
 

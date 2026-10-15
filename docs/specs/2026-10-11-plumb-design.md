@@ -399,15 +399,16 @@ template, `templates/chrome-roles.css`, and `prototype.html` links "Open as app"
 the screens, as the build does, and writes nothing (exit 0 / 2). It also **warns** when a step's target, label or
 action element sits in an element the screen's own CSS hides at some frame widths (`display: none`, `visibility:
 hidden` or an off-canvas `transform` outside an `@container plumb-frame (min-width: …)` rule that shows it again, or
-the reverse): "visible only when the frame is ≥ 48rem". It reads the screen's top-level rules and its `@container
-plumb-frame` blocks with a standard-library reader (cascade by `!important`, specificity and order) and the selector
+the reverse): "visible only when the frame is ≥ 48rem". It reads the `_shared/*.css` files and the screen's own styles (in the page's order): their top-level rules and
+`@container plumb-frame` blocks with a standard-library reader (cascade by `!important`, specificity and order) and the selector
 subset above; what it cannot read is left out. The runtime pass is plugin-side (ruling B4), `scripts/check-tour.py
 <docs>/tours/<id>.html` (not copied into projects, like `screenshot.py`): with a browser screenshot.py's search finds
 (or `--browser`), it writes a scratch copy under `<project>/.plumb-tmp/` (its `<base>` pointed at the original's
 folder) with a checker script, runs it headless with `--dump-dom` and `--virtual-time-budget` at 1280 and 1440 wide
 (light theme), and the checker walks every step in guide and in play mode through the player's API (play paused at
 once, nothing waits real time). Per step: the page shows the step's screen and state; each target, label and action
-element is laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, and inside the window; the dock is not
+element is laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and not covered at
+its centre (the panel, a screen's fixed or sticky layer); the dock is not
 covered (`elementFromPoint` at its centre). The results come back as JSON in the dumped DOM. Problems: exit 2, one line
 per step and problem with the widths and modes (`step 12 (Users › Invite): the target ".invite" is hidden
 (visibility: hidden) at 1280 (guide, play)`); no result or a hung browser: exit 1; no browser: exit 3 with a note and

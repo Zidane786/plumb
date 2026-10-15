@@ -204,6 +204,57 @@ def test_no_warning_without_a_frame_breakpoint(tmp_path: Path) -> None:
     assert warnings(r) == [] and "fix:" not in r.stderr, r.stderr
 
 
+def test_a_descendant_that_sets_visibility_visible_does_not_warn(tmp_path: Path) -> None:
+    screen = DASH.replace("</style>", """[data-screen="dash"] .wrap { visibility: hidden; }
+[data-screen="dash"] .wrap .keep { visibility: visible; }
+@container plumb-frame (min-width: 48rem) { [data-screen="dash"] .wrap { visibility: visible; } }
+</style>""").replace('<p class="summary">All good.</p>',
+                     '<p class="summary">All good.</p><div class="wrap"><b class="keep">K</b><i class="lost">L</i></div>')
+    p = dash_project(tmp_path, {"dash": dash_tour(".keep", ".lost")})
+    write(p / DASH_REL, screen)
+    r = check_tour(p, "dash")
+    assert r.returncode == 0, r.stdout + r.stderr
+    found = warnings(r)
+    assert len(found) == 1 and '".lost" sits inside div.wrap' in found[0] and "(visibility: hidden)" in found[0], found
+
+
+def test_shared_css_reaches_the_breakpoint_warning(tmp_path: Path) -> None:
+    shared = ('[data-screen] .side-panel { display: none; }\n'
+              "@container plumb-frame (min-width: 48rem) { [data-screen] .side-panel { display: block; } }\n")
+    p = dash_project(tmp_path, {"dash": dash_tour(".side-panel a")})
+    write(p / DASH_REL, DASH.replace('<main class="body">',
+                                     '<div class="side-panel"><a href="#screen-home">Home</a></div><main class="body">'))
+    write(p / f"{DOCS}/prototype/screens/_shared/shell.css", shared)
+    r = check_tour(p, "dash")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert [w for w in warnings(r) if "div.side-panel" in w and "≥ 48rem" in w], r.stderr
+    # the screen's own styles come after the shared files: a screen that shows it at every width stays quiet
+    write(p / DASH_REL, read(p / DASH_REL).replace("</style>", '[data-screen="dash"] .side-panel { display: block; }\n</style>'))
+    r = check_tour(p, "dash")
+    assert r.returncode == 0 and warnings(r) == [], r.stderr
+
+
+def test_a_refused_shared_file_refuses_check_tour(tmp_path: Path) -> None:
+    p = dash_project(tmp_path, {"dash": dash_tour(".refresh")})
+    write(p / f"{DOCS}/prototype/screens/_shared/bad.css", "a { color: red } </style>\n")
+    r = check_tour(p, "dash")
+    assert r.returncode == 2 and "error: " in r.stderr and "\nfix: " in r.stderr, r.stderr
+
+
+def test_inline_size_queries_are_read() -> None:
+    for q in ("(min-inline-size: 48rem)", "(inline-size >= 48rem)", "(min-width: 768px)"):
+        parts = BP._frame_query(q)
+        assert parts and parts[0][0] == "min" and parts[0][2] == 768, q
+    assert BP._frame_query("(max-inline-size: 30rem)")[0][:3] == ("max", False, 480)
+    assert BP._frame_query("(orientation: portrait)") is None
+
+
+def test_one_step_matches(tmp_path: Path) -> None:
+    p = dash_project(tmp_path, {"dash": dash_tour(".refresh")})
+    r = check_tour(p, "dash")
+    assert r.stdout.strip() == f"ok: {TOURS_REL}/dash.json: 1 step (guide mode, app view) matches the screens"
+
+
 def test_important_beats_specificity() -> None:
     css = """[data-screen="x"] .a .b { display: none; }
 @container plumb-frame (min-width: 36rem) { .b { display: block !important; } }"""
@@ -257,6 +308,9 @@ with open(os.environ["STUB_LOG"], "a", encoding="utf-8") as fh:
                          "checker": 'pre.id = "plumb-tour-check"' in text,
                          "errors": "__plumbTourErrors" in text}) + "\n")
 mode = os.environ.get("STUB_MODE", "ok")
+if mode == "sandbox" and "--no-sandbox" not in args:
+    sys.stderr.write("[0101/000000.000:FATAL:zygote_host_impl_linux.cc(128)] No usable sandbox! Update your kernel\n")
+    sys.exit(1)
 width = int(next(a for a in args if a.startswith("--window-size=")).split("=", 1)[1].split(",")[0])
 data = json.loads(re.search(r'<script type="application/json" id="plumb-tours">(.*?)</script>', text, re.S).group(1))
 tour = next(t for t in data["tours"] if t["id"] == data["autostart"]["tour"])
@@ -400,6 +454,7 @@ def test_a_hung_browser_is_stopped_at_the_timeout(stub, built: Path) -> None:
     start = time.monotonic()
     r = check(stub, str(built / PAGES_REL / "demo.html"), "--width", "1280", "--timeout", "2", mode="hang", cwd=built)
     assert r.returncode == 1 and "did not finish within 2 s" in r.stderr and "--timeout" in r.stderr, r.stderr
+    assert "another Chrome, Edge or Chromium already on this machine with --browser PATH" in r.stderr
     assert time.monotonic() - start < 30
     assert not (built / ".plumb-tmp").exists()
 
@@ -446,6 +501,30 @@ def test_bad_input_is_refused(stub, built: Path, args: list, needle: str) -> Non
     assert calls(stub) == [], "no browser runs on bad input"
 
 
+@pytest.mark.parametrize("linux", [True, False])
+def test_no_usable_sandbox_on_linux_retries_once_with_no_sandbox(stub, built: Path, monkeypatch, capsys,
+                                                                 linux: bool) -> None:
+    bin_dir, log = stub
+    launcher = next(bin_dir.iterdir())
+    monkeypatch.setenv("STUB_LOG", str(log))
+    monkeypatch.setenv("STUB_MODE", "sandbox")
+    monkeypatch.setattr(CT, "_linux", lambda: linux)
+    monkeypatch.chdir(built)
+    code = CT.main([str(built / PAGES_REL / "demo.html"), "--browser", str(launcher), "--width", "1280",
+                    "--width", "1440"])
+    out, err = capsys.readouterr()
+    sandboxed = ["--no-sandbox" in c["args"] for c in calls(stub)]
+    if linux:
+        assert code == 0, out + err
+        assert out.strip() == "ok: 6 steps × guide/play × 1280, 1440"
+        assert err.count("note: ") == 1 and "no usable sandbox" in err and "ran it again with --no-sandbox" in err
+        assert sandboxed == [False, True, True], "one retry, then kept for the other widths"
+    else:
+        assert code == 1 and "No usable sandbox" in err and "note: " not in err, err
+        assert sandboxed == [False], "never --no-sandbox off Linux"
+    assert not (built / ".plumb-tmp").exists()
+
+
 def test_result_parsing_unescapes_the_dumped_text() -> None:
     data = {"done": True, "results": [{"mode": "guide", "n": 1, "problems": ['a "b" <c> & d']}]}
     dom = '<html><body><pre id="plumb-tour-check">x</pre><pre id="plumb-tour-check" hidden="">' + \
@@ -475,6 +554,8 @@ HIDDEN = """<style>
 [data-screen="hidden"] .ghost { visibility: hidden; }
 [data-screen="hidden"] .gone { display: none; }
 [data-screen="hidden"] .flat { display: block; width: 0; height: 0; overflow: hidden; }
+[data-screen="hidden"] .cover-bar { position: fixed; top: 0; left: 0; width: 100%; height: 120px; z-index: 2; background: #eee; }
+[data-screen="hidden"] .under { position: fixed; top: 40px; left: 40px; z-index: 1; margin: 0; }
 </style>
 <section data-screen="hidden" data-title="Hidden things" data-order="5">
   <h2>Hidden things</h2>
@@ -483,6 +564,10 @@ HIDDEN = """<style>
     <div class="gone"><a href="#screen-home" class="gone-link">Gone</a></div>
     <span class="flat"></span>
     <p class="shown">Shown</p>
+  </div>
+  <div data-state="covered">
+    <div class="cover-bar">A bar on top</div>
+    <p class="under">Under the bar</p>
   </div>
 </section>
 """
@@ -512,6 +597,7 @@ def test_check_tour_for_real(tmp_path: Path) -> None:
         {"screen": "hidden", "title": "Flat", "caption": "No size.", "target": ".flat"},
         {"screen": "hidden", "title": "Shown", "caption": "Fine.", "target": ".shown",
          "labels": [{"target": ".ghost", "text": "Ghost label"}]},
+        {"screen": "hidden", "state": "covered", "title": "Under", "caption": "Under a fixed bar.", "target": ".under"},
     ]}
     p = make_tour_project(tmp_path / "Real Ünïcode", {"demo": demo(), "walk": walk()}, build=False)
     write(p / HIDDEN_REL, HIDDEN)
@@ -519,19 +605,21 @@ def test_check_tour_for_real(tmp_path: Path) -> None:
     r = run(p)
     assert r.returncode == 0, r.stdout + r.stderr
     for name in ("demo", "walk"):
-        ok = subprocess.run([sys.executable, str(CHECK), str(p / PAGES_REL / f"{name}.html"), "--browser", browser],
+        ok = subprocess.run([sys.executable, str(CHECK), str(p / PAGES_REL / f"{name}.html"), "--browser", browser,
+                             "--timeout", "90"],
                             capture_output=True, text=True, encoding="utf-8", cwd=str(p), timeout=300)
         assert ok.returncode == 0, ok.stdout + ok.stderr
         assert ok.stdout.strip() == "ok: 6 steps × guide/play × 1280, 1440"
     bad = subprocess.run([sys.executable, str(CHECK), str(p / PAGES_REL / "broken.html"), "--width", "1280",
-                          "--browser", browser], capture_output=True, text=True, encoding="utf-8", cwd=str(p), timeout=300)
+                          "--browser", browser, "--timeout", "90"], capture_output=True, text=True, encoding="utf-8", cwd=str(p), timeout=300)
     assert bad.returncode == 2, bad.stdout + bad.stderr
     lines = bad.stdout.strip().splitlines()
-    assert lines[:4] == [
+    assert lines[:5] == [
         'step 1 (Ghost): the target ".ghost" is hidden (visibility: hidden) at 1280 (guide, play)',
         'step 2 (Gone): the target ".gone-link" is hidden (display: none on div.gone) at 1280 (guide, play)',
         'step 3 (Flat): the target ".flat" is zero-size (0 × 0 px) at 1280 (guide, play)',
         'step 4 (Shown): the label "Ghost label" (.ghost) is hidden (visibility: hidden) at 1280 (guide, play)',
+        'step 5 (Under): the target ".under" is covered by div.cover-bar at 1280 (guide, play)',
     ], bad.stdout
-    assert lines[4].startswith(f"fix: change those steps in {TOURS_REL}/broken.json")
+    assert lines[5].startswith(f"fix: change those steps in {TOURS_REL}/broken.json")
     assert not (p / ".plumb-tmp").exists()

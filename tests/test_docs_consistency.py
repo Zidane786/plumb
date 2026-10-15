@@ -320,7 +320,7 @@ TEST_EXPECTS = [
      "note: visual comparison skipped: no browser found"),
     ("ok: docs/design/prototype/tours/first-look.json: 3 steps (play mode, app view) match the screens",
      "assets/skill/scripts/build-prototype.py",
-     "f\"ok: {prel}: {n} step{'s' if n != 1 else ''} ({tour['mode']} mode, {tour['view']} view) match the \""),
+     "f\"{'match' if n != 1 else 'matches'} the \""),
     ("is hidden by the screen's CSS (display: none): visible only when the frame is ≥ 48rem",
      "assets/skill/scripts/build-prototype.py", "is hidden by the screen's CSS"),
     ("ok: 3 steps × guide/play × 1280, 1440", "scripts/check-tour.py",

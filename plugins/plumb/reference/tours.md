@@ -180,10 +180,12 @@ Two passes, both evidence for the agent, never a substitute for looking ([script
    playing the tour in the app view.
 2. **In a browser, when one is on the machine:** the plugin's `check-tour.py <docs>/tours/<id>.html` plays the tour page
    headless in guide and play mode at 1280 and 1440 wide and checks, per step: the right screen and state; every target,
-   label and action element laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, and inside the window;
+   label and action element laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and
+   not covered by the panel or the screen's own fixed or sticky bar;
    the dock not covered by the screen. Problems come one line per step, e.g. `step 12 (Users › Invite): the target
    ".invite" is hidden (visibility: hidden) at 1280 (guide, play)`, exit 2. No browser: exit 3 with a note; Plumb
-   never installs one, so say so and ask the user whether to continue without it.
+   never installs one, so say so and ask the user whether to continue without it. Exit 1 (the browser gave no result): ask whether to try another
+   installed browser (`--browser`) or continue without it.
 
 ## Every tour is also its own page
 

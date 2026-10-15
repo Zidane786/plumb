@@ -120,9 +120,11 @@ Commands (every call rebuilds the generated files, so the pages always show the 
                                     some frame widths: display: none, visibility: hidden or an off-canvas transform
                                     (translateX(-100%) and the like) in a top-level rule, shown again inside
                                     `@container plumb-frame (min-width: ...)` (or the reverse): "visible only when the
-                                    frame is ≥ 48rem". It reads the screen's top-level rules and its @container
-                                    plumb-frame blocks (cascade by !important, specificity and order); a selector or
-                                    query it cannot read is left out. The browser pass is the plugin's check-tour.py.
+                                    frame is ≥ 48rem". It reads the _shared/*.css files and the screen's own styles
+                                    (in the page's order): their top-level rules and @container plumb-frame blocks
+                                    (min-/max-width, width, inline-size; cascade by !important, specificity and order;
+                                    a descendant's own visibility: visible wins); a selector or query it cannot read
+                                    is left out. The browser pass is the plugin's check-tour.py.
 
 Proposals (/plumb:prototype's variants): <docs>/prototype/proposals/<NAME>/<variant>/screens/*.html are the variant's screen
 files (the same contract) and <variant>/idea.md is optional (`# Title`, a paragraph with the idea, `- ` lines with the
@@ -1798,7 +1800,8 @@ def load_tours(folder: Path, screens: List[Screen], root: Path, rel, screens_rel
 # @container plumb-frame blocks; a selector or query it cannot read is left out, silently)
 
 _LENGTH = r"(\d*\.?\d+)\s*(rem|em|px)"
-_QUERY = re.compile(r"^\(\s*(?:(min|max)-width\s*:\s*" + _LENGTH + r"|width\s*(>=|<=|>|<)\s*" + _LENGTH + r")\s*\)$", re.I)
+_QUERY = re.compile(r"^\(\s*(?:(min|max)-(?:width|inline-size)\s*:\s*" + _LENGTH
+                    + r"|(?:width|inline-size)\s*(>=|<=|>|<)\s*" + _LENGTH + r")\s*\)$", re.I)
 _OFF_CANVAS = re.compile(r"translate(x|y|3d)?\(([^()]*)\)")
 _PERCENT = re.compile(r"^([+-]?\d*\.?\d+)%$")
 _EPS = 0.01
@@ -1806,7 +1809,8 @@ _HUGE = 10.0 ** 6
 
 
 def _frame_query(text: str) -> Optional[List[Tuple[str, bool, float, str]]]:
-    """The parts of `@container plumb-frame <text>` as (min|max, strict, px, as written); None when unreadable."""
+    """The parts of `@container plumb-frame <text>` as (min|max, strict, px, as written); None when unreadable.
+    Reads (min-width: X), (max-width: X), (width >= X) and the like, and the same with inline-size."""
     parts = []
     for raw in re.split(r"\s+and\s+", text.strip(), flags=re.I):
         m = _QUERY.match(raw.strip())
@@ -1923,11 +1927,11 @@ class _ScreenCSS:
     """The screen's own CSS applied to its markup in one state: for each element, the hiding properties that rules set
     on it, with their cascade order (!important, specificity, source order) and frame condition."""
 
-    def __init__(self, screen: Screen, state: str) -> None:
+    def __init__(self, screen: Screen, state: str, shared_css: Tuple[str, ...] = ()) -> None:
         self.decls: Dict[_Node, Dict[str, list]] = {}
         self.bounds: Dict[float, str] = {}
         tree, order = screen.tree(), 0
-        for css in screen.styles:
+        for css in (*shared_css, *screen.styles):  # the page's order: the shared files first, then the screen's own
             for selectors, decls, cond in css_rules(css):
                 wanted = [d for d in decls if d[0] in _HIDES]
                 if not wanted:
@@ -1956,12 +1960,18 @@ class _ScreenCSS:
         return out + [(_HUGE, "", "")]
 
     def hidden(self, node: _Node, width: float) -> Optional[Tuple[_Node, str]]:
-        """(the element that hides it, "property: value") when the node or an ancestor is hidden at this frame width."""
+        """(the element that hides it, "property: value") when the node or an ancestor is hidden at this frame width.
+        visibility inherits and a descendant may set it back: the nearest element that sets it decides."""
+        visibility_set = False
         while node is not None and node.tag != "#root":
             for prop, cands in self.decls.get(node, {}).items():
+                if prop == "visibility" and visibility_set:
+                    continue
                 live = [c for c in cands if _holds(c[1], width)]
                 if live:
                     value = max(live, key=lambda c: c[0])[2]
+                    if prop == "visibility":
+                        visibility_set = True
                     if _HIDES[prop](value):
                         return node, f"{prop}: {value}"
             node = node.parent
@@ -1973,7 +1983,8 @@ def _describe(node: _Node) -> str:
     return out + "".join(f".{c}" for c in node.attrs.get("class", "").split()[:2])
 
 
-def breakpoint_warnings(reader: "_TourReader", tour: dict, screens: Dict[str, Screen]) -> List[str]:
+def breakpoint_warnings(reader: "_TourReader", tour: dict, screens: Dict[str, Screen],
+                        shared_css: Tuple[str, ...] = ()) -> List[str]:
     """One line per step selector whose elements the screen's own CSS shows only at some frame widths."""
     cache: Dict[Tuple[str, str], _ScreenCSS] = {}
     out: List[str] = []
@@ -1981,7 +1992,7 @@ def breakpoint_warnings(reader: "_TourReader", tour: dict, screens: Dict[str, Sc
         screen = screens[step["screen"]]
         key = (screen.id, step["state"])
         if key not in cache:
-            cache[key] = _ScreenCSS(screen, step["state"])
+            cache[key] = _ScreenCSS(screen, step["state"], shared_css)
         sheet = cache[key]
         if not sheet.bounds:
             continue
@@ -2029,7 +2040,8 @@ def breakpoint_warnings(reader: "_TourReader", tour: dict, screens: Dict[str, Sc
     return out
 
 
-def check_tour_file(given: str, root: Path, docs: Path, screens: List[Screen], rel, folder: Path, command: str) -> int:
+def check_tour_file(given: str, root: Path, docs: Path, screens: List[Screen], rel, folder: Path, command: str,
+                    shared: Optional[List["Shared"]] = None) -> int:
     """--check-tour FILE: validate one tour file against the screens and warn about frame widths; writes nothing."""
     tours_dir = docs / "prototype" / "tours"
     path = Path(given)
@@ -2055,7 +2067,7 @@ def check_tour_file(given: str, root: Path, docs: Path, screens: List[Screen], r
     by_id = {s.id: s for s in screens}
     reader = _TourReader(tid, prel, text, by_id, rel(folder, root) + "/")
     tour = reader.read()
-    warnings = breakpoint_warnings(reader, tour, by_id)
+    warnings = breakpoint_warnings(reader, tour, by_id, tuple(s.text for s in shared or () if s.kind == "css"))
     for line in warnings:
         print(f"warning: {line}", file=sys.stderr)
     if warnings:
@@ -2064,7 +2076,8 @@ def check_tour_file(given: str, root: Path, docs: Path, screens: List[Screen], r
               "/plumb:tour then checks it in a browser with check-tour.py", file=sys.stderr)
     n = len(tour["steps"])
     extra = f"; {len(warnings)} warning{'s' if len(warnings) != 1 else ''}" if warnings else ""
-    print(f"ok: {prel}: {n} step{'s' if n != 1 else ''} ({tour['mode']} mode, {tour['view']} view) match the "
+    print(f"ok: {prel}: {n} step{'s' if n != 1 else ''} ({tour['mode']} mode, {tour['view']} view) "
+          f"{'match' if n != 1 else 'matches'} the "
           f"screens{extra}")
     return 0
 
@@ -2814,7 +2827,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     changes_path = docs / "prototype" / "changes.md"
     if args.check_tour is not None:
         check_shared(shared)
-        return check_tour_file(args.check_tour, root, docs, screens, rel, folder, command)
+        return check_tour_file(args.check_tour, root, docs, screens, rel, folder, command, shared)
     tours_folder, pages_folder = docs / "prototype" / "tours", docs / "tours"
     mutating = bool(args.map or args.approve or args.synced)
     tour_error: Optional[PlumbError] = None

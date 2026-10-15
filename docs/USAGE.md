@@ -971,7 +971,7 @@ until it's fixed. Recording approvals still works meanwhile. `/plumb:tour <id>` 
 **Checking a tour by hand:** `python3 <skill>/scripts/build-prototype.py --check-tour docs/design/prototype/tours/<id>.json`
 checks one tour without writing anything (and warns about elements hidden below or above a frame width), and, with a
 browser on the machine, `python3 <plugin>/scripts/check-tour.py docs/design/tours/<id>.html` plays it headless and
-lists every step that does not show what it points at (exit 0 all fine, 2 problems, 3 no browser).
+lists every step that does not show what it points at (exit 0 all fine, 1 the browser gave no result, 2 problems, 3 no browser).
 
 Captions and callouts are announced to screen readers, and every control works by keyboard. Turning a tour into
 in-app onboarding in the live product is not part of 1.0.0.
