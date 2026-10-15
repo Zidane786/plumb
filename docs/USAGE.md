@@ -1235,6 +1235,15 @@ Three checks, in this order:
    reading decides. A reader failure or a command too long to read adds one line, with the real outcome, to the hooks'
    log (`/plumb:feedback`).
 
+   Paths are compared without case where the file system ignores it: always on Windows and macOS, and on Linux when
+   the file system the project is on does (the guard asks it: a folder that ignores case, a Windows drive mounted in
+   WSL), so `Docs/Design/Screens.html` is refused there and allowed only where it is another file. On Windows, `\`
+   and `/`, drive letters in either case and quoted paths with spaces are read as Windows reads them, and so are Git
+   for Windows' Bash drive paths (`/c/Users/…`, `/cygdrive/c/…`, which Claude Code's Bash uses) and the same text read
+   as PowerShell does (`\c\Users\…` on the current drive): a guarded file in any of those spellings is refused. In
+   inline Python a path in a plain string is read as Python reads it (`'\t'` is a tab), so give Windows paths with `/`
+   or as a raw string (`r'C:\…'`).
+
    The guard is a consistency net, not a sandbox. Not followed:
    - script files written before the command, `xargs`, `find -exec` and `find -delete` on the files found, `patch`,
      `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other tools;

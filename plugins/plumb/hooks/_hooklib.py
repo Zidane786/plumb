@@ -106,8 +106,11 @@ def setup_in_progress(root: str) -> bool:
     when = setup_marker_time(root)
     return when is not None and time.time() - when <= SETUP_MARKER_HOURS * 3600
 UI_EXT = frozenset((".tsx", ".jsx", ".ts", ".js", ".vue", ".svelte", ".astro", ".html", ".css", ".scss", ".swift", ".kt"))
-# Windows and macOS (APFS, HFS+ by default) file systems ignore case: TOKENS.CSS is tokens.css there.
-CASELESS = sys.platform in ("win32", "darwin")
+# Whether paths are compared without case (TOKENS.CSS is tokens.css where the file system ignores case). Windows and
+# macOS (APFS, HFS+) ignore case by default, Linux does not; a Linux folder can (casefold, a Windows drive mounted in
+# WSL), so once the project is known its file system is asked too (fs_ignores_case, set_case_from).
+PLATFORM_CASELESS = sys.platform in ("win32", "darwin")
+CASELESS = PLATFORM_CASELESS
 
 # Tool names (lower case, without "_" and "-") -> what the tool does. Claude Code: Edit, Write, MultiEdit, Bash,
 # PowerShell; Copilot CLI: the same names for a plugin's hooks, or edit, create, str_replace, apply_patch, bash,
@@ -470,6 +473,23 @@ def resolve(path: str, base: str) -> str:
     return os.path.realpath(os.path.normpath(path))
 
 
+def real_path(path: str, cache: Dict[str, str]) -> str:
+    """os.path.realpath(path) for an absolute, normalised path, sharing the work in cache: a path that does not exist
+    is no link, so its real path is its folder's real path and its name, and the folder is resolved once for all its
+    entries (a realpath costs a file system call per part, most on Windows, where it opens every file). The cache
+    belongs to one command: never kept between hook runs."""
+    found = cache.get(path)
+    if found is None:
+        parent, name = os.path.split(path)
+        if (name and name not in (".", "..") and parent and parent != path and "\x00" not in path
+                and not os.path.lexists(path)):
+            found = os.path.join(real_path(parent, cache), name)
+        else:
+            found = os.path.realpath(path)
+        cache[path] = found
+    return found
+
+
 def under(path: str, root: str) -> Optional[str]:
     """path relative to root (posix), "" for root itself, None when it is outside."""
     a, b = path.rstrip("/\\"), root.rstrip("/\\")
@@ -489,9 +509,46 @@ def fold(text: str) -> str:
     return text.lower() if CASELESS else text
 
 
+def fs_ignores_case(folder: str) -> Optional[bool]:
+    """Whether the file system holding folder (an existing folder) ignores case: the nearest name in its path that has
+    letters, written in the other case, is the same file (True) or is missing or another file (False); None when it
+    cannot tell (no such name, the folder missing or unreadable)."""
+    try:
+        path = os.path.realpath(folder)
+        while True:
+            parent, name = os.path.split(path)
+            if not name or parent == path:
+                return None
+            other = name.swapcase()
+            if other != name:
+                st = os.lstat(path)
+                try:
+                    return os.path.samestat(st, os.lstat(os.path.join(parent, other)))
+                except FileNotFoundError:
+                    return False
+            path = parent
+    except (OSError, ValueError):
+        return None
+
+
+def set_case_from(folder: str) -> None:
+    """Compare paths without case (CASELESS) where the file system holding folder (the project) ignores case, and
+    always on Windows and macOS: Plumb's own files may sit on another volume there (a case-sensitive project volume
+    never makes a miscased path to the plugin pass), and a guarded path in another case is refused either way."""
+    global CASELESS
+    CASELESS = PLATFORM_CASELESS or fs_ignores_case(folder) is True
+
+
+_PLUGIN_ROOT: Dict[Optional[str], str] = {}
+
+
 def plugin_root() -> str:
+    """The plugin's folder, symlinks resolved; worked out once per value of CLAUDE_PLUGIN_ROOT (the guard asks it for
+    every path a shell command writes, and a realpath costs a file system call per part, most on Windows)."""
     env = os.environ.get("CLAUDE_PLUGIN_ROOT")
-    return os.path.realpath(env if env else os.path.dirname(HOOKS_DIR))
+    if env not in _PLUGIN_ROOT:
+        _PLUGIN_ROOT[env] = os.path.realpath(env if env else os.path.dirname(HOOKS_DIR))
+    return _PLUGIN_ROOT[env]
 
 
 def plugin_version() -> Optional[str]:
@@ -536,19 +593,20 @@ def newer_plugin() -> Optional[Tuple[str, str]]:
     return (best[1], best[2]) if best else None
 
 
-KIRO_SKILL = re.compile(r"(?:^|/)\.kiro/skills/(plumb-[^/]+)/(.+)$", re.I if CASELESS else 0)
-KIRO_HOOKS = re.compile(r"(?:^|/)\.kiro/hooks/plumb\.json$", re.I if CASELESS else 0)
+KIRO_SKILL = r"(?:^|/)\.kiro/skills/(plumb-[^/]+)/(.+)$"
+KIRO_HOOKS = r"(?:^|/)\.kiro/hooks/plumb\.json$"
 
 
 def kiro_own_file(path: str) -> Optional[str]:
     """The folder holding .kiro when path is one of the files kiro.py installed there (a marked
     .kiro/hooks/plumb.json, or anything in a .kiro/skills/plumb-<name>/ folder whose SKILL.md is marked), else None."""
     p = path.replace("\\", "/")  # an absolute path: the match starts at the "/" before .kiro
-    m = KIRO_SKILL.search(p)
+    flags = re.I if CASELESS else 0  # re keeps the compiled patterns
+    m = re.search(KIRO_SKILL, p, flags)
     if m:
         marked = KIRO_MARK in (_read(os.path.join(p[:m.start(2)], "SKILL.md")) or "")
         return (p[:m.start()] or "/") if marked else None
-    m = KIRO_HOOKS.search(p)
+    m = re.search(KIRO_HOOKS, p, flags)
     if m and kiro_hooks_doc(path) is not None:
         return p[:m.start()] or "/"
     return None
@@ -625,6 +683,7 @@ class Project:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.root_s = str(root)
+        set_case_from(self.root_s)  # compare paths without case where this project's file system ignores it
         text = _read(os.path.join(self.root_s, PLUMB_MD)) or ""
         first = text.lstrip("﻿").split("\n", 1)[0]
         m = _VERSION.search(first)
@@ -1241,6 +1300,9 @@ WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\
                         r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b",
                         re.I)
 SHELL_BUDGET = 1.5  # seconds this reader may take (the hook's timeout is 10 s); past it the previous reader decides
+# The clock every time budget is measured on: monotonic and fine-grained everywhere (time.monotonic ticks only every
+# ~16 ms on Windows before Python 3.13, so a budget measured on it could pass unnoticed).
+clock = time.perf_counter
 _MAX_TARGETS = 2000  # more targets than this: the reader is unsure (the previous reader decides on the rest)
 _MAX_GLOB = 500
 _ESCAPABLE = frozenset(" \t\n'\"\\$`;&|<>()*?[]#~{}!")  # outside quotes \x is x for these; \x stays \x for the rest
@@ -1574,6 +1636,7 @@ def _commands(toks: List[tuple]) -> List[tuple]:
 # $HOME, ${HOME} (sh), %USERPROFILE% (cmd), $env:USERPROFILE / $env:HOME (PowerShell) at the start of a path: read as ~.
 _HOME_VAR = re.compile(r"^(?:\$HOME|\$\{HOME\}|%USERPROFILE%|\$env:USERPROFILE|\$env:HOME)(?=[/\\]|$)", re.I)
 _VAR = re.compile(r"\$(?:\{([A-Za-z_]\w*|\d+|[@*])\}|([A-Za-z_]\w*|\d|[@*]))")  # $NAME, ${NAME}, $1, "$@"
+_MSYS_DRIVE = re.compile(r"^/(?:cygdrive/)?([A-Za-z])(?=/|$)")
 _HERE_PREFIX = re.compile(r"^(?:\$PWD|\$\{PWD\}|\$\(pwd\)|`pwd`)(?=[/\\]|$)")
 _ROOT_PREFIX = re.compile(r"^(?:\$CLAUDE_PROJECT_DIR|\$\{CLAUDE_PROJECT_DIR\}|\$env:CLAUDE_PROJECT_DIR"
                           r"|\$\(git rev-parse --show-toplevel\)|`git rev-parse --show-toplevel`)(?=[/\\]|$)")
@@ -1619,6 +1682,21 @@ def _braces(word: str, limit: int = 64) -> List[str]:
     return out[:limit]
 
 
+def msys_drive(path: str) -> Optional[str]:
+    """The Windows form of an MSYS (Git for Windows' Bash) or Cygwin drive path: /c/Users/me -> C:/Users/me,
+    /cygdrive/d -> D:/; None for any other path. Claude Code runs Bash on Windows in Git for Windows' Bash, where both
+    forms name the drive."""
+    m = _MSYS_DRIVE.match(path)
+    return f"{m.group(1).upper()}:{path[m.end():] or '/'}" if m else None
+
+
+def path_forms(path: str) -> List[str]:
+    """The paths a word can name: itself and, on Windows, its drive form (/c/x is C:\\x in Bash there and \\c\\x on the
+    current drive in PowerShell: both count)."""
+    drive = msys_drive(path) if os.sep == "\\" else None
+    return [path, drive] if drive else [path]
+
+
 class ShellEffects:
     """What a shell command writes (files, and folders it writes into), removes, and what is needed to judge it against
     the earlier reader: unsure (why the reader cannot prove anything: the earlier reader decides), other (text outside
@@ -1653,7 +1731,7 @@ class ShellEffects:
             self.unsure.append(why)
 
     def tick(self) -> None:
-        if time.monotonic() > self.deadline:
+        if clock() >= self.deadline:
             raise _Budget()
 
     def note(self, scope: _Scope, *texts: str) -> None:
@@ -1696,7 +1774,7 @@ class ShellEffects:
                 self.compute(word, w, scope)
             self.doubt("a variable or a command the reader cannot resolve in a path")
         out: List[str] = []
-        for x in (_braces(w) if strict else [w]):
+        for x in [f for y in (_braces(w) if strict else [w]) for f in path_forms(y)]:
             for b in bases:
                 full = os.path.normpath(x if os.path.isabs(x) else os.path.join(b, x))
                 out.append(full)
@@ -3493,7 +3571,7 @@ def shell_effects(command: str, cwd: str, root: Optional[str] = None) -> ShellEf
             budget = float(os.environ.get("PLUMB_SHELL_BUDGET") or SHELL_BUDGET)
         except ValueError:
             budget = SHELL_BUDGET
-        eff = ShellEffects(root, time.monotonic() + budget)
+        eff = ShellEffects(root, clock() + budget)
         eff.command = command
         scope = _Scope((cwd,), {})
         try:
