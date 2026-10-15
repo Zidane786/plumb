@@ -355,9 +355,13 @@ def test_a_stock_shadcn_new_york_stylesheet_maps_by_role_and_colour(project: Pat
         "sidebar-primary": "{color.primary}", "sidebar-primary-foreground": "{color.on-primary}",
         "sidebar-accent": "{color.sunk}", "sidebar-accent-foreground": "{color.on-surface}",
         "sidebar-border": "{color.outline}", "sidebar-ring": "{color.primary}"}
-    looks = sorted(n.split(": --color-", 1)[1].split(" ", 1)[0] for n in copy["notes"] if "the look changes" in n)
+    looks = sorted(n.split(": --color-", 1)[1].split(" ", 1)[0] for n in copy["notes"]
+                   if "the look changes" in n and ": --color-" in n)
     assert looks == ["accent-foreground", "ring", "secondary-foreground", "sidebar", "sidebar-accent-foreground",
                      "sidebar-primary", "sidebar-primary-foreground", "sidebar-ring"]
+    # radius.md is 6px in the tokens; the app's --radius-md works out at 8px: a look change too (radius.lg agrees)
+    sizes = [n for n in copy["notes"] if "the look changes" in n and ": --radius-" in n]
+    assert len(sizes) == 1 and "--radius-md is {radius.md}" in sizes[0] and "(8px today, 6px in the tokens)" in sizes[0]
     # a raised surface token with the popover's colours, and an on-sunk with accent-foreground's: they are used
     _extracted_tokens(project, {"surface-raised": "popover", "on-sunk": "accent-foreground"})
     (copy,) = plan(project)["copies"]
@@ -603,3 +607,53 @@ def test_duplicate_next_app_routes_give_one_note(project: Path) -> None:
     _font_project(project, routes="app (next-app), ./app/ (next-app)")
     (copy,) = plan(project)["copies"]
     assert len([n for n in copy["by_hand"] if "layout" in n]) == 1
+
+
+# ---------------------------------------------------------------- a token's own name with another value in the app
+
+
+def _looks(copy: dict) -> list:
+    return [n for n in copy["notes"] if "the look changes" in n]
+
+
+def test_a_token_named_override_whose_colours_differ_is_a_look_change_note(project: Path) -> None:
+    """The app's --color-background reads #f0e0d0 (light and dark), the token color.background is #ffffff / #0f1217:
+    moving the line into the tokens changes the look, so the plan says so (with both values) for the skill to ask."""
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n\n:root {\n  --background: #f0e0d0;\n}\n\n@theme inline {\n'
+        '  --color-background: var(--background);\n}\n', encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    o = by_name({"copies": [copy]})["--color-background"]
+    assert (o["kind"], o["token"], o["token_change"]) == ("token", "color.background", None)
+    (note,) = _looks(copy)
+    assert note.startswith("line 8: --color-background is {color.background}"), note
+    assert "#f0e0d0 today" in note and "#ffffff / #0f1217 in the tokens" in note and "/plumb:update" in note
+    out = run(project, "build-tokens.py", "--overrides", "--apply").stdout
+    assert "note: app/globals.css line 8: --color-background is {color.background}" in out
+
+
+def test_a_token_named_override_with_the_tokens_colours_is_quiet(project: Path) -> None:
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n\n:root {\n  --background: #ffffff;\n}\n\n.dark {\n  --background: #0f1217;\n}\n\n'
+        '@theme inline {\n  --color-background: var(--background);\n  --color-primary: var(--brand);\n}\n',
+        encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    assert _looks(copy) == []  # the same colours; and --brand is defined nowhere: nothing to compare, no note
+
+
+def test_a_token_named_length_that_differs_is_a_look_change_note(project: Path) -> None:
+    """radius.md is 6px and radius.lg 10px in the tokens; the app works them out from its own --radius (0.625rem):
+    md = 8px (differs, a note with both values), lg = 10px (the same, no note)."""
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n\n:root {\n  --radius: 0.625rem;\n}\n\n@theme inline {\n'
+        '  --radius-md: calc(var(--radius) - 2px);\n  --radius-lg: var(--radius);\n}\n', encoding="utf-8")
+    (copy,) = plan(project)["copies"]
+    found = by_name({"copies": [copy]})
+    assert (found["--radius-md"]["kind"], found["--radius-md"]["token"]) == ("token", "radius.md")
+    (note,) = _looks(copy)
+    assert note.startswith("line 8: --radius-md is {radius.md}"), note
+    assert "8px today" in note and "6px in the tokens" in note and "/plumb:update" in note
+    # a plain value the same as the token's: quiet
+    (project / "app/globals.css").write_text(
+        '@import "tailwindcss";\n\n@theme inline {\n  --radius-md: 6px;\n  --radius-lg: 0.625rem;\n}\n', encoding="utf-8")
+    assert _looks(plan(project)["copies"][0]) == []
