@@ -2339,14 +2339,16 @@ def test_the_app_view_tour_page_plays_guide_mode_without_adding_history(browser,
         page.evaluate("window.plumbPlayer.start('demo', {mode: 'guide'})")
         start, seen = _history(page), set()
         for _ in range(40):
-            s = _state(page)
+            # the state and the hash in one read: "Do it for me" moves on from a timer, never between two reads
+            s, hash_ = page.evaluate("[window.plumbPlayer.state(), location.hash]")
             if not s["active"]:
                 break
             seen.add(_visible_screen(page))
             if s["step"] is not None:
-                assert page.evaluate("location.hash") == f"#tour-demo-{s['step']}"
+                assert hash_ == f"#tour-demo-{s['step']}"
             page.click(".pl-dock [data-pl=do]" if s["yourTurn"] else ".pl-dock [data-pl=next]")
-            page.wait_for_timeout(120)
+            page.wait_for_function("(pos) => { const t = window.plumbPlayer.state(); return !t.active || t.pos !== pos; }",
+                                   arg=s["pos"])
         assert not _state(page)["active"], "Finish leaves the walkthrough"
         assert {"home", "booking"} <= seen, seen
         assert _history(page) == start, "the player (and the clicks it makes) moved between screens with no history entry"
