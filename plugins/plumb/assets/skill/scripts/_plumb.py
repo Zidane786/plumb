@@ -142,13 +142,15 @@ def write_problem(path, root) -> Optional[str]:
     (the file itself or a folder on the way) that leads outside it, or a FIFO, device or socket there (opening one for
     writing blocks, or the text is swallowed). A path outside the project given on purpose (a --snapshot in the OS
     temp folder) is not a link through the project and is fine."""
-    p, r = Path(os.path.abspath(str(path))), Path(os.path.abspath(str(root)))
-    try:
-        parts = p.relative_to(r).parts
-    except ValueError:
-        parts = ()
+    p = Path(os.path.abspath(str(path)))
+    real_root = Path(os.path.realpath(str(root)))
+    # the project, however its path is spelled (a linked parent folder, macOS /tmp -> /private/tmp): the nearest
+    # folder on the way whose real path is the project's; none means a path outside the project, given on purpose
+    base = next((a for a in p.parents if Path(os.path.realpath(str(a))) == real_root), None)
+    parts = p.relative_to(base).parts if base is not None else ()
+    r = base if base is not None else real_root
     shown = p.relative_to(r).as_posix() if parts else str(p)
-    real_root, cur = Path(os.path.realpath(str(r))), r
+    cur = r
     for part in parts:
         cur = cur / part
         if os.path.islink(str(cur)):
