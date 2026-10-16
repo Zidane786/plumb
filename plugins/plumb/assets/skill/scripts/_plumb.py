@@ -16,11 +16,13 @@ Token format: W3C Design Tokens (DTCG). Light values are `$value`; dark and brea
 from __future__ import annotations
 
 import bisect
+import errno
 import functools
 import json
 import math
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -77,13 +79,52 @@ def fill_template(text: str, values: dict, name: str = "template") -> str:
     return _SLOT.sub(sub, text)
 
 
+# ---------------------------------------------------------------- reading project files
+
+# A project file is data, and a cloned repository can hold anything at a path: a committed symlink to /dev/zero or
+# /dev/random, or a FIFO from an archive, reads forever (stat() follows the link and says 0 bytes, so a size check
+# passes). So the scripts read a file they did not write only through read_project_bytes: a regular file, at most
+# PROJECT_READ_LIMIT bytes. 8 MB is well above any real source, tokens or screen file (the audit already skips sources
+# over 5 MB) and small enough that a hostile file cannot make a hook allocate gigabytes.
+PROJECT_READ_LIMIT = 8 * 1024 * 1024
+
+
+def read_project_bytes(path, limit: int = PROJECT_READ_LIMIT) -> bytes:
+    """The bytes of a regular file of at most `limit` bytes. Raises OSError (FileNotFoundError when missing) for
+    anything else: a device, a FIFO, a socket or a folder (opened without blocking, refused after fstat), or a longer
+    file. Callers treat that as unreadable, as they do any other read error."""
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        chunks: List[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(1 << 20, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > limit:
+                raise OSError(errno.EFBIG, f"larger than {limit // (1024 * 1024) or limit} "
+                                           f"{'MB' if limit >= 1024 * 1024 else 'bytes'}", str(path))
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def read_project_text(path, encoding: str = "utf-8-sig", errors: str = "strict", limit: int = PROJECT_READ_LIMIT) -> str:
+    """read_project_bytes decoded (UTF-8 with an optional BOM by default; UnicodeDecodeError when errors='strict')."""
+    return read_project_bytes(path, limit).decode(encoding, errors)
+
+
 # ---------------------------------------------------------------- reading tokens
 
 
 def load_tokens(path: Path) -> dict:
     path = Path(path)
     try:
-        text = path.read_text(encoding="utf-8-sig")
+        text = read_project_text(path)
     except FileNotFoundError:
         raise _err(f"{path}: tokens file not found", "run the project's create or extract step, or pass the right path") from None
     except (OSError, UnicodeDecodeError) as exc:

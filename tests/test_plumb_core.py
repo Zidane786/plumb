@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -242,3 +244,49 @@ def test_parse_color_clips_out_of_gamut_and_refuses_bad_oklch() -> None:
         with pytest.raises(P.PlumbError) as exc:
             P.parse_color(bad)
         assert_formatted(exc.value)
+
+
+# ---------------------------------------------------------------- reading project files (regular files only, bounded)
+
+_POSIX = os.name == "posix"
+
+
+def test_read_project_bytes_reads_a_regular_file(tmp_path: Path) -> None:
+    f = tmp_path / "a.css"
+    f.write_bytes(b"\xef\xbb\xbfa { color: red; }\r\n")
+    assert P.read_project_bytes(f) == b"\xef\xbb\xbfa { color: red; }\r\n"
+    assert P.read_project_text(f) == "a { color: red; }\r\n"  # utf-8-sig by default
+    with pytest.raises(FileNotFoundError):
+        P.read_project_bytes(tmp_path / "missing.css")
+
+
+def test_read_project_bytes_refuses_a_file_over_the_limit(tmp_path: Path) -> None:
+    f = tmp_path / "big.css"
+    f.write_bytes(b"x" * 101)
+    with pytest.raises(OSError):
+        P.read_project_bytes(f, limit=100)
+    assert P.read_project_bytes(f, limit=101) == b"x" * 101
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_read_project_bytes_refuses_a_fifo_without_waiting(tmp_path: Path) -> None:
+    fifo = tmp_path / "hang.css"
+    os.mkfifo(fifo)
+    start = time.monotonic()
+    with pytest.raises(OSError):
+        P.read_project_bytes(fifo)
+    assert time.monotonic() - start < 2
+
+
+@pytest.mark.skipif(not _POSIX or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+def test_a_tokens_file_linked_to_a_device_is_refused_quickly(tmp_path: Path) -> None:
+    link = tmp_path / "demo.tokens.json"
+    link.symlink_to("/dev/zero")
+    start = time.monotonic()
+    with pytest.raises(OSError):
+        P.read_project_bytes(link)
+    with pytest.raises(P.PlumbError) as err:
+        P.load_tokens(link)
+    assert time.monotonic() - start < 2
+    assert_formatted(err.value)
+    assert "not a regular file" in str(err.value)

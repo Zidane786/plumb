@@ -252,3 +252,5 @@
   most half a second, else leaving its line out), so hooks failing at the same moment never lose or interleave lines,
   also on Windows, where appends from several processes are not atomic.
 - Nothing is installed or downloaded, and no network call is made at run time.
+- `audit.py --html <path>` writes only its own report: an existing page it did not write (`--html app/landing.html`,
+  meaning "audit this page") is refused, exit 2, and keeps every byte.
