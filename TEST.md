@@ -374,7 +374,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Ask the agent to edit the generated CSS copy (e.g. `app/globals.css`) by hand, and then with
       `sed -i` → both **refused** (`… is generated from the design tokens; a hand edit is lost on the next build`).
       Then ask it to delete that file (`rm`, or `Remove-Item` on Windows) and to `mv` it away → both **refused** the
-      same way. The same through `bash -c "rm app/globals.css"` → **refused**.
+      same way. The same through `bash -c "rm app/globals.css"` → **refused**. On Windows, also
+      `Rename-Item app\globals.css old.css` and `cmd /c del app\globals.css` → **refused** the same way. Ask it to
+      `ln <skill>/assets/platforms/web/tokens.css x.css` (a hard link) and then to edit `x.css` → the edit is
+      **refused** with `tokens.css`'s message (delete `x.css` yourself afterwards).
 - [ ] Commands that only **mention** a guarded file are **allowed** (no refusal, no note): ask the agent to append a
       `tokens` target to the Makefile with a here-document (`cat >> Makefile <<'EOF'` … `python3 <skill>/scripts/build-tokens.py`
       … `EOF`), to count the screens with `python3 -c "import json; print(len(json.load(open('docs/design/prototype/screens.json'))['screens']))"`,

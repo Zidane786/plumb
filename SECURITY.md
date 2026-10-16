@@ -14,12 +14,15 @@ and write files in the project.
   the scripts that ship with the plugin (`plugins/plumb/assets/skill/scripts/` in the installed plugin), never the
   copies in a project's design-system skill (`.claude/skills/<project>-design-system/scripts/`). A project is only
   read as data: `PLUMB.md`, the tokens JSON, `screens.json`, the screen files (with their `_shared/` CSS and
-  JS, hashed, never run) and the source files. When a project's
+  JS, hashed, never run) and the source files. The hooks' own reads of project files take only regular files (opened
+  without waiting, then checked on the open file, so a FIFO, a device or a symlink to one is never read), each up to
+  8 MB; a tokens file that is not one skips the checks that read it. When a project's
   copies are a different version, the hooks say so ("run /plumb:upgrade") and still check with the plugin's own
   scripts.
 - **Git, with fixed overrides.** To see what changed in a session the hooks run git in the project: `rev-parse`,
-  `status`, `diff --name-only`, `ls-tree`, `cat-file --batch` (the stored blob of a file's old text) and
-  `config --get-regexp` (to list filter drivers). Git is found as an absolute path by walking `PATH` (empty, `.` and
+  `status`, `diff --name-only`, `ls-tree`, `cat-file --batch` (the stored blob of a file's old text),
+  `config --get-regexp` (to list filter drivers) and `--version` (only when a filter name contains `=`, to see whether
+  git can empty it). Git is found as an absolute path by walking `PATH` (empty, `.` and
   relative entries and anything inside the project are skipped; on Windows only `git.exe`), never in the project.
   All the git calls of one hook run share a 3-second budget. Without git (not found, failing, or over the budget) the
   snapshot falls back to modification times and the end-of-turn check still runs on them; a session whose snapshot
@@ -29,8 +32,9 @@ and write files in the project.
   every `filter.<name>` the configuration lists (any name; on git older than 2.31 a name containing `=` cannot be
   emptied, so git is not run there). Every call also has `--no-optional-locks`, `--no-pager`, `GIT_NO_LAZY_FETCH=1`
   (no fetch from a promisor remote), `GIT_TERMINAL_PROMPT=0` and `GIT_PAGER=cat`, drops `GIT_DIR`, `GIT_WORK_TREE`,
-  `GIT_EXTERNAL_DIFF`, `GIT_SSH*` and `GIT_ASKPASS`, and `diff` adds `--no-ext-diff --no-textconv
-  --ignore-submodules=all`. Commit ids from a snapshot reach git only after a hex check.
+  `GIT_EXTERNAL_DIFF`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_ALLOW_PROTOCOL`, `GIT_PROTOCOL_FROM_USER`,
+  `GIT_CONFIG_PARAMETERS` and the environment's own `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`
+  (replaced by the overrides above), and `diff` adds `--no-ext-diff --no-textconv --ignore-submodules=all`. Commit ids from a snapshot reach git only after a hex check.
 - **What that guarantee is, and is not.** The hooks run only the plugin's own code, plus git with the overrides above.
   Git still reads the repository's configuration (`.git/config` and what it includes) for every other key, as any
   git command run there does. The overrides cover every configured command we know these read-only calls can reach;

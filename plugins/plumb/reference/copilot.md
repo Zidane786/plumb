@@ -32,7 +32,8 @@ check says when).
   Each checkpoint is a STOP: ask, then wait; no command or write before the answer. If there is no question tool, ask
   in plain text with numbered options, the content in the same message, and wait for the answer.
 - **Hooks:** the same three hooks run in both (session start, edit check before edits and shell writes, end-of-turn
-  check). In Copilot CLI edits arrive as `apply_patch` text, input uses `toolName`/`toolArgs`, a refusal is a
+  check). In Copilot CLI edits arrive as `apply_patch` text (a header may be indented), input uses
+  `toolName`/`toolArgs`, a refusal is a
   `{"permissionDecision": "deny", …}` answer on stdout (Copilot hides exit-2 stderr), and session start returns
   `{"additionalContext": …}`. The end-of-turn check makes Copilot continue: its `agentStop` answer arrives as a new
   prompt, which can override what the user said earlier. So when it stops you after the user said not to fix now,

@@ -38,7 +38,9 @@ need no import at all (a non-UI edit stays far under 150 ms).
 Trust boundary: the checks load audit.py (and through it build-prototype.py, build-tokens.py, _plumb.py) only from the
 plugin's own install (PLUGIN_SCRIPTS, next to these hooks), never the copies in the project's design-system skill: the
 project is data (PLUMB.md, the tokens JSON, screens.json, screen and source files); the git calls in audit.py turn off
-the commands a repository's config can name (see SECURITY.md "Trust boundary"). When the project's copies are another
+the commands a repository's config can name (see SECURITY.md "Trust boundary"). The hooks read a project file only
+when it is a regular file, at most PROJECT_FILE_LIMIT bytes, opened without waiting (read_regular): a FIFO or a link to
+a device never stalls a hook. When the project's copies are another
 version, scripts_note() says so (run /plumb:upgrade); the checks still use the plugin's. When loading fails the checks
 are skipped with one stderr line: hooks fail open. Snapshots live in a private per-user temp folder (snapshot_dir).
 
