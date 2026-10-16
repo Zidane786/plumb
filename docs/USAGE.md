@@ -850,9 +850,10 @@ pages.
 Every page opens from disk, with no server and no network.
 
 **One source per screen.** Every page is built by `build-prototype.py` from
-`docs/design/prototype/screens/<id>.html`: one file per screen, its states marked with `data-state`, its interactions
-inline, and only the design system's tokens for colours, type, spacing, radius, shadow and motion. Edit a screen file
-and rebuild; every page follows, so they can never disagree. The audit runs on the screen files like on your code.
+`docs/design/prototype/screens/<id>.html`: one file per screen, its states marked with `data-state` (blocks that share
+a state name show together, e.g. a state that changes the main area and the side panel), its interactions inline,
+and only the design system's tokens for colours, type, spacing, radius, shadow and motion. Edit a screen file and
+rebuild; every page follows, so they can never disagree. The audit runs on the screen files like on your code.
 The `_shared/` folder beside the screens holds shared files (below); nothing in it is a screen.
 
 **Shared files.** CSS and scripts several screens use (an app shell's layout, a toast helper) go once in

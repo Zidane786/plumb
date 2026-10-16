@@ -529,12 +529,27 @@ def test_duplicate_screen_sections_are_refused(project: Path) -> None:
     assert_refusal(run(project), "dup.html:2", "duplicate")
 
 
-def test_a_duplicate_state_is_refused(project: Path) -> None:
-    write(project / SCREENS_REL / "dup.html", '<section data-screen="dup">\n  <div data-state="a"></div>\n'
-                                              '  <div data-state="b"></div>\n  <div data-state=" a "></div>\n</section>\n')
-    for args in ((), ("--check",)):
-        r = run(project, *args)
-        assert_refusal(r, f"{SCREENS_REL}/dup.html:4", 'duplicate state data-state="a"', "line 2")
+DUP_STATES = """<section data-screen="dup" data-title="Dup">
+  <main><div data-state="empty" data-test="main-empty">Nothing yet</div><div data-state="ready" data-test="main-ready">List</div></main>
+  <nav>Shared nav</nav>
+  <aside><div data-state="empty" data-test="side-empty">Add one</div><div data-state=" ready " data-test="side-ready">Details</div></aside>
+</section>
+"""
+
+
+def test_blocks_that_share_a_state_name_show_together(project: Path) -> None:
+    """A state that changes two regions with shared chrome between them: both blocks are that state, listed once."""
+    write(project / SCREENS_REL / "dup.html", DUP_STATES)
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert entry(project, "dup")["states"] == ["empty", "ready"]
+    screen = BP.parse_screen(project / SCREENS_REL / "dup.html", f"{SCREENS_REL}/dup.html")
+    assert screen.states == ["empty", "ready"]
+    static = screen.render("empty")  # the static frame
+    for test_id, hidden in (("main-empty", False), ("side-empty", False), ("main-ready", True), ("side-ready", True)):
+        tag = re.search(r'<div( hidden)? data-state="[^"]*" data-test="' + test_id + '"', static)
+        assert tag and bool(tag.group(1)) == hidden, (test_id, static)
+    assert run(project, "--check").returncode == 0
 
 
 def test_file_without_a_screen_section_is_refused(project: Path) -> None:
@@ -2275,3 +2290,26 @@ def test_the_scripts_leave_no_bytecode_in_the_project(tmp_path: Path) -> None:
         subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script)], cwd=str(project),
                        capture_output=True, text=True, encoding="utf-8", env=env)
     assert not list((project / SKILL_REL).rglob("__pycache__")), list((project / SKILL_REL).rglob("*.pyc"))
+
+
+def test_blocks_that_share_a_state_name_show_together_in_every_page(browser, tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", build=False)
+    write(project / SCREENS_REL / "dup.html", DUP_STATES)
+    assert run(project).returncode == 0
+    for rel, hash_ in ((PROTO_REL, "#screen-dup/empty"), (APP_REL, "#/dup/empty")):
+        ctx, page, errors, _ = _open(browser, project / rel, hash_=hash_)
+        try:
+            assert _visible_states(page, "dup") == ["empty", "empty"], rel
+            assert errors == []
+        finally:
+            ctx.close()
+    ctx, page, errors, _ = _open(browser, project / CATALOGUE_REL)
+    try:
+        _copies_ready(page)
+        for state in ("empty", "ready"):
+            shown = _copy(page, f"dup/{state}/light").locator("[data-state]").evaluate_all(
+                "els => els.filter(e => e.offsetParent !== null).map(e => e.dataset.state.trim())")
+            assert shown == [state, state], (state, shown)
+        assert errors == []
+    finally:
+        ctx.close()

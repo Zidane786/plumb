@@ -388,17 +388,12 @@ def parse_screen(path: Path, rel: str) -> Screen:
         raise _err(f"{where}: data-order=\"{order_text}\" is not a whole number", "use data-order=\"1\", \"2\", ...") from None
     title = " ".join(found["attrs"].get("data-title", "").split()) or sid
     screen = Screen(sid, title, order, rel, text)
-    first_line: Dict[str, int] = {}
     for name, _off, line in found["states"]:
         if not _ID.match(name.strip()):
             raise _err(f"{rel}:{line}: data-state=\"{name}\" may only use letters, digits, _ and -",
                        "name states like ready, loading, empty, error, long-text")
-        if name.strip() in first_line:
-            raise _err(f"{rel}:{line}: duplicate state data-state=\"{name.strip()}\" (the first is on line "
-                       f"{first_line[name.strip()]}): each state block of a screen has its own name",
-                       "rename this block to the state it shows (e.g. long-text), or merge it into the first")
-        first_line[name.strip()] = line
-        screen.states.append(name.strip())
+        if name.strip() not in screen.states:  # blocks that share a state name show together (one state, listed once)
+            screen.states.append(name.strip())
     if parser.stray:
         line, what = parser.stray[0]
         raise _err(f"{rel}:{line}: {what} is outside the screen section", "move it inside <section data-screen> (or delete it)")

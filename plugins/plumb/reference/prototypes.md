@@ -55,8 +55,9 @@ form.addEventListener("submit", function (event) {
 ```
 
 - **One `<section data-screen>`** with `data-title` (the name in the navigation) and optional `data-order`.
-- **States** are the outermost `data-state` blocks, each name once (a second block with the same name exits 2
-  naming its line). Name them with plain words: `ready` (or `default`), `loading`,
+- **States** are the outermost `data-state` blocks. Blocks that share a state name show together (one state, listed
+  once), e.g. a state that changes the main area and the side panel with shared navigation between them. Name them
+  with plain words: `ready` (or `default`), `loading`,
   `empty`, `error`, `success`, `disabled`, `long-text`, `zero`, `offline`, … Every state `references/ux.md` asks of this
   screen (`### States per screen`) must exist; the audit suggests the missing ones.
 - **Styles** go in `<style>` and every selector starts with `[data-screen="ID"]`, so screens never style each other.
