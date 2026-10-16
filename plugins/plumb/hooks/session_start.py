@@ -51,7 +51,12 @@ from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _hooklib as H  # noqa: E402
+try:
+    import _hooklib as H  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 - a half-updated plugin folder: fail open (Kiro blocks on any non-zero exit)
+    sys.stderr.write(f"plumb: session_start.py skipped: the plugin's hooks/_hooklib.py does not load "
+                     f"({type(_exc).__name__}); reinstall the Plumb plugin\n")
+    sys.exit(0)
 
 AUDIT_TIMEOUT = 2.0
 # The last stderr line of a Python crash (a SyntaxError prints no "Traceback" header); a script's own refusal is

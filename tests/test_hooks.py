@@ -856,6 +856,24 @@ def test_broken_plugin_audit_fails_open_with_one_note(launcher, tmp_path, proj):
     refused(write_tool(launcher, tmp_path, proj, "app/globals.css", "x", env=env))
 
 
+@pytest.mark.parametrize("script", ["session_start.py", "pre_edit.py", "stop_check.py"])
+def test_a_hooklib_that_does_not_load_fails_open_with_one_line(launcher, tmp_path, proj, script):
+    """A half-updated plugin folder (hooks/_hooklib.py broken): every hook prints one stderr line and exits 0, never 1
+    (Kiro blocks a PreToolUse on any non-zero exit), and writes no log (the log is _hooklib's)."""
+    plugin = plugin_copy(tmp_path)
+    write(plugin / "hooks/_hooklib.py", "def broken(:\n")
+    env = hook_env(tmp_path, extra={"CLAUDE_PLUGIN_ROOT": str(plugin)})
+    stdin = {"session_start.py": payload("claude", "session_start", CWD=str(proj)),
+             "stop_check.py": payload("claude", "stop", CWD=str(proj), ACTIVE=False),
+             "pre_edit.py": payload("claude", "write", CWD=str(proj), FILE=str(proj / "app/globals.css"),
+                                    CONTENT="x")}[script]
+    r = run_hook(launcher, script, stdin, proj, env)
+    assert r.returncode == 0 and r.stdout.strip() == "", (r.returncode, r.stdout, r.stderr)
+    lines = notes(r)
+    assert len(lines) == 1 and "_hooklib.py" in lines[0] and "reinstall the Plumb plugin" in lines[0], r.stderr
+    assert not (Path(env["HOME"]) / ".plumb").exists()
+
+
 def test_broken_project_scripts_do_not_matter(launcher, tmp_path, proj):
     write(proj / SKILL_REL / "scripts/audit.py", "def broken(:\n")
     assert "#ff0000" in refused(edit(launcher, tmp_path, proj, "app/page.tsx", H1, H1_RAW))

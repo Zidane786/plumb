@@ -80,7 +80,12 @@ from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _hooklib as H  # noqa: E402
+try:
+    import _hooklib as H  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 - a half-updated plugin folder: fail open (Kiro blocks on any non-zero exit)
+    sys.stderr.write(f"plumb: pre_edit.py skipped: the plugin's hooks/_hooklib.py does not load "
+                     f"({type(_exc).__name__}); reinstall the Plumb plugin\n")
+    sys.exit(0)
 
 MAX_ISSUES = 10
 # Matched without case where paths are compared without it (H.CASELESS, settled once the project is known).
