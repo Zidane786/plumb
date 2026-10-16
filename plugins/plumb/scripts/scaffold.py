@@ -127,7 +127,8 @@ ROLES = ("home", "linked")
 THEME_SWITCHES = ("both", "system", "class", "data-theme")  # $extensions.plumb.web.theme_switch
 REDUCED_MOTION = ("none", "keep-fades")  # $extensions.plumb.motion.reduced
 
-RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON", "RESET_PALETTE"))
+RAW_JSON_SLOTS = frozenset(("ICONS_JSON", "PLATFORMS_JSON", "COPIES_JSON", "RESET_PALETTE", "FONT_SANS_STACK",
+                            "FONT_MONO_STACK"))
 SLOT = re.compile(r"\{\{([A-Z0-9_]+)\}\}")
 HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 DIMENSION = re.compile(r"^\d+(?:\.\d+)?(?:px|rem|em)$")
@@ -182,6 +183,9 @@ DEFAULT_SHADOWS = {
 }
 DEFAULT_MOTION = {"fast": "150ms", "mid": "200ms", "slow": "300ms"}
 DEFAULT_FONTS = {"sans": "system-ui", "mono": "ui-monospace"}
+# The system stack after the answer's family (a family the answer already names is not repeated).
+FONT_STACKS = {"sans": ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
+               "mono": ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"]}
 DEFAULT_ICONS: List[Dict[str, str]] = [
     {"concept": c, "lucide": l, "sfSymbol": s, "materialSymbol": m} for c, l, s, m in (
         ("home", "house", "house", "home"), ("search", "search", "magnifyingglass", "search"),
@@ -285,6 +289,8 @@ def resolve_answers(answers: dict, name: str, platforms: List[str]) -> Tuple[Dic
         if not isinstance(given, str) or not given.strip() or re.search(r"[\r\n]", given):
             raise _bad(f"fonts.{key}", given, "not a font family name", f"write answers.fonts.{key} as a family name")
         v["FONT_" + key.upper()] = given.strip()
+        stack = [given.strip()] + [f for f in FONT_STACKS[key] if f.casefold() != given.strip().casefold()]
+        v["FONT_" + key.upper() + "_STACK"] = json.dumps(stack, ensure_ascii=False)
     type_given = _obj(answers, "type_scale")
     for name_, pair in type_given.items():
         if name_ not in DEFAULT_TYPE:

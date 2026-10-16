@@ -296,6 +296,25 @@ def test_tokens_file_shape(tmp_path: Path) -> None:
         assert "dark" in tok.get("$extensions", {}).get("plumb", {}), f"{name} has no dark value"
     assert doc["spacing"]["2"]["$value"] == "8px"
     assert doc["spacing"]["4"]["$value"] == "16px"
+    # no font answer: the system stack once, no repeated head family
+    assert doc["font"]["sans"]["$value"] == ["system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]
+    assert doc["font"]["mono"]["$value"] == ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"]
+
+
+@pytest.mark.parametrize("sans, stack", [
+    ("Inter", ["Inter", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]),
+    ("segoe ui", ["segoe ui", "system-ui", "-apple-system", "Roboto", "sans-serif"]),
+    ("System-UI", ["System-UI", "-apple-system", "Segoe UI", "Roboto", "sans-serif"]),
+])
+def test_a_font_answer_is_never_repeated_in_its_stack(tmp_path: Path, sans: str, stack: List[str]) -> None:
+    path = tmp_path / "answers.json"
+    path.write_text(json.dumps({"fonts": {"sans": sans}}), encoding="utf-8")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    r = run(proj, "--answers", str(path))
+    assert r.returncode == 0, r.stderr
+    doc = json.loads((proj / SKILL_REL / "assets/tokens/demo.tokens.json").read_text(encoding="utf-8"))
+    assert doc["font"]["sans"]["$value"] == stack
 
 
 def test_answers_fill_the_templates(tmp_path: Path) -> None:
