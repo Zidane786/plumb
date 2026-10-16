@@ -618,6 +618,26 @@ _KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
 _NOTE = re.compile(r"\s{2,}\((?!\s*(?:next-app|next-pages|nuxt|sveltekit|angular|router)\s*\))[^)]*\)\s*$")
 
 
+# An interpreter name or path, as the hooks take PLUMB.md's `Python:` (hooks/_hooklib._SAFE_PYTHON, the same pattern:
+# tests/test_plumb_core.py pins the two together): it is echoed into fix: lines an agent may run.
+SAFE_PYTHON = re.compile(r"py -3|py(?:\.exe)?|(?:[\w.:/\\-]*[/\\])?python[\d.]*(?:\.exe)?")
+
+
+@functools.lru_cache(maxsize=8)
+def _project_python(root: str) -> str:
+    try:
+        given = str(read_plumb_md(Path(root) / "PLUMB.md").get("Python", "") or "").strip()
+    except PlumbError:
+        given = ""
+    return given if SAFE_PYTHON.fullmatch(given) else "python3"
+
+
+def project_python(root) -> str:
+    """The Python command the printed commands (fix:, next:, the report's rerun line) start with: PLUMB.md's `Python:`
+    when it is an interpreter name or path (`py -3`, `python`, `C:/Python39/python.exe`), else python3."""
+    return _project_python(str(root))
+
+
 def read_plumb_md(path: Path) -> dict:
     """'Key: value' lines of PLUMB.md as a dict. Unknown keys are kept; comments, code fences, headings, bullets
     and tables are ignored; CRLF is fine; a missing file gives {}. A trailing '   (note)' is dropped from a value

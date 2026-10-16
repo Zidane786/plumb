@@ -1522,7 +1522,7 @@ class Project:
         self.scales = scales_for(doc)
         self.tokens_name = rel(tokens_file, root) if tokens_file is not None else ""
         self.light_only = _LIGHT_ONLY.match(str(settings.get("Themes", "") or "")) is not None
-        self.build_command = f"python3 {rel(skill_dir / 'scripts' / _BUILD_TOKENS, root)}"
+        self.build_command = f"{P.project_python(root)} {rel(skill_dir / 'scripts' / _BUILD_TOKENS, root)}"
         globs = _split_list(settings.get("Allowed raw values"))
         self.primitive_globs = globs or ["components/ui/**"]
         self.markup = [c for c in ctxs if c.platform == "web" and not c.stylesheet]
@@ -2949,7 +2949,7 @@ class Fidelity:
             print(f"note: {_BUILD_PROTOTYPE} is not next to audit.py: prototype fidelity checks skipped", file=sys.stderr)
             return
         self.bp, self.root, self.docs = bp, root, docs
-        self.command = f"python3 {rel(proj.skill_dir / 'scripts' / _BUILD_PROTOTYPE, root)}"
+        self.command = f"{P.project_python(root)} {rel(proj.skill_dir / 'scripts' / _BUILD_PROTOTYPE, root)}"
         self.ux_path = proj.skill_dir / "references" / "ux.md"
         self.where = self.map_rel
         old = bp.read_map(map_path, self.map_rel)
@@ -4783,7 +4783,7 @@ def render_report(template: str, findings: List[Finding], checked: int, mode: st
         "improvements": report_improvements(findings),
         "scales": report_scales(scales),
         "agent_review": report_review(review),
-        "rerun": _t(f"python3 {script} --html"),
+        "rerun": _t(f"{P.project_python(root)} {script} --html"),
     }
     text = P.fill_template(template, values, REPORT_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
@@ -4921,7 +4921,7 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
             print(f"note: {t} does not exist, skipped", file=sys.stderr)
     if not existing:
         print(f"error: none of {', '.join(str(t) for t in targets)} exist, nothing was checked\n"
-              f"fix: pass the folders that hold your UI code, e.g. python3 {rel(skill_dir / SCRIPT_REL, root)} app components",
+              f"fix: pass the folders that hold your UI code, e.g. {P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)} app components",
               file=sys.stderr)
         return 2
     files = collect_files(existing, root, skill_dir, settings, explicit)
@@ -4968,7 +4968,7 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
     if not ctxs:
         exts = " ".join(sorted(PLATFORM_OF))
         print(f"error: no UI files ({exts}) in {looked}, nothing was checked\n"
-              f"fix: pass the folders that hold your UI code, e.g. python3 {rel(skill_dir / SCRIPT_REL, root)} app components",
+              f"fix: pass the folders that hold your UI code, e.g. {P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)} app components",
               file=sys.stderr)
         return 2
     if doc is not None and load_build_tokens() is None:

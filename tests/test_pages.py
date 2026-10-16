@@ -440,6 +440,23 @@ def test_suggest_rules_have_a_weight_and_a_why() -> None:
             assert r.why and r.why.endswith("."), r.id
 
 
+@pytest.mark.parametrize("given, shown", [("`py -3`", "py -3"), ("python", "python"),
+                                          ("C:/Python39/python.exe", "C:/Python39/python.exe"),
+                                          ("python3; rm -rf ~", "python3"), ("$(evil)", "python3"), ("", "python3")])
+def test_fix_lines_use_the_python_plumb_md_records(project: Path, given: str, shown: str) -> None:
+    write(project / "PLUMB.md", f"Project: demo\nPython: {given}\n\n## Checks\nAllowed raw values: components/ui/**\n")
+    css = project / SKILL_REL / "assets/platforms/web/tokens.css"
+    write(css, read(css) + "/* by hand */\n")
+    r = build_tokens(project, "--check")
+    assert r.returncode == 1 and f"{shown} {SKILL_REL}/scripts/build-tokens.py" in r.stdout + r.stderr, r.stdout + r.stderr
+    found = json.loads(audit(project, "--json").stdout)["findings"]
+    drift = next(f for f in found if f["rule"] == "generated-drift")
+    assert drift["fix"] == f"{shown} {SKILL_REL}/scripts/build-tokens.py", drift
+    if shown == "python3":
+        assert "rm -rf" not in r.stdout + r.stderr and "evil" not in drift["fix"]
+    assert P.project_python(project) == shown
+
+
 def test_report_custom_path_and_json_stdout(project: Path) -> None:
     r = audit(project, "--json", "--html", "out/report.html")
     assert r.returncode == 1

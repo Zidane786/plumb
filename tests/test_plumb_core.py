@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -309,3 +310,13 @@ def test_read_project_head_reads_only_the_start(tmp_path: Path) -> None:
     assert P.read_project_head(f, 10) == b"a" * 10
     with pytest.raises(OSError):  # a folder (IsADirectoryError on POSIX, PermissionError on Windows)
         P.read_project_bytes(tmp_path)
+
+
+def test_the_python_pattern_matches_the_hooks() -> None:
+    hooklib = (REPO / "plugins/plumb/hooks/_hooklib.py").read_text(encoding="utf-8")
+    m = re.search(r'^_SAFE_PYTHON = re\.compile\(r"(.*)"\)$', hooklib, re.M)
+    assert m and m.group(1) == P.SAFE_PYTHON.pattern
+    for ok in ("python3", "py -3", "py", "python", "python3.12", "/usr/bin/python3", "C:\\Python39\\python.exe"):
+        assert P.SAFE_PYTHON.fullmatch(ok), ok
+    for bad in ("python3 -c 'x'", "python3; rm -rf ~", "$(evil)", "node", "C:/Program Files/python.exe"):
+        assert not P.SAFE_PYTHON.fullmatch(bad), bad

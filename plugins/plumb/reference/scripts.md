@@ -10,7 +10,9 @@ plugin's helpers (`detect.py`, `scaffold.py`, `version.py`, `screenshot.py`, `ch
 the plugin root (`${CLAUDE_PLUGIN_ROOT}`, or the skill's base directory + `/../..`).
 
 **Python.** Every command starts with the project's Python command from `PLUMB.md` (`Python: \`python3\``; `py -3` or
-`python` on Windows). Below it is written `python3`. Run from the project root. Commands never need a shell feature
+`python` on Windows). Below it is written `python3`. The scripts print their `fix:`, `next:` and rerun
+commands with it too (only an interpreter name or path such as `py -3` or `C:/Python39/python.exe` is taken from
+`PLUMB.md`; anything else prints `python3`). Run from the project root. Commands never need a shell feature
 (no pipes, no `cd … &&`).
 
 **Where output goes.** Nothing is written outside the project. Every default output path is inside it (the audit

@@ -2488,7 +2488,7 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
             print(f"note: {plan['file']} {note}")
         for note in plan["by_hand"]:
             print(f"by hand: {plan['file']} {note}")
-    print(f"next: python3 {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")
+    print(f"next: {P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")
     return 0
 
 
@@ -3247,7 +3247,8 @@ def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str
                        f"assets/skill/assets/platforms/web/)")
         elif missing and has and not given:
             default, choices = MISSING_DEFAULTS[key]
-            command = f"python3 {rel(skill_dir / SCRIPT_REL, find_project_root(skill_dir))} --migrate"
+            found_root = find_project_root(skill_dir)
+            command = f"{P.project_python(found_root)} {rel(skill_dir / SCRIPT_REL, found_root)} --migrate"
             out.append(f"note: $extensions.plumb.{key} is not set, so the default {default} applies; keep it with "
                        f"`{command}` (records the defaults, changes nothing else), or record another choice "
                        f"({choices}) with /plumb:update")
@@ -3351,7 +3352,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if P.find_template(skill_dir, SPECIMEN_TEMPLATE) is None:
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)
-    command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    command = f"{P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)}"
     # A specimen.html this script did not write is never replaced: everything else is built, the specimen is left as it
     # is, and the build says so (--check: exit 1).
     foreign = specimen_in_the_way(doc, root, files)

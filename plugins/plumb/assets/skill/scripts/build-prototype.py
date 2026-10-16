@@ -2898,11 +2898,13 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
 
 
 def _script_command() -> str:
-    """python3 <this script, relative to the project root>, as the other refusals name it."""
+    """The project's Python (PLUMB.md, else python3) and this script, relative to the project root, as the other
+    refusals name it."""
     skill_dir = Path(__file__).resolve().parents[1]
     try:
         bt = _load_build_tokens()
-        return f"python3 {bt.rel(skill_dir / SCRIPT_REL, bt.find_project_root(skill_dir))}"
+        root = bt.find_project_root(skill_dir)
+        return f"{P.project_python(root)} {bt.rel(skill_dir / SCRIPT_REL, root)}"
     except Exception:  # noqa: BLE001 - only the wording of a usage line depends on it
         return f"python3 {SCRIPT_REL}"
 
@@ -2978,7 +2980,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     proto_path, cat_path, map_path = docs / "prototype.html", docs / "screens.html", docs / "prototype" / "screens.json"
     app_path = docs / "app.html"
     decisions_path = docs / "decisions.md"
-    command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    command = f"{P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)}"
     if args.proposal is not None:
         return run_proposal(args, skill_dir, root, doc, settings, docs, command, bt, tokens_file)
     has_screens = bool(screen_files(folder))
