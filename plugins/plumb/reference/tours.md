@@ -94,7 +94,8 @@ the frame holds those layers, so zoom works as always.
 
 - **Voice:** the "Voice" button in the play controls (a toggle, `aria-pressed`) or the `V` key reads the captions aloud
   with the browser's own speech (`speechSynthesis`) and the voices already on the computer: nothing is downloaded or
-  installed, and it works offline. It is **off by default** (screen-reader users already hear the captions), and the
+  installed, and it works offline. Only local voices are used (`localService` not `false`): a remote one, such as
+  Chrome's "Google …" voices, would send the text over the network. It is **off by default** (screen-reader users already hear the captions), and the
   choice is remembered in this browser (`localStorage`; with storage off it lasts for the page). `V` does nothing while
   you type, with Shift, Ctrl, Alt or Cmd held, or as a held key repeats.
 - **One caption line:** the voice reads the same caption the player already shows on screen (no second subtitle
@@ -114,7 +115,7 @@ the frame holds those layers, so zoom works as always.
   marker starts the run as Start without voice does (the remembered choice stays). "Start with voice" speaks its first
   sentence at once, in the browser's default voice while the voice list is still loading. Started from a button on the
   page, it plays at once. Guide mode is silent. Leaving or reloading the page stops the sentence.
-- **No voice:** no `speechSynthesis`, no voices within about a second, or speech blocked: the Voice button is disabled
+- **No voice:** no `speechSynthesis`, no voices within about a second, only remote voices, or speech blocked: the Voice button is disabled
   with "Voice isn't available in this browser", the first card offers only **Start**, and the tour plays with captions
   and today's timing. An error during a tour (including speech the browser does not allow, or speech that never ends:
   a safety timer from the sentence's length in words or characters, whichever is longer, so a spelled-out e-mail

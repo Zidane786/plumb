@@ -2824,6 +2824,13 @@ FAKE_SPEECH = """
 })();
 """
 NO_VOICES = "window.__voices = [];" + FAKE_SPEECH
+# Chrome's "Google …" voices send the text to a remote service (localService: false): never used
+REMOTE_VOICES = ('window.__voices = [{ name: "Google US English", lang: "en-US", default: true, localService: false, '
+                 'voiceURI: "g" }];' + FAKE_SPEECH)
+MIXED_VOICES = ('window.__voices = [{ name: "Google US English", lang: "en-US", default: true, localService: false, '
+                'voiceURI: "g" }, { name: "Local French", lang: "fr-FR", default: false, localService: true, '
+                'voiceURI: "fr" }, { name: "Unknown English", lang: "en-GB", default: false, voiceURI: "u" }];'
+                + FAKE_SPEECH)
 NO_SPEECH = """Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
 window.SpeechSynthesisUtterance = undefined;"""
 AUTO_END = "window.__speechAuto = 60;"
@@ -3102,7 +3109,22 @@ def test_a_tour_that_opens_in_play_mode_waits_on_its_first_card_for_start(browse
         ctx.close()
 
 
-@pytest.mark.parametrize("init", [NO_SPEECH, NO_VOICES], ids=["no-api", "no-voices"])
+def test_a_network_voice_is_never_used(browser, voiced) -> None:
+    """The page's language matches only a remote voice: the local one speaks (an unknown localService counts as
+    local, as in browsers that do not set it)."""
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=MIXED_VOICES)
+    try:
+        _start(page, "demo", "play", step=1)
+        page.click(VOICE_BTN)
+        said = page.evaluate("window.__speech.spoken")
+        assert said and said[0]["voice"] == "Unknown English", said
+        assert all(s["voice"] != "Google US English" for s in said)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("init", [NO_SPEECH, NO_VOICES, REMOTE_VOICES], ids=["no-api", "no-voices", "remote-only"])
 def test_without_speech_the_voice_is_disabled_and_captions_keep_todays_timing(browser, voiced, init: str) -> None:
     ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=REMEMBER_VOICE + init)
     try:
