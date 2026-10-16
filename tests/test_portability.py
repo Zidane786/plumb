@@ -83,3 +83,39 @@ def test_text_io_and_subprocess_name_an_encoding(path: Path) -> None:
             if t is not None and isinstance(t.value, ast.Constant) and t.value.value is True and not kw(c, "encoding"):
                 bad.append(f"line {c.lineno}: subprocess.{name}(text=True) without encoding=")
     assert not bad, f"{path.name}:\n  " + "\n  ".join(bad)
+
+
+def _top_level_bindings(tree: ast.Module):
+    """(name, kind, line) for every name a module binds at the top level: def/class, import, assignment."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield node.name, "def", node.lineno
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                yield (alias.asname or alias.name).split(".")[0], "import", node.lineno
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    yield target.id, "assign", node.lineno
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and isinstance(node.target, ast.Name):
+            yield node.target.id, "assign", node.lineno
+
+
+@pytest.mark.parametrize("path", SCRIPTS, ids=lambda p: str(p.relative_to(REPO)))
+def test_no_function_class_or_import_is_bound_twice(path: Path) -> None:
+    """A second top-level def, class, import or assignment of a function's, class's or import's name silently replaces
+    the first for every caller (a quoting helper added for one message once broke the Swift and Kotlin themes that
+    way). A constant may be extended (X = X | {...}); a name that is a def, class or import may be bound only once."""
+    seen: dict = {}
+    for name, kind, line in _top_level_bindings(ast.parse(path.read_text(encoding="utf-8"))):
+        seen.setdefault(name, []).append((kind, line))
+    clashes = {n: b for n, b in seen.items() if len(b) > 1 and any(k in ("def", "import") for k, _ in b)}
+    assert not clashes, clashes
+
+
+def test_the_binding_check_catches_a_shadowed_function() -> None:
+    tree = ast.parse("def _q(t):\n    return t\n_q = str\nX = 1\nX = X + 1\nfrom os import path\nimport os.path\n")
+    seen: dict = {}
+    for name, kind, line in _top_level_bindings(tree):
+        seen.setdefault(name, []).append(kind)
+    assert seen["_q"] == ["def", "assign"] and seen["X"] == ["assign", "assign"] and seen["path"] == ["import"]

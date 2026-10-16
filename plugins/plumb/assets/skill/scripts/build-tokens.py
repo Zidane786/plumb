@@ -2797,14 +2797,36 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
             text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
         except (OSError, UnicodeDecodeError):
             text = None  # build-prototype.py --check reports an unreadable page
-        if text is not None and path.parent == tours and not P.is_generated_text(text):
-            continue  # a hand-written page in tours/ is not Plumb's
+        if text is not None and path not in generated_only and not P.is_prototype_page(text):
+            continue  # a page build-prototype.py did not write (another tool's, or by hand) is not Plumb's
         if text is not None and path in generated_only and not P.is_generated_proposal_page(text):
             continue  # nor is a page in proposals/ that build-prototype.py --proposal did not write
         refreshed = refresh_prototype_theme(text, doc) if text is not None else None
         if refreshed is not None:
             out[path] = refreshed
     return out
+
+
+def specimen_in_the_way(doc: dict, root: Path, files: Dict[Path, str]) -> Optional[Path]:
+    """The specimen page when one is there that this script did not write (another tool's, or a hand-written one): it
+    is never replaced. An empty page (a build cut short) or one that cannot be read is not in the way."""
+    path = specimen_path(doc, root)
+    if path not in files or not path.is_file():
+        return None
+    try:
+        head = path.read_bytes()[:P.PAGE_HEAD_BYTES].decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    return None if P.is_specimen_page(head) else path
+
+
+def _free_name(path: Path, suffix: str) -> Path:
+    """<name><suffix> next to path, or <name>-2<suffix>, -3 … when that is taken."""
+    target, n = path.with_name(path.stem + suffix), 1
+    while target.exists():
+        n += 1
+        target = path.with_name(f"{path.stem}{suffix[:-len('.html')]}-{n}.html")
+    return target
 
 
 def specimen_path(doc: dict, root: Path) -> Path:
@@ -3285,6 +3307,16 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    # A specimen.html this script did not write is never replaced: everything else is built, the specimen is left as it
+    # is, and the build says so (--check: exit 1).
+    foreign = specimen_in_the_way(doc, root, files)
+    foreign_lines: List[str] = []
+    if foreign:
+        files.pop(foreign)
+        page, target = rel(foreign, root), rel(_free_name(foreign, ".before-plumb.html"), root)
+        foreign_lines = [f"{page} (not written by build-tokens.py): left as it is, so the specimen was not updated",
+                         f"fix: ask the user before moving it out of the way (mv {P.shell_word(page)} "
+                         f"{P.shell_word(target)}), then run {command}"]
     stale = []
     for path, text in files.items():
         try:
@@ -3304,7 +3336,12 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if not args.check:
         for note in notes:
             print(note, file=sys.stderr)
+        if foreign_lines:
+            first, _, why = foreign_lines[0].partition(" ")
+            print(f"warning: {first} is not Plumb's {why}\n{foreign_lines[1]}", file=sys.stderr)
     if args.check:
+        if foreign_lines:
+            print(f"not Plumb's: {foreign_lines[0]}\n{foreign_lines[1]}")
         if stale:
             prototype_pages = set(prototype_page_outputs(doc, root))  # generated pages that carry the plumb:theme region
             for path in stale:
@@ -3314,6 +3351,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
                 if path in stale:
                     print_first_block(path, files[path], root)
             print(f"fix: {command}")
+            return 1
+        if foreign_lines:
             return 1
         print(f"ok: {len(files)} generated files are up to date")
     return 0

@@ -55,7 +55,9 @@
   screens' own scripts and theme toggle (the choice is remembered in the browser), the md breakpoint following the
   window, a `data-app-sidebar` that stays in view, and a dialog a click opens scrolled into view. Each proposal variant
   gets one too, linked from the proposal index next to its prototype. The prototype's **Open as app** link opens it on
-  the screen and state you are looking at.
+  the screen and state you are looking at. A page already at one of the build's paths that Plumb didn't write (your own
+  `app.html`, say) is never replaced: the build stops, names it and says how to move it out of the way. The tokens
+  build leaves a `specimen.html` it did not write as it is too (it builds everything else and says how to move it).
 - **`/plumb:prototype`**: 2–3 variants of a new screen, flow or interaction, each as a clickable prototype and as
   every state in light and dark, side by side on one page (`build-prototype.py --proposal <name>`); the one you pick
   joins the main prototype with a default walkthrough, and your approval is recorded per screen.
@@ -121,7 +123,9 @@
   part, or apply the audit's system suggestions one at a time; everything is regenerated, the decision recorded, the
   audit run.
 - **`/plumb:upgrade`** and **`/plumb:status`**: bring a project's copied files up to the plugin's version (what's new
-  first, additive token migration, each step asked), and a read-only health report with the next step.
+  first, additive token migration, each step asked), and a read-only health report with the next step. Another build of
+  the same version is noticed too: when Plumb's own files in the project differ from the plugin's, the session-start
+  line and both commands say so, and the upgrade shows the evidence and asks before refreshing them.
 - **`/plumb:feedback`**: Plumb's own mistakes, recorded for Plumb's developers. When a Plumb script, hook or skill gets
   something wrong and the agent corrects it, the agent records that Plumb mistake (only Plumb's: your project's design
   issues stay audit findings) as one Markdown file in `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on
@@ -139,7 +143,9 @@
   checks are switched in `PLUMB.md` (`Edit check`, `Prototype sync`, `End-of-turn check`); the session-start line and
   the guard on generated and Plumb's own files are always on in a project with a `PLUMB.md`. The generated pages it
   guards include the app view, the tour pages and each proposal's pages (`index.html` and a variant's `prototype.html`,
-  `app.html`, `screens.html`); a page in those places without the header Plumb's build writes is yours and left alone.
+  `app.html`, `screens.html`); a page in those places (or at `specimen.html`, `prototype.html`, `app.html`,
+  `screens.html` and in `tours/`) without the header Plumb's build writes is yours and left alone; one that is empty
+  or cannot be read stays guarded.
 - **Screenshots without installing anything**: `screenshot.py` uses a Chrome, Edge or Chromium already on the machine,
   headless; with none, the visual part is skipped with a note and every other check still runs.
 - **You confirm what you can see, at every checkpoint**: what you are asked to confirm (the setup Plumb found, the

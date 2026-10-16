@@ -882,6 +882,42 @@ def scripts_note(project: Project) -> Optional[str]:
     return f"this project's Plumb scripts are v{mine}; the plugin is v{plugin} \u2014 run /plumb:upgrade"
 
 
+def _same_bytes(a: Path, b: Path) -> bool:
+    try:
+        x, y = a.read_bytes(), b.read_bytes()
+    except OSError:
+        return False
+    norm = lambda data: data[3:].replace(b"\r\n", b"\n") if data.startswith(b"\xef\xbb\xbf") \
+        else data.replace(b"\r\n", b"\n")  # noqa: E731 - a Windows checkout
+    return x == y or norm(x) == norm(y)
+
+
+def files_note(project: Project) -> Optional[str]:
+    """One line when the project is on the plugin's version but Plumb's own files in its skill (scripts/*.py,
+    templates/*, assets/platforms/README.md: version.py's plumb_file_rels) differ from the plugin's copies: another
+    build of the same version, or a hand edit. None otherwise, for a linked repo, or when anything cannot be read."""
+    if project.linked or not project.skill_ok or project.version is None or project.version != plugin_version():
+        return None
+    rel = project.skill_rel.replace("\\", "/")
+    if (rel.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", rel) or ".." in rel.split("/")
+            or under(os.path.realpath(str(project.skill_dir)), os.path.realpath(project.root_s)) is None):
+        return None  # only a skill named inside the project, as version.py and /plumb:upgrade compare it
+    src = Path(PLUGIN_SCRIPTS).parent
+    try:
+        rels = [f"scripts/{f.name}" for f in sorted((src / "scripts").glob("*.py")) if f.is_file()]
+        rels += [f"templates/{f.name}" for f in sorted((src / "templates").iterdir()) if f.is_file()]
+    except OSError:
+        return None
+    if (src / "assets/platforms/README.md").is_file():
+        rels.append("assets/platforms/README.md")
+    skill = project.skill_dir
+    n = sum(1 for r in rels if not _same_bytes(skill / r, src / r))  # type: ignore[operator]
+    if not n:
+        return None
+    return (f"{n} of Plumb's files in this project differ from the installed plugin's (both v{project.version}: "
+            f"another build, or a hand edit) \u2014 /plumb:upgrade shows them and asks before refreshing")
+
+
 # ---------------------------------------------------------------- session snapshots
 
 

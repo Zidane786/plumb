@@ -53,6 +53,7 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    only if the user agrees.
 4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json`: `older` → say once "Plumb <plugin> is
    available for this project (on <project>): run `/plumb:upgrade` when ready." and continue; never run it yourself.
+   `same` with `files_differ`: say once that `/plumb:upgrade` can refresh Plumb's files (they differ from the plugin's).
 5. No tokens file yet in `SKILL/assets/tokens/` → the design system comes first: offer `/plumb:create` or
    `/plumb:extract` and stop.
 6. `PLUMB.md` has no `Routes:` line → say once that the prototype-first check and `route-not-prototyped` cannot see
