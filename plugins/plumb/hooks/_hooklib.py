@@ -3611,17 +3611,18 @@ def _nesting(command: str) -> int:
     return most
 
 
-def shell_effects(command: str, cwd: str, root: Optional[str] = None) -> ShellEffects:
+def shell_effects(command: str, cwd: str, root: Optional[str] = None, deadline: Optional[float] = None) -> ShellEffects:
     """What a shell command (Bash or PowerShell) writes, removes and how it is judged, run in cwd, in the project at
-    root (for $CLAUDE_PROJECT_DIR and a cd the reader can only guess). Past its time budget, or on an internal error,
-    the reader is unsure (the earlier reader decides) and eff.trouble says why (pre_edit logs it with the outcome)."""
+    root (for $CLAUDE_PROJECT_DIR and a cd the reader can only guess). Past its time budget (or deadline, the whole
+    check's, on the clock() scale, when it comes first), or on an internal error, the reader is unsure (the earlier
+    reader decides) and eff.trouble says why (pre_edit logs it with the outcome)."""
     key = (command, cwd, root)
     if key not in _EFFECTS_CACHE:
         try:  # PLUMB_SHELL_BUDGET: seconds, for tests
             budget = float(os.environ.get("PLUMB_SHELL_BUDGET") or SHELL_BUDGET)
         except ValueError:
             budget = SHELL_BUDGET
-        eff = ShellEffects(root, clock() + budget)
+        eff = ShellEffects(root, min(clock() + budget, deadline if deadline is not None else float("inf")))
         eff.command = command
         scope = _Scope((cwd,), {})
         try:

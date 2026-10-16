@@ -45,7 +45,9 @@ In such a project, in this order:
    whose brackets nest deeper than the reader reads, and one the reader fails on (a crash, the recursion limit) are
    not read: refused when a word names a guarded file or folder (or a parent of one), else the earlier reader decides;
    when the check itself fails (shell_decision), the command is refused when the earlier reader's targets or removals,
-   or any of its words, name a guarded path, and allowed only when nothing guarded is named (fail closed);
+   or any of its words, name a guarded path, and allowed only when nothing guarded is named (fail closed). The whole
+   check has one deadline (SHELL_DEADLINE, well under the hook's timeout); past it the earlier reader decides, or a
+   guarded name in the command refuses it;
    a crash, a timeout and a command too long to read log one line with the real outcome.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
@@ -423,6 +425,28 @@ def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: 
 
 SHELL_HUGE = 64 * 1024  # characters: a longer command is not read; it is refused when it names a guarded path
 NAMES_BUDGET = 3.0  # seconds to look for guarded paths in a command the reader could not read; past it: refused
+# One deadline for the whole shell check (the reader and every stage after it): pre_edit's timeout in hooks.json is
+# 10 s and a CLI timeout lets the command through, so the check, the earlier reader's decision after it and the
+# fallback after an error (FALLBACK_BUDGET) all fit with room to spare. No stage gets a fresh budget past it.
+SHELL_DEADLINE = 5.0
+_SHELL_END: List[float] = [float("inf")]  # when the current command's check must end (shell_refusal sets it)
+
+
+class _PastDeadline(Exception):
+    """The command's deadline passed in a stage: the earlier reader decides, or a guarded name refuses."""
+
+
+def _until(seconds: float) -> float:
+    """A stage's deadline: its own budget, never past the command's."""
+    return min(H.clock() + seconds, _SHELL_END[0])
+
+
+def _out_of_time(deadline: float) -> bool:
+    """The stage's deadline passed; past the command's deadline the stage stops (_PastDeadline)."""
+    now = H.clock()
+    if now >= _SHELL_END[0]:
+        raise _PastDeadline()
+    return now >= deadline
 _DOCS_PAGES = ("specimen.html", "prototype.html", "app.html", "screens.html", "prototype/screens.json")
 _FIXED_NAMES = ("specimen.html", "prototype.html", "app.html", "screens.html", "screens.json", "build-tokens.py",
                 "build-prototype.py")
@@ -485,7 +509,7 @@ class _Guarded:
         guarded paths are matched, never the file system."""
         out: List[str] = []
         for kind, value, bases in items:
-            if H.clock() >= deadline:
+            if _out_of_time(deadline):
                 break
             if kind == "lit":
                 out.append(value)
@@ -530,7 +554,7 @@ class _Guarded:
         `.` and the project root never count."""
         root = os.path.realpath(self.proj.root_s)
         for word in dict.fromkeys(w for w in words if w and not w.startswith(("$", "-", "\x00"))):
-            if H.clock() >= deadline:
+            if _out_of_time(deadline):
                 return "a path Plumb ran out of time to check"
             w = os.path.expanduser(word.replace("\\", "/") if os.sep == "/" else word).rstrip("/\\")
             if not w or not re.search(r"[/\\]", w) or "$" in w or "`" in w:
@@ -558,7 +582,7 @@ class _Guarded:
         if len(words) > _MAX_WORDS:
             return "a path among more words than Plumb checks"
         for word in dict.fromkeys(words):
-            if H.clock() >= deadline:
+            if _out_of_time(deadline):
                 return "a path Plumb ran out of time to check"
             w = word[7:] if word.startswith("file://") else word
             w = os.path.expanduser(os.path.expandvars(w.replace("\\", "/") if os.sep == "/" else w))
@@ -577,7 +601,7 @@ def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str, rule: Optional[_Gu
     if eff.unsure:
         return False
     rule = rule or _Guarded(proj, cwd)
-    deadline = H.clock() + NAMES_BUDGET
+    deadline = _until(NAMES_BUDGET)
     if any(rule.text(text, bases, deadline) for text, bases in eff.other):
         return False
     for target in eff.code_writes:
@@ -597,7 +621,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
     when the target's own text names a guarded folder or file, or the command names a guarded path anywhere. Past the
     number of tries or the time the check has, the command-wide rule decides alone: refused when the command names a
     guarded path, else the earlier reader decides."""
-    deadline = H.clock() + NAMES_BUDGET
+    deadline = _until(NAMES_BUDGET)
     command_hit: List[Optional[str]] = []
     literal_seen: dict = {}
     yields: dict = {}
@@ -606,7 +630,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
     def in_command() -> Optional[str]:
         if not command_hit:
             command_hit.append(rule.target(eff.command_words(), tuple(dict.fromkeys((cwd, proj.root_s))),
-                                           H.clock() + NAMES_BUDGET))
+                                           _until(NAMES_BUDGET)))
         return command_hit[0]
 
     def unknown(word: str, scope) -> Optional[str]:
@@ -629,7 +653,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
                 f"target path out in full (and change {hit} the way Plumb's own message for it says)")
 
     for kind, word, sources, scope in eff.loop_targets:
-        if H.clock() >= deadline or "#" in sources:
+        if _out_of_time(deadline) or "#" in sources:
             return past_limits()
         if any(items == [H._ANY] for items in sources.values()):
             why = unknown(word, scope)
@@ -651,7 +675,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
         for options in choices:
             combos = [c + [o] for c in combos for o in options]
         for combo in combos:
-            if H.clock() >= deadline:
+            if _out_of_time(deadline):
                 return past_limits()
             paths = H.substitute(word, dict(combo), scope, proj.root_s)
             if paths is None:  # a part still unknown after the variables ($TMPDIR, $OUT): the target's own text only
@@ -674,7 +698,7 @@ def _unread(proj: H.Project, command: str, base: str, cwd: str, rule: Optional[_
     """For a command the reader could not read: the first of its words that names a guarded file or folder (or a
     parent of one) by the guard's rule, or None."""
     bases = tuple(dict.fromkeys((base, cwd)))
-    return (rule or _Guarded(proj, cwd)).text(command, bases, H.clock() + NAMES_BUDGET)
+    return (rule or _Guarded(proj, cwd)).text(command, bases, _until(NAMES_BUDGET))
 
 
 def _unread_refusal(hit: str, why: str) -> str:
@@ -689,11 +713,39 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     data or reads (_proven). A command it does not read (over SHELL_HUGE, brackets nested past the reader's depth) or
     one the reader failed on (a crash, the recursion limit) is refused when any of its words names a guarded file or
     folder; a write or removal target it cannot work out is refused when it names a guarded path in full
-    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. A crash, a timeout
-    and a command too long to read are logged once, with the real outcome."""
+    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. The whole check has
+    one deadline (SHELL_DEADLINE); past it the earlier reader decides, or a guarded name in the command refuses it
+    (_past_deadline). A crash, a timeout and a command too long to read are logged once, with the real outcome."""
     command = command.replace("\x00", "")  # a NUL byte never reaches a shell: read the rest
     if not H.WRITE_HINT.search(command):
         return None
+    _SHELL_END[0] = H.clock() + SHELL_DEADLINE
+    try:
+        return _shell_check(proj, command, base, cwd)
+    except _PastDeadline:
+        _SHELL_END[0] = float("inf")
+        why = _past_deadline(proj, command, base, cwd)
+        H.log_failure(f"the shell check ran past its {SHELL_DEADLINE:g} s deadline", "the command checked in time",
+                      category="timeout", outcome=f"{'refused' if why else 'allowed'}: the earlier reader decided, "
+                                                  f"or a guarded name in the command")
+        return why
+    finally:
+        _SHELL_END[0] = float("inf")
+
+
+def _past_deadline(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """Past the command's deadline: the earlier reader's decision, or refused when the command names a guarded path
+    (as plain text: no time is left to look further)."""
+    floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
+             or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
+    if floor is not None:
+        return floor
+    hit = _guarded_text(proj, command)
+    return _unread_refusal(hit, "it takes longer to check than Plumb has") if hit else None
+
+
+def _shell_check(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """shell_refusal's work, within the command's deadline (_SHELL_END)."""
     built: List[_Guarded] = []
 
     def rule() -> _Guarded:  # built once per command, only when needed (it globs the guarded files)
@@ -707,7 +759,8 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
         H.log_failure(f"a shell command of {size}, too long to read", "the command read (a guarded path in it refuses "
                       "it)", category="timeout", outcome=f"{'refused' if hit else 'allowed'} without reading it")
         return _unread_refusal(hit, size) if hit else None
-    eff = H.shell_effects(command, base, proj.root_s)
+    eff = H.shell_effects(command, base, proj.root_s, deadline=_SHELL_END[0])
+    _out_of_time(_SHELL_END[0])  # the reader used the whole deadline: _past_deadline decides
     checked = _Checked()  # paths found allowed are not checked again
     why = (_shell_paths_refusal(proj, eff.writes, False, cwd, checked)
            or _shell_paths_refusal(proj, eff.removals, True, cwd, checked)
@@ -715,7 +768,7 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     if why is None and eff.loop_targets:
         why = _loop_refusal(proj, eff, rule(), cwd)
     if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one
-        deadline = H.clock() + NAMES_BUDGET
+        deadline = _until(NAMES_BUDGET)
         named = next((n for n in (rule().target(words, bases, deadline) for words, bases in eff.computed) if n), None)
         if named is not None:
             why = (f"error: this shell command writes to or removes a path Plumb cannot work out, and that path is "
@@ -731,6 +784,8 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
                  or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd, checked))
         if floor is not None and not _proven(proj, eff, cwd, rule()):
             why = floor
+    if why is None:
+        _out_of_time(_SHELL_END[0])  # an allow reached past the deadline: _past_deadline decides
     if eff.trouble is not None and eff.trouble[1] != "deep":  # deep nesting is the command's, not Plumb's mistake
         given, category, exc = eff.trouble
         outcome = ("refused without reading it (it names a guarded path)" if hit is not None

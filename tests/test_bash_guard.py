@@ -684,6 +684,40 @@ def test_the_time_budget_holds_on_a_coarse_clock(decide, monkeypatch):
     H._EFFECTS_CACHE.clear()
 
 
+def test_one_deadline_for_the_whole_command_fits_the_hook_timeout(decide):
+    """The reader and every stage after it share one deadline, and with the fallback after an error it stays well under
+    the shortest hook timeout in hooks.json (a CLI timeout is an allow)."""
+    import json
+    hooks = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    shortest = min(h["timeout"] for event in hooks.values() for entry in event for h in entry["hooks"])
+    pe = decide.pe
+    assert pe.SHELL_DEADLINE + pe.FALLBACK_BUDGET + 2.0 <= shortest
+    assert pe.H.SHELL_BUDGET < pe.SHELL_DEADLINE and pe.NAMES_BUDGET < pe.SHELL_DEADLINE
+
+
+def test_past_the_command_deadline_the_earlier_reader_decides_or_a_guarded_name_refuses(decide, monkeypatch):
+    """With no time left, no stage gets a fresh budget of its own: the earlier reader's decision stands, and a command
+    that names a guarded path is refused; one that names none is allowed. Each decision is quick."""
+    pe = decide.pe
+    monkeypatch.setattr(pe, "SHELL_DEADLINE", 0.0)
+    monkeypatch.setattr(pe, "NAMES_BUDGET", 1000.0)  # a stage that took its own budget would never end in time
+    monkeypatch.setattr(pe.H, "log_failure", lambda *a, **k: None)
+    cwd = str(decide.proj)
+    cases = {f"git commit -m 'never > {GEN} by hand'": True, f"echo x > {GEN}": True,
+             "for f in docs/design/*.html; do echo x > \"$f\"; done": True,
+             "for f in a b; do echo x > \"/tmp/plumb-$f\"; done": False, "echo x > notes/a.txt": False,
+             "out=$(mktemp); echo x > \"$out\"": False}
+    for command, want in cases.items():
+        pe.H._EFFECTS_CACHE.clear()
+        t = time.perf_counter()
+        reason = pe.shell_refusal(decide.project, command, cwd, cwd)
+        assert time.perf_counter() - t < SPEED_LIMIT, command
+        assert bool(reason) is want, (command, reason)
+        if reason:
+            actionable(reason)
+    pe.H._EFFECTS_CACHE.clear()
+
+
 def test_real_paths_shared_across_a_command_match_realpath(H, tmp_path):
     (tmp_path / "real" / "sub").mkdir(parents=True)
     (tmp_path / "real" / "f.txt").write_text("x", encoding="utf-8")
@@ -950,7 +984,7 @@ def test_a_reader_crash_is_logged_once_with_the_real_outcome(decide, monkeypatch
     lines = []
     monkeypatch.setattr(H, "log_failure", lambda given, expected, **kw: lines.append(kw.get("outcome")))
 
-    def crashed(command, cwd, root=None):
+    def crashed(command, cwd, root=None, deadline=None):
         eff = H.ShellEffects(root, time.monotonic() + 5)
         eff.doubt("the reader failed (RecursionError)")
         eff.trouble = ("the shell reader failed (RecursionError: deep)", "crash", RecursionError("deep"))
