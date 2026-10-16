@@ -738,16 +738,42 @@ def test_a_translucent_surface_is_skipped_with_a_note(tmp_path: Path) -> None:
         r = run(p, *args)
         assert r.returncode == 0, (args, r.stdout, r.stderr)
         assert "note: surface-glass is translucent" in r.stderr, r.stderr
-        assert "$extensions.plumb.contrast.surfaces" in r.stderr and "opaque value" in r.stderr
+        assert "opaque value" in r.stderr
         assert r.stderr.count("surface-glass is translucent") == 1, r.stderr
     table = block(dark_md(p))
     assert "on surface-glass" not in table and "| on-surface on background |" in table
 
 
-def test_a_translucent_surface_named_in_the_settings_is_refused_with_the_way_out(tmp_path: Path) -> None:
+def test_a_translucent_surface_with_its_own_on_token_never_stops_the_build(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+        doc["color"]["on-surface-glass"] = {"$value": "#111111", "$extensions": {"plumb": {"dark": "#eeeeee"}}}
+    p = make_project(tmp_path, mut)
+    for args in ((), ("--check",), ("--contrast",)):
+        r = run(p, *args)
+        assert r.returncode == 0, (args, r.stdout, r.stderr)
+        assert r.stderr.count("warning: on-surface-glass on surface-glass is not checked for contrast: surface-glass is "
+                              "translucent") == 1, r.stderr
+        fix = next(l for l in r.stderr.splitlines() if l.startswith("fix: ") and "on-surface-glass" in l)
+        assert "give color.surface-glass an opaque value" in fix and "$extensions.plumb.contrast.extra_pairs" in fix
+        assert '["on-surface-glass", "background", "text"]' in fix
+        assert "contrast.surfaces" not in fix  # the project has no such list
+    table = block(dark_md(p))
+    assert "on surface-glass" not in table and "| on-surface on background |" in table
+    doc = json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+    doc["$extensions"]["plumb"]["contrast"] = {"extra_pairs": [["on-surface-glass", "background", "text"]]}
+    write(skill(p) / TOKENS_REL, json.dumps(doc, indent=2))
+    assert run(p, "--contrast").returncode == 0  # the way out the fix names works
+    assert "| on-surface-glass on background |" in block(dark_md(p))
+
+
+def test_a_translucent_surface_named_in_the_settings_is_skipped_with_the_way_out(tmp_path: Path) -> None:
     def mut(doc: dict) -> None:
         doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
         doc["$extensions"]["plumb"]["contrast"] = {"surfaces": ["background", "surface-glass"]}
     p = make_project(tmp_path, mut)
-    assert_refusal(run(p, "--contrast"), "surface-glass is transparent", "$extensions.plumb.contrast.surfaces",
-                   "color.surface-glass")
+    r = run(p, "--contrast")
+    assert r.returncode == 0, r.stderr
+    assert "warning: on-surface on surface-glass is not checked for contrast" in r.stderr, r.stderr
+    assert "take surface-glass out of $extensions.plumb.contrast.surfaces" in r.stderr
+    assert "on surface-glass" not in block(dark_md(p))

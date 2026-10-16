@@ -1646,9 +1646,53 @@ def translucent_surfaces(doc: dict) -> List[Tuple[str, str, str, str]]:
 
 def surface_notes(doc: dict) -> List[str]:
     """The note for each translucent surface left out of the contrast pairs, with the exact way out."""
-    return [f"note: {name} is translucent ({value} in {mode} mode), so text on it is not measured for contrast: list "
-            f"the opaque surfaces in $extensions.plumb.contrast.surfaces (e.g. [\"background\", \"surface\"]), or give "
-            f"{path} an opaque value" for name, path, value, mode in translucent_surfaces(doc)]
+    return [f"note: {name} is translucent ({value} in {mode} mode), so text on it is not measured for contrast: give "
+            f"{path} an opaque value, or add a $extensions.plumb.contrast.surfaces list naming only the opaque surfaces "
+            f"text sits on (e.g. [\"background\", \"surface\"])" for name, path, value, mode in translucent_surfaces(doc)]
+
+
+def _translucent_in(doc: dict, path: str) -> Optional[Tuple[str, str]]:
+    """(value, mode) when the colour at path is translucent in light or dark, else None (unreadable: measured, and
+    refused, as before)."""
+    for mode in ("light", "dark"):
+        try:
+            _hex, alpha = _hex_in(doc, path, mode)
+        except PlumbError:
+            return None
+        if alpha < 1:
+            return str(P.resolve(doc, path, mode)), mode
+    return None
+
+
+def translucent_pair_warnings(doc: dict) -> List[str]:
+    """warning: and fix: lines for each contrast pair left out because its background is translucent (what shows
+    through is not known): an on-X on a translucent X, or a pair over a surface the settings name. The fix names what
+    the project can really do: an opaque value, the pair checked over the surface it sits on in contrast.extra_pairs,
+    or (when the settings list it) the surface taken out of contrast.surfaces."""
+    cfg = _contrast_settings(doc)
+    listed = set(cfg.get("surfaces") or [])
+    keys = _colour_keys(doc)
+    ground = next((k for k in ("background", "page", "surface") if k in keys and not _translucent_in(doc, keys[k])),
+                  "background")
+    out: List[str] = []
+    for pair in contrast_pairs(doc):
+        bg_path = keys.get(pair.bg)
+        found = _translucent_in(doc, bg_path) if bg_path else None
+        if not found:
+            continue
+        value, mode = found
+        kind = "text" if pair.need >= NEED_TEXT else "ui"
+        if pair.bg in listed:
+            fix = (f"take {pair.bg} out of $extensions.plumb.contrast.surfaces (it lists only the surfaces text is "
+                   f"checked over), or give {bg_path} an opaque value")
+        else:
+            fix = (f"give {bg_path} an opaque value, or check {pair.fg} against the surface {pair.bg} sits on in "
+                   f"$extensions.plumb.contrast.extra_pairs (e.g. [\"{pair.fg}\", \"{ground}\", \"{kind}\"])")
+        out += [f"warning: {pair.fg} on {pair.bg} is not checked for contrast: {pair.bg} is translucent ({value} in "
+                f"{mode} mode), so what shows through it is not known", f"fix: {fix}"]
+    return out
+
+
 
 
 def _hex_in(doc: dict, path: str, mode: str) -> Tuple[str, float]:
@@ -1671,6 +1715,8 @@ def measure_pairs(doc: dict) -> List[Pair]:
             parts = P.path_parts(path)
             paths["-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)] = path
     listed = set(_contrast_settings(doc).get("surfaces") or [])
+    # a pair over a translucent background is left out (translucent_pair_warnings says so), never stopping the build
+    pairs = [p for p in pairs if not _translucent_in(doc, paths[p.bg])]
     for pair in pairs:
         pair.fg_path, pair.bg_path = paths[pair.fg], paths[pair.bg]
         pair.surface = is_surface_role(pair.bg, listed)
@@ -1678,11 +1724,7 @@ def measure_pairs(doc: dict) -> List[Pair]:
             pair.source[mode] = {pair.fg: _source_path(doc, pair.fg_path, mode), pair.bg: _source_path(doc, pair.bg_path, mode)}
         for mode in ("light", "dark"):
             fg, fa = _hex_in(doc, paths[pair.fg], mode)
-            bg, ba = _hex_in(doc, paths[pair.bg], mode)
-            if ba < 1:
-                raise _err(f"{pair.bg} is transparent in {mode} mode, so {pair.fg} on {pair.bg} cannot be measured",
-                           f"give {pair.bg_path} an opaque value, or take {pair.bg} out of "
-                           f"$extensions.plumb.contrast.surfaces (and extra_pairs) and list only opaque surfaces")
+            bg, _ba = _hex_in(doc, paths[pair.bg], mode)
             fg = _blend(fg, fa, bg)
             pair.hex[mode] = (fg, bg)
             ratio = P.contrast_ratio(fg, bg)  # unrounded: compared below, floored when shown
@@ -3325,7 +3367,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"added {line}")
         print(f"wrote {rel(tokens_file, root)}")
         return 0
-    for line in surface_notes(doc):
+    for line in surface_notes(doc) + translucent_pair_warnings(doc):
         print(line, file=sys.stderr)
     if args.contrast:
         found = contrast_output(doc, skill_dir, required=True)
