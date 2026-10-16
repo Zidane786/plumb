@@ -1295,6 +1295,18 @@ def test_apply_patch_tolerates_trailing_space_and_crlf(H):
     assert change.after(before) == "x = 1   \ny = 3\n"
 
 
+def test_apply_patch_headers_may_be_indented(H):
+    """The reference apply_patch parser trims a line before it matches a header: an indented header is a file section
+    here too (it only reads more targets), and indented patch text is recognised as a patch."""
+    text = ("*** Begin Patch\n  *** Update File: a.tsx\n@@\n-x\n+y\n\t*** Add File: b.tsx\n+one\n"
+            " *** Delete File: c.tsx\n   *** Update File: d.tsx\n  *** Move to: e.tsx\n@@\n-a\n+b\n*** End Patch\n")
+    changes = H.parse_patch(text)
+    assert [(c.kind, c.path) for c in changes] == [("update", "a.tsx"), ("add", "b.tsx"), ("delete", "c.tsx"),
+                                                    ("update", "d.tsx"), ("move", "e.tsx")]
+    assert changes[1].after(None) == "one\n"
+    assert H.PATCH_RE.search("  *** Update File: a.tsx\n@@\n-x\n+y\n")
+
+
 def test_apply_patch_add_delete_move_and_failure(H):
     changes = H.parse_patch(patch("*** Add File: n.tsx\n+one\n+two\n", "*** Delete File: d.tsx\n",
                                   "*** Update File: m.tsx\n*** Move to: moved.tsx\n@@\n-old\n+new\n"))

@@ -295,8 +295,10 @@ class Change:
         return "\n".join(ln[1:] for h in self.hunks for ln in h.lines if ln[0] == "-")
 
 
-PATCH_HEADER = re.compile(r"^\*\*\* (Update File|Add File|Delete File|Move to):[ \t]*(.+?)[ \t]*$")
-PATCH_RE = re.compile(r"^\*\*\* (?:Begin Patch|Update File:|Add File:|Delete File:)", re.MULTILINE)
+# A header may be indented (the reference apply_patch parser trims each line before it matches one): reading an indented
+# header as a file section only finds more targets.
+PATCH_HEADER = re.compile(r"^[ \t]*\*\*\* (Update File|Add File|Delete File|Move to):[ \t]*(.+?)[ \t]*$")
+PATCH_RE = re.compile(r"^[ \t]*\*\*\* (?:Begin Patch|Update File:|Add File:|Delete File:)", re.MULTILINE)
 _PATCH_KIND = {"Update File": "update", "Add File": "add", "Delete File": "delete", "Move to": "move"}
 
 
