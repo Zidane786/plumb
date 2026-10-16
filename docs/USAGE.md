@@ -1186,9 +1186,17 @@ Three checks, in this order:
 
 1. **The guard (always on):** hand edits to generated files and to Plumb's own files are refused, including through the
    shell. Removing or moving away a guarded file (`rm`, `rmdir`, `del`, `Remove-Item`, `git rm`, `mv` / `Move-Item` /
-   `git mv`, `ren` / `Rename-Item` from it), or a folder holding one, is refused the same way. A hard link of a guarded
-   file (`ln`, `cp -l`: the same file under another name) gets that file's refusal. Running `build-tokens.py` or
-   `build-prototype.py` is allowed.
+   `git mv`, `ren` / `Rename-Item` from it), or a folder holding one, is refused the same way. Links:
+   - an existing hard link (the same file under another name) of any guarded file gets that file's refusal: the
+     skill's `[P]` files, the generated outputs, pages and web copies, Kiro's files and every file under the plugin;
+     a generated `*Theme.swift` / `*Theme.kt` anywhere in the project is known by build-tokens.py's header under any
+     name (removing such a link is refused too);
+   - a name the same command links to a guarded file or folder (`ln`, `ln -s`, `cp -l` / `--link` / `-s`, `mklink`,
+     `New-Item -ItemType HardLink` / `SymbolicLink` / `Junction`) is guarded for the rest of the command:
+     `ln -s <skill>/scripts/build-tokens.py y && echo x > y` is refused; making the link alone is allowed (a symbolic
+     link is followed by every later command).
+
+   Running `build-tokens.py` or `build-prototype.py` is allowed.
 
    A shell command is refused when a guarded file is one of its **real write targets**:
    - a redirect (`>`, `>>`, `1>`, `2>`, `&>`, `>|`), `tee [-a]`, `sed -i` (and sed's `w FILE`), `perl -i`, `sort -o`,
@@ -1274,8 +1282,9 @@ Three checks, in this order:
    refused when any of its words names a guarded file, a guarded folder or a parent of one, and otherwise the earlier
    reading decides. If the check itself fails, the command is refused when the earlier reading's targets or any of its
    words name a guarded path, and allowed only when nothing guarded is named. The whole check of one command has a
-   5-second deadline (the hook's timeout is 10 seconds, and a timeout would let the command through): past it the
-   earlier reading decides, or a guarded name in the command refuses it. A reader failure, a check that failed, a
+   4-second deadline (the hook's timeout is 10 seconds, and a timeout would let the command through). A step that
+   runs out of time refuses, as before; past the deadline the earlier reading decides, or the command is refused when
+   any of its words names a guarded path (looked up again, briefly) or its text names a guarded file or folder. A reader failure, a check that failed, a
    deadline reached or a command too long to read adds one line, with the real outcome, to the hooks' log
    (`/plumb:feedback`).
 

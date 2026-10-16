@@ -491,6 +491,14 @@ Restart Copilot, open the same kind of scratch project, and report:
       it reports what the check found and stops.
 - [ ] **Windows only:** the same refusals in PowerShell (the hooks run `hooks/run.cmd`); a machine without Python must
       not block any tool call.
+- [ ] **Windows only, a plugin path with brackets:** copy the clone's `plugins\plumb` folder to a folder whose name
+      has `[` and `]` (for example `C:\plumb-test [x]\plumb`), start Copilot with
+      `copilot --plugin-dir "C:\plumb-test [x]\plumb"` in the scratch project and ask "what does the Plumb session note
+      say?" (no tools) → it quotes the
+      `Plumb: <project>-design-system 1.0.0 · tokens up to date · N audit issues · read the skill before UI changes`
+      line (the hooks ran: `Test-Path -LiteralPath` and `& $s` found `run.cmd` there). Then the hand edit to
+      `app/globals.css` → **refused** with `error: app/globals.css is generated from the design tokens`. Report it as
+      failed if the note is missing or the edit goes through.
 
 ---
 

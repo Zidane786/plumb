@@ -189,8 +189,10 @@
   variables (`OUT=…; echo > "$OUT"`), `$PWD`, `$'…'` escapes, globs and braces, write targets put together in code
   (`os.path.join(d, …)`, `Path(d) / …`, f-strings, `%`, `.format`, `${}`), code piped to an interpreter or on
   `/dev/stdin`, `os.remove` / `shutil.rmtree` in inline code, and the Windows tools `xcopy`, `robocopy`, `cmd /c copy`
-  / `move` / `del` / `erase`, `ren` / `Rename-Item` and `clc`. A hard link of a guarded file (`ln`, `cp -l`) is guarded
-  like the file. A command over 64 KB, one nested deeper than the reader reads, and one the reader fails on are refused
+  / `move` / `del` / `erase`, `ren` / `Rename-Item` and `clc`. An existing hard link of any guarded file (the skill's
+  files, the generated outputs and pages, the web copies, Kiro's files, the plugin's own files; a generated theme
+  anywhere in the project, by its header) is guarded like the file, and so is a name the same command links to a
+  guarded file or folder (`ln`, `ln -s`, `cp -l` / `-s`, `mklink`, `New-Item -ItemType HardLink` / `SymbolicLink`). A command over 64 KB, one nested deeper than the reader reads, and one the reader fails on are refused
   when they name a guarded file or folder (or a parent of one); if the check itself fails, a command that names a
   guarded path is refused.
   Loop variables are followed: a target that uses a `for` / `select` / `while read` variable is refused when the
@@ -204,8 +206,8 @@
   Linux when the project's file system ignores case (asked of the file system itself: a folder that ignores case, a
   Windows drive in WSL); on Windows it reads Git for Windows' Bash drive paths (`/c/Users/…`,
   `/cygdrive/c/…`) as well as `\` and `/`, drive letters in either case and quoted paths with spaces. The whole check
-  of a command has one deadline, well inside the hook's timeout (past it the stricter first reading decides, or a
-  guarded name refuses the command), measured on a fine-grained clock on every platform; each folder's real path is
+  of a command has one deadline, well inside the hook's timeout: a step that runs out of time refuses, and past the
+  deadline the stricter first reading decides, or a guarded path or name in the command refuses it, measured on a fine-grained clock on every platform; each folder's real path is
   worked out once per command, without recursion, so a long command or a path thousands of parts deep stays well
   inside the timeout, on a Windows runner too.
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
