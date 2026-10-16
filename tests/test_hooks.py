@@ -2145,3 +2145,140 @@ def test_files_note_follows_version_py_for_an_absolute_skill_path(launcher, tmp_
     text = read(proj / "PLUMB.md")
     write(proj / "PLUMB.md", re.sub(r"(?m)^Design system:.*$", f"Design system: `{(proj / SKILL_REL).as_posix()}/`", text))
     assert "of Plumb's files in this project differ" not in context(session_start(launcher, tmp_path, proj))
+
+
+# ---------------------------------------------------------------- project files that are not regular files
+#
+# A cloned repository can commit a symlink to /dev/zero, and a folder can hold a FIFO: the hooks read only regular files,
+# each up to a limit, and never wait on one. Each hook runs in its own process group (killed past the limit) with at
+# most 4 GB of address space where the system enforces it, so a regression fails the test instead of the machine.
+
+needs_dev_zero = pytest.mark.skipif(os.name == "nt" or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+needs_fifo = pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX: FIFO")
+NOT_REGULAR = [pytest.param("dev-zero", marks=needs_dev_zero), pytest.param("fifo", marks=needs_fifo)]
+STALL_LIMIT = 8.0  # seconds a hook may take here (session start alone waits up to 5 s for build-tokens.py --check)
+SCRIPTS_SIDE = "scripts side lands in the parallel batch"
+
+
+def _not_regular(path: Path, kind: str) -> None:
+    if path.exists() or path.is_symlink():
+        path.unlink()
+    if kind == "dev-zero":
+        os.symlink("/dev/zero", str(path))
+    else:
+        os.mkfifo(str(path))
+
+
+def _bounded(script: str, stdin: str, cwd: Path, env, limit: float = 20.0):
+    """(seconds, result) of a hook run through run.sh, or (None, None) when it was still running at limit."""
+    import resource
+    import signal
+    import subprocess
+
+    def cap() -> None:
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, (4 << 30, 4 << 30))
+        except (ValueError, OSError):
+            pass
+
+    start = time.perf_counter()
+    proc = subprocess.Popen([shutil.which("sh"), str(HOOKS / "run.sh"), script], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=str(cwd), env=env,
+                            start_new_session=True, preexec_fn=cap)
+    try:
+        out, err = proc.communicate(stdin.encode("utf-8"), timeout=limit)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        return None, None
+    r = subprocess.CompletedProcess(proc.args, proc.returncode, out.decode("utf-8", "replace"),
+                                    err.decode("utf-8", "replace"))
+    r.copilot = False  # type: ignore[attr-defined]
+    assert "Traceback" not in r.stderr and "MemoryError" not in r.stderr, r.stderr
+    return time.perf_counter() - start, r
+
+
+def _quick(script: str, stdin: str, proj: Path, env, limit: float = STALL_LIMIT):
+    took, r = _bounded(script, stdin, proj, env)
+    assert r is not None and took < limit, f"{script} took {took if took is not None else 'more than 20'} s"
+    return r
+
+
+def _hook_stdin(proj: Path, script: str, **values) -> str:
+    name = {"session_start.py": "session_start", "stop_check.py": "stop"}.get(script)
+    if name:
+        return payload("claude", name, CWD=str(proj), ACTIVE=False)
+    return payload("claude", values.pop("name", "edit"), CWD=str(proj), **values)
+
+
+@pytest.mark.parametrize("kind", NOT_REGULAR)
+def test_a_tokens_file_that_is_not_a_regular_file_never_stalls_a_hook(tmp_path, proj, kind):
+    """The tokens file a symlink to /dev/zero (committable) or a FIFO: every hook answers within seconds; the guards stay
+    on, the checks that need the tokens are skipped (fail open), and session start says the tokens were not checked."""
+    _not_regular(proj / SKILL_REL / "assets/tokens/demo.tokens.json", kind)
+    env = hook_env(tmp_path)
+    allowed(_quick("pre_edit.py", _hook_stdin(proj, "pre_edit.py", FILE=str(proj / "README.md"), OLD="Notes.",
+                                              NEW="More notes."), proj, env))
+    allowed(_quick("pre_edit.py", _hook_stdin(proj, "pre_edit.py", FILE=str(proj / "app/page.tsx"), OLD=H1, NEW=H1_RAW),
+                   proj, env))
+    assert " is generated" in refused(_quick("pre_edit.py", _hook_stdin(
+        proj, "pre_edit.py", name="bash", COMMAND="echo x > docs/design/screens.html"), proj, env))
+    assert "tokens not checked" in context(_quick("session_start.py", _hook_stdin(proj, "session_start.py"), proj, env))
+    allowed(_quick("stop_check.py", _hook_stdin(proj, "stop_check.py"), proj, env))
+
+
+@pytest.mark.parametrize("kind", NOT_REGULAR)
+def test_copied_scripts_that_are_not_regular_files_never_stall_a_hook(tmp_path, proj, kind):
+    """The project's copied _plumb.py (read as text for its version) a symlink to /dev/zero or a FIFO."""
+    _not_regular(proj / SKILL_REL / "scripts/_plumb.py", kind)
+    env = hook_env(tmp_path)
+    text = context(_quick("session_start.py", _hook_stdin(proj, "session_start.py"), proj, env))
+    assert "this project's Plumb scripts are v" not in text
+    allowed(_quick("stop_check.py", _hook_stdin(proj, "stop_check.py"), proj, env))
+
+
+@pytest.mark.parametrize("kind", NOT_REGULAR)
+def test_a_web_copy_that_is_not_a_regular_file_stays_guarded_without_a_stall(tmp_path, proj, kind):
+    """A web copy that cannot be read as a regular file is never read: a FIFO there is refused at once (fail closed: its
+    block cannot be checked); a symlink to /dev/zero writes /dev/zero, not the copy (symlinks are followed)."""
+    _not_regular(proj / "app/globals.css", kind)
+    env = hook_env(tmp_path)
+    runs = [_quick("pre_edit.py", _hook_stdin(proj, "pre_edit.py", FILE=str(proj / "app/globals.css"), OLD="margin: 0;",
+                                              NEW="margin: 1px;"), proj, env),
+            _quick("pre_edit.py", _hook_stdin(proj, "pre_edit.py", name="bash",
+                                              COMMAND="sed -i.bak 's/a/b/' app/globals.css"), proj, env)]
+    for r in runs:
+        if kind == "fifo":
+            assert refused(r).startswith("error: app/globals.css is generated")
+        else:
+            allowed(r)
+
+
+@needs_fifo
+@pytest.mark.xfail(strict=True, reason=SCRIPTS_SIDE)
+def test_a_fifo_ui_file_never_stalls_session_start_or_the_end_of_turn_check(tmp_path, proj):
+    """A FIFO among the UI files: the session snapshot and the end-of-turn check (audit.py's, in-process) skip it."""
+    _not_regular(proj / "app/hang.css", "fifo")
+    env = hook_env(tmp_path)
+    _quick("session_start.py", _hook_stdin(proj, "session_start.py"), proj, env)
+    _quick("stop_check.py", _hook_stdin(proj, "stop_check.py"), proj, env)
+
+
+def test_read_regular_reads_only_regular_files_within_the_limit(H, tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"12345")
+    assert H.read_regular(str(f)) == b"12345"
+    assert H.regular_bytes(str(f), limit=5) == b"12345"
+    assert H.regular_bytes(str(f), limit=4) is None  # larger than the limit: not read
+    assert H.read_regular(str(f), limit=3, head=True) == b"123"  # the head of a larger file
+    assert H.regular_bytes(str(tmp_path / "missing")) is None
+    with pytest.raises(FileNotFoundError):
+        H.read_regular(str(tmp_path / "missing"))
+    assert H.regular_bytes(str(tmp_path)) is None  # a folder
+    if hasattr(os, "mkfifo"):
+        os.mkfifo(str(tmp_path / "fifo"))
+        assert H.regular_bytes(str(tmp_path / "fifo")) is None  # returns at once: never waits for a writer
+    if os.name != "nt" and os.path.exists("/dev/zero"):
+        os.symlink("/dev/zero", str(tmp_path / "zero"))
+        assert H.regular_bytes(str(tmp_path / "zero")) is None
+    assert H.PROJECT_FILE_LIMIT >= 8 * 1024 * 1024

@@ -52,6 +52,7 @@ Python 3.9+, standard library only.
 
 from __future__ import annotations
 
+import errno
 import fnmatch
 import glob
 import hashlib
@@ -667,12 +668,55 @@ def plumb_md_keys(text: str) -> Dict[str, str]:
     return out
 
 
-def _read(path: str) -> Optional[str]:
+# The most the hooks read of one project file. Generous: a tokens file, PLUMB.md, a copied script or a page is far
+# smaller (the audit itself skips source files over 5 MB), so only a file no project writes by hand is left out; small
+# enough that a hostile file costs a hook at most this much memory and a moment of reading.
+PROJECT_FILE_LIMIT = 8 * 1024 * 1024
+_READ_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+
+
+def read_regular(path: str, limit: int = PROJECT_FILE_LIMIT, head: bool = False) -> bytes:
+    """The bytes of a project file, read only when it is a regular file: opened non-blocking (a FIFO never makes the
+    open wait for a writer; Windows has no O_NONBLOCK, the regular-file check alone holds there), then fstat-ed on
+    the open file, so a symlink to /dev/zero, a device, a FIFO or a folder is never read. At most limit bytes: a larger
+    file raises (with head=True its first limit bytes are returned). Raises OSError as os.open does
+    (FileNotFoundError for a missing file), and OSError(EINVAL) for a file that is not regular or is too large."""
+    fd = os.open(path, _READ_FLAGS)
     try:
-        with open(path, "rb") as fh:
-            return fh.read().decode("utf-8-sig", "replace")
-    except OSError:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", path)
+        if st.st_size > limit and not head:
+            raise OSError(errno.EFBIG, "larger than the hooks read", path)
+        chunks: List[bytes] = []
+        left = limit + 1  # one byte more than the limit tells a file that grew past it
+        while left > 0:
+            chunk = os.read(fd, min(left, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > limit:
+            if not head:
+                raise OSError(errno.EFBIG, "larger than the hooks read", path)
+            data = data[:limit]
+        return data
+    finally:
+        os.close(fd)
+
+
+def regular_bytes(path: str, limit: int = PROJECT_FILE_LIMIT) -> Optional[bytes]:
+    """read_regular, or None for a file that is missing, not regular, too large or unreadable."""
+    try:
+        return read_regular(path, limit)
+    except (OSError, ValueError):
         return None
+
+
+def _read(path: str) -> Optional[str]:
+    data = regular_bytes(path)
+    return data.decode("utf-8-sig", "replace") if data is not None else None
 
 
 def find_project(start: str) -> Optional[Path]:
@@ -711,6 +755,7 @@ class Project:
         self.python = python if _SAFE_PYTHON.fullmatch(python) else "python3"
         self._doc: Optional[dict] = None
         self._doc_read = False
+        self.tokens_refused: Optional[Path] = None  # the tokens file, when it is not a regular file within the limit
 
     def on(self, key: str) -> bool:
         return _ON.match(self.keys.get(key, "") or "") is not None
@@ -735,11 +780,27 @@ class Project:
             found = sorted(folder.glob("*.tokens.json")) if folder is not None and folder.is_dir() else []
             if len(found) == 1:
                 try:
-                    doc = json.loads(found[0].read_bytes().decode("utf-8-sig"))
+                    doc = json.loads(read_regular(str(found[0])).decode("utf-8-sig"))
                     self._doc = doc if isinstance(doc, dict) else None
-                except (OSError, ValueError):
+                except OSError as exc:
+                    self._doc = None
+                    if exc.errno in (errno.EINVAL, errno.EFBIG):
+                        self.tokens_refused = found[0]
+                except ValueError:
                     self._doc = None
         return self._doc
+
+    def tokens_unreadable(self) -> Optional[str]:
+        """A note when the tokens file is not a regular file or is larger than the hooks read (a symlink to a device, a
+        FIFO): the checks that load it (the plugin's audit.py and build-tokens.py) are skipped so they never wait on
+        it; else None."""
+        self.tokens_doc()
+        bad = self.tokens_refused
+        if bad is None:
+            return None
+        rel = under(str(bad), self.root_s) or str(bad)
+        return (f"{rel} is not a regular file of at most {PROJECT_FILE_LIMIT // (1024 * 1024)} MB, so the design checks "
+                f"that read it are skipped (the guards stay on)")
 
     def _plumb_settings(self) -> dict:
         doc = self.tokens_doc() or {}
@@ -897,9 +958,8 @@ def scripts_note(project: Project) -> Optional[str]:
 
 
 def _same_bytes(a: Path, b: Path) -> bool:
-    try:
-        x, y = a.read_bytes(), b.read_bytes()
-    except OSError:
+    x, y = regular_bytes(str(a)), regular_bytes(str(b))
+    if x is None or y is None:
         return False
     norm = lambda data: data[3:].replace(b"\r\n", b"\n") if data.startswith(b"\xef\xbb\xbf") \
         else data.replace(b"\r\n", b"\n")  # noqa: E731 - a Windows checkout

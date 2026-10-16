@@ -67,6 +67,10 @@ def main() -> int:
         return 0
     if H.setup_in_progress(proj.root_s):
         return 0  # a setup is running (<root>/.plumb-tmp/setup-in-progress): its half-done state is expected
+    unreadable = proj.tokens_unreadable()
+    if unreadable:  # the plugin's audit.py would wait on it (a FIFO, a link to a device): stay quiet
+        H.note(unreadable)
+        return 0
     path = H.snapshot_path(proj.root, p.session_id)
     if path is None:
         return 0  # no private temp folder (snapshot_dir said why): stay quiet
