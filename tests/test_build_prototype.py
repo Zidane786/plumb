@@ -529,6 +529,14 @@ def test_duplicate_screen_sections_are_refused(project: Path) -> None:
     assert_refusal(run(project), "dup.html:2", "duplicate")
 
 
+def test_a_duplicate_state_is_refused(project: Path) -> None:
+    write(project / SCREENS_REL / "dup.html", '<section data-screen="dup">\n  <div data-state="a"></div>\n'
+                                              '  <div data-state="b"></div>\n  <div data-state=" a "></div>\n</section>\n')
+    for args in ((), ("--check",)):
+        r = run(project, *args)
+        assert_refusal(r, f"{SCREENS_REL}/dup.html:4", 'duplicate state data-state="a"', "line 2")
+
+
 def test_file_without_a_screen_section_is_refused(project: Path) -> None:
     write(project / SCREENS_REL / "loose.html", "<div data-state='ready'>no section</div>\n")
     assert_refusal(run(project), "loose.html", "data-screen")
