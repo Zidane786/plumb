@@ -70,6 +70,8 @@ from bisect import bisect_right
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+if __name__ == "__main__":  # run in a project: leave no __pycache__ in the skill's scripts folder (the hooks
+    sys.dont_write_bytecode = True  # import this file as a module and keep their own cache)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _plumb as P  # noqa: E402

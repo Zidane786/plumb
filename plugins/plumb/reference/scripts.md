@@ -17,7 +17,8 @@ the plugin root (`${CLAUDE_PLUGIN_ROOT}`, or the skill's base directory + `/../.
 report and the pages in the docs folder, the generated files in the skill and the copies); a file you need only for
 one step (an answers file, a `--snapshot`, saved `--json` or `--check` output to read back) goes in
 `<root>/.plumb-tmp/` (with a `.gitignore` of `*`; "Temporary files" in [placement.md](placement.md)), never `/tmp`,
-`%TEMP%` or a folder above the project.
+`%TEMP%` or a folder above the project. The scripts write no Python bytecode (`__pycache__`) into the skill's
+`scripts/` folder.
 
 **Errors.** Every script prints `error: <what>` then `fix: <exact command>` (or `ask the user: …`) and never a
 traceback. Bad input exits 2. Do what the `fix:` line says, or ask the user when it says so; never guess.

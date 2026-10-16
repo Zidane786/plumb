@@ -2255,3 +2255,15 @@ def test_build_tokens_never_replaces_a_specimen_it_did_not_write(tmp_path: Path)
     assert build_tokens(p, "--check").returncode == 0
     write(spec, "")  # a build cut short: rewritten
     assert build_tokens(p).returncode == 0 and P.is_specimen_page(read(spec))
+
+
+def test_the_scripts_leave_no_bytecode_in_the_project(tmp_path: Path) -> None:
+    """A JS repo's `git add .` must not pick up __pycache__/*.pyc from the skill's scripts folder."""
+    project = make_project(tmp_path / "p", build=False)
+    shutil.copy(SCRIPTS / "audit.py", project / SKILL_REL / "scripts" / "audit.py")
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+    env.pop("PYTHONPYCACHEPREFIX", None)
+    for script in ("build-tokens.py", "build-prototype.py", "audit.py"):
+        subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script)], cwd=str(project),
+                       capture_output=True, text=True, encoding="utf-8", env=env)
+    assert not list((project / SKILL_REL).rglob("__pycache__")), list((project / SKILL_REL).rglob("*.pyc"))
