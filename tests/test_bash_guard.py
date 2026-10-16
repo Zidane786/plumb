@@ -691,7 +691,8 @@ def test_one_deadline_for_the_whole_command_fits_the_hook_timeout(decide):
     hooks = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]
     shortest = min(h["timeout"] for event in hooks.values() for entry in event for h in entry["hooks"])
     pe = decide.pe
-    assert pe.SHELL_DEADLINE + pe.FALLBACK_BUDGET + 2.0 <= shortest
+    # the deadline, then a fresh look for guarded paths past it, then the fallback after an error, with room to spare
+    assert pe.SHELL_DEADLINE + 2 * pe.FALLBACK_BUDGET + 2.0 <= shortest
     assert pe.H.SHELL_BUDGET < pe.SHELL_DEADLINE and pe.NAMES_BUDGET < pe.SHELL_DEADLINE
 
 
@@ -716,6 +717,78 @@ def test_past_the_command_deadline_the_earlier_reader_decides_or_a_guarded_name_
         if reason:
             actionable(reason)
     pe.H._EFFECTS_CACHE.clear()
+
+
+SLOW_CASES = [  # (cwd: "skill" or "root", command): refused by the earlier build when the target check was slow
+    ("skill", 'for f in $(cat /tmp/l); do echo x > "$f"; done; cat scripts/audit.py'),
+    ("skill", 'echo x > "$(echo scripts)/audit.py"'),
+    ("skill", 'for f in $(cat /tmp/l); do echo x > "scripts/$f"; done'),
+    ("root", 'for f in $(cat /tmp/l); do echo x > "ds/scripts/$f"; done'),
+    ("root", 'for f in $(cat /tmp/l); do echo x > "$f"; done; cat ds/scripts/audit.py'),
+    ("root", 'echo x > "$(echo ds)/scripts/audit.py"'),
+    ("root", f'echo x > "$(echo {SKILL_REL})/scripts/audit.py"'),
+]
+
+
+@pytest.mark.parametrize("slowed", ["target", "text"])
+def test_a_check_that_runs_out_of_the_command_deadline_never_allows(tmp_path, monkeypatch, slowed):
+    """Ruling (re-review I-1): when the command's deadline runs out inside a guarded-path check (simulated: the clock
+    jumps 100 s as the check starts), "ran out of time" stays a refusal, never an allow. The six commands the re-review
+    found (a cwd-relative path, a symlinked folder) and every write the earlier reader refuses stay refused."""
+    proj = make_project(tmp_path, "Slow Proj")
+    (proj / "notes").mkdir(exist_ok=True)
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(proj.parent))
+    monkeypatch.setenv("USERPROFILE", str(proj.parent))
+    d = Decider(proj)
+    pe, H = d.pe, d.pe.H
+    skill = proj / SKILL_REL
+    cases = list(SLOW_CASES)
+    try:
+        (proj / "ds").symlink_to(skill, target_is_directory=True)
+    except (OSError, NotImplementedError):  # Windows without developer mode: the cases through the link are left out
+        cases = [(w, c) for w, c in cases if "ds/" not in c and "echo ds" not in c]
+    monkeypatch.setattr(H, "log_failure", lambda *a, **k: None)
+    real, offset = H.clock, [0.0]
+    monkeypatch.setattr(H, "clock", lambda: real() + offset[0])
+    original = getattr(pe._Guarded, slowed)
+
+    def slow(self, *args):
+        offset[0] += 100.0  # this check is slow: the command's deadline passes inside it
+        return original(self, *args)
+
+    monkeypatch.setattr(pe._Guarded, slowed, slow)
+
+    def refuses(command: str, cwd: str) -> bool:
+        offset[0] = 0.0
+        H._EFFECTS_CACHE.clear()
+        return pe.shell_refusal(H.Project(proj), command, cwd, cwd) is not None
+
+    if slowed == "target":  # the six run through the target check
+        allowed_now = [(w, c) for w, c in cases if not refuses(c, str(skill if w == "skill" else proj))]
+        assert not allowed_now, allowed_now
+    commands = [(cmd, rest[0] if rest else "") for _label, cmd, *rest in CASES.writes(SKILL_REL, str(proj))]
+    commands += [(cmd, "") for _label, cmd in CASES.rr_writes(SKILL_REL, str(proj))]
+    misses = [cmd for cmd, sub in commands
+              if d.old(cmd, sub) and not refuses(cmd, str(proj / sub) if sub else str(proj))]
+    assert not misses, misses
+
+
+def test_the_plain_text_last_resort_names_every_guarded_class(decide):
+    """_guarded_text (when even the guarded-path check failed, and past the deadline): every class the guard guards is
+    named by its text: the skill's [P] scripts and templates, the generated outputs and themes, the tokens file, the
+    web copies, the pages, Kiro's files and the plugin's own files."""
+    pe = decide.pe
+    plugin = pe.H.plugin_root().replace("\\", "/")
+    for command in ("cat x > lib/audit.py", "cp a _plumb.py", "cp a templates/player.js", "rm player.js",
+                    "mv a build-prototype.py", "echo x > web/tokens.css", "echo x > tailwind.tokens.js",
+                    "echo > demo.tokens.json", "echo x > app/globals.css", "echo > ios/App/AppTheme.swift",
+                    "echo > android/AppTheme.kt", "echo > docs/design/tours/a.html", f"echo x > {plugin}/hooks/x.py",
+                    "rm -rf .kiro/hooks", f"echo > {GEN}", f"rm {SKILL_REL}/assets/platforms/README.md"):
+        assert pe._guarded_text(decide.project, command), command
+    for command in ("echo x > notes/a.txt", "cp a b", "rm -rf build/"):
+        assert pe._guarded_text(decide.project, command) is None, command
 
 
 def test_real_paths_shared_across_a_command_match_realpath(H, tmp_path):
