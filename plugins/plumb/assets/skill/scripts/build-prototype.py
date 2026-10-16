@@ -94,8 +94,9 @@ script, in name order, as function (screen, plumb) with the same API. Inlined as
 @import or url() with a remote or //-address exit 2. They are part of every screen's approval hash (with none it is the
 screen file's own hash, so earlier approvals stand): editing one makes those approvals stale, and the build names it.
 A screen file gets the same network check (its <style>, style="" and screen script), plus src / href / srcset / poster
-/ data with an http(s): or // address on link, script, img, iframe, video, audio, source, object and embed: exit 2
-with file:line on the build, --check, --check-tour and --proposal.
+/ data / xlink:href with an http(s): or // address on link, script, img, iframe, video, audio, source, track, object,
+embed, svg image and an image input (whole tag names): exit 2 with file:line on the build, --check, --check-tour and
+--proposal.
 
 Change ids: data-guide="F01 · what changed and why" (a letter and digits, then ·) marks a changed element; the Guide
 panel shows the id as a chip. A proposal lists its ids in <docs>/prototype/proposals/<NAME>/changes.md, one
@@ -441,11 +442,13 @@ def parse_screen(path: Path, rel: str) -> Screen:
 
 # ---------------------------------------------------------------- network loads in a screen file
 
-_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.S)
-_LOAD_TAG = re.compile(r"<(link|script|img|iframe|video|audio|source|object|embed)\b([^>]*)>", re.I)
-_ANY_TAG = re.compile(r"<[a-zA-Z][\w:-]*\b([^>]*)>")
-_LOAD_ATTR = re.compile(r"""\s(src|href|srcset|poster|data)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
-_STYLE_ATTR = re.compile(r"""\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+# A start tag's attributes that load a file: (tag, attribute) as html.parser reads them (names lower-cased, quotes and a
+# ">" inside a quoted value handled), whole tag names only, so a custom element such as <link-card> is not one.
+_LOAD_ATTRS = {
+    "link": ("href",), "script": ("src",), "img": ("src", "srcset"), "iframe": ("src",), "video": ("src", "poster"),
+    "audio": ("src",), "source": ("src", "srcset"), "track": ("src",), "object": ("data",), "embed": ("src",),
+    "image": ("href", "xlink:href"), "input": ("src",),  # <svg><image>; <input type="image">
+}
 _REMOTE_URL = re.compile(r"\s*(?:https?:|//)", re.I)
 _CSS_LOAD_FIX = ("put the rules in this file (an @import is not inlined, and the catalogue loads nothing) and use "
                  "relative or data: URLs")
@@ -454,18 +457,45 @@ _ATTR_LOAD_FIX = ("use a relative or data: URL (a copy of the file in the projec
                   "network")
 
 
-def _blank(text: str, a: int, b: int) -> str:
-    return text[:a] + re.sub(r"[^\n]", " ", text[a:b]) + text[b:]
+class _LoadScanner(HTMLParser):
+    """Every start tag's loading attribute that holds an http(s): or // address, and every style="" attribute that
+    loads (the shared CSS scan), as (line, column, what, fix). Comments, and the text of <script> and <style>, are not
+    tags to the parser."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hits: List[Tuple[int, int, str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        line, col = self.getpos()
+        names = _LOAD_ATTRS.get(tag, ())
+        if tag == "input" and not any(k == "type" and (v or "").strip().lower() == "image" for k, v in attrs):
+            names = ()  # only an image button loads its src
+        for key, value in attrs:
+            if value is None:
+                continue
+            if key in names:
+                urls = value.split(",") if key == "srcset" else [value]
+                remote = next((u.split()[0] for u in urls if u.strip() and _REMOTE_URL.match(u)), None)
+                if remote:
+                    self.hits.append((line, col, remote, _ATTR_LOAD_FIX))
+            elif key == "style":
+                found = _CSS_REMOTE.search(value)
+                if found:
+                    self.hits.append((line, col, found.group(0), _CSS_LOAD_FIX))
+
+    def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        self.handle_starttag(tag, attrs)
 
 
 def screen_network_load(text: str, blocks: List[dict], rel: str) -> Optional[PlumbError]:
     """The first thing in a screen file that loads from the network, as the refusal (exit 2, file:line) the build and
     --check raise, else None: in its <style> blocks and style="" attributes the shared CSS scan (@import, a remote or
     //-address url()), in its <script data-screen-script> the shared JS scan (fetch(, XMLHttpRequest, WebSocket, …;
-    comments and string text do not count), and src / href / srcset / poster / data holding an http(s): or //
-    address on link, script, img, iframe, video, audio, source, object and embed. HTML comments do not count."""
-    hits: List[Tuple[int, str, str]] = []  # (offset, what, fix)
-    masked = _HTML_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    comments and string text do not count), and an http(s): or // address in a loading attribute (_LOAD_ATTRS: src,
+    href, srcset, poster, data, xlink:href on link, script, img, iframe, video, audio, source, track, object, embed,
+    svg image and an image input). HTML comments do not count."""
+    hits: List[Tuple[int, int, str, str]] = []  # (line, column, what, fix)
     for blk in blocks:
         if blk.get("body_end") is None:
             continue
@@ -478,25 +508,18 @@ def screen_network_load(text: str, blocks: List[dict], rel: str) -> Optional[Plu
             found = _JS_NETWORK.search(blank_js(body))
             fix = _JS_LOAD_FIX
         if found:
-            hits.append((a + found.start(), found.group(0), fix))
-        masked = _blank(masked, a, b)
-    for tag in _LOAD_TAG.finditer(masked):
-        for attr in _LOAD_ATTR.finditer(tag.group(2)):
-            value = next(v for v in attr.groups()[1:] if v is not None)
-            urls = value.split(",") if attr.group(1).lower() == "srcset" else [value]
-            remote = next((u.split()[0] for u in urls if u.strip() and _REMOTE_URL.match(u)), None)
-            if remote:
-                hits.append((tag.start(2) + attr.start(), remote, _ATTR_LOAD_FIX))
-    for tag in _ANY_TAG.finditer(masked):
-        for attr in _STYLE_ATTR.finditer(tag.group(1)):
-            value = attr.group(1) if attr.group(1) is not None else attr.group(2)
-            found = _CSS_REMOTE.search(value)
-            if found:
-                hits.append((tag.start(1) + attr.start(), found.group(0), _CSS_LOAD_FIX))
+            off = a + found.start()
+            hits.append((text.count("\n", 0, off) + 1, off - (text.rfind("\n", 0, off) + 1), found.group(0), fix))
+    scanner = _LoadScanner()
+    try:
+        scanner.feed(text)
+        scanner.close()
+    except Exception:  # noqa: BLE001 - parse_screen already parsed the same text; a lenient parser that raises finds nothing
+        pass
+    hits += scanner.hits
     if not hits:
         return None
-    off, what, fix = min(hits)
-    line = text.count("\n", 0, off) + 1
+    line, _col, what, fix = min(hits)
     return _err(f"{rel}:{line}: \"{' '.join(what.split())}\" loads from the network; a screen file must not load "
                 f"anything (the pages open offline)", fix)
 

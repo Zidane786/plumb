@@ -174,8 +174,9 @@ any system exists: each direction is a candidate system, so there Effective HTML
   top app bar and navigation bar, 44 pt / 48 dp targets).
 - **Offline:** nothing loaded from the network: no CDN, no hosted fonts, no remote images (system font stacks or the
   project's own font files). The build checks it: a screen file whose `<style>`, `style=""`, screen script or
-  `src` / `href` / `srcset` / `poster` / `data` (on `link`, `script`, `img`, `iframe`, `video`, `audio`, `source`,
-  `object`, `embed`) loads from an `http(s):` or `//` address exits 2 naming the file and line, as a shared file does.
+  `src` / `href` / `srcset` / `poster` / `data` / `xlink:href` (on `link`, `script`, `img`, `iframe`, `video`, `audio`,
+  `source`, `track`, `object`, `embed`, an SVG `<image>`, an `<input type="image">`) loads from an `http(s):` or `//`
+  address exits 2 naming the file and line, as a shared file does.
 
 ## Variants (`/plumb:prototype`)
 

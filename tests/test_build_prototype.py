@@ -1985,6 +1985,11 @@ var ok = 1;
     ("", '<object data="https://example.com/x.svg"></object>', "", "https://example.com/x.svg"),
     ("", '<iframe src=https://example.com/embed></iframe>', "", "https://example.com/embed"),
     ("", '<p style="background: url(https://example.com/s.png)">x</p>', "", "url(https://"),
+    ("", '<svg viewBox="0 0 10 10"><image href="https://example.com/i.png"/></svg>', "", "https://example.com/i.png"),
+    ("", '<svg viewBox="0 0 10 10"><image xlink:href="//example.com/x.png"/></svg>', "", "//example.com/x.png"),
+    ("", '<input type="image" src="https://example.com/go.png" alt="Go">', "", "https://example.com/go.png"),
+    ("", '<video><track kind="captions" src="https://example.com/c.vtt"></video>', "", "https://example.com/c.vtt"),
+    ("", '<img alt="a > b" src="https://example.com/gt.png">', "", "https://example.com/gt.png"),
     ("", "", 'fetch("https://example.com/api");', "fetch("),
     ("", "", "var x = new XMLHttpRequest();", "XMLHttpRequest"),
 ])
@@ -2007,7 +2012,13 @@ def test_a_screen_file_that_loads_nothing_is_accepted(project: Path) -> None:
         .replace("{html}", '<a href="https://example.com/help">Help</a> <p>See https://example.com</p>\n'
                            '    <!-- <img src="https://example.com/old.png"> -->\n'
                            '    <img src="img/logo.png" srcset="img/logo@2x.png 2x" alt="">\n'
-                           '    <img src="data:image/png;base64,iVBORw0KGgo=" alt="">') \
+                           '    <img src="data:image/png;base64,iVBORw0KGgo=" alt="">\n'
+                           '    <link-card href="https://example.com/doc">Docs</link-card>\n'
+                           '    <video-player src="https://example.com/v.mp4"></video-player>\n'
+                           '    <input type="text" name="url" value="https://example.com" src="https://example.com/x">\n'
+                           '    <img src="img/a.png" alt="x" title="<img src=https://example.com/t.png>">\n'
+                           '    <svg viewBox="0 0 10 10"><image href="img/i.png"/></svg>\n'
+                           '    <p>Upload from http or https, or //server/share.</p>') \
         .replace("{script}", 'var help = "https://example.com/help"; // fetch("https://example.com") later\n'
                              'var tpl = \'<img src="https://example.com/t.png">\';')
     write(project / SCREENS_REL / "net.html", text)
