@@ -18,7 +18,8 @@ In such a project, in this order:
    - one of Plumb's own files: the design-system skill's [P] files (scripts/*.py, templates/*,
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
-     marked, in the project or the home folder): editing them could switch the checks off.
+     marked, in the project or the home folder): editing them could switch the checks off;
+   - a hard link of any of these (the same file under another name: ln, cp -l): that file's refusal.
    Shell commands (shell_refusal): the earlier reader (_shell_legacy.py) decides, and _hooklib's shell reader adds what
    it finds. Refused when the shell reader finds a guarded file among the real write targets: a redirect (>, >>, 1>,
    2>, &>, >|), tee [-a], sed -i / w FILE, perl -i, sort -o, the destination of cp / mv / install / rsync / ln (a
@@ -70,6 +71,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -213,7 +215,41 @@ def _kiro_own(proj: H.Project, shown: str, base: str) -> str:
 
 
 def guard(proj: H.Project, path: str) -> Optional[str]:
-    """The refusal for writing this absolute path by hand, or None."""
+    """The refusal for writing this absolute path by hand, or None. A hard link of a guarded file (the same file under
+    another name: ln, cp -l) gets that file's refusal."""
+    why = _guard_path(proj, path)
+    if why is None:
+        twin = _hard_link_of(proj, path)
+        if twin is not None:
+            why = _guard_path(proj, twin)
+    return why
+
+
+def _hard_link_of(proj: H.Project, path: str) -> Optional[str]:
+    """The guarded file this path is a hard link of (an existing regular file with more than one link, the same device
+    and inode as a guarded file), or None. The guarded files' identities are listed once per hook run."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    if st.st_nlink < 2 or not stat.S_ISREG(st.st_mode):
+        return None
+    index = getattr(proj, "_hard_links", None)
+    if index is None:
+        index = {}
+        for f in guarded_files(proj, proj.root_s):
+            try:
+                g = os.stat(f)
+            except (OSError, ValueError):
+                continue
+            if g.st_nlink > 1 and stat.S_ISREG(g.st_mode):
+                index.setdefault((g.st_dev, g.st_ino), f)
+        proj._hard_links = index  # type: ignore[attr-defined]
+    return index.get((st.st_dev, st.st_ino))
+
+
+def _guard_path(proj: H.Project, path: str) -> Optional[str]:
+    """guard() by the path alone."""
     if H.under(path, H.plugin_root()) is not None:
         return _own(path)
     in_project = H.under(path, proj.root_s)
