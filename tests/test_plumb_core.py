@@ -48,6 +48,11 @@ def test_contrast_is_compared_unrounded_and_shown_floored() -> None:
     assert P.ratio_text(raw) == "4.49"
     assert P.ratio_text(4.57) == "4.57" and P.ratio_text(21.0) == "21.00" and P.ratio_text(4.5) == "4.50"
     assert P.contrast_ratio("#ffffff", "#008580") == raw
+    # just under a minimum never shows as the minimum, however close
+    for value, shown in ((4.4999999996, "4.49"), (2.9999999999999996, "2.99"), (6.999999999, "6.99"),
+                         (4.57, "4.57"), (4.5, "4.50"), (3.0, "3.00"), (20.999999, "20.99")):
+        assert P.ratio_text(value) == shown, (value, P.ratio_text(value))
+        assert P.floor2(value) <= value
 
 
 def test_delta_e() -> None:

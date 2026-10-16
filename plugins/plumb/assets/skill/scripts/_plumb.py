@@ -16,6 +16,7 @@ Token format: W3C Design Tokens (DTCG). Light values are `$value`; dark and brea
 from __future__ import annotations
 
 import bisect
+import decimal
 import errno
 import functools
 import json
@@ -474,8 +475,9 @@ def contrast_ratio(fg_hex: str, bg_hex: str) -> float:
 
 def floor2(ratio: float) -> float:
     """A ratio floored to 2 decimals, for display: 4.49995 is 4.49, never 4.50 (a shown figure never passes when the
-    ratio fails). The x100 value is rounded to 6 places first, so 4.57 (456.99999… in binary) stays 4.57."""
-    return math.floor(round(ratio * 100, 6)) / 100
+    ratio fails, however close). The shortest decimal form of the float (repr) is floored, so 4.57 stays 4.57 and
+    nothing is ever rounded up."""
+    return float(decimal.Decimal(repr(float(ratio))).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_FLOOR))
 
 
 def ratio_text(ratio: float) -> str:
