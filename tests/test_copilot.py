@@ -306,6 +306,7 @@ def test_every_hook_has_a_windows_powershell_command():
             ps = h["powershell"]
             assert '$s = "$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd"' in ps
             assert f"& $s {script}; exit $LASTEXITCODE" in ps
+            assert "if (Test-Path -LiteralPath $s) {" in ps  # [ and ] in the plugin path are not wildcards
             assert ps.rstrip().endswith("exit 0")  # a missing launcher never blocks a tool call (Copilot fails closed)
             assert isinstance(h.get("timeout"), int) and h["timeout"] > 0
 
@@ -342,6 +343,25 @@ def test_windows_powershell_hook_without_plugin_root_never_blocks(tmp_path):
                        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=str(tmp_path),
                        timeout=60)
     assert r.returncode == 0
+
+
+@windows_only
+def test_windows_powershell_hook_runs_from_a_plugin_path_with_brackets(tmp_path):
+    """Test-Path reads [ and ] as wildcards unless given -LiteralPath: a plugin installed under such a folder would
+    silently skip every hook on Windows."""
+    plugin = tmp_path / "plugins [1.0.0]" / "plumb"
+    for part in ("hooks", ".claude-plugin", "assets/skill/scripts"):
+        shutil.copytree(str(PLUGIN / part), str(plugin / part), ignore=shutil.ignore_patterns("__pycache__"))
+    proj = make_project(tmp_path)
+    (h,) = _hook_entries()["PreToolUse"]
+    env = hook_env(tmp_path, copilot=True, extra={"CLAUDE_PLUGIN_ROOT": str(plugin)})
+    import subprocess
+    stdin = payload("claude", "write", CWD=str(proj), FILE=str(proj / "app/globals.css"), CONTENT="x")
+    r = subprocess.run([str(POWERSHELL), "-NoProfile", "-NonInteractive", "-Command", h["powershell"]], input=stdin,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, cwd=str(proj),
+                       timeout=60)
+    r.copilot = True
+    assert denied(r).startswith("error: app/globals.css is generated")
 
 
 @windows_only
