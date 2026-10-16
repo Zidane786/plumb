@@ -1157,8 +1157,8 @@ Three hooks run in Claude Code and Copilot CLI (and Kiro, pending its live check
 `PLUMB.md`. They run **only the plugin's own installed scripts**, never the copies inside your project, so a cloned
 repository can't get code run just by containing a `PLUMB.md` (see `SECURITY.md`, "Trust boundary"). They **fail open**:
 no Python, a broken file or unreadable input never blocks your work (at most one note); a half-updated plugin folder
-(its `hooks/_hooklib.py` does not load) prints one line and exits 0. They read only regular files from the project,
-each up to 8 MB, and never wait on one: a tokens file that is a FIFO or a link to a device skips the checks that read
+(its `hooks/_hooklib.py` does not load) prints one line and exits 0. Their own reads take only regular files from the
+project, each up to 8 MB, and never wait on one: a tokens file that is a FIFO or a link to a device skips the checks that read
 it (session start says `tokens not checked`; the guard stays on).
 
 ### At session start
