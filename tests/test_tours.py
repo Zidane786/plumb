@@ -3413,3 +3413,12 @@ def test_a_hand_written_page_where_a_tour_page_goes_is_never_replaced(tmp_path: 
     stem = DEMO_PAGE.rpartition("/")[2][: -len(".html")]
     assert_refusal(run(p), DEMO_PAGE, "not Plumb's", f"mv {DEMO_PAGE} {DOCS}/{stem}.before-plumb.html")
     assert read(p / DEMO_PAGE) == mine
+
+
+def test_an_empty_tour_page_with_no_tour_is_removed(project: Path) -> None:
+    """A build cut short can leave an empty page in tours/; with no tour file it is removed like any of Plumb's pages."""
+    stray = project / PAGES_REL / "gone.html"
+    write(stray, "")
+    r = run(project)
+    assert r.returncode == 0, r.stderr
+    assert not stray.exists() and f"removed {PAGES_REL}/gone.html" in r.stdout

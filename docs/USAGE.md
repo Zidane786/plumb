@@ -688,7 +688,7 @@ healthy; shows the diff. You commit.
   them: the files can't tell which build is newer, so refreshing is recommended unless a teammate refreshed the
   project more recently. Then it rebuilds and checks as usual.
 - **A page in the way:** if the rebuild would write a page that something else made (for example your own
-  `app.html`), it stops before writing anything and offers to move it to `app.before-plumb.html` (or the next free
+  `app.html` or `specimen.html`), it stops before writing anything and offers to move it to `app.before-plumb.html` (or the next free
   `-2`, `-3` name; a tour page goes one folder up); nothing is replaced without your yes.
 - **Something went wrong:** it restores only Plumb's own files, one path at a time, from what the dry run listed, and
   asks before deleting anything new.
@@ -823,8 +823,8 @@ Every Plumb project has **one main prototype of the whole product**, kept in ste
   screens' own links, buttons and theme toggle work; the theme follows your system until a screen's toggle picks one,
   and the browser remembers it. A sidebar marked `data-app-sidebar` stays in view while a long page scrolls, and a
   dialog a click opens is scrolled into view. **prototype.html to review, app.html to demo.** If an `app.html` (or any
-  page the build writes) is already there and Plumb didn't make it, the build stops and asks before anything is
-  replaced.
+  page the build writes, `specimen.html` included) is already there and Plumb didn't make it, the build stops and
+  asks before anything is replaced.
 - **`docs/design/screens.html`**: the catalogue. A sidebar, and every screen in every state (loading, empty, error,
   success, disabled, long text, zero, offline where relevant) in **light and dark side by side**, plus every control
   state (default, hover, focus, pressed, disabled, loading). Each screen is stored in it once and drawn in every

@@ -898,6 +898,8 @@ def files_note(project: Project) -> Optional[str]:
     build of the same version, or a hand edit. None otherwise, for a linked repo, or when anything cannot be read."""
     if project.linked or not project.skill_ok or project.version is None or project.version != plugin_version():
         return None
+    if under(os.path.realpath(str(project.skill_dir)), os.path.realpath(project.root_s)) is None:
+        return None  # a skill outside the project: version.py and /plumb:upgrade leave it alone too
     src = Path(PLUGIN_SCRIPTS).parent
     try:
         rels = [f"scripts/{f.name}" for f in sorted((src / "scripts").glob("*.py")) if f.is_file()]

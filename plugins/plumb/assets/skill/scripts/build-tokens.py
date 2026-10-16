@@ -2807,6 +2807,33 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
     return out
 
 
+def specimen_in_the_way(doc: dict, root: Path, files: Dict[Path, str]) -> Optional[Path]:
+    """The specimen page when one is there that this script did not write (another tool's, or a hand-written one): it
+    is never replaced. An empty page (a build cut short) or one that cannot be read is not in the way."""
+    path = specimen_path(doc, root)
+    if path not in files or not path.is_file():
+        return None
+    try:
+        head = path.read_bytes()[:P.PAGE_HEAD_BYTES].decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    return None if P.is_specimen_page(head) else path
+
+
+def _free_name(path: Path, suffix: str) -> Path:
+    """<name><suffix> next to path, or <name>-2<suffix>, -3 … when that is taken."""
+    target, n = path.with_name(path.stem + suffix), 1
+    while target.exists():
+        n += 1
+        target = path.with_name(f"{path.stem}{suffix[:-len('.html')]}-{n}.html")
+    return target
+
+
+def _q(text: str) -> str:
+    """A word for a printed command: as it is when plain, else double-quoted (with no ", $ or backtick left in it)."""
+    return text if re.fullmatch(r"[\w./:@%+=,-]+", text) else '"' + re.sub(r'["`$]', "", text) + '"'
+
+
 def specimen_path(doc: dict, root: Path) -> Path:
     docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
     return safe_copy_path(root, f"{str(docs).rstrip('/')}/specimen.html", "$extensions.plumb.docs_dir")
@@ -3285,6 +3312,17 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    foreign = specimen_in_the_way(doc, root, files)
+    if foreign:
+        move = _free_name(foreign, ".before-plumb.html")
+        page, target = rel(foreign, root), rel(move, root)
+        if args.check:
+            print(f"not Plumb's: {page} (another tool's page or one written by hand: the build would replace it)")
+            print(f"fix: ask the user before moving it out of the way (mv {_q(page)} {_q(target)}), then run {command}")
+            return 1
+        raise _err(f"{page} is not Plumb's (not written by build-tokens.py), and this build writes that path: nothing "
+                   f"was written", f"ask the user before moving it out of the way (mv {_q(page)} {_q(target)}), then "
+                   f"run {command} again")
     stale = []
     for path, text in files.items():
         try:

@@ -2482,7 +2482,7 @@ def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
             head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
         except OSError:
             continue
-        if head.strip() and P.is_prototype_page(head):
+        if P.is_prototype_page(head):  # an empty one too: what a build cut short leaves
             found.append(path)
     return found
 

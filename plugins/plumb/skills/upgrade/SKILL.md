@@ -53,7 +53,9 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
      or a `--check` reports a problem, offer to fix it. Otherwise stop.
    - `same` with `files_differ` → another build of the same version, or a hand edit: Plumb's own files differ from
      the plugin's, and the files cannot tell which is newer. Gather the evidence: `git log -1 --format=%cs -- <file>`
-     for each listed file, `git status --short` on them (a local edit), and `PLUMB.md`'s latest "Plumb updates" line.
+     for each listed file, `git status --short` on them (a local edit), `PLUMB.md`'s latest "Plumb updates" line, and
+     the plugin's own date: `git -C "<ROOT>" log -1 --format=%cs` when `<ROOT>` is a git checkout (a plugin loaded
+     from a clone), else the modified date of `<ROOT>/.claude-plugin/plugin.json` (when it was installed or updated).
      Skip step 1 and step 3 (no version in between) and run the rest in order: item 6 below, then step 2, whose
      step-3 question is the only ask here: put the `files_differ` list, that evidence and the dry-run list in it, with
      **Refresh from this plugin** recommended unless the evidence shows the project's copy is newer (a teammate's
