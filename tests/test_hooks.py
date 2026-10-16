@@ -2136,3 +2136,12 @@ def test_files_note_leaves_a_skill_outside_the_project_alone(launcher, tmp_path,
     text = read(proj / "PLUMB.md")
     write(proj / "PLUMB.md", re.sub(r"(?m)^Design system:.*$", f"Design system: `{outside.as_posix()}/`", text))
     assert "of Plumb's files in this project differ" not in context(session_start(launcher, tmp_path, proj))
+
+
+def test_files_note_follows_version_py_for_an_absolute_skill_path(launcher, tmp_path, proj):
+    """An absolute Design system: path, even one inside the project, is not compared by version.py: no note either."""
+    player = proj / SKILL_REL / "templates/player.js"
+    write(player, read(player) + "// another build\n")
+    text = read(proj / "PLUMB.md")
+    write(proj / "PLUMB.md", re.sub(r"(?m)^Design system:.*$", f"Design system: `{(proj / SKILL_REL).as_posix()}/`", text))
+    assert "of Plumb's files in this project differ" not in context(session_start(launcher, tmp_path, proj))

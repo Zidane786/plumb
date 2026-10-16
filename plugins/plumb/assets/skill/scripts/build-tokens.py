@@ -2829,11 +2829,6 @@ def _free_name(path: Path, suffix: str) -> Path:
     return target
 
 
-def _q(text: str) -> str:
-    """A word for a printed command: as it is when plain, else double-quoted (with no ", $ or backtick left in it)."""
-    return text if re.fullmatch(r"[\w./:@%+=,-]+", text) else '"' + re.sub(r'["`$]', "", text) + '"'
-
-
 def specimen_path(doc: dict, root: Path) -> Path:
     docs = P.plumb_settings(doc).get("docs_dir") or "docs/design"
     return safe_copy_path(root, f"{str(docs).rstrip('/')}/specimen.html", "$extensions.plumb.docs_dir")
@@ -3312,17 +3307,17 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)
     command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    # A specimen.html this script did not write is never replaced: everything else is built, the specimen is left as it
+    # is, and the build says so (--check: exit 1).
     foreign = specimen_in_the_way(doc, root, files)
+    foreign_lines: List[str] = []
     if foreign:
-        move = _free_name(foreign, ".before-plumb.html")
-        page, target = rel(foreign, root), rel(move, root)
-        if args.check:
-            print(f"not Plumb's: {page} (another tool's page or one written by hand: the build would replace it)")
-            print(f"fix: ask the user before moving it out of the way (mv {_q(page)} {_q(target)}), then run {command}")
-            return 1
-        raise _err(f"{page} is not Plumb's (not written by build-tokens.py), and this build writes that path: nothing "
-                   f"was written", f"ask the user before moving it out of the way (mv {_q(page)} {_q(target)}), then "
-                   f"run {command} again")
+        files.pop(foreign)
+        page, target = rel(foreign, root), rel(_free_name(foreign, ".before-plumb.html"), root)
+        foreign_lines = [f"{page} is not Plumb's (not written by build-tokens.py): left as it is, so the specimen was not "
+                         f"updated",
+                         f"fix: ask the user before moving it out of the way (mv {P.shell_word(page)} "
+                         f"{P.shell_word(target)}), then run {command}"]
     stale = []
     for path, text in files.items():
         try:
@@ -3342,7 +3337,11 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if not args.check:
         for note in notes:
             print(note, file=sys.stderr)
+        if foreign_lines:
+            print(f"warning: {foreign_lines[0]}\n{foreign_lines[1]}", file=sys.stderr)
     if args.check:
+        if foreign_lines:
+            print(f"not Plumb's: {foreign_lines[0]}\n{foreign_lines[1]}")
         if stale:
             prototype_pages = set(prototype_page_outputs(doc, root))  # generated pages that carry the plumb:theme region
             for path in stale:
@@ -3352,6 +3351,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
                 if path in stale:
                     print_first_block(path, files[path], root)
             print(f"fix: {command}")
+            return 1
+        if foreign_lines:
             return 1
         print(f"ok: {len(files)} generated files are up to date")
     return 0

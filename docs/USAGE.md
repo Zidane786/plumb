@@ -823,8 +823,9 @@ Every Plumb project has **one main prototype of the whole product**, kept in ste
   screens' own links, buttons and theme toggle work; the theme follows your system until a screen's toggle picks one,
   and the browser remembers it. A sidebar marked `data-app-sidebar` stays in view while a long page scrolls, and a
   dialog a click opens is scrolled into view. **prototype.html to review, app.html to demo.** If an `app.html` (or any
-  page the build writes, `specimen.html` included) is already there and Plumb didn't make it, the build stops and
-  asks before anything is replaced.
+  page the build writes) is already there and Plumb didn't make it, the build stops and asks before anything is
+  replaced. A `specimen.html` Plumb didn't make is left as it is too: the tokens build writes everything else and
+  says how to move it out of the way.
 - **`docs/design/screens.html`**: the catalogue. A sidebar, and every screen in every state (loading, empty, error,
   success, disabled, long text, zero, offline where relevant) in **light and dark side by side**, plus every control
   state (default, hover, focus, pressed, disabled, loading). Each screen is stored in it once and drawn in every

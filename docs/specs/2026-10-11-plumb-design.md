@@ -576,7 +576,8 @@ file's last commit, a local edit, the latest "Plumb updates" line) and asks befo
 which build is newer, so the user decides. **A page in the way:** `build-prototype.py` never replaces a page at one of
 its paths that it did not write (no header of its own: another tool's page or a hand-written one); it stops before
 writing anything and names a free `<name>.before-plumb.html` to move it to, after the user's yes; `build-tokens.py`
-does the same for `specimen.html`.
+leaves a `specimen.html` it did not write as it is (everything else is built; a `warning:` and a `fix:` say how to move
+it; `--check` exits 1).
 
 ### 3.9 `/plumb:status`
 

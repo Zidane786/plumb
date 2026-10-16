@@ -103,7 +103,9 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    and its `fix:`; never hand-edit a generated file or Plumb's scripts to make it pass. `error: <page> is not Plumb's`
    (a page the new build writes, e.g. `app.html`, is already there, made by another tool or by hand) → ask the user
    whether to move it to the `.before-plumb.html` name the fix gives (recommended: nothing is lost) or keep it and skip
-   the prototype pages for now; move it only on their yes, then build again.
+   the prototype pages for now; move it only on their yes, then build again. The tokens build's `warning: <docs>/
+   specimen.html is not Plumb's` (everything else was built; the specimen was left as it is) → the same question for the
+   specimen.
 5. **Rolling back** (only if something failed and the user agrees): restore Plumb's own files only, one path at a
    time, from the `would write:` list of the dry run:
    - a path git knows (`git ls-files --error-unmatch <path>` exits 0): `git checkout -- <path>`;

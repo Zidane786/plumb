@@ -57,7 +57,7 @@
   gets one too, linked from the proposal index next to its prototype. The prototype's **Open as app** link opens it on
   the screen and state you are looking at. A page already at one of the build's paths that Plumb didn't write (your own
   `app.html`, say) is never replaced: the build stops, names it and says how to move it out of the way. The tokens
-  build does the same for a `specimen.html` it did not write.
+  build leaves a `specimen.html` it did not write as it is too (it builds everything else and says how to move it).
 - **`/plumb:prototype`**: 2–3 variants of a new screen, flow or interaction, each as a clickable prototype and as
   every state in light and dark, side by side on one page (`build-prototype.py --proposal <name>`); the one you pick
   joins the main prototype with a default walkthrough, and your approval is recorded per screen.

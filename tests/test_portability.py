@@ -83,3 +83,14 @@ def test_text_io_and_subprocess_name_an_encoding(path: Path) -> None:
             if t is not None and isinstance(t.value, ast.Constant) and t.value.value is True and not kw(c, "encoding"):
                 bad.append(f"line {c.lineno}: subprocess.{name}(text=True) without encoding=")
     assert not bad, f"{path.name}:\n  " + "\n  ".join(bad)
+
+
+@pytest.mark.parametrize("path", SCRIPTS, ids=lambda p: str(p.relative_to(REPO)))
+def test_no_top_level_name_is_defined_twice(path: Path) -> None:
+    """A second top-level def or class of the same name silently replaces the first for every caller (a quoting helper
+    added for one message once broke the Swift and Kotlin themes that way)."""
+    seen: dict = {}
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            assert node.name not in seen, f"{node.name} defined at lines {seen[node.name]} and {node.lineno}"
+            seen[node.name] = node.lineno

@@ -2503,12 +2503,7 @@ def not_plumbs(paths, root: Path, rel) -> List[str]:
     return found
 
 
-_PLAIN_ARG = re.compile(r"[\w./:@%+=,-]+")
-
-
-def _arg(text: str) -> str:
-    """A word for a printed command: as it is when plain, else double-quoted (with no ", $ or backtick left in it)."""
-    return text if _PLAIN_ARG.fullmatch(text) else '"' + re.sub(r'["`$]', "", text) + '"'
+_arg = P.shell_word
 
 
 def _move_targets(found: List[str], root: Path) -> List[str]:
