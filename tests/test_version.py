@@ -4,6 +4,7 @@ upgrade files in between (upgrades/<version>.md, compared as numbers)."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -216,6 +217,20 @@ def test_no_design_system_yet_linked_or_odd_paths_compare_nothing(tmp_path: Path
     nodesign = tmp_path / "nodesign"
     write(nodesign / "PLUMB.md", "<!-- plumb v1.2.0 · written by /plumb:init, safe to edit values -->\n# Plumb\n")
     assert as_json(run("--project", str(nodesign), "--plugin", str(plugin), "--json"))["files_differ"] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires POSIX: symlink")
+def test_a_skill_linked_from_outside_the_project_compares_nothing(tmp_path: Path, plugin: Path) -> None:
+    """As the session-start line: a skill folder whose real path is outside the project is not compared."""
+    plugin_files(plugin)
+    p = project(tmp_path, "1.2.0")
+    outside = tmp_path / "shared-skill"
+    write(outside / "scripts/audit.py", "other\n")
+    (p / SKILL).parent.mkdir(parents=True, exist_ok=True)
+    (p / SKILL).symlink_to(outside, target_is_directory=True)
+    assert as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))["files_differ"] == []
+    write(p / "PLUMB.md", plumb_md("1.2.0").replace(f"Design system: `{SKILL}/`", "Design system: `~/skill/`"))
+    assert as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))["files_differ"] == []
 
 
 def _scaffold(root: Path, *extra: str):

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -172,13 +173,17 @@ def plumb_files_differ(project: Path, plugin: Path) -> List[str]:
     if keys.get("Role", "").strip().lower().startswith("linked"):
         return []
     rel = keys.get("Design system", "").strip().replace("\\", "/")
-    if rel.startswith("/") or re.match(r"^[A-Za-z]:", rel) or ".." in rel.split("/"):
+    if rel.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", rel) or ".." in rel.split("/"):
         return []  # only a skill inside the project is compared
     rel = rel.strip("/")
     if not rel:
         return []
     skill, src = root / rel, plugin / "assets" / "skill"
     if not skill.is_dir() or not src.is_dir():
+        return []
+    try:  # a skill folder linked from outside the project is not compared, as the session-start line (files_note)
+        Path(os.path.realpath(skill)).relative_to(Path(os.path.realpath(root)))
+    except ValueError:
         return []
     return [f"{rel}/{r}" for r in plumb_file_rels(src) if not _same_text(skill / r, src / r)]
 
