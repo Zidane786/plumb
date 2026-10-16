@@ -421,6 +421,10 @@ def test_a_variant_has_its_own_shared_files(proposal: Path) -> None:
     assert "2 screens" in read(proposal / PROPOSALS / NAME / "index.html")  # _shared is not a screen
     write(shared / "calm.js", 'fetch("/x");\n')
     assert_refusal(run(proposal, "--proposal", NAME), "a-calm/screens/_shared/calm.js:1", "fetch(")
+    write(shared / "calm.js", 'screen.setAttribute("data-calm", plumb.screen);\n')
+    screen = next((proposal / PROPOSALS / NAME / "a-calm/screens").glob("*.html"))
+    write(screen, read(screen).replace("</section>", '<img src="https://example.com/x.png" alt=""></section>', 1))
+    assert_refusal(run(proposal, "--proposal", NAME), f"a-calm/screens/{screen.name}:", "https://example.com/x.png")
 
 
 @pytest.mark.parametrize("width", [1280, 390])

@@ -93,6 +93,9 @@ script, in name order, as function (screen, plumb) with the same API. Inlined as
 "</style" in a CSS file, fetch( / new XMLHttpRequest / WebSocket / EventSource / sendBeacon( / import, and in CSS
 @import or url() with a remote or //-address exit 2. They are part of every screen's approval hash (with none it is the
 screen file's own hash, so earlier approvals stand): editing one makes those approvals stale, and the build names it.
+A screen file gets the same network check (its <style>, style="" and screen script), plus src / href / srcset / poster
+/ data with an http(s): or // address on link, script, img, iframe, video, audio, source, object and embed: exit 2
+with file:line on the build, --check, --check-tour and --proposal.
 
 Change ids: data-guide="F01 · what changed and why" (a letter and digits, then ·) marks a changed element; the Guide
 panel shows the id as a chip. A proposal lists its ids in <docs>/prototype/proposals/<NAME>/changes.md, one
@@ -238,6 +241,7 @@ class Screen:
         self.styles: List[str] = []
         self.scripts: List[str] = []
         self.warnings: List[str] = []
+        self.problem: Optional[PlumbError] = None  # a network load in it (check_screens raises it), as for shared files
         self._tree: Optional["_Node"] = None
 
     def tree(self) -> "_Node":
@@ -391,6 +395,7 @@ def parse_screen(path: Path, rel: str) -> Screen:
     if parser.stray:
         line, what = parser.stray[0]
         raise _err(f"{rel}:{line}: {what} is outside the screen section", "move it inside <section data-screen> (or delete it)")
+    screen.problem = screen_network_load(text, parser.blocks, rel)
     start, end = found["start"], found["end"]
     cut: List[Tuple[int, int]] = []
     for blk in parser.blocks:
@@ -430,6 +435,75 @@ def parse_screen(path: Path, rel: str) -> Screen:
         marks.append((moved(off), name.strip()))
     screen.state_marks = marks
     return screen
+
+
+# ---------------------------------------------------------------- network loads in a screen file
+
+_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.S)
+_LOAD_TAG = re.compile(r"<(link|script|img|iframe|video|audio|source|object|embed)\b([^>]*)>", re.I)
+_ANY_TAG = re.compile(r"<[a-zA-Z][\w:-]*\b([^>]*)>")
+_LOAD_ATTR = re.compile(r"""\s(src|href|srcset|poster|data)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
+_STYLE_ATTR = re.compile(r"""\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.I)
+_REMOTE_URL = re.compile(r"\s*(?:https?:|//)", re.I)
+_CSS_LOAD_FIX = ("put the rules in this file (an @import is not inlined, and the catalogue loads nothing) and use "
+                 "relative or data: URLs")
+_JS_LOAD_FIX = "keep the data in the script (a constant or JSON in the file): the pages load nothing from the network"
+_ATTR_LOAD_FIX = ("use a relative or data: URL (a copy of the file in the project): the pages load nothing from the "
+                  "network")
+
+
+def _blank(text: str, a: int, b: int) -> str:
+    return text[:a] + re.sub(r"[^\n]", " ", text[a:b]) + text[b:]
+
+
+def screen_network_load(text: str, blocks: List[dict], rel: str) -> Optional[PlumbError]:
+    """The first thing in a screen file that loads from the network, as the refusal (exit 2, file:line) the build and
+    --check raise, else None: in its <style> blocks and style="" attributes the shared CSS scan (@import, a remote or
+    //-address url()), in its <script data-screen-script> the shared JS scan (fetch(, XMLHttpRequest, WebSocket, …;
+    comments and string text do not count), and src / href / srcset / poster / data holding an http(s): or //
+    address on link, script, img, iframe, video, audio, source, object and embed. HTML comments do not count."""
+    hits: List[Tuple[int, str, str]] = []  # (offset, what, fix)
+    masked = _HTML_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    for blk in blocks:
+        if blk.get("body_end") is None:
+            continue
+        a, b = blk["body"], blk["body_end"]
+        body = text[a:b]
+        if blk["tag"] == "style":
+            found = _CSS_REMOTE.search(_CSS_COMMENT.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), body))
+            fix = _CSS_LOAD_FIX
+        else:
+            found = _JS_NETWORK.search(blank_js(body))
+            fix = _JS_LOAD_FIX
+        if found:
+            hits.append((a + found.start(), found.group(0), fix))
+        masked = _blank(masked, a, b)
+    for tag in _LOAD_TAG.finditer(masked):
+        for attr in _LOAD_ATTR.finditer(tag.group(2)):
+            value = next(v for v in attr.groups()[1:] if v is not None)
+            urls = value.split(",") if attr.group(1).lower() == "srcset" else [value]
+            remote = next((u.split()[0] for u in urls if u.strip() and _REMOTE_URL.match(u)), None)
+            if remote:
+                hits.append((tag.start(2) + attr.start(), remote, _ATTR_LOAD_FIX))
+    for tag in _ANY_TAG.finditer(masked):
+        for attr in _STYLE_ATTR.finditer(tag.group(1)):
+            value = attr.group(1) if attr.group(1) is not None else attr.group(2)
+            found = _CSS_REMOTE.search(value)
+            if found:
+                hits.append((tag.start(1) + attr.start(), found.group(0), _CSS_LOAD_FIX))
+    if not hits:
+        return None
+    off, what, fix = min(hits)
+    line = text.count("\n", 0, off) + 1
+    return _err(f"{rel}:{line}: \"{' '.join(what.split())}\" loads from the network; a screen file must not load "
+                f"anything (the pages open offline)", fix)
+
+
+def check_screens(screens: List[Screen]) -> None:
+    """Refuse (exit 2) the first screen file that loads from the network (screen_network_load)."""
+    for s in screens:
+        if s.problem is not None:
+            raise s.problem
 
 
 # ---------------------------------------------------------------- screen CSS scope
@@ -2722,6 +2796,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         shared = load_shared(screens_dir, root, rel)
         check_shared(shared)
         screens = load_screens(screens_dir, root, rel, shared)
+        check_screens(screens)
         variant_screens += screens
         shared_warnings += shared_warning_lines(shared)
         for s in screens:
@@ -2912,6 +2987,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     changes_path = docs / "prototype" / "changes.md"
     if args.check_tour is not None:
         check_shared(shared)
+        check_screens(screens)
         return check_tour_file(args.check_tour, root, docs, screens, rel, folder, command, shared)
     tours_folder, pages_folder = docs / "prototype" / "tours", docs / "tours"
     mutating = bool(args.map or args.approve or args.synced)
@@ -2920,6 +2996,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     id_warnings: List[str] = []
     try:
         check_shared(shared)
+        check_screens(screens)
         changes = read_changes(changes_path, root, rel)
         # change ids in the main screens are checked only when the prototype keeps a change list
         if changes is not None:
@@ -2928,7 +3005,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         if not mutating:
             raise
         # like a broken tour: --map / --approve / --synced still record the map; the pages wait for the fix
-        tour_error, blocked_by = exc, "a shared file or a change id is refused"
+        tour_error, blocked_by = exc, "a shared file, a screen file or a change id is refused"
     try:
         tours = load_tours(tours_folder, screens, root, rel, rel(folder, root) + "/")
     except PlumbError as exc:

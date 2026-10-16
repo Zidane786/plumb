@@ -254,6 +254,9 @@
   most half a second, else leaving its line out), so hooks failing at the same moment never lose or interleave lines,
   also on Windows, where appends from several processes are not atomic.
 - Nothing is installed or downloaded, and no network call is made at run time.
+- Every screen file is checked before it is inlined, as the shared files are: a hosted font `<link>`, a remote
+  `<img>`, `<iframe>`, `<video>` or `<source>`, an `@import` or remote `url()` in its styles, or a `fetch(` in its
+  script exits 2 naming the file and line, so a generated page never loads anything from the network.
 - `audit.py --html <path>` writes only its own report: an existing page it did not write (`--html app/landing.html`,
   meaning "audit this page") is refused, exit 2, and keeps every byte.
 - The scripts read only regular files from a project, each up to 8 MB (pages and screen files up to 256 MB): a FIFO,

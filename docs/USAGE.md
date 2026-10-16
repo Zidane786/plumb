@@ -1464,7 +1464,10 @@ in the project sees it. (Enforcing it on other tools is outside Plumb; an instal
 
 Every page Plumb generates (prototype, screens, tours, specimen, reports, directions) loads nothing from the network:
 no CDN, no hosted web fonts, no remote images. A project font is used from the project's own font files; otherwise a
-system font stack. Every page opens from disk, offline, on any machine.
+system font stack. Every page opens from disk, offline, on any machine. `build-prototype.py` checks every screen file
+and shared file before it is inlined: a hosted font `<link>`, a remote `<img src>`, `@import`, a remote `url()` or a
+`fetch(` in a screen script exits 2 naming the file and line (copy the file into the project and use a relative or
+`data:` URL).
 
 ### Screenshots without installing anything
 

@@ -1935,6 +1935,63 @@ def test_shared_files_that_load_nothing_are_accepted(project: Path) -> None:
     assert "warning" not in r.stderr, r.stderr
 
 
+NET_SCREEN = """<style>
+[data-screen="net"] h2 { margin: 0; }
+{style}
+</style>
+<section data-screen="net" data-title="Net">
+  <div data-state="ready">
+    <h2>Net</h2>
+    {html}
+  </div>
+</section>
+<script data-screen-script>
+var ok = 1;
+{script}
+</script>
+"""
+
+
+@pytest.mark.parametrize("style, html, script, needle", [
+    ('@import url("https://fonts.example.com/css?family=X");', "", "", "@import"),
+    ('[data-screen="net"] { background: url(https://example.com/bg.png); }', "", "", "url(https://"),
+    ("", '<link rel="stylesheet" href="https://fonts.example.com/css">', "", "https://fonts.example.com/css"),
+    ("", '<img src="//cdn.example.com/x.png" alt="">', "", "//cdn.example.com/x.png"),
+    ("", '<img srcset="a.png 1x, https://example.com/b.png 2x" alt="">', "", "https://example.com/b.png"),
+    ("", "<video poster='https://example.com/p.jpg'></video>", "", "https://example.com/p.jpg"),
+    ("", '<object data="https://example.com/x.svg"></object>', "", "https://example.com/x.svg"),
+    ("", '<iframe src=https://example.com/embed></iframe>', "", "https://example.com/embed"),
+    ("", '<p style="background: url(https://example.com/s.png)">x</p>', "", "url(https://"),
+    ("", "", 'fetch("https://example.com/api");', "fetch("),
+    ("", "", "var x = new XMLHttpRequest();", "XMLHttpRequest"),
+])
+def test_a_screen_file_that_loads_from_the_network_is_refused(project: Path, style, html, script, needle) -> None:
+    text = NET_SCREEN.replace("{style}", style).replace("{html}", html).replace("{script}", script)
+    write(project / SCREENS_REL / "net.html", text)
+    line = next(i for i, l in enumerate(text.split("\n"), 1) if (style or html or script) in l)
+    for args in ((), ("--check",)):
+        r = run(project, *args)
+        assert_refusal(r, f"{SCREENS_REL}/net.html:{line}", needle, "load")
+        assert "nothing from the network" in r.stderr or "relative or data: URL" in r.stderr, r.stderr
+    for page in (PROTO_REL, APP_REL, CATALOGUE_REL):
+        assert "example.com" not in (project / page).read_text(encoding="utf-8")
+
+
+def test_a_screen_file_that_loads_nothing_is_accepted(project: Path) -> None:
+    """False positives: an <a href> to a site, a URL in text, a comment or a string, relative and data: sources."""
+    text = NET_SCREEN.replace("{style}", '[data-screen="net"] .i { background: url(img/bg.png), url("data:image/svg+xml,'
+                                         '%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E"); }') \
+        .replace("{html}", '<a href="https://example.com/help">Help</a> <p>See https://example.com</p>\n'
+                           '    <!-- <img src="https://example.com/old.png"> -->\n'
+                           '    <img src="img/logo.png" srcset="img/logo@2x.png 2x" alt="">\n'
+                           '    <img src="data:image/png;base64,iVBORw0KGgo=" alt="">') \
+        .replace("{script}", 'var help = "https://example.com/help"; // fetch("https://example.com") later\n'
+                             'var tpl = \'<img src="https://example.com/t.png">\';')
+    write(project / SCREENS_REL / "net.html", text)
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
 def test_unscoped_shared_css_warns(project: Path) -> None:
     write(project / SHARED_REL / "loose.css", '.card { padding: 4px; }\n[data-screen="home"] h2, button { margin: 0; }\n'
                                               '@media (min-width: 40rem) { [data-screen] .x { color: red; } }\n')
@@ -1964,7 +2021,7 @@ def test_a_refused_shared_file_or_id_does_not_block_the_map(project: Path, tmp_p
     r = run(project, "--approve", "booking", env=clean_env(tmp_path, USER="Ana", USERNAME="Ana"))
     assert r.returncode == 0, r.stderr
     assert entry(project, "booking")["approved"]["by"] == "Ana"
-    assert "warning: the pages were not rebuilt because a shared file or a change id is refused" in r.stderr
+    assert "warning: the pages were not rebuilt because a shared file, a screen file or a change id is refused" in r.stderr
     assert needle in r.stderr and "\nfix: " in r.stderr and r.stderr.count("then run") == 1, r.stderr
     assert read(project / PROTO_REL) == before
     assert_refusal(run(project), needle)
