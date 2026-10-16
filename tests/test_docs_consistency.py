@@ -1057,6 +1057,14 @@ def test_every_feedback_pointer_says_plumb_mistakes(path: Path) -> None:
             f"{path.relative_to(REPO)}: a /plumb:feedback pointer must say 'Plumb mistakes': ...{near}..."
 
 
+def test_the_project_skill_template_never_lets_an_agent_add_tokens_alone() -> None:
+    """The project's design-system skill is read before every UI change: a value with no token goes to the user and
+    /plumb:update (which records the decision), never straight into the tokens file."""
+    text = _flat(PLUGIN / "assets/skill/SKILL.md.tmpl")
+    assert "stop and tell the user" in text and "/plumb:update" in text
+    assert "edit only here" not in text and "a missing value goes into the tokens file" not in text  # _flat lowercases
+
+
 def test_the_project_skill_template_points_to_feedback() -> None:
     # Ruling (review): everyday UI work reads the project's own design-system skill; one line, the same wording.
     assert FEEDBACK_POINTER in _flat(PLUGIN / "assets/skill/SKILL.md.tmpl")

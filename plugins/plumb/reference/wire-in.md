@@ -68,7 +68,8 @@ Ask only when `<root>/.kiro/` exists or the user mentions Kiro: "Write `.kiro/st
 design system on every task?" On yes write front matter `inclusion: always` and one paragraph: before any UI change
 read `<skill dir>/SKILL.md`; UI work is prototype first; never install or download anything, ask the user and wait;
 Plumb's own mistakes (a script, hook or skill got it wrong) → `/plumb-feedback`.
-Kiro's own skills and hooks come from `kiro.py install`: tell the user; never run it for them.
+Kiro's own skills and hooks come from `kiro.py install`: tell the user the command and run it only when the user says
+so.
 
 ## Monorepo package pointer
 

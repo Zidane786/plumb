@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — 2026-10-11
+## 1.0.0 — 2026-10-16
 
 ### Highlights
 
@@ -45,7 +45,7 @@
   state, light and dark side by side), both built from one file per screen and kept in step with the code both ways.
   `screens.html` stays small on a large prototype: each screen is stored once and drawn in every state and both themes
   by the page (a 20-screen × 10-state prototype stays under half a MB), every copy with its own state, theme and
-  scripts. A state name written with spaces around it (`data-state=" ready "`) is read the same way in every page.
+  scripts. State names are read the same way in every page, spaces around them included (`data-state=" ready "`).
 - **A size warning for large pages**: any page `build-prototype.py` writes (`prototype.html`, `app.html`,
   `screens.html`, the tour pages, the proposal pages) over 10 MB prints one `warning: <page> is <N> MB …` line naming
   every such page, also on `--check`, with the heaviest screen files and what helps: smaller screen files (inline
@@ -201,9 +201,8 @@
   Linux when the project's file system ignores case (asked of the file system itself: a folder that ignores case, a
   Windows drive in WSL); on Windows it reads Git for Windows' Bash drive paths (`/c/Users/…`,
   `/cygdrive/c/…`) as well as `\` and `/`, drive letters in either case and quoted paths with spaces. Its time budget
-  runs on a fine clock (on Windows before Python 3.13 the coarse one let a budget pass unnoticed), and a long command
-  is checked faster (each folder's real path is worked out once per command), so even a Windows runner stays well
-  inside the hook's timeout.
+  runs on a fine-grained clock on every platform, and each folder's real path is worked out once per command, so a
+  long command stays well inside the hook's timeout, on a Windows runner too.
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace

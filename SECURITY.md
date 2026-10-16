@@ -72,7 +72,9 @@ and write files in the project.
 - **Windows launcher.** `hooks/run.cmd` sets `NoDefaultCurrentDirectoryInExePath`, so cmd.exe never runs a `py`,
   `python` or `python3` found in the project folder instead of the one on `PATH`.
 - **A project's copied scripts run only when someone runs them on purpose:** a Plumb command such as `/plumb:audit`,
-  `make tokens` / `make design-audit`, or the project's CI. They are ordinary code in that repository.
+  `make tokens` / `make design-audit`, or the project's CI. They are ordinary code in that repository. Some Plumb
+  commands (status, audit, prototype, tour, ux) can also be started by the agent itself when the work calls for them,
+  and they run those scripts; the CLI's own permission prompt for each command still applies.
 - **A cloned repository's scripts are that repository's code.** Before running a cloned repo's design-system scripts
   (or a command that runs them), review them as you would any script in a repo you don't trust yet;
   `/plumb:upgrade` replaces them with the plugin's own copies.

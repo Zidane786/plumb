@@ -3,7 +3,7 @@
 **Plumb keeps a project's design true.** It is a plugin for Claude Code and GitHub Copilot CLI that creates,
 extracts, audits and maintains a project's design system, so every screen an agent builds uses the same colours, type,
 spacing, components and words, on the web and on phones. You stay in charge: Plumb asks one question at a time and
-writes nothing without your OK.
+writes nothing in your project without your OK.
 
 - **New project:** Plumb asks what you're building and who it's for, walks you through the design decisions one at a
   time, shows 2–3 directions to pick from, and writes a design-system skill into the project: one token file that
@@ -61,8 +61,8 @@ hooks run through PowerShell. VS Code's Copilot Chat isn't supported.
 ### Kiro (preview)
 
 Kiro has no plugin marketplace, so a script copies Plumb's skills and hook files in, one scope per run:
-`python3 <plumb>/plugins/plumb/scripts/kiro.py install` (your home folder) or `… install --project <folder>` (that
-workspace only). It lists every path and asks first (`--yes` skips the question); run it again after updating Plumb.
+`python3 <plugin root>/scripts/kiro.py install` (your home folder) or `… install --project <folder>` (that workspace
+only); `<plugin root>` is `plugins/plumb` in a clone of this repository (installed copies: [docs/USAGE.md](docs/USAGE.md)). It lists every path and asks first (`--yes` skips the question); run it again after updating Plumb.
 The commands are `/plumb-init`, `/plumb-create`, …. This was built from Kiro's documented formats; **the live check on
 a real Kiro is pending**. See
 [docs/USAGE.md](docs/USAGE.md#kiro-built-from-kiros-docs-live-check-pending).
@@ -192,6 +192,7 @@ back as a "deny" answer with the same reason; whether the end-of-turn check can 
 | `Prototype sync: on` | Prototype first: refuse a new page with no approved screen; stop once when code changes without its screen |
 | `Themes: light-and-dark` | Or `light-only`, an explicit, recorded decision that turns the dark rules off |
 | `UI files:` · `Allowed raw values:` | Which files count as UI; the paths where primitives may use raw values (exceptions are by path, never by a comment) |
+| `Routes:` | The app's page roots (`app (next-app)`, …) that prototype-first reads; recorded by `/plumb:init` |
 | `Python:` | The command every skill, the Makefile and the fix lines use |
 | `Design system:` · `Role:` | Where the skill is; `home` or `linked` (a repo that uses another repo's system) |
 
@@ -237,7 +238,7 @@ Every change to the plugin is a release with a version bump and a changelog entr
 
 ```
 plugins/plumb/     the plugin: skills/, reference/, assets/skill/ (the design-system template and its scripts),
-                   hooks/, scripts/ (detect, scaffold, version, screenshot, kiro), templates/, upgrades/
+                   hooks/, scripts/ (detect, scaffold, version, screenshot, check-tour, kiro), templates/, upgrades/
 tests/             pytest: the token generator, every audit rule, the hooks (Claude Code, Copilot CLI and Kiro input),
                    placement, the prototype builder, the pages in a headless browser, docs consistency, portability
 docs/              the design spec, build plans, USAGE.md, what-you-get.html

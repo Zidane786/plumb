@@ -3,7 +3,8 @@
 Plumb keeps a project's design true. It gives your project **one design system** that every screen is built
 from, a **clickable prototype** of the whole product that you approve before anything is built, and **checks**
 that stop an agent from drifting off the system while it works. It runs in Claude Code and GitHub Copilot CLI
-(and Kiro, see below), on macOS, Linux and Windows, and it always asks you before it decides or writes anything.
+(and Kiro, see below), on macOS, Linux and Windows, and it always asks you before it decides anything or writes
+anything in your project (its own notes of Plumb mistakes go to `~/.plumb/feedback/`, outside every project).
 
 This guide teaches every part of it. Read "Start here" first; after that, jump to what you need.
 
@@ -80,13 +81,15 @@ Then restart Copilot CLI (`/restart`, or quit and start it again). The commands 
 ### Kiro (built from Kiro's docs; live check pending)
 
 Plumb's skills follow the Agent Skills standard, so Kiro (IDE and CLI v3+) can run them. Kiro has no plugin
-marketplace, so a script copies them in. With Plumb installed in Claude Code or Copilot CLI (or a clone of the Plumb
-repository), run it yourself, one scope at a time:
+marketplace, so a script copies them in. It sits in Plumb's plugin folder, `<plugin root>/scripts/kiro.py`: in a
+clone of the Plumb repository that is `<clone>/plugins/plumb/scripts/kiro.py`; a plugin installed in Claude Code lives
+under `~/.claude/plugins/cache/plumb/plumb/<version>/`, in Copilot CLI under `~/.copilot/installed-plugins/plumb/plumb/`.
+Run it yourself, one scope at a time:
 
 ```
-python3 <plumb>/plugins/plumb/scripts/kiro.py install                       # your home folder only (~/.kiro)
-python3 <plumb>/plugins/plumb/scripts/kiro.py install --project <folder>    # that workspace only (<folder>/.kiro)
-python3 <plumb>/plugins/plumb/scripts/kiro.py uninstall [--project <folder>]
+python3 <plugin root>/scripts/kiro.py install                       # your home folder only (~/.kiro)
+python3 <plugin root>/scripts/kiro.py install --project <folder>    # that workspace only (<folder>/.kiro)
+python3 <plugin root>/scripts/kiro.py uninstall [--project <folder>]
 ```
 
 Each run writes `.kiro/skills/plumb-<name>/SKILL.md` for every command and `.kiro/hooks/plumb.json` in that one scope
@@ -1097,6 +1100,7 @@ Edit check: on
 End-of-turn check: on
 Themes: light-and-dark          (light-and-dark | light-only: an explicit decision)
 UI files: app/**, components/** · *.tsx *.jsx *.css
+Routes: app (next-app)
 Allowed raw values: components/ui/**
 
 ## Commands
@@ -1124,6 +1128,7 @@ are the direct commands.
 | `Prototype sync:` | `on`: a new page with no approved screen is refused, and code that changed without its screen stops the agent once |
 | `Themes:` | `light-and-dark`, or `light-only` (turns off the dark rules; a recorded decision) |
 | `UI files:` | Which files the audit and hooks treat as UI |
+| `Routes:` | The app's page roots, each `<path> (<kind>)` (`next-app`, `next-pages`, `nuxt`, `sveltekit`, `angular`, `router`), or `none`: what prototype-first and `route-not-prototyped` read. Not recorded: those checks stay off (`/plumb:init` offers to record it) |
 | `Allowed raw values:` | Paths where primitives live (e.g. `components/ui/**`): raw values are allowed there. Exceptions are by path only, never by a comment in the code |
 
 ### Commands you can run yourself
@@ -1640,13 +1645,13 @@ Run `/plumb:upgrade` when you're ready; nothing breaks meanwhile (the hooks chec
 A teammate upgraded first. Update your plugin (`claude plugin marketplace update plumb`, then
 `claude plugin update plumb@plumb`, then `/reload-plugins`). Plumb never downgrades a project.
 
----
-
 **The hooks never write `~/.plumb/feedback/hooks.md`, even after a crash note.**
 The log is private: if `~/.plumb` or `~/.plumb/feedback` is a symlink or someone else's folder, the hooks write
 nothing there (your own folders with wider permissions are made 0700 instead). Remove the link, or make the folders
 yours, and the next failure is logged. A full log (512 KB) is left alone too: move the old `hooks.md` aside. A
 project's own broken file (a tokens file that is not JSON) is not a Plumb mistake and is never logged.
+
+---
 
 ## FAQ
 

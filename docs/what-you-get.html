@@ -468,7 +468,7 @@ description: "<span class="ph">&lt;Project&gt;</span>'s design system (<span cla
    user, get their approval, then build it to match.
 2. Inventory before building (references/inventory.md). Reuse or add a named variant.
 3. Spec first (references/components.md), then only the platform file.
-4. Name every visual decision with a token. A missing value goes into the tokens file.
+4. Name every visual decision with a token. No token for it: stop and tell the user (/plumb:update).
 5. Build every state from the prototype and references/ux.md, light and dark.
 6. Check: the accessibility checklist, make tokens-check, make design-audit.
 7. Report what you reused, what you created and why.
@@ -496,7 +496,7 @@ description: "<span class="ph">&lt;Project&gt;</span>'s design system (<span cla
     "on-surface": { "$value": "<span class="ph">#……</span>", "$description": "Ink",
       "$extensions": { "plumb": { "dark": "<span class="ph">#……</span>" } } }
   },
-  "typography": { "body-md": { "$type": "typography", "$value": { … } } },
+  "typography": { "body": { "$type": "typography", "$value": { … } } },
   "radius": { "md": { "$type": "dimension", "$value": "<span class="ph">6px</span>" } },
   "motion": { "duration": { "fast": { "$type": "duration", "$value": "<span class="ph">150ms</span>" } } }
 }</code></pre>
