@@ -278,6 +278,19 @@ def test_specimen_shows_a_pair_just_under_the_minimum_as_failing(tmp_path: Path)
     assert any(f["rule"] == "contrast" and "link on background is 4.49:1 in light mode" in f["message"] for f in found)
 
 
+def test_audit_names_a_foreign_specimen_as_a_warning_with_the_move_fix(project: Path) -> None:
+    # build-tokens leaves a specimen.html it did not write as it is; the audit must not ask for a build that cannot clear it
+    write(project / SPECIMEN_REL, "<!doctype html>\n<html><body><h1>Our own specimen</h1></body></html>\n")
+    out = json.loads(audit(project, "--json").stdout)
+    drift = [f for f in out["findings"] if f["rule"] == "generated-drift"]
+    assert len(drift) == 1, drift
+    f = drift[0]
+    assert f["severity"] == "warn" and f["file"] == SPECIMEN_REL and "not Plumb's" in f["message"], f
+    assert "mv docs/design/specimen.html docs/design/specimen.before-plumb.html" in f["fix"], f
+    assert "ask the user" in f["fix"] and "build-tokens.py" in f["fix"]
+    assert not any(x["severity"] == "error" and x["file"] == SPECIMEN_REL for x in out["findings"])
+
+
 def test_specimen_scopes_both_themes_from_the_tokens(project: Path) -> None:
     text = read(project / SPECIMEN_REL)
     doc = doc_of(project)

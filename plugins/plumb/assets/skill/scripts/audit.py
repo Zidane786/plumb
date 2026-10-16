@@ -1830,6 +1830,17 @@ def check_generated_drift(proj: Project) -> Iterator[XHit]:
         what, fix = _plumb_error_parts(exc)
         yield XHit(proj.tokens_name, 1, what, f"the generated files cannot be checked: {what}", fix)
         return
+    # A specimen.html build-tokens.py did not write is left as it is (the build skips it): a warning with the way out,
+    # never a build command that cannot clear it.
+    in_the_way = getattr(bt, "specimen_in_the_way", None)
+    foreign = in_the_way(proj.doc, proj.root, files) if in_the_way is not None else None
+    if foreign is not None:
+        files.pop(foreign)
+        page, target = rel(foreign, proj.root), rel(bt._free_name(foreign, ".before-plumb.html"), proj.root)
+        yield XHit(page, 1, page, f"{page} is not Plumb's (not written by build-tokens.py): left as it is, so the "
+                   f"specimen is not updated",
+                   f"ask the user before moving it out of the way (mv {P.shell_word(page)} {P.shell_word(target)}), "
+                   f"then run {proj.build_command}", severity="warn")
     for path, text in files.items():
         try:
             current = (normalise_text(P.read_project_text(path, "utf-8", "replace", P.PAGE_READ_LIMIT)) if path.is_file()
