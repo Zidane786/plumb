@@ -571,6 +571,16 @@ def load_plumb_core():
     return mod
 
 
+def plumb_file_rels() -> List[str]:
+    """Plumb's own [P] files, relative to the skill, from version.py (one list: what scaffold copies is what
+    /plumb:upgrade compares)."""
+    path = Path(__file__).resolve().with_name("version.py")
+    spec = importlib.util.spec_from_file_location("plumb_version_for_scaffold", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod.plumb_file_rels(SKILL_SRC)
+
+
 # ---------------------------------------------------------------- token names in the references
 
 MISSING_TOKEN = "`<{what}: no such token yet, add one with /plumb:update>`"
@@ -692,13 +702,9 @@ def build_plan(args: argparse.Namespace, root: Path, skill_rel: str, docs: str, 
                          json_mode=True)
     values.update(token_names(project_tokens(existing[0] if existing else None, tokens_text)))
 
-    # [P] plugin-owned
-    for script in sorted((src / "scripts").glob("*.py")):
-        plan.append(Item(skill / "scripts" / script.name, read_source(script), "P"))
-    tpl_dir = src / "templates"
-    for tpl in sorted(p for p in tpl_dir.iterdir() if p.is_file()):
-        plan.append(Item(skill / "templates" / tpl.name, read_source(tpl), "P"))
-    plan.append(Item(skill / "assets/platforms/README.md", read_source(src / "assets/platforms/README.md"), "P"))
+    # [P] plugin-owned (the list /plumb:upgrade compares: version.py plumb_file_rels)
+    for rel_p in plumb_file_rels():
+        plan.append(Item(skill / rel_p, read_source(src / rel_p), "P"))
 
     # [Y] yours
     def y(src_rel: str, dest_rel: str, json_mode: bool = False) -> None:

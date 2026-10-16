@@ -13,8 +13,10 @@ plugin.json's "version". state is the project compared with the plugin: "same", 
 upgrades/<version>.md with project < version <= plugin, in ascending order, compared as numbers (1.10.0 > 1.9.0);
 it is empty unless state is "older". files_differ (only when state is "same") lists Plumb's own files in the project
 (the design-system skill's scripts/*.py, templates/* and assets/platforms/README.md, the ones scaffold.py copies) that
-are missing or differ from the plugin's copies, ignoring line endings and a BOM: a newer build of the same version, so
-/plumb:upgrade offers to refresh them. Used by /plumb:upgrade and /plumb:status. It only reads.
+are missing or differ from the plugin's copies, ignoring line endings and a BOM: another build of the same version (a
+pre-release or branch build, or a hand edit). Which one is newer cannot be told from the files, so /plumb:upgrade shows
+the evidence and asks. PLUMB.md is read by the hooks' rules (_hooklib.plumb_md_keys). Used by /plumb:upgrade and
+/plumb:status. It only reads.
 
 Exit codes: 0 ok (whatever the state), 2 bad input (`error: ...` then `fix: ...`). Python 3.9+, standard library only.
 """
@@ -31,8 +33,9 @@ from typing import List, Optional, Tuple
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 VERSION_LINE = re.compile(r"<!--\s*plumb\s+v(\S+)")
 UPGRADE_FILE = re.compile(r"^(\d+\.\d+\.\d+)\.md$")
-DESIGN_LINE = re.compile(r"^Design system:\s*`?([^`\n]*?)`?\s*(?:\(.*\))?\s*$", re.M)
-ROLE_LINE = re.compile(r"^Role:\s*([a-z]+)", re.M)
+# PLUMB.md's `Key: value` lines, read exactly as the hooks read them (hooks/_hooklib.py plumb_md_keys).
+_KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
+_NOTE = re.compile(r"\s{2,}\((?!\s*(?:next-app|next-pages|nuxt|sveltekit|angular|router)\s*\))[^)]*\)\s*$")
 HEAD_LINES = 5  # the version line is the first line; a blank line or two before it is tolerated
 
 
@@ -111,6 +114,40 @@ def upgrades_between(plugin: Path, old: Tuple[int, int, int], new: Tuple[int, in
     return [name for _v, name in sorted(found)]
 
 
+def plumb_md_keys(text: str) -> dict:
+    """PLUMB.md's `Key: value` lines (comments, code fences, headings, bullets, quotes and tables ignored; a trailing
+    '   (note)' dropped; a value in backticks unwrapped; the last one wins), as the hooks read them."""
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    out: dict = {}
+    fence = False
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("```") or s.startswith("~~~"):
+            fence = not fence
+            continue
+        if fence or not s or s[0] in "#-*>|":
+            continue
+        m = _KEY.match(s)
+        if not m:
+            continue
+        val = _NOTE.sub("", (m.group(2) or "").strip()).strip()
+        if len(val) >= 2 and val[0] == val[-1] == "`":
+            val = val[1:-1].strip()
+        out[m.group(1).strip()] = val
+    return out
+
+
+def plumb_file_rels(src: Path) -> List[str]:
+    """Plumb's own [P] files, relative to the skill: scripts/*.py, templates/* and assets/platforms/README.md, as found
+    in the plugin's assets/skill/ (scaffold.py copies the same list)."""
+    rels = [f"scripts/{f.name}" for f in sorted((src / "scripts").glob("*.py")) if f.is_file()]
+    if (src / "templates").is_dir():
+        rels += [f"templates/{f.name}" for f in sorted((src / "templates").iterdir()) if f.is_file()]
+    if (src / "assets/platforms/README.md").is_file():
+        rels.append("assets/platforms/README.md")
+    return rels
+
+
 def _same_text(a: Path, b: Path) -> bool:
     try:
         x, y = a.read_bytes(), b.read_bytes()
@@ -131,11 +168,10 @@ def plumb_files_differ(project: Path, plugin: Path) -> List[str]:
         text = (root / "PLUMB.md").read_bytes().decode("utf-8-sig", errors="replace").replace("\r\n", "\n")
     except OSError:
         return []
-    role = ROLE_LINE.search(text)
-    m = DESIGN_LINE.search(text)
-    if (role and role.group(1) == "linked") or not m:
+    keys = plumb_md_keys(text)
+    if keys.get("Role", "").strip().lower().startswith("linked"):
         return []
-    rel = m.group(1).strip().replace("\\", "/")
+    rel = keys.get("Design system", "").strip().replace("\\", "/")
     if rel.startswith("/") or re.match(r"^[A-Za-z]:", rel) or ".." in rel.split("/"):
         return []  # only a skill inside the project is compared
     rel = rel.strip("/")
@@ -144,12 +180,7 @@ def plumb_files_differ(project: Path, plugin: Path) -> List[str]:
     skill, src = root / rel, plugin / "assets" / "skill"
     if not skill.is_dir() or not src.is_dir():
         return []
-    rels = [f"scripts/{f.name}" for f in sorted((src / "scripts").glob("*.py")) if f.is_file()]
-    if (src / "templates").is_dir():
-        rels += [f"templates/{f.name}" for f in sorted((src / "templates").iterdir()) if f.is_file()]
-    if (src / "assets/platforms/README.md").is_file():
-        rels.append("assets/platforms/README.md")
-    return [f"{rel}/{r}" for r in rels if not _same_text(skill / r, src / r)]
+    return [f"{rel}/{r}" for r in plumb_file_rels(src) if not _same_text(skill / r, src / r)]
 
 
 def compare(project: Path, plugin: Path) -> dict:
@@ -166,8 +197,9 @@ def plain(result: dict) -> str:
     p, g = result["project"], result["plugin"]
     if result["state"] == "same" and result["files_differ"]:
         n = len(result["files_differ"])
-        return (f"Plumb {p} on both, but {n} of Plumb's files in the project differ from the plugin's (a newer build of "
-                f"{p}): run /plumb:upgrade to refresh them. " + ", ".join(result["files_differ"]))
+        return (f"Plumb {p} on both, but {n} of Plumb's files in the project differ from the plugin's (another build of "
+                f"{p}, or a hand edit; which is newer cannot be told from the files): /plumb:upgrade shows them and asks "
+                f"before refreshing. " + ", ".join(result["files_differ"]))
     if result["state"] == "same":
         return f"Plumb {p}: the project is up to date with the plugin."
     if result["state"] == "newer":

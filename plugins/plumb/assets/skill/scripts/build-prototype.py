@@ -2482,7 +2482,7 @@ def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
             head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
         except OSError:
             continue
-        if P.is_generated_text(head) and "build-prototype.py" in head:
+        if head.strip() and P.is_prototype_page(head):
             found.append(path)
     return found
 
@@ -2495,35 +2495,69 @@ def not_plumbs(paths, root: Path, rel) -> List[str]:
         if path.suffix != ".html" or not path.is_file():
             continue
         try:
-            head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
+            head = path.read_bytes()[:P.PAGE_HEAD_BYTES].decode("utf-8", errors="replace")
         except OSError:
-            continue
+            continue  # unreadable: the write reports it; never taken for someone else's page
         if not P.is_prototype_page(head):
             found.append(rel(path, root))
     return found
 
 
-def _before_plumb(page: str) -> str:
-    """Where to move a page that is in the way: next to it, or for a tour page one folder up (every page in tours/ is
-    the build's)."""
-    folder, _, name = page.rpartition("/")
-    if folder.rpartition("/")[2] == "tours":
-        folder = folder.rpartition("/")[0]
-    return (f"{folder}/" if folder else "") + name[: -len(".html")] + ".before-plumb.html"
+_PLAIN_ARG = re.compile(r"[\w./:@%+=,-]+")
 
 
-def not_plumbs_error(found: List[str], command: str) -> PlumbError:
-    moves = "; ".join(f"mv {f} {_before_plumb(f)}" for f in found)
+def _arg(text: str) -> str:
+    """A word for a printed command: as it is when plain, else double-quoted (with no ", $ or backtick left in it)."""
+    return text if _PLAIN_ARG.fullmatch(text) else '"' + re.sub(r'["`$]', "", text) + '"'
+
+
+def _move_targets(found: List[str], root: Path) -> List[str]:
+    """Where to move each page that is in the way: <name>.before-plumb.html next to it (a tour page's one folder up:
+    every page in tours/ is the build's), with -2, -3 … when that name is taken or already chosen for another page."""
+    taken: set = set()
+    out = []
+    for page in found:
+        folder, _, name = page.rpartition("/")
+        if folder.rpartition("/")[2] == "tours":
+            folder = folder.rpartition("/")[0]
+        stem = (f"{folder}/" if folder else "") + name[: -len(".html")]
+        target, n = f"{stem}.before-plumb.html", 1
+        while target in taken or (root / target).exists():
+            n += 1
+            target = f"{stem}.before-plumb-{n}.html"
+        taken.add(target)
+        out.append(target)
+    return out
+
+
+def _moves(found: List[str], root: Path) -> str:
+    return "; ".join(f"mv {_arg(f)} {_arg(t)}" for f, t in zip(found, _move_targets(found, root)))
+
+
+def not_plumbs_error(found: List[str], root: Path, again: str) -> PlumbError:
     one = len(found) == 1
     return _err(f"{', '.join(found)} {'is' if one else 'are'} not Plumb's (not written by build-prototype.py), and this "
                 f"build writes {'that path' if one else 'those paths'}: nothing was written",
-                f"ask the user before moving {'it' if one else 'them'} out of the way ({moves}), then run {command} again")
+                f"ask the user before moving {'it' if one else 'them'} out of the way ({_moves(found, root)}), then run "
+                f"{again} again")
 
 
-def not_plumbs_lines(found: List[str], command: str) -> List[str]:
+def not_plumbs_lines(found: List[str], root: Path, again: str) -> List[str]:
     return [f"not Plumb's: {f} (another tool's page or one written by hand: the build would replace it)" for f in found] + [
-        f"ask the user before moving {'it' if len(found) == 1 else 'them'} out of the way ("
-        + "; ".join(f"mv {f} {_before_plumb(f)}" for f in found) + f"), then run {command}"]
+        f"fix: ask the user before moving {'it' if len(found) == 1 else 'them'} out of the way ({_moves(found, root)}), "
+        f"then run {again}"]
+
+
+def _rerun(command: str, args: argparse.Namespace) -> str:
+    """The command as it was given (its --map, --approve or --synced kept), for a refusal's fix line."""
+    extra: List[str] = []
+    if args.map:
+        extra += ["--map", args.map, f"--route={args.route}", "--files", *(args.files or [])]
+    if args.approve:
+        extra += ["--approve", args.approve]
+    if args.synced:
+        extra += ["--synced", args.synced]
+    return " ".join([command] + [_arg(x) for x in extra])
 
 
 def read_template(skill_dir: Path, name: str) -> str:
@@ -2743,7 +2777,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     foreign = not_plumbs(files, root, rel)
     if args.check:
         if foreign:
-            print("\n".join(not_plumbs_lines(foreign, again)))
+            print("\n".join(not_plumbs_lines(foreign, root, again)))
             return 1
         stale = []
         for path, text in files.items():
@@ -2762,7 +2796,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         print(f"ok: {line}: up to date")
         return 0
     if foreign:
-        raise not_plumbs_error(foreign, again)
+        raise not_plumbs_error(foreign, root, again)
     wrote = 0
     for path, text in files.items():
         try:
@@ -3008,7 +3042,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     foreign = not_plumbs(files, root, rel)
     if args.check:
         if foreign:
-            for line in not_plumbs_lines(foreign, command):
+            for line in not_plumbs_lines(foreign, root, command):
                 print(line)
             return 1
         stale = []
@@ -3038,7 +3072,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         return 0
 
     if foreign:
-        raise not_plumbs_error(foreign, command)
+        raise not_plumbs_error(foreign, root, _rerun(command, args))
     for s in screens:
         for line in s.warnings[:5]:
             print(f"warning: {line}", file=sys.stderr)

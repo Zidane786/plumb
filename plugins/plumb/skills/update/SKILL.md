@@ -52,6 +52,7 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    unless the user wants to work there).
 4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json`: `older` → recommend `/plumb:upgrade` first
    (the user decides; adding a platform requires it, step 2).
+   `same` with `files_differ`: say once that `/plumb:upgrade` can refresh Plumb's files (they differ from the plugin's).
 5. `PY SKILL/scripts/build-tokens.py --check`: stale → say so; the build in step 3 brings it up to date.
 
 ## Step 1: what changes

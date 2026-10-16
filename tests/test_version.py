@@ -4,6 +4,7 @@ upgrade files in between (upgrades/<version>.md, compared as numbers)."""
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -217,20 +218,50 @@ def test_no_design_system_yet_linked_or_odd_paths_compare_nothing(tmp_path: Path
     assert as_json(run("--project", str(nodesign), "--plugin", str(plugin), "--json"))["files_differ"] == []
 
 
-def test_the_real_plugin_against_a_scaffolded_copy(tmp_path: Path) -> None:
-    """Every [P] file scaffold.py copies is one version.py compares, and a fresh copy differs in none."""
+def _scaffold(root: Path, *extra: str):
+    cmd = [sys.executable, str(PLUGIN / "scripts/scaffold.py"), "--project-root", str(root), "--name", "Demo",
+           "--skill-dir", SKILL, "--platforms", "web", "--styling", "tailwind-v4", *extra]
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+
+
+def test_what_scaffold_copies_is_what_version_compares(tmp_path: Path) -> None:
+    """A real scaffold, then its dry run again: every file still `would write:` is one of Plumb's (the project's own are
+    `skip: … (yours, kept)`). version.py compares exactly those: none differ after the scaffold, each one changed is
+    listed, and nothing else is."""
     version = json.loads((PLUGIN / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
     p = tmp_path / "real"
+    p.mkdir()
+    dry = _scaffold(p, "--dry-run")
+    token = re.search(r"--confirm ([0-9a-f]{12})", dry.stdout).group(1)
+    assert _scaffold(p, "--confirm", token).returncode == 0
+    again = _scaffold(p, "--dry-run").stdout
+    plumbs = sorted(line[len("would write: "):] for line in again.splitlines() if line.startswith("would write: "))
+    assert plumbs and all(f"{SKILL}/scripts/" in x or f"{SKILL}/templates/" in x or x.endswith("platforms/README.md")
+                          for x in plumbs)
     write(p / "PLUMB.md", plumb_md(version))
-    src = PLUGIN / "assets/skill"
-    rels = [f"scripts/{f.name}" for f in sorted((src / "scripts").glob("*.py"))]
-    rels += [f"templates/{f.name}" for f in sorted((src / "templates").iterdir()) if f.is_file()]
-    rels.append("assets/platforms/README.md")
-    for rel in rels:
-        (p / SKILL / rel).parent.mkdir(parents=True, exist_ok=True)
-        (p / SKILL / rel).write_bytes((src / rel).read_bytes())
     assert as_json(run("--project", str(p), "--plugin", str(PLUGIN), "--json"))["files_differ"] == []
-    (p / SKILL / "templates/player.js").write_bytes(b"// an older build\n")
-    (p / SKILL / "scripts/audit.py").unlink()
-    out = as_json(run("--project", str(p), "--plugin", str(PLUGIN), "--json"))
-    assert out["files_differ"] == [f"{SKILL}/scripts/audit.py", f"{SKILL}/templates/player.js"]
+    for x in plumbs:
+        (p / x).write_bytes((p / x).read_bytes() + b"\n// another build\n")
+    (p / SKILL / "SKILL.md").write_text("the project's own\n", encoding="utf-8")
+    assert sorted(as_json(run("--project", str(p), "--plugin", str(PLUGIN), "--json"))["files_differ"]) == plumbs
+
+
+def test_plumb_md_is_read_the_way_the_hooks_read_it(tmp_path: Path, plugin: Path) -> None:
+    plugin_files(plugin)
+    head = "<!-- plumb v1.2.0 · written by /plumb:init, safe to edit values -->\n# Plumb\n\n"
+    cases = {
+        "note": (f"Design system: `{SKILL}/`   (home)\n", True),
+        "plain": (f"Design system: {SKILL}\n", True),
+        "indented": (f"  Design system: `{SKILL}/`\n", True),
+        "last-wins": (f"Design system: `elsewhere/`\nDesign system: `{SKILL}/`\n", True),
+        "fenced": (f"```\nDesign system: `{SKILL}/`\n```\n", False),
+        "bullet": (f"- Design system: `{SKILL}/`\n", False),
+        "linked-capital": (f"Design system: `{SKILL}/`\nRole: Linked\n", False),
+    }
+    for name, (body, listed) in cases.items():
+        p = tmp_path / name
+        write(p / "PLUMB.md", head + body, "\r\n" if name == "plain" else "\n")
+        copy_into(plugin, p)
+        write(p / SKILL / "scripts/audit.py", "audit = 0\n")  # another build
+        out = as_json(run("--project", str(p / "PLUMB.md"), "--plugin", str(plugin), "--json"))["files_differ"]
+        assert out == ([f"{SKILL}/scripts/audit.py"] if listed else []), name

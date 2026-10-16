@@ -51,10 +51,14 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    `between`:
    - `same` with `files_differ` empty → "Already on Plumb <NEW>." Still run step 5's checks; if `scaffold.py --verify`
      or a `--check` reports a problem, offer to fix it. Otherwise stop.
-   - `same` with `files_differ` → a newer build of the same version: Plumb's own files differ from the plugin's. Skip
-     step 1 and step 3 (no version in between); ask "Refresh Plumb's files (<n> differ from the plugin's)?" with the
-     list inside the question, then run step 2, step 4 (the version line stays; the "Plumb updates" line says
-     `refreshed Plumb <NEW>'s files`) and step 5.
+   - `same` with `files_differ` → another build of the same version, or a hand edit: Plumb's own files differ from
+     the plugin's, and the files cannot tell which is newer. Gather the evidence: `git log -1 --format=%cs -- <file>`
+     for each listed file, `git status --short` on them (a local edit), and `PLUMB.md`'s latest "Plumb updates" line.
+     Skip step 1 and step 3 (no version in between) and run the rest in order: item 6 below, then step 2, whose
+     step-3 question is the only ask here: put the `files_differ` list, that evidence and the dry-run list in it, with
+     **Refresh from this plugin** recommended unless the evidence shows the project's copy is newer (a teammate's
+     later refresh, a commit after this plugin was installed), then **Keep the project's files** is recommended. Then
+     step 4 (the version line stays; the "Plumb updates" line says `refreshed Plumb <NEW>'s files`), step 5, step 6.
    - `newer` → the project is newer than the plugin (a teammate upgraded): never downgrade. Print the commands for the
      user to run in their own terminal: `claude plugin marketplace update plumb`, then
      `claude plugin update plumb@plumb`, then `/reload-plugins` (Copilot CLI: `copilot plugin marketplace update plumb`,

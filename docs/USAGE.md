@@ -682,12 +682,14 @@ healthy; shows the diff. You commit.
 - **Project newer than the plugin** (a teammate upgraded first): it never downgrades. It prints the commands to update
   your plugin and asks you to run them.
 - **Linked repo:** only the `PLUMB.md` version line changes; the design system is upgraded in the home repo.
-- **Same version, newer build** (a pre-release build, or a plugin installed from a branch): when Plumb's own files in
-  the project differ from the plugin's although the versions match, it says how many and offers to refresh them, then
-  rebuilds and checks as usual.
+- **Same version, another build** (a pre-release build, a plugin installed from a branch, or a hand edit): when
+  Plumb's own files in the project differ from the plugin's although the versions match, it lists them with the
+  evidence (each file's last commit, any local edit, the latest "Plumb updates" line) and asks before refreshing
+  them: the files can't tell which build is newer, so refreshing is recommended unless a teammate refreshed the
+  project more recently. Then it rebuilds and checks as usual.
 - **A page in the way:** if the rebuild would write a page that something else made (for example your own
-  `app.html`), it stops before writing anything and offers to move it to `app.before-plumb.html`; nothing is replaced
-  without your yes.
+  `app.html`), it stops before writing anything and offers to move it to `app.before-plumb.html` (or the next free
+  `-2`, `-3` name; a tour page goes one folder up); nothing is replaced without your yes.
 - **Something went wrong:** it restores only Plumb's own files, one path at a time, from what the dry run listed, and
   asks before deleting anything new.
 
@@ -1159,7 +1161,9 @@ Plumb: acme-design-system 1.0.0 · tokens up to date · 1 audit issue · read th
 
 Possible extras: `Plumb 1.1.0 is installed; this project's design system is 1.0.0: run /plumb:upgrade` (the project is
 older than the plugin); `this project's Plumb scripts are v1.0.0; the plugin is v1.1.0 — run /plumb:upgrade` (the
-copied scripts differ); `design system not found` with a `warning:` and a `fix:` line (the path in `PLUMB.md` is
+copied scripts differ); `3 of Plumb's files in this project differ from the installed plugin's (both v1.0.0: another
+build, or a hand edit) — /plumb:upgrade shows them and asks before refreshing` (same version, another build);
+`design system not found` with a `warning:` and a `fix:` line (the path in `PLUMB.md` is
 missing; the checks are off until it is fixed). It also takes a snapshot of the UI files already changed, so the
 end-of-turn check only looks at what this session changed. The audit count is capped at 2 seconds; set the
 `PLUMB_AUDIT_TIMEOUT` environment variable (seconds, `0` skips it) to change that. Last comes one short pointer,

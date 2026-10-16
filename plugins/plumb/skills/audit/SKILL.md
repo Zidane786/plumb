@@ -55,6 +55,7 @@ a `found: … (file:line)` to confirm, never an open question.
    `PY <SKILL>/scripts/audit.py <ui folders> --html <docs>/audit-YYYY-MM-DD.html`.
 4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json`: `older` → say once that `/plumb:upgrade` is
    available, then continue.
+   `same` with `files_differ`: say once that `/plumb:upgrade` can refresh Plumb's files (they differ from the plugin's).
 5. The mode is the first argument: none → report only; `fix`; `improve`. Other arguments are paths to check.
 
 ## Step 1: run the script

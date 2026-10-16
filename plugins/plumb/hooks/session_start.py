@@ -224,7 +224,7 @@ def main() -> int:
         lines.append(line)
         if nudge:
             lines.append(nudge)
-        scripts = H.scripts_note(proj)
+        scripts = H.scripts_note(proj) or H.files_note(proj)
         if scripts:
             lines.append(scripts)
         lines += setup_notes(proj)

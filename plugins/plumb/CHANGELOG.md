@@ -122,9 +122,9 @@
   part, or apply the audit's system suggestions one at a time; everything is regenerated, the decision recorded, the
   audit run.
 - **`/plumb:upgrade`** and **`/plumb:status`**: bring a project's copied files up to the plugin's version (what's new
-  first, additive token migration, each step asked), and a read-only health report with the next step. A newer build of
-  the same version is noticed too: when Plumb's own files in the project differ from the plugin's, both say so and the
-  upgrade offers to refresh them.
+  first, additive token migration, each step asked), and a read-only health report with the next step. Another build of
+  the same version is noticed too: when Plumb's own files in the project differ from the plugin's, the session-start
+  line and both commands say so, and the upgrade shows the evidence and asks before refreshing them.
 - **`/plumb:feedback`**: Plumb's own mistakes, recorded for Plumb's developers. When a Plumb script, hook or skill gets
   something wrong and the agent corrects it, the agent records that Plumb mistake (only Plumb's: your project's design
   issues stay audit findings) as one Markdown file in `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on
