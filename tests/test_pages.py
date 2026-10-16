@@ -457,6 +457,24 @@ def test_fix_lines_use_the_python_plumb_md_records(project: Path, given: str, sh
     assert P.project_python(project) == shown
 
 
+def test_audit_warns_about_a_contrast_pair_it_leaves_out(tmp_path: Path) -> None:
+    def glass(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+        doc["color"]["on-surface-glass"] = {"$value": "#111111", "$extensions": {"plumb": {"dark": "#eeeeee"}}}
+    plain = make_project(tmp_path / "plain")
+    p = make_project(tmp_path / "glass", mutate=glass)
+    base, r = audit(plain, "--json"), audit(p, "--json")
+    assert r.returncode == base.returncode, "a left-out pair never changes the exit code"
+    found = [f for f in json.loads(r.stdout)["findings"] if "on-surface-glass on surface-glass" in f["message"]]
+    assert len(found) == 1, found
+    f = found[0]
+    assert f["rule"] == "contrast" and f["severity"] == "warn" and f["file"] == TOKENS_REL
+    assert "is not checked for contrast: surface-glass is translucent" in f["message"]
+    assert "give color.surface-glass an opaque value" in f["fix"] and "contrast.extra_pairs" in f["fix"]
+    assert audit(p, "--html", "out/r.html").returncode == base.returncode
+    assert "on-surface-glass on surface-glass is not checked for contrast" in html.unescape(read(p / "out/r.html"))
+
+
 def test_report_custom_path_and_json_stdout(project: Path) -> None:
     r = audit(project, "--json", "--html", "out/report.html")
     assert r.returncode == 1
@@ -593,6 +611,17 @@ def test_no_script_writes_through_a_link_that_leads_outside_the_project(project:
     r = audit_t(project, "--snapshot", "out/snap.json")
     assert_refusal(r, "out/snap.json", "outside the project")
     assert not (outside / "snap.json").exists()
+    # the same project reached through another spelling of its path (a linked parent folder, macOS /tmp ->
+    # /private/tmp): the link in it is still found
+    alias = tmp_path / "alias"
+    alias.symlink_to(project.parent, target_is_directory=True)
+    spelled = alias / project.name / "out"
+    r = audit_t(project, "--html", str(spelled / "r.html"))
+    assert_refusal(r, "outside the project", "rm out")
+    r = audit_t(project, "--snapshot", str(spelled / "s.json"))
+    assert_refusal(r, "outside the project")
+    assert not (outside / "r.html").exists() and not (outside / "s.json").exists()
+    assert audit_t(project, "--snapshot", str(alias / project.name / ".plumb-tmp/s.json")).returncode == 0
     # a path outside the project given on purpose is not a link through the project: still written
     r = audit_t(project, "--snapshot", str(outside / "given.json"))
     assert r.returncode == 0 and (outside / "given.json").is_file(), r.stderr

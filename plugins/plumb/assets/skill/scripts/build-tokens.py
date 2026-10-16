@@ -1664,21 +1664,22 @@ def _translucent_in(doc: dict, path: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def translucent_pair_warnings(doc: dict) -> List[str]:
-    """warning: and fix: lines for each contrast pair left out because its background is translucent (what shows
-    through is not known): an on-X on a translucent X, or a pair over a surface the settings name. The fix names what
-    the project can really do: an opaque value, the pair checked over the surface it sits on in contrast.extra_pairs,
-    or (when the settings list it) the surface taken out of contrast.surfaces."""
+def translucent_pairs(doc: dict) -> List[Tuple[str, str, str, str]]:
+    """(fg, bg token path, message, fix) for each contrast pair left out because its background is translucent (what
+    shows through is not known): an on-X on a translucent X, or a pair over a surface the settings name. The fix names
+    what the project can really do: an opaque value, the pair checked over the surface it sits on in
+    contrast.extra_pairs, or (when the settings list it) the surface taken out of contrast.surfaces. The build prints
+    them as warning: and fix: lines; the audit reports each as a warning of its contrast rule."""
     cfg = _contrast_settings(doc)
     listed = set(cfg.get("surfaces") or [])
     keys = _colour_keys(doc)
     ground = next((k for k in ("background", "page", "surface") if k in keys and not _translucent_in(doc, keys[k])),
                   "background")
-    out: List[str] = []
+    out: List[Tuple[str, str, str, str]] = []
     for pair in contrast_pairs(doc):
         bg_path = keys.get(pair.bg)
         found = _translucent_in(doc, bg_path) if bg_path else None
-        if not found:
+        if not found or bg_path is None:
             continue
         value, mode = found
         kind = "text" if pair.need >= NEED_TEXT else "ui"
@@ -1688,8 +1689,16 @@ def translucent_pair_warnings(doc: dict) -> List[str]:
         else:
             fix = (f"give {bg_path} an opaque value, or check {pair.fg} against the surface {pair.bg} sits on in "
                    f"$extensions.plumb.contrast.extra_pairs (e.g. [\"{pair.fg}\", \"{ground}\", \"{kind}\"])")
-        out += [f"warning: {pair.fg} on {pair.bg} is not checked for contrast: {pair.bg} is translucent ({value} in "
-                f"{mode} mode), so what shows through it is not known", f"fix: {fix}"]
+        out.append((pair.fg, bg_path, f"{pair.fg} on {pair.bg} is not checked for contrast: {pair.bg} is translucent "
+                    f"({value} in {mode} mode), so what shows through it is not known", fix))
+    return out
+
+
+def translucent_pair_warnings(doc: dict) -> List[str]:
+    """The warning: and fix: lines the build prints for translucent_pairs."""
+    out: List[str] = []
+    for _fg, _bg_path, message, fix in translucent_pairs(doc):
+        out += [f"warning: {message}", f"fix: {fix}"]
     return out
 
 

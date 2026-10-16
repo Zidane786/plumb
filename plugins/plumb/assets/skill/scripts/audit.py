@@ -1751,6 +1751,10 @@ def check_contrast(proj: Project) -> Iterator[XHit]:
         what, fix = _plumb_error_parts(pairs)
         yield XHit(proj.tokens_name, 1, what, f"contrast cannot be measured: {what}", fix)
         return
+    left_out = getattr(load_build_tokens(), "translucent_pairs", None)
+    for fg, bg_path, message, fix in (left_out(proj.doc) if left_out is not None and proj.doc is not None else []):
+        # not measured (a translucent background): said, as a warning that never changes the exit code
+        yield XHit(proj.tokens_name, proj.token_line(bg_path), fg, message, fix, severity="warn")
     for pair in pairs:
         for mode in proj.modes():
             ratio = pair.light if mode == "light" else pair.dark
