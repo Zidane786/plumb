@@ -19,7 +19,10 @@ In such a project, in this order:
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
      marked, in the project or the home folder): editing them could switch the checks off;
-   - a hard link of any of these (the same file under another name: ln, cp -l): that file's refusal.
+   - a hard link of any of these (the same file under another name: ln, cp -l, mklink /H; the plugin's own files too;
+     a generated *Theme.swift / *Theme.kt anywhere, by build-tokens.py's header): that file's refusal; and in a shell
+     command, a name the command linked to a guarded file or folder earlier (ln, ln -s, cp -l / -s, mklink, New-Item
+     -ItemType HardLink / SymbolicLink / Junction): written or removed, it is that path.
    Shell commands (shell_refusal): the earlier reader (_shell_legacy.py) decides, and _hooklib's shell reader adds what
    it finds. Refused when the shell reader finds a guarded file among the real write targets: a redirect (>, >>, 1>,
    2>, &>, >|), tee [-a], sed -i / w FILE, perl -i, sort -o, the destination of cp / mv / install / rsync / ln (a
@@ -49,8 +52,8 @@ In such a project, in this order:
    not read: refused when a word names a guarded file or folder (or a parent of one), else the earlier reader decides;
    when the check itself fails (shell_decision), the command is refused when the earlier reader's targets or removals,
    or any of its words, name a guarded path, and allowed only when nothing guarded is named (fail closed). The whole
-   check has one deadline (SHELL_DEADLINE, well under the hook's timeout); past it the earlier reader decides, or a
-   guarded name in the command refuses it;
+   check has one deadline (SHELL_DEADLINE, well under the hook's timeout); a stage that runs out of time refuses, and
+   past the deadline the earlier reader decides, or a guarded path or name in the command refuses it;
    a crash, a timeout and a command too long to read log one line with the real outcome.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
@@ -223,18 +226,25 @@ def _kiro_own(proj: H.Project, shown: str, base: str) -> str:
 
 def guard(proj: H.Project, path: str) -> Optional[str]:
     """The refusal for writing this absolute path by hand, or None. A hard link of a guarded file (the same file under
-    another name: ln, cp -l) gets that file's refusal."""
+    another name: ln, cp -l, mklink /H) gets that file's refusal (_hard_link_refusal)."""
     why = _guard_path(proj, path)
-    if why is None:
-        twin = _hard_link_of(proj, path)
-        if twin is not None:
-            why = _guard_path(proj, twin)
-    return why
+    return why if why is not None else _hard_link_refusal(proj, path)
 
 
-def _hard_link_of(proj: H.Project, path: str) -> Optional[str]:
-    """The guarded file this path is a hard link of (an existing regular file with more than one link, the same device
-    and inode as a guarded file), or None. The guarded files' identities are listed once per hook run."""
+def _hard_link_files(proj: H.Project) -> List[str]:
+    """Every guarded file a hard link can be made of: the listed guarded files and every file under the plugin root."""
+    files = [f for f in guarded_files(proj, proj.root_s) if os.path.isfile(f)]
+    for folder, dirs, names in os.walk(H.plugin_root()):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        files += [os.path.join(folder, n) for n in names]
+    return files
+
+
+def _hard_link_refusal(proj: H.Project, path: str) -> Optional[str]:
+    """For an existing regular file with more than one link: the refusal of the guarded file it is (the same device and
+    inode: the guarded files and the plugin's own, listed once per hook run), or, for a file that carries
+    build-tokens.py's GENERATED header (a theme anywhere in the project under another name), the generated-file
+    refusal; else None."""
     try:
         st = os.stat(path)
     except (OSError, ValueError):
@@ -244,7 +254,7 @@ def _hard_link_of(proj: H.Project, path: str) -> Optional[str]:
     index = getattr(proj, "_hard_links", None)
     if index is None:
         index = {}
-        for f in guarded_files(proj, proj.root_s):
+        for f in _hard_link_files(proj):
             try:
                 g = os.stat(f)
             except (OSError, ValueError):
@@ -252,7 +262,14 @@ def _hard_link_of(proj: H.Project, path: str) -> Optional[str]:
             if g.st_nlink > 1 and stat.S_ISREG(g.st_mode):
                 index.setdefault((g.st_dev, g.st_ino), f)
         proj._hard_links = index  # type: ignore[attr-defined]
-    return index.get((st.st_dev, st.st_ino))
+    twin = index.get((st.st_dev, st.st_ino))
+    if twin is not None:
+        return _guard_path(proj, twin)
+    head = _page_head(path) or ""
+    if re.search(r"do not edit", head, re.I) and _SPECIMEN_HEADER.search(head):  # build-tokens.py's header
+        in_project = H.under(path, proj.root_s)
+        return _tokens_output(proj, in_project if in_project else path)
+    return None
 
 
 def _guard_path(proj: H.Project, path: str) -> Optional[str]:
@@ -810,6 +827,9 @@ def _shell_check(proj: H.Project, command: str, base: str, cwd: str) -> Optional
     why = (_shell_paths_refusal(proj, eff.writes, False, cwd, checked)
            or _shell_paths_refusal(proj, eff.removals, True, cwd, checked)
            or _shell_paths_refusal(proj, eff.folder_writes, True, cwd, checked))
+    for kind, sources in eff.link_writes:  # through a name the command linked to a guarded path earlier
+        if why is None:
+            why = _shell_paths_refusal(proj, sources, kind in (1, 2), cwd, checked)
     if why is None and eff.loop_targets:
         why = _loop_refusal(proj, eff, rule(), cwd)
     if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one

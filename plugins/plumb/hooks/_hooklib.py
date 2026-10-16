@@ -1414,7 +1414,7 @@ WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\
                         # removals and moves: rm, del, erase, rd, Remove-Item, ri, move, mi
                         r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b|"
                         # Windows tools: xcopy, robocopy, ren (rename, Rename-Item: "rename" above), rni, clc
-                        r"\bxcopy\b|\brobocopy\b|\bren\b|\brni\b|\bclc\b",
+                        r"\bxcopy\b|\brobocopy\b|\bren\b|\brni\b|\bclc\b|\bmklink\b",
                         re.I)
 SHELL_BUDGET = 1.5  # seconds this reader may take (the hook's timeout is 10 s); past it the previous reader decides
 # The clock every time budget is measured on: monotonic and fine-grained everywhere (time.monotonic ticks only every
@@ -1840,6 +1840,10 @@ class ShellEffects:
         # pre_edit asks of each whether the variable could hold a guarded path, or a name the target turns into one
         self.loop_targets: List[Tuple[int, str, Dict[str, List[Tuple]], "_Scope"]] = []
         self._loop_seen: set = set()
+        # names the command made links to other paths (ln, cp -l / -s, mklink, New-Item -ItemType HardLink …): a later
+        # write or removal through such a name is one of its source (link_writes: (kind, the source paths))
+        self.linked: Dict[str, List[str]] = {}
+        self.link_writes: List[Tuple[int, List[str]]] = []
         self._words: Optional[List[str]] = None
         self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
@@ -1945,6 +1949,8 @@ class ShellEffects:
         lst = (self.writes, self.removals, self.folder_writes, self.code_writes)[kind]
         seen = self._seen[kind]
         found = self._paths(word, scope, True, kind < 3)
+        if kind < 3 and self.linked:
+            self._through_links(kind, found)
         for p in found:
             if p in seen:
                 continue
@@ -1954,6 +1960,34 @@ class ShellEffects:
             seen.add(p)
             lst.append(p)
         return found
+
+    def _through_links(self, kind: int, found: List[str]) -> None:
+        """A write or removal of a name the command linked earlier (or of a path under it): one of the link's source."""
+        for p in found:
+            for name, sources in list(self.linked.items()):
+                if p == name:
+                    rest = ""
+                elif p.startswith(name.rstrip("/\\") + os.sep) or p.startswith(name.rstrip("/\\") + "/"):
+                    rest = p[len(name.rstrip("/\\")) + 1:]
+                else:
+                    continue
+                if len(self.link_writes) < _MAX_TARGETS:
+                    self.link_writes.append((kind, [os.path.normpath(os.path.join(s, rest)) if rest else s
+                                                    for s in sources]))
+
+    def link(self, name: str, source: str, scope: _Scope) -> None:
+        """name is made a link to source (a hard or symbolic link). A symbolic link's relative source counts from the
+        link's folder as well as from the command's."""
+        names = self._paths(name, scope, False)
+        if not names or not source:
+            return
+        sources = list(self._paths(source, scope, False))
+        w = source.replace("\\", "/") if os.sep == "/" else source
+        if not os.path.isabs(os.path.expanduser(w)) and "$" not in w and "`" not in w:
+            sources += [os.path.normpath(os.path.join(os.path.dirname(n), w)) for n in names]
+        for n in names:
+            if len(self.linked) < _MAX_TARGETS:
+                self.linked[n] = list(dict.fromkeys(self.linked.get(n, []) + sources))
 
     def write(self, word: str, scope: _Scope, text: Optional[str] = None) -> None:
         """A file write. text: what the file then holds, when the reader knows it (a here-document, echo's words)."""
@@ -2130,6 +2164,8 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
             eff.write_folder(pos[-1], scope)  # a recursive xcopy writes the source's contents into DEST
     recursive = name in ("rsync", "mv", "move") or any(
         re.fullmatch(r"-[a-zA-Z]*[rRa][a-zA-Z]*", a) or a in ("--recursive", "--archive") for a in args)
+    linking = name == "ln" or (name == "cp" and any(
+        re.fullmatch(r"-[a-zA-Z]*[ls][a-zA-Z]*", a) or a in ("--link", "--symbolic-link") for a in args))
     if into is not None:
         folder, sources = into, pos
         eff.write(folder, scope)
@@ -2143,6 +2179,8 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
         if recursive and (not exists or any(s.endswith(("/", "\\", "/.")) for s in sources)):
             eff.write_folder(dest, scope)
         if not (len(pos) > 2 or dest.endswith(("/", "\\")) or exists):
+            if linking:
+                eff.link(dest, sources[0], scope)
             return
         folder = dest
     else:
@@ -2157,6 +2195,8 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
             eff.write(target, scope)
             if recursive:
                 eff.write_folder(target, scope)
+            if linking:
+                eff.link(target, s, scope)
 
 
 _REMOVERS = ("rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri")
@@ -2563,6 +2603,11 @@ def _simple(cmd: _Simple, scope: _Scope, eff: ShellEffects, depth: int, before: 
                 eff.write(a[2:], scope)
     elif name in ("robocopy", "ren", "rename", "rename-item", "rni"):
         _windows_tool(name, args, scope, eff)
+    elif name == "mklink":  # cmd's mklink [/D | /H | /J] LINK TARGET
+        pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if len(pos) >= 2:
+            eff.write(pos[0], scope)
+            eff.link(pos[0], pos[1], scope)
     elif name == "cmd":  # cmd /c COMMAND (or /k, /r): its builtins (copy, move, del, erase, ren) are read
         eff.doubt("cmd runs a command")
         at = next((k for k, a in enumerate(args) if a.lower() in ("/c", "/k", "/r")), None)
@@ -2571,9 +2616,14 @@ def _simple(cmd: _Simple, scope: _Scope, eff: ShellEffects, depth: int, before: 
     elif name in _PS_WRITERS:
         value = _flag_value(args, _PS_PATH_FLAGS)
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
+        kind = _flag_value(args, ("-itemtype", "-type")) if name in ("new-item", "ni") else None
+        source = _flag_value(args, ("-target", "-value")) if kind and kind.lower() in (
+            "hardlink", "symboliclink", "junction") else None
         for item in ([value] if value else pos[:1]):
             for x in item.split(","):
                 eff.write(x.strip(), scope)
+                if source:
+                    eff.link(x.strip(), source, scope)
     elif name in ("copy-item", "move-item", "cpi", "mi"):
         value = _flag_value(args, ("-destination",))
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))

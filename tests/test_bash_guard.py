@@ -882,6 +882,40 @@ WINDOWS_TOOL_ALLOWED = [
 ]
 
 
+LINK_THEN_WRITE = [  # a name linked to a guarded file earlier in the same command is guarded too
+    f"ln {OWN} y.py && echo x > y.py",
+    f"ln -s {OWN} z.py && echo x > z.py",
+    f"ln -sf ../{OWN} notes/t.py && sed -i.bak s/a/b/ notes/t.py",  # a symbolic link's source, from the link's folder
+    f"cp -l {OWN} w.py; echo x > w.py",
+    f"cp --link {OWN} w.py; echo x >> w.py",
+    f"cp -s $PWD/{OWN} notes/ && echo x > notes/build-tokens.py",  # into a folder: <folder>/<source name>
+    f"ln -s {GEN} g.html && cat a > g.html",
+    f"ln -s {GEN} g.html; rm g.html; echo x > g.html",
+    "ln -s docs/design d && echo x > d/screens.html",  # a link to a folder Plumb owns
+    f"ln -s {SKILL_REL}/scripts s && rm -rf s/",
+    f"mklink /H y.py {OWN} & echo x > y.py",
+    f"cmd /c \"mklink y.py {OWN}\" && echo x > y.py",
+    f"New-Item -ItemType HardLink -Path y.py -Target {OWN}; Set-Content y.py x",
+    f"ni -ItemType SymbolicLink -Path y.py -Value {OWN}; Add-Content y.py x",
+]
+LINK_ALLOWED = [
+    f"ln -s ../{OWN} notes/own.py", f"ln -s {OWN} y.py && cat y.py", "ln -s notes/a z && echo x > z",
+    "cp -l notes/a w; echo x > w", "echo x > y.py; ln -s notes/a y.py",
+]
+
+
+@pytest.mark.parametrize("command", LINK_THEN_WRITE)
+def test_a_link_to_a_guarded_file_made_and_written_in_one_command_is_refused(decide, command):
+    reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    assert reason, command
+    actionable(reason)
+
+
+@pytest.mark.parametrize("command", LINK_ALLOWED)
+def test_links_written_to_nothing_guarded_are_allowed(decide, command):
+    assert not decide.new(command), command
+
+
 @pytest.mark.parametrize("command", WINDOWS_TOOL_WRITES)
 def test_windows_copy_rename_and_clear_tools_are_read_as_writes(decide, command):
     """xcopy, robocopy, cmd /c copy / move / del / erase, ren / rename, Rename-Item / rni and clc (Clear-Content) write,
