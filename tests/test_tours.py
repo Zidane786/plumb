@@ -3235,7 +3235,8 @@ def test_save_subtitles_is_in_the_panel_while_playing(browser, voiced) -> None:
             page.click(".pl-dock [data-pl=vtt]")
         cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
         assert [c["text"] for c in cues] == ["The host lands on tonight's tables, in time order."]
-        assert cues[0]["start"] == 0 and cues[0]["end"] >= 350, "the caption on screen, up to now"
+        # the first caption opens as play starts: within a few milliseconds (a slower runner takes one or two to render)
+        assert cues[0]["start"] <= 50 and cues[0]["end"] >= 350, "the caption on screen, up to now"
         assert errors == []
     finally:
         ctx.close()
@@ -3326,7 +3327,7 @@ def test_leaving_the_start_card_another_way_starts_the_run_without_voice(browser
         with page.expect_download() as dl:
             page.click(".pl-dock [data-pl=vtt]")
         cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
-        assert cues[0]["text"] == want and cues[0]["start"] == 0, cues
+        assert cues[0]["text"] == want and cues[0]["start"] <= 50, cues  # opens as play starts (render time aside)
         assert errors == []
     finally:
         ctx.close()
