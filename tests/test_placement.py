@@ -14,6 +14,10 @@ from typing import List
 
 import pytest
 
+# File system calls are slower on Windows CI runners (antivirus scanning, NTFS): this work took 1.45 s there (CI run
+# 38891458675) and well under 1 s on macOS and Linux. The budget still catches a deep scan of such a tree.
+TIME_BUDGET = 3.0 if os.name == "nt" else 1.0
+
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "plugins/plumb/scripts/detect.py"
 FIXTURES = REPO / "tests/fixtures/layouts"
@@ -410,7 +414,7 @@ def test_fast_on_large_tree(tmp_path: Path) -> None:
         (tmp_path / "node_modules" / f"p{i}" / "package.json").write_text("{}", encoding="utf-8")
     t = time.perf_counter()
     r = run(tmp_path)
-    assert time.perf_counter() - t < 1.0
+    assert time.perf_counter() - t < TIME_BUDGET
     assert r["ui_packages"][0]["framework"] == "next"
 
 
@@ -650,7 +654,7 @@ def test_parent_listing_does_not_deep_scan(tmp_path: Path) -> None:
             put(tmp_path, f"p{i}/src/d{j}/f.tsx", "x")
     t = time.perf_counter()
     r = run(tmp_path)
-    assert time.perf_counter() - t < 1.0
+    assert time.perf_counter() - t < TIME_BUDGET
     assert len(r["children"]) == 30 and all(c["has_ui"] for c in r["children"])
 
 

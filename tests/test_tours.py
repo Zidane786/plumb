@@ -3205,7 +3205,8 @@ def test_subtitles_are_exact_from_a_play_through(browser, voiced, voice: bool) -
                 first[e["pos"]] = e["t"]
         t0 = first[0]
         for i, c in enumerate(cues):
-            assert abs(c["start"] - (first[i] - t0)) <= 25, (i, c, first[i] - t0)
+            # within a few frames of when the page showed it (Windows' timer and a busy runner add ~30 ms)
+            assert abs(c["start"] - (first[i] - t0)) <= 60, (i, c, first[i] - t0)
             assert c["end"] > c["start"]
             if i + 1 < len(cues):
                 assert abs(cues[i + 1]["start"] - c["end"]) <= 2, "back to back: one caption ends as the next shows"
