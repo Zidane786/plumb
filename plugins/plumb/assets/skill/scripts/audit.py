@@ -4788,6 +4788,10 @@ def render_report(template: str, findings: List[Finding], checked: int, mode: st
 
 
 def write_report(out: Path, text: str, root: Path) -> bool:
+    problem = P.write_problem(out, root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return False
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8", newline="\n") as fh:
@@ -4891,11 +4895,12 @@ def _html_target(given: str, root: Path, skill_dir: Path, settings: dict) -> Tup
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: {tpl}: cannot read the report template ({exc})\n"
                          f"fix: restore it from the Plumb plugin's assets/skill/templates/") from None
+    # absolute, links not resolved: write_report refuses a link that leads outside the project
     if given:
-        out = Path(given).resolve()
+        out = Path(os.path.abspath(given))
     else:
         docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
-        out = (root / docs / f"audit-{datetime.date.today().isoformat()}.html").resolve()
+        out = Path(os.path.abspath(root / docs / f"audit-{datetime.date.today().isoformat()}.html"))
     if os.path.lexists(out):  # a page, a folder, a pipe or a device there: only a report of its own is replaced
         try:
             mine = P.is_plumb_page(P.read_project_head(out).decode("utf-8", errors="replace"), REPORT_HEADER)
@@ -4993,6 +4998,10 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
 
 def run_snapshot(out: Path, root: Path, skill_dir: Path, settings: dict) -> int:
     snap = take_snapshot(root, skill_dir, settings)
+    problem = P.write_problem(out, root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8", newline="\n") as fh:

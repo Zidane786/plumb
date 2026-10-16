@@ -137,6 +137,35 @@ def read_project_text(path, encoding: str = "utf-8-sig", errors: str = "strict",
     return read_project_bytes(path, limit).decode(encoding, errors)
 
 
+def write_problem(path, root) -> Optional[str]:
+    """The refusal (error: and fix: lines) when writing `path` must not happen, else None: a link inside the project
+    (the file itself or a folder on the way) that leads outside it, or a FIFO, device or socket there (opening one for
+    writing blocks, or the text is swallowed). A path outside the project given on purpose (a --snapshot in the OS
+    temp folder) is not a link through the project and is fine."""
+    p, r = Path(os.path.abspath(str(path))), Path(os.path.abspath(str(root)))
+    try:
+        parts = p.relative_to(r).parts
+    except ValueError:
+        parts = ()
+    shown = p.relative_to(r).as_posix() if parts else str(p)
+    real_root, cur = Path(os.path.realpath(str(r))), r
+    for part in parts:
+        cur = cur / part
+        if os.path.islink(str(cur)):
+            real = Path(os.path.realpath(str(cur)))
+            try:
+                real.relative_to(real_root)
+            except ValueError:
+                link = cur.relative_to(r).as_posix()
+                return (f"error: cannot write {shown}: {link} is a link that leads outside the project ({real}), so the "
+                        f"write would change a file there\nfix: ask the user before removing the link (rm {shell_word(link)}: "
+                        f"only the link goes, not what it points at), then run the same command again")
+    if os.path.exists(str(p)) and not p.is_file() and not p.is_dir():
+        return (f"error: cannot write {shown} (not a regular file: a pipe, a device or a link to one)\n"
+                f"fix: ask the user before removing it (rm {shell_word(shown)}), then run the same command again")
+    return None
+
+
 # ---------------------------------------------------------------- reading tokens
 
 

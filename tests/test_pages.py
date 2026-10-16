@@ -571,6 +571,33 @@ def test_the_tokens_build_never_writes_into_a_fifo(project: Path) -> None:
     assert_refusal(r, "not a regular file", SPECIMEN_REL)
 
 
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: symlink")
+def test_no_script_writes_through_a_link_that_leads_outside_the_project(project: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "dotfile"
+    victim.write_text("keep me\n", encoding="utf-8")
+    css = project / SKILL_REL / "assets/platforms/web/tokens.css"
+    css.unlink()
+    css.symlink_to(victim)  # a committed link to a file outside the project
+    r = build_tokens_t(project)
+    assert_refusal(r, f"cannot write {SKILL_REL}/assets/platforms/web/tokens.css", "outside the project",
+                   f"rm {SKILL_REL}/assets/platforms/web/tokens.css")
+    assert victim.read_text(encoding="utf-8") == "keep me\n"
+    css.unlink()
+    assert build_tokens_t(project).returncode == 0  # a plain file again: written
+    (project / "out").symlink_to(outside, target_is_directory=True)  # a linked folder
+    r = audit_t(project, "--html", "out/report.html")
+    assert_refusal(r, "out/report.html", "outside the project", "rm out")
+    assert not (outside / "report.html").exists()
+    r = audit_t(project, "--snapshot", "out/snap.json")
+    assert_refusal(r, "out/snap.json", "outside the project")
+    assert not (outside / "snap.json").exists()
+    # a path outside the project given on purpose is not a link through the project: still written
+    r = audit_t(project, "--snapshot", str(outside / "given.json"))
+    assert r.returncode == 0 and (outside / "given.json").is_file(), r.stderr
+
+
 def build_tokens_t(project: Path, *args: str):
     return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-tokens.py"), *args],
                           cwd=str(project), capture_output=True, text=True, encoding="utf-8", timeout=20)

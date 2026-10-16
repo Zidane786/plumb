@@ -266,3 +266,6 @@
 - The scripts read only regular files from a project, each up to 8 MB (pages and screen files up to 256 MB): a FIFO,
   a device or a link to one (a committed symlink to `/dev/zero`) is skipped by every walk, refused as unreadable when a
   command needs it (the tokens file), and never written into, so it cannot make a check hang or fill memory.
+- The scripts never write through a link in the project that leads outside it (a committed `tokens.css` pointing at a
+  file in your home folder, or a linked output folder): the build, the audit report and the snapshot stop with an
+  `error:` and a `fix:` that removes only the link, after you are asked.

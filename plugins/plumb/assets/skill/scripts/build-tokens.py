@@ -2512,6 +2512,11 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
         print("ok: nothing to move: no web copy sets the tokens' variables outside Plumb's block")
         return 0
     news = [apply_override_plan(path, plan) for path, plan in plans]  # all checked before anything is written
+    for (path, _plan), new in zip(plans, news):
+        problem = P.write_problem(path, root) if new is not None else None
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
     changes = apply_token_changes(doc, [p for _path, p in plans])
     if changes and not _write(tokens_file, json.dumps(doc, indent=2, ensure_ascii=False) + "\n", root):
         return 2
@@ -3200,10 +3205,9 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _write(path: Path, text: str, root: Path) -> bool:
-    if os.path.lexists(path) and not path.is_file() and not path.is_dir():  # a FIFO would block, a device swallow it
-        shown = rel(path, root)
-        print(f"error: cannot write {shown} (not a regular file: a pipe, a device or a link to one)\n"
-              f"fix: ask the user before removing it (rm {P.shell_word(shown)}), then run the build again", file=sys.stderr)
+    problem = P.write_problem(path, root)  # a link out of the project, a FIFO (it would block) or a device
+    if problem:
+        print(problem, file=sys.stderr)
         return False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
