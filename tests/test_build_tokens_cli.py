@@ -709,3 +709,22 @@ def test_kotlin_without_colours_has_no_empty_class(tmp_path: Path) -> None:
     assert "data class DemoColors()" not in text and "DemoColors(" not in text
     assert "LocalDemoColors" not in text and "val colors: DemoColors" not in text
     assert "fun DemoTheme(" in text and "colorScheme = " in text
+
+
+def test_a_pair_just_under_the_minimum_fails_and_shows_floored(tmp_path: Path) -> None:
+    """#008580 on white is 4.49995:1: WCAG does not round, so it fails, and the evidence never shows it as 4.50."""
+    def mut(doc: dict) -> None:
+        doc["color"]["link"] = {"$value": "#008580", "$extensions": {"plumb": {"dark": "#7fd6d0"}}}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    table = block(dark_md(p))
+    row = next(l for l in table.splitlines() if l.startswith("| link on background "))
+    assert "| 4.49 |" in row and "fail (light)" in row, row
+    assert "- link on background (light): nearest passing" in table
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bt_floor_test", SCRIPTS / "build-tokens.py")
+    bt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bt)
+    pair = next(x for x in bt.measure_pairs(json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8")))
+                if (x.fg, x.bg) == ("link", "background"))
+    assert pair.failed == ["light"] and 4.4999 < pair.light < 4.5

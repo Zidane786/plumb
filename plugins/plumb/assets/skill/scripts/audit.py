@@ -1765,7 +1765,7 @@ def check_contrast(proj: Project) -> Iterator[XHit]:
                 fix = (f"no {pair.fg} of this hue reaches {num(pair.need)}:1 on {pair.bg} in {mode} mode: change "
                        f"{pair.bg_path} with /plumb:update, then run {proj.build_command}")
             yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
-                       f"{pair.fg} on {pair.bg} is {ratio:.2f}:1 in {mode} mode (needs {num(pair.need)}:1): text "
+                       f"{pair.fg} on {pair.bg} is {P.ratio_text(ratio)}:1 in {mode} mode (needs {num(pair.need)}:1): text "
                        f"this faint is hard to read", fix)
 
 
@@ -1783,10 +1783,11 @@ def check_contrast_headroom(proj: Project) -> Iterator[XHit]:
                 continue
             fg, bg = pair.hex[mode]
             better = bt.nearest_passing(fg, bg, pair.need + spare, lighten=(mode == "dark"))
-            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, {num(spare)} to spare) with "
+            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({P.ratio_text(better[1])}:1, {num(spare)} to spare) with "
                    f"/plumb:update, then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
             yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
-                       f"{pair.fg} on {pair.bg} passes at {ratio:.2f}:1 in {mode} mode, only {ratio - pair.need:.2f} "
+                       f"{pair.fg} on {pair.bg} passes at {P.ratio_text(ratio)}:1 in {mode} mode, only "
+                       f"{P.ratio_text(ratio - pair.need)} "
                        f"above the {num(pair.need)}:1 minimum: thin fonts and dim screens push it under", fix)
 
 
@@ -4266,6 +4267,8 @@ def _mtimes(root: Path, tracked: Callable[[str], Optional[bool]]) -> Dict[str, L
             try:
                 st = path.stat()
             except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode):  # a FIFO or a link to a device: never read, so never a change
                 continue
             out[r] = [st.st_mtime_ns, st.st_size]
             if not stat.S_ISREG(st.st_mode):  # a FIFO or a link to a device: never read, so never a change

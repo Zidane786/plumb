@@ -30,7 +30,9 @@
   same design system; a prototype of every existing route; and an audit of what doesn't match yet.
 - **One token file** (W3C design tokens, light and dark) generates the web theme (Tailwind v4, Tailwind v3 or plain
   CSS, plus an exact copy at your app's path), a SwiftUI theme and a Compose Material 3 theme. Contrast is computed in
-  light and dark and written as evidence in the skill's `dark-mode.md`.
+  light and dark and written as evidence in the skill's `dark-mode.md`. Pass or fail is decided on the unrounded ratio,
+  as WCAG does (4.49995:1 fails 4.5:1), and every ratio is shown floored to 2 decimals (4.49), the same in the
+  evidence, the specimen and the audit.
 - **Your stylesheet stays yours**: in a stylesheet you already have (e.g. `app/globals.css`), Plumb adds and owns only
   a marked block, shown as a diff and asked first. When the file sets its own theme variables (a stock
   create-next-app or shadcn `globals.css`), create and extract show the token each maps onto and, on your OK, move

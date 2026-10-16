@@ -1383,7 +1383,7 @@ class Pair:
     def _step(self, opt: Tuple[str, str, str, float], mode: str) -> str:
         name, path, value, ratio = opt
         own = self.bg_path if name == self.bg else self.fg_path
-        text = f"step {name} to {value} ({ratio:.2f}:1"
+        text = f"step {name} to {value} ({P.ratio_text(ratio)}:1"
         if name == self.bg and self.fix_bg.get(mode):
             text += f", {self.fg} stays {self.hex[mode][0]}"
         text += ")"
@@ -1402,7 +1402,7 @@ class Pair:
             own = self.bg_path if name == self.bg else self.fg_path
             alias = f" (it is an alias: change it at the source token {path})" if path != own else ""
             head = "nearest passing" if short and name == self.fg else f"nearest passing {name} in {mode} mode:"
-            return f"{head} {value} ({ratio:.2f}:1){alias}"
+            return f"{head} {value} ({P.ratio_text(ratio)}:1){alias}"
         return ""
 
 
@@ -1475,7 +1475,7 @@ def _walk_lightness(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tu
     while (lightness < 1) if lighten else (lightness > 0):
         lightness = min(1.0, max(0.0, lightness + step))
         cand = _oklch_to_hex(lightness, chroma, hue)
-        ratio = P.contrast(cand, bg)
+        ratio = P.contrast_ratio(cand, bg)
         if ratio >= need:
             return cand, ratio
     return None
@@ -1648,7 +1648,7 @@ def measure_pairs(doc: dict) -> List[Pair]:
                            "use an opaque colour for the background in $extensions.plumb.contrast")
             fg = _blend(fg, fa, bg)
             pair.hex[mode] = (fg, bg)
-            ratio = P.contrast(fg, bg)
+            ratio = P.contrast_ratio(fg, bg)  # unrounded: compared below, floored when shown
             if mode == "light":
                 pair.light = ratio
             else:
@@ -1676,7 +1676,7 @@ def contrast_block(doc: dict) -> str:
     ]
     for p in pairs:
         result = "pass" if not p.failed else "fail (" + ", ".join(p.failed) + ")"
-        L.append(f"| {p.fg} on {p.bg} | {p.light:.2f} | {p.dark:.2f} | {num(p.need)} | {result} |")
+        L.append(f"| {p.fg} on {p.bg} | {P.ratio_text(p.light)} | {P.ratio_text(p.dark)} | {num(p.need)} | {result} |")
     if failing:
         L += ["", "Nearest passing values with 0.5 to spare (the colour nudged in OKLCH lightness, hue kept: the text lighter in dark mode, darker in light mode; for text on a filled control, the fill is the first option, away from the text colour, unless the fill is a surface):", ""]
         for p in failing:
@@ -2639,7 +2639,7 @@ def _chrome_text_ok(doc: dict, path: str, picked: Dict[str, Optional[str]]) -> b
             else:
                 bg = CHROME_NEUTRAL[ground][mode]
             fg, fa = P.parse_color(P.resolve(doc, path, mode))
-            if P.contrast(_blend(fg, fa, bg), bg) < CHROME_FLOOR:
+            if P.contrast_ratio(_blend(fg, fa, bg), bg) < CHROME_FLOOR:
                 return False
     return True
 
@@ -2862,7 +2862,7 @@ def _verdict(passed: bool) -> str:
 
 def _pair_item(pair: "Pair") -> str:
     return (f'<li class="pair" data-pair="{_e(pair.fg)} on {_e(pair.bg)}"><span class="pair-name">{_e(pair.fg)} on {_e(pair.bg)}'
-            f'</span><span class="ratio">light <b>{pair.light:.2f}</b></span><span class="ratio">dark <b>{pair.dark:.2f}</b>'
+            f'</span><span class="ratio">light <b>{P.ratio_text(pair.light)}</b></span><span class="ratio">dark <b>{P.ratio_text(pair.dark)}</b>'
             f'</span><span class="need">needs {num(pair.need)}</span>{_verdict(not pair.failed)}</li>')
 
 

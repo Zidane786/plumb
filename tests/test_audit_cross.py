@@ -194,8 +194,9 @@ def test_contrast_reports_mode_ratio_and_nearest_passing_value(tmp_path: Path) -
     project = make_project(tmp_path / "p", CROSS / "contrast/bad")
     found = [f for f in audit_json(project)["findings"] if f["rule"] == "contrast"]
     light = next(f for f in found if "on-primary on primary" in f["message"] and "light" in f["message"])
-    assert "4.48:1" in light["message"] and "4.5:1" in light["message"]
-    assert "#070707" in light["fix"] and "build-tokens.py" in light["fix"]
+    assert "4.47:1" in light["message"] and "4.5:1" in light["message"]  # 4.4765, floored
+    # #070707 is 4.499995:1 (shown as 4.50 when ratios were rounded): it fails, so the nearest passing is #060606
+    assert "#060606" in light["fix"] and "build-tokens.py" in light["fix"]
     assert any("text-muted on background" in f["message"] and "dark" in f["message"] for f in found)
 
 
@@ -207,14 +208,16 @@ def test_contrast_fix_for_white_on_a_fill_lists_the_fill_option_first(tmp_path: 
     fix = light["fix"]
     assert fix.startswith("two options in light mode") and "on-primary stays #ffffff" in fix
     assert fix.index("(1) step primary to #") < fix.index("(2) step on-primary to #")
-    # exact values (deterministic): fill #007d77 at 5.00:1, on-primary #070707 (also pinned above)
-    assert "(1) step primary to #007d77 (5.00:1, on-primary stays #ffffff); (2) step on-primary to #070707 (" in fix
+    # exact values (deterministic): fill #007d77 at 5.00:1, on-primary #060606 at 4.52:1 (also pinned above)
+    assert ("(1) step primary to #007d77 (5.00:1, on-primary stays #ffffff); (2) step on-primary to #060606 (4.52:1)"
+            in fix)
     first = fix.split("(1) step primary to ")[1][:7]
     assert P.contrast("#ffffff", first) >= 4.5 + BT.FIX_SPARE - 0.05  # the pale-teal fill darkened enough
     # dark mode: on-primary is #0f1217, near-black and near-neutral: it gets the fill option too, lightening the fill
+    # (#e5e9f1 is 4.995:1 on #0f6e69, shown 5.00 when ratios were rounded: under the 5.0 target, so the walk goes on)
     dark = next(f for f in found if "on-primary on primary" in f["message"] and "dark" in f["message"])
     assert dark["fix"].startswith("two options in dark mode: (1) step primary to #") and "on-primary stays #0f1217" in dark["fix"]
-    assert "(1) step primary to #3e918b (5.03:1, on-primary stays #0f1217); (2) step on-primary to #e5e9f1 (5.00:1)" in dark["fix"]
+    assert "(1) step primary to #3e918b (5.02:1, on-primary stays #0f1217); (2) step on-primary to #e5eaf1 (5.02:1)" in dark["fix"]
 
 
 def test_contrast_uses_the_build_tokens_pair_logic() -> None:

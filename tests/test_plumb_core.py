@@ -32,11 +32,21 @@ def test_versions() -> None:
 
 
 def test_contrast_known_ratios() -> None:
-    assert P.contrast("#ffffff", "#14857f") == 4.48
-    assert P.contrast("#ffffff", "#13817b") == 4.72  # the brief says 4.7; the exact ratio is 4.72
+    assert P.contrast("#ffffff", "#14857f") == 4.47  # 4.4765: shown floored to 2 decimals, never rounded up
+    assert P.contrast("#ffffff", "#13817b") == 4.71  # 4.7151
     assert P.contrast("#1b2230", "#ffffff") >= 15
     assert P.contrast("#14857f", "#ffffff") == P.contrast("#ffffff", "#14857f")
     assert P.contrast("#000", "#fff") == 21.0
+
+
+def test_contrast_is_compared_unrounded_and_shown_floored() -> None:
+    # #008580 on white is 4.49995:1. WCAG does not round: it fails 4.5:1, and it is never shown as 4.50.
+    raw = P.contrast_ratio("#008580", "#ffffff")
+    assert 4.4999 < raw < 4.5
+    assert P.contrast("#008580", "#ffffff") == 4.49
+    assert P.ratio_text(raw) == "4.49"
+    assert P.ratio_text(4.57) == "4.57" and P.ratio_text(21.0) == "21.00" and P.ratio_text(4.5) == "4.50"
+    assert P.contrast_ratio("#ffffff", "#008580") == raw
 
 
 def test_delta_e() -> None:

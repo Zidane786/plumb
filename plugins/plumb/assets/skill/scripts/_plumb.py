@@ -464,11 +464,28 @@ def _luminance(hexv: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-def contrast(fg_hex: str, bg_hex: str) -> float:
-    """WCAG 2.x contrast ratio, rounded to 2 decimals; argument order does not matter."""
+def contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+    """WCAG 2.x contrast ratio, unrounded; argument order does not matter. Every pass/fail and headroom decision
+    compares this: WCAG does not round, so 4.49995:1 fails 4.5:1."""
     a, b = _luminance(fg_hex), _luminance(bg_hex)
     hi, lo = max(a, b), min(a, b)
-    return round((hi + 0.05) / (lo + 0.05), 2)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def floor2(ratio: float) -> float:
+    """A ratio floored to 2 decimals, for display: 4.49995 is 4.49, never 4.50 (a shown figure never passes when the
+    ratio fails). The x100 value is rounded to 6 places first, so 4.57 (456.99999… in binary) stays 4.57."""
+    return math.floor(round(ratio * 100, 6)) / 100
+
+
+def ratio_text(ratio: float) -> str:
+    """A ratio as the evidence shows it: floored to 2 decimals ("4.49")."""
+    return f"{floor2(ratio):.2f}"
+
+
+def contrast(fg_hex: str, bg_hex: str) -> float:
+    """WCAG 2.x contrast ratio floored to 2 decimals (what the evidence shows); compare contrast_ratio instead."""
+    return floor2(contrast_ratio(fg_hex, bg_hex))
 
 
 def _lab(hexv: str) -> Tuple[float, float, float]:

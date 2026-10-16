@@ -262,7 +262,20 @@ def test_specimen_colours_in_light_and_dark_with_contrast(project: Path) -> None
         key = f'data-pair="{pair.fg} on {pair.bg}"'
         assert key in text, key
         chunk = text[text.index(key):text.index(key) + 600]
-        assert f"{pair.light:.2f}" in chunk and f"{pair.dark:.2f}" in chunk, chunk
+        assert f"light <b>{P.ratio_text(pair.light)}</b>" in chunk and f"dark <b>{P.ratio_text(pair.dark)}</b>" in chunk, chunk
+
+
+def test_specimen_shows_a_pair_just_under_the_minimum_as_failing(tmp_path: Path) -> None:
+    # #008580 on white is 4.49995:1: it fails 4.5:1 and shows 4.49 (floored), as in dark-mode.md and the audit
+    def mut(doc: dict) -> None:
+        doc["color"]["link"] = {"$value": "#008580", "$extensions": {"plumb": {"dark": "#7fd6d0"}}}
+    p = make_project(tmp_path / "proj", mutate=mut)
+    text = read(p / SPECIMEN_REL)
+    key = 'data-pair="link on background"'
+    chunk = text[text.index(key):text.index(key) + 600]
+    assert "light <b>4.49</b>" in chunk and "verdict-good" not in chunk.split("</li>")[0], chunk
+    found = json.loads(audit(p, "--json").stdout)["findings"]
+    assert any(f["rule"] == "contrast" and "link on background is 4.49:1 in light mode" in f["message"] for f in found)
 
 
 def test_specimen_scopes_both_themes_from_the_tokens(project: Path) -> None:
@@ -473,6 +486,69 @@ def test_report_rewrites_its_own_report_and_an_empty_file(project: Path) -> None
     write(project / "out/empty.html", "")
     assert audit(project, "--html", "out/empty.html").returncode == 1
     assert P.is_plumb_page(read(project / "out/empty.html"), A.REPORT_HEADER)
+
+
+_POSIX = os.name == "posix"
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_a_fifo_in_the_project_is_skipped_not_read(project: Path) -> None:
+    os.mkfifo(project / "app/hang.css")
+    for script, args in (("audit.py", ("--json",)), ("audit.py", ("app",)), ("audit.py", ("--html",)),
+                         ("build-tokens.py", ("--check",))):
+        try:
+            r = subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script), *args], cwd=str(project),
+                               capture_output=True, text=True, encoding="utf-8", timeout=20)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"{script} {args} read the FIFO")
+        assert r.returncode in (0, 1), (script, args, r.stdout, r.stderr)
+        assert "Traceback" not in r.stderr
+        assert "hang.css" not in r.stdout  # never audited
+
+
+@pytest.mark.skipif(not _POSIX or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+def test_a_tokens_file_linked_to_a_device_is_refused_quickly(project: Path) -> None:
+    tokens = project / TOKENS_REL
+    tokens.unlink()
+    tokens.symlink_to("/dev/zero")
+    for script, args in (("build-tokens.py", ("--check",)), ("build-tokens.py", ()), ("audit.py", ("--json",))):
+        try:
+            r = subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script), *args], cwd=str(project),
+                               capture_output=True, text=True, encoding="utf-8", timeout=20)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"{script} {args} read /dev/zero")
+        assert_refusal(r, "not a regular file")
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_report_never_writes_into_a_fifo(project: Path) -> None:
+    os.mkfifo(project / "out.html")
+    try:
+        r = audit_t(project, "--html", "out.html")
+    except subprocess.TimeoutExpired:
+        pytest.fail("--html opened the FIFO")
+    assert_refusal(r, "not an audit report")
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_the_tokens_build_never_writes_into_a_fifo(project: Path) -> None:
+    (project / SPECIMEN_REL).unlink()
+    os.mkfifo(project / SPECIMEN_REL)
+    try:
+        r = build_tokens_t(project)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the build opened the FIFO")
+    assert_refusal(r, "not a regular file", SPECIMEN_REL)
+
+
+def build_tokens_t(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-tokens.py"), *args],
+                          cwd=str(project), capture_output=True, text=True, encoding="utf-8", timeout=20)
+
+
+def audit_t(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/audit.py"), *args], cwd=str(project),
+                          capture_output=True, text=True, encoding="utf-8", timeout=20)
 
 
 def test_report_refusals(project: Path, tmp_path: Path) -> None:
