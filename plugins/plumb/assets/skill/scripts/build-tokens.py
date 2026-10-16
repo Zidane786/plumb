@@ -284,7 +284,7 @@ def read_template(skill_dir: Path, styling: str) -> str:
         path = folder / name
         if path.is_file():
             try:
-                text = path.read_text(encoding="utf-8-sig")
+                text = P.read_project_text(path)
             except (OSError, UnicodeDecodeError) as exc:
                 raise _err(f"{path}: cannot read the template ({exc})", "save it as UTF-8") from None
             return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -863,7 +863,7 @@ def load_icon_map(skill_dir: Path) -> Optional[List[dict]]:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _err(f"{path}: cannot read the icon map ({exc})", "fix the JSON or delete the file to leave icons out") from None
     icons = data.get("icons") if isinstance(data, dict) else None
@@ -1258,7 +1258,7 @@ def copy_output(path: Path, css: str, root: Path) -> CopyPlan:
     no block) becomes the block."""
     shown = rel(path, root)
     try:
-        current = path.read_bytes().decode("utf-8") if path.is_file() else None
+        current = P.read_project_bytes(path).decode("utf-8") if path.is_file() else None
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{shown}: cannot read the web copy ({exc})", f"save {shown} as UTF-8, then run build-tokens.py again") from None
     if current is None or not current.strip("﻿ \t\r\n"):
@@ -1705,7 +1705,7 @@ def read_dark_doc(skill_dir: Path) -> Optional[str]:
     if not path.is_file():
         return None
     try:
-        return path.read_bytes().decode("utf-8")
+        return P.read_project_bytes(path).decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{path}: cannot read ({exc})", "save it as UTF-8") from None
 
@@ -1962,7 +1962,7 @@ def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict], docs_rel: 
             try:
                 if path.stat().st_size > P.MAX_SOURCE_BYTES:
                     continue
-                text = path.read_bytes().decode("utf-8", errors="replace")
+                text = P.read_project_text(path, "utf-8", "replace")
             except OSError:
                 continue
             if "var(" not in text or P.is_generated_text(text[:2000]):
@@ -2055,7 +2055,7 @@ def _next_font_body_notes(root: Path, fontvars: Dict[str, str]) -> List[str]:
     notes: List[str] = []
     for layout in layouts:
         try:
-            text = layout.read_bytes().decode("utf-8")
+            text = P.read_project_bytes(layout).decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         code = P.mask_comments(text, ".tsx")  # same offsets: a <body> in a comment is not the tag
@@ -2076,7 +2076,7 @@ def _next_font_body_notes(root: Path, fontvars: Dict[str, str]) -> List[str]:
                 imported, spec = imports[ident]
                 module = _local_module(root, layout.parent, spec)
                 try:
-                    var = _font_variables(module.read_bytes().decode("utf-8")).get(imported) if module else None
+                    var = _font_variables(P.read_project_bytes(module).decode("utf-8")).get(imported) if module else None
                 except (OSError, UnicodeDecodeError):
                     var = None
             if var in fontvars:
@@ -2097,7 +2097,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     dark-variant, the token it is or becomes, the project's values, the token change), the lines to remove, the
     replacements, the project variables that fed them, and what only the person can do (by_hand)."""
     shown = rel(path, root)
-    text = path.read_bytes().decode("utf-8")
+    text = P.read_project_bytes(path).decode("utf-8")
     code = P.mask_comments(P.mask_block(text), ".css")
     L = _Lines(text, code)
     blocks = P.css_blocks(code)
@@ -2383,7 +2383,7 @@ def override_plans(doc: dict, skill_dir: Path, project: Optional[Path]) -> List[
 
 def apply_override_plan(path: Path, plan: dict) -> Optional[str]:
     """The copy's new text after the plan's replacements and removals (None when nothing changes)."""
-    text = path.read_bytes().decode("utf-8")
+    text = P.read_project_bytes(path).decode("utf-8")
     lines = text.split("\n")
     for r in plan["replace"]:
         lines[r["line"] - 1] = lines[r["line"] - 1].replace(r["old"], r["new"], 1)
@@ -2794,7 +2794,8 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
         generated_only.update(found)
     for path in paths:
         try:
-            text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
+            text = (P.normalise_text(P.read_project_text(path, "utf-8", limit=P.PAGE_READ_LIMIT)) if path.is_file()
+                    else None)
         except (OSError, UnicodeDecodeError):
             text = None  # build-prototype.py --check reports an unreadable page
         if text is not None and path not in generated_only and not P.is_prototype_page(text):
@@ -2814,7 +2815,7 @@ def specimen_in_the_way(doc: dict, root: Path, files: Dict[Path, str]) -> Option
     if path not in files or not path.is_file():
         return None
     try:
-        head = path.read_bytes()[:P.PAGE_HEAD_BYTES].decode("utf-8", errors="replace")
+        head = P.read_project_head(path).decode("utf-8", errors="replace")
     except OSError:
         return None
     return None if P.is_specimen_page(head) else path
@@ -3104,7 +3105,7 @@ def specimen_output(doc: dict, skill_dir: Path, root: Path, tokens_file: Path, h
     if tpl is None:
         return None
     try:
-        template = tpl.read_text(encoding="utf-8-sig")
+        template = P.read_project_text(tpl)
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{tpl}: cannot read the specimen template ({exc})", "restore it from the Plumb plugin's assets/skill/templates/") from None
     return specimen_path(doc, root), build_specimen(doc, template, header, rel(tokens_file, root))
@@ -3120,6 +3121,11 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _write(path: Path, text: str, root: Path) -> bool:
+    if os.path.lexists(path) and not path.is_file() and not path.is_dir():  # a FIFO would block, a device swallow it
+        shown = rel(path, root)
+        print(f"error: cannot write {shown} (not a regular file: a pipe, a device or a link to one)\n"
+              f"fix: ask the user before removing it (rm {P.shell_word(shown)}), then run the build again", file=sys.stderr)
+        return False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -3173,7 +3179,7 @@ def print_first_block(path: Path, new: str, root: Path) -> None:
     as a unified diff, so it can be shown to the person and agreed before anything is written."""
     shown = rel(path, root)
     try:
-        old = path.read_bytes().decode("utf-8", errors="replace")
+        old = P.read_project_text(path, "utf-8", "replace")
     except OSError:
         old = ""
     print(f"would add Plumb's block to {shown} (first time; every other line stays as it is). The change:")
@@ -3320,7 +3326,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     stale = []
     for path, text in files.items():
         try:
-            current = path.read_bytes() if path.exists() else None
+            current = P.read_project_bytes(path, P.PAGE_READ_LIMIT) if path.exists() else None
         except OSError:
             current = None
         if current == text.encode("utf-8"):

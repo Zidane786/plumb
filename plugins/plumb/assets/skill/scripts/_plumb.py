@@ -87,30 +87,48 @@ def fill_template(text: str, values: dict, name: str = "template") -> str:
 # PROJECT_READ_LIMIT bytes. 8 MB is well above any real source, tokens or screen file (the audit already skips sources
 # over 5 MB) and small enough that a hostile file cannot make a hook allocate gigabytes.
 PROJECT_READ_LIMIT = 8 * 1024 * 1024
+# Pages and screen files are read whole by the builders and can be large (inline data: images; a page over 10 MB only
+# gets a warning), so they get a higher bound; it still stops a runaway read long before memory runs out.
+PAGE_READ_LIMIT = 256 * 1024 * 1024
 
 
-def read_project_bytes(path, limit: int = PROJECT_READ_LIMIT) -> bytes:
-    """The bytes of a regular file of at most `limit` bytes. Raises OSError (FileNotFoundError when missing) for
-    anything else: a device, a FIFO, a socket or a folder (opened without blocking, refused after fstat), or a longer
-    file. Callers treat that as unreadable, as they do any other read error."""
+def _read_regular(path, limit: int, cut: bool) -> bytes:
     fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        mode = os.fstat(fd).st_mode
+        if stat.S_ISDIR(mode):
+            raise IsADirectoryError(errno.EISDIR, "is a folder", str(path))
+        if not stat.S_ISREG(mode):
             raise OSError(errno.EINVAL, "not a regular file", str(path))
         chunks: List[bytes] = []
         total = 0
-        while True:
+        while total <= limit:
             chunk = os.read(fd, min(1 << 20, limit + 1 - total))
             if not chunk:
                 break
             chunks.append(chunk)
             total += len(chunk)
-            if total > limit:
-                raise OSError(errno.EFBIG, f"larger than {limit // (1024 * 1024) or limit} "
-                                           f"{'MB' if limit >= 1024 * 1024 else 'bytes'}", str(path))
-        return b"".join(chunks)
+        data = b"".join(chunks)
+        if len(data) > limit:
+            if cut:
+                return data[:limit]
+            raise OSError(errno.EFBIG, f"larger than {limit} bytes", str(path))
+        return data
     finally:
         os.close(fd)
+
+
+def read_project_bytes(path, limit: int = PROJECT_READ_LIMIT) -> bytes:
+    """The bytes of a regular file of at most `limit` bytes. Raises OSError (FileNotFoundError when missing,
+    IsADirectoryError for a folder) for anything else: a device, a FIFO or a socket (opened without blocking, refused
+    after fstat), or a longer file. Callers treat that as unreadable, as they do any other read error."""
+    return _read_regular(path, limit, False)
+
+
+def read_project_head(path, size: Optional[int] = None) -> bytes:
+    """The first `size` bytes (default PAGE_HEAD_BYTES) of a regular file, for a header test; OSError as
+    read_project_bytes for anything that is not a regular file."""
+    return _read_regular(path, PAGE_HEAD_BYTES if size is None else size, True)
 
 
 def read_project_text(path, encoding: str = "utf-8-sig", errors: str = "strict", limit: int = PROJECT_READ_LIMIT) -> str:
@@ -588,7 +606,7 @@ def read_plumb_md(path: Path) -> dict:
     and tables are ignored; CRLF is fine; a missing file gives {}. A trailing '   (note)' is dropped from a value
     and a value wrapped in backticks is unwrapped."""
     try:
-        text = Path(path).read_text(encoding="utf-8-sig")
+        text = read_project_text(path)
     except (FileNotFoundError, IsADirectoryError):
         return {}
     except (OSError, UnicodeDecodeError) as exc:
@@ -1052,7 +1070,7 @@ def tailwind_project(folder: Path) -> bool:
     pkg = folder / "package.json"
     if pkg.is_file():
         try:
-            return uses_tailwind(pkg.read_text(encoding="utf-8", errors="replace"))
+            return uses_tailwind(read_project_text(pkg, "utf-8", "replace"))
         except OSError:
             return False
     return False
@@ -1705,7 +1723,7 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
             try:
                 if path.stat().st_size > MAX_SOURCE_BYTES:
                     continue
-                text = normalise_text(path.read_bytes().decode("utf-8-sig", errors="replace"))
+                text = normalise_text(read_project_text(path, errors="replace"))
             except OSError:
                 continue
             if is_generated_text(text):

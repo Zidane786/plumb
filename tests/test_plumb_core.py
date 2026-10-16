@@ -290,3 +290,12 @@ def test_a_tokens_file_linked_to_a_device_is_refused_quickly(tmp_path: Path) -> 
     assert time.monotonic() - start < 2
     assert_formatted(err.value)
     assert "not a regular file" in str(err.value)
+
+
+def test_read_project_head_reads_only_the_start(tmp_path: Path) -> None:
+    f = tmp_path / "page.html"
+    f.write_bytes(b"a" * 5000)
+    assert P.read_project_head(f) == b"a" * P.PAGE_HEAD_BYTES
+    assert P.read_project_head(f, 10) == b"a" * 10
+    with pytest.raises(OSError):  # a folder (IsADirectoryError on POSIX, PermissionError on Windows)
+        P.read_project_bytes(tmp_path)

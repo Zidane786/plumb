@@ -340,7 +340,7 @@ class _ScreenParser(HTMLParser):
 
 def parse_screen(path: Path, rel: str) -> Screen:
     try:
-        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+        text = P.normalise_text(P.read_project_text(path, limit=P.PAGE_READ_LIMIT))
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{rel}: cannot read the screen file ({exc})", "save it as UTF-8") from None
     parser = _ScreenParser(text)
@@ -648,7 +648,7 @@ def load_shared(folder: Path, root: Path, rel) -> List[Shared]:
                         and not p.name.startswith(".")), key=lambda p: p.name):
         prel = rel(path, root)
         try:
-            text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+            text = P.normalise_text(P.read_project_text(path, limit=P.PAGE_READ_LIMIT))
         except (OSError, UnicodeDecodeError) as exc:
             raise _err(f"{prel}: cannot read the shared file ({exc})", "save it as UTF-8") from None
         kind = path.suffix[1:]
@@ -708,13 +708,13 @@ def combined_hash(own: str, shared: List[Tuple[str, str]]) -> str:
 def screen_file_hash(path: Path) -> str:
     """The approval hash of one screen file, from its text and its folder's shared files (read, not checked): what the
     edit hook compares an approval with. Raises OSError / UnicodeDecodeError when a file cannot be read."""
-    own = sha256_text(path.read_bytes().decode("utf-8-sig"))
+    own = sha256_text(P.read_project_text(path, limit=P.PAGE_READ_LIMIT))
     base = path.parent / SHARED_DIR
     pairs = []
     if base.is_dir():
         for p in base.iterdir():
             if p.is_file() and p.suffix in (".css", ".js") and not p.name.startswith("."):
-                pairs.append((f"{SHARED_DIR}/{p.name}", sha256_text(p.read_bytes().decode("utf-8-sig"))))
+                pairs.append((f"{SHARED_DIR}/{p.name}", sha256_text(P.read_project_text(p, limit=P.PAGE_READ_LIMIT))))
     return combined_hash(own, pairs)
 
 
@@ -770,7 +770,7 @@ def read_changes(path: Path, root: Path, rel) -> Optional[List[dict]]:
         return None
     prel = rel(path, root)
     try:
-        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+        text = P.normalise_text(P.read_project_text(path))
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{prel}: cannot read the change list ({exc})", "save it as UTF-8") from None
     out: List[dict] = []
@@ -953,7 +953,7 @@ def files_state(root: Path, globs: List[str]) -> Tuple[Optional[str], str]:
     h = hashlib.sha256()
     for relp in paths:
         try:
-            data = (root / relp).read_bytes()
+            data = P.read_project_bytes(root / relp, P.PAGE_READ_LIMIT)
         except OSError:
             continue
         try:
@@ -995,7 +995,7 @@ def read_map(path: Path, rel_path: str) -> Dict[str, dict]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(path, limit=P.PAGE_READ_LIMIT))
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{rel_path}: cannot read the screen map ({exc})", "restore it with git (git checkout -- "
                    f"{rel_path}); only build-prototype.py writes it") from None
@@ -1790,7 +1790,7 @@ def load_tours(folder: Path, screens: List[Screen], root: Path, rel, screens_rel
     tours = []
     for path, (tid, prel) in zip(files, ids):
         try:
-            text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+            text = P.normalise_text(P.read_project_text(path))
         except (OSError, UnicodeDecodeError) as exc:
             raise _err(f"{prel}: cannot read the tour file ({exc})", "save it as UTF-8") from None
         tours.append(_TourReader(tid, prel, text, by_id, screens_rel).read())
@@ -2063,7 +2063,7 @@ def check_tour_file(given: str, root: Path, docs: Path, screens: List[Screen], r
         raise _err(f"{prel}: tour id \"{tid}\" may only use letters, digits, _ and -",
                    "rename the file to an id such as booking-demo.json")
     try:
-        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+        text = P.normalise_text(P.read_project_text(path))
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{prel}: cannot read the tour file ({exc})", "save it as UTF-8") from None
     by_id = {s.id: s for s in screens}
@@ -2479,7 +2479,7 @@ def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
         if path in pages or not path.is_file():
             continue
         try:
-            head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
+            head = P.read_project_head(path).decode("utf-8", errors="replace")
         except OSError:
             continue
         if P.is_prototype_page(head):  # an empty one too: what a build cut short leaves
@@ -2495,7 +2495,7 @@ def not_plumbs(paths, root: Path, rel) -> List[str]:
         if path.suffix != ".html" or not path.is_file():
             continue
         try:
-            head = path.read_bytes()[:P.PAGE_HEAD_BYTES].decode("utf-8", errors="replace")
+            head = P.read_project_head(path).decode("utf-8", errors="replace")
         except OSError:
             continue  # unreadable: the write reports it; never taken for someone else's page
         if not P.is_prototype_page(head):
@@ -2561,7 +2561,7 @@ def read_template(skill_dir: Path, name: str) -> str:
         raise _err(f"templates/{name} is missing from the skill",
                    "copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)")
     try:
-        return tpl.read_text(encoding="utf-8-sig")
+        return P.read_project_text(tpl)
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{tpl}: cannot read the template ({exc})", "restore it from the Plumb plugin's assets/skill/templates/") from None
 
@@ -2585,7 +2585,7 @@ def proposal_pages(docs: Path) -> List[Path]:
     out = []
     for path in found:
         try:
-            head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
+            head = P.read_project_head(path).decode("utf-8", errors="replace")
         except OSError:
             continue
         if path.is_file() and P.is_generated_proposal_page(head):
@@ -2598,7 +2598,7 @@ def proposal_refresh(docs: Path, doc: dict, bt) -> Dict[Path, str]:
     out: Dict[Path, str] = {}
     for path in proposal_pages(docs):
         try:
-            current = P.normalise_text(path.read_text(encoding="utf-8"))
+            current = P.normalise_text(P.read_project_text(path, "utf-8", limit=P.PAGE_READ_LIMIT))
         except (OSError, UnicodeDecodeError):
             continue
         refreshed = bt.refresh_prototype_theme(current, doc)
@@ -2612,7 +2612,7 @@ def read_idea(path: Path) -> Tuple[Optional[str], List[str], List[str]]:
     if not path.is_file():
         return None, [], []
     try:
-        text = P.normalise_text(path.read_text(encoding="utf-8-sig"))
+        text = P.normalise_text(P.read_project_text(path))
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{path}: cannot read the variant's idea ({exc})", "save idea.md as UTF-8 text") from None
     title, paras, trade, cur = None, [], [], []
@@ -2777,7 +2777,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
         stale = []
         for path, text in files.items():
             try:
-                current = P.normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.exists() else None
+                current = (P.normalise_text(P.read_project_text(path, "utf-8", "replace", P.PAGE_READ_LIMIT)) if path.exists()
+                           else None)
             except OSError:
                 current = None
             if current != text:
@@ -2795,7 +2796,7 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     wrote = 0
     for path, text in files.items():
         try:
-            current = path.read_bytes() if path.exists() else None
+            current = P.read_project_bytes(path, P.PAGE_READ_LIMIT) if path.exists() else None
         except OSError:
             current = None
         if current == text.encode("utf-8"):
@@ -2975,7 +2976,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     decisions: List[dict] = []
     if decisions_path.exists():
         try:
-            decisions = parse_decisions(decisions_path.read_text(encoding="utf-8-sig"))
+            decisions = parse_decisions(P.read_project_text(decisions_path, limit=P.PAGE_READ_LIMIT))
         except (OSError, UnicodeDecodeError) as exc:
             print(f"warning: cannot read {rel(decisions_path, root)} ({exc}): the decision panels are empty\n"
                   f"fix: save {rel(decisions_path, root)} as UTF-8", file=sys.stderr)
@@ -2990,7 +2991,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if tour_error is not None:
         text = map_text([entries[s.id] for s in screens], header)
         try:
-            current = map_path.read_bytes() if map_path.exists() else None
+            current = P.read_project_bytes(map_path, P.PAGE_READ_LIMIT) if map_path.exists() else None
         except OSError:
             current = None
         if current != text.encode("utf-8"):
@@ -3043,7 +3044,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         stale = []
         for path, text in files.items():
             try:
-                current = P.normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.exists() else None
+                current = (P.normalise_text(P.read_project_text(path, "utf-8", "replace", P.PAGE_READ_LIMIT)) if path.exists()
+                           else None)
             except OSError:
                 current = None
             if current == text:
@@ -3083,7 +3085,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     wrote = 0
     for path, text in files.items():
         try:
-            current = path.read_bytes() if path.exists() else None
+            current = P.read_project_bytes(path, P.PAGE_READ_LIMIT) if path.exists() else None
         except OSError:
             current = None
         if current == text.encode("utf-8"):

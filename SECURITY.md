@@ -14,7 +14,9 @@ and write files in the project.
   the scripts that ship with the plugin (`plugins/plumb/assets/skill/scripts/` in the installed plugin), never the
   copies in a project's design-system skill (`.claude/skills/<project>-design-system/scripts/`). A project is only
   read as data: `PLUMB.md`, the tokens JSON, `screens.json`, the screen files (with their `_shared/` CSS and
-  JS, hashed, never run) and the source files. When a project's
+  JS, hashed, never run) and the source files. The scripts read only regular files, each up to 8 MB (pages and screen
+  files up to 256 MB): a FIFO, a device or a link to one (a committed symlink to `/dev/zero`) is skipped or refused
+  as unreadable, never read and never written into. When a project's
   copies are a different version, the hooks say so ("run /plumb:upgrade") and still check with the plugin's own
   scripts.
 - **Git, with fixed overrides.** To see what changed in a session the hooks run git in the project: `rev-parse`,

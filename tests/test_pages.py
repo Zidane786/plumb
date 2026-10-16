@@ -10,6 +10,7 @@ import datetime
 import html
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -486,6 +487,69 @@ def test_report_refusals(project: Path, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------- browser (headless)
+
+_POSIX = os.name == "posix"
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_a_fifo_in_the_project_is_skipped_not_read(project: Path) -> None:
+    os.mkfifo(project / "app/hang.css")
+    for script, args in (("audit.py", ("--json",)), ("audit.py", ("app",)), ("audit.py", ("--html",)),
+                         ("build-tokens.py", ("--check",))):
+        try:
+            r = subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script), *args], cwd=str(project),
+                               capture_output=True, text=True, encoding="utf-8", timeout=20)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"{script} {args} read the FIFO")
+        assert r.returncode in (0, 1), (script, args, r.stdout, r.stderr)
+        assert "Traceback" not in r.stderr
+        assert "hang.css" not in r.stdout  # never audited
+
+
+@pytest.mark.skipif(not _POSIX or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+def test_a_tokens_file_linked_to_a_device_is_refused_quickly(project: Path) -> None:
+    tokens = project / TOKENS_REL
+    tokens.unlink()
+    tokens.symlink_to("/dev/zero")
+    for script, args in (("build-tokens.py", ("--check",)), ("build-tokens.py", ()), ("audit.py", ("--json",))):
+        try:
+            r = subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script), *args], cwd=str(project),
+                               capture_output=True, text=True, encoding="utf-8", timeout=20)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"{script} {args} read /dev/zero")
+        assert_refusal(r, "not a regular file")
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_report_never_writes_into_a_fifo(project: Path) -> None:
+    os.mkfifo(project / "out.html")
+    try:
+        r = audit_t(project, "--html", "out.html")
+    except subprocess.TimeoutExpired:
+        pytest.fail("--html opened the FIFO")
+    assert_refusal(r, "not an audit report")
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_the_tokens_build_never_writes_into_a_fifo(project: Path) -> None:
+    (project / SPECIMEN_REL).unlink()
+    os.mkfifo(project / SPECIMEN_REL)
+    try:
+        r = build_tokens_t(project)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the build opened the FIFO")
+    assert_refusal(r, "not a regular file", SPECIMEN_REL)
+
+
+def build_tokens_t(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-tokens.py"), *args],
+                          cwd=str(project), capture_output=True, text=True, encoding="utf-8", timeout=20)
+
+
+def audit_t(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/audit.py"), *args], cwd=str(project),
+                          capture_output=True, text=True, encoding="utf-8", timeout=20)
+
 
 
 def _playwright():

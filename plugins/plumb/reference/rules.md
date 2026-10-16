@@ -15,7 +15,8 @@ rule except `outline-none`, `icon-library` and `emoji` on the paths in `PLUMB.md
 primitives live, e.g. `components/ui/**`). Exceptions are by path only, never by a comment in the line.
 
 **Where it looks:** `.tsx .jsx .ts .js .vue .svelte .astro .html .css .scss` (web), `.swift` (iOS), `.kt` (Android);
-never `node_modules`, build output or files over 5 MB; a `GENERATED … do not edit` header exempts a file only on the
+never `node_modules`, build output, files over 5 MB or anything that is not a regular file (a FIFO, a device or a link
+to one); a `GENERATED … do not edit` header exempts a file only on the
 paths Plumb's generators own. In a web copy (`$extensions.plumb.web.copies`, e.g. `app/globals.css`) only Plumb's block
 (`/* plumb:start … */` to `/* plumb:end */`) is exempt: the rest of the file is the project's and is checked like any
 stylesheet. `PLUMB.md`'s `UI files:` narrows a whole-project run.

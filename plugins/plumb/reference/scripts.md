@@ -22,6 +22,11 @@ one step (an answers file, a `--snapshot`, saved `--json` or `--check` output to
 **Errors.** Every script prints `error: <what>` then `fix: <exact command>` (or `ask the user: …`) and never a
 traceback. Bad input exits 2. Do what the `fix:` line says, or ask the user when it says so; never guess.
 
+**Only regular files.** The scripts read a project file only when it is a regular file, and at most 8 MB of it (256 MB
+for pages and screen files): a FIFO, a device or a link to one (`tokens.json -> /dev/zero`) is never read. A walk
+skips it; a file the command needs (the tokens file, `PLUMB.md`) is refused as unreadable (`not a regular file`), and
+nothing is ever written into one.
+
 **Never by hand.** Generated files (`[G]`: `tokens.css`, `tailwind.tokens.js`, the Swift and Kotlin
 themes, `specimen.html`, `prototype.html`, `app.html`, `screens.html`, `prototype/screens.json`, `tours/*.html`, the proposal pages,
 `audit-*.html`, and Plumb's block in each web copy) are

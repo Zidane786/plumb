@@ -210,6 +210,7 @@ import json
 import os
 import posixpath
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -1830,7 +1831,8 @@ def check_generated_drift(proj: Project) -> Iterator[XHit]:
         return
     for path, text in files.items():
         try:
-            current = normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.is_file() else None
+            current = (normalise_text(P.read_project_text(path, "utf-8", "replace", P.PAGE_READ_LIMIT)) if path.is_file()
+                       else None)
         except OSError:
             current = None
         if current == normalise_text(text):
@@ -3848,7 +3850,7 @@ def make_settings(root: Path, doc: Optional[dict]) -> dict:
     src/), so native <select> and checkbox/radio inputs are reported as hand-rolled."""
     settings = {**P.plumb_settings(doc or {}), **P.read_plumb_md(root / "PLUMB.md")}
     try:
-        created = _CREATED.search((root / "PLUMB.md").read_text(encoding="utf-8-sig"))
+        created = _CREATED.search(P.read_project_text(root / "PLUMB.md"))
     except (OSError, UnicodeDecodeError):
         created = None
     if created:
@@ -3918,13 +3920,14 @@ def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: di
             dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
             for name in filenames:
                 path = Path(dirpath) / name
-                if wanted(path):
+                if wanted(path) and path.is_file():  # a regular file (a FIFO or a link to a device is never read)
                     out.add(path)
     return sorted(out, key=lambda p: rel(p, root))
 
 
 def read_source(path: Path) -> str:
-    return path.read_bytes().decode("utf-8-sig", errors="replace")
+    """A project file's text (regular files only, bounded: P.read_project_bytes; OSError otherwise)."""
+    return P.read_project_text(path, errors="replace")
 
 
 # ---------------------------------------------------------------- session snapshots (--snapshot, --changed; the hooks)
@@ -4206,7 +4209,8 @@ def _screens_status(root: Path, settings: dict) -> Dict[str, str]:
     """{screen id: status} from screens.json as it is now (the end-of-turn check only compares screens that were already
     built when the session started). A missing or broken map gives {}."""
     try:
-        data = json.loads((root / _docs_rel(settings) / "prototype" / "screens.json").read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(root / _docs_rel(settings) / "prototype" / "screens.json",
+                                             limit=P.PAGE_READ_LIMIT))
         return {s["id"]: str(s.get("status", "")) for s in data.get("screens", [])
                 if isinstance(s, dict) and isinstance(s.get("id"), str)}
     except (OSError, ValueError, AttributeError, TypeError):
@@ -4264,13 +4268,15 @@ def _mtimes(root: Path, tracked: Callable[[str], Optional[bool]]) -> Dict[str, L
             except OSError:
                 continue
             out[r] = [st.st_mtime_ns, st.st_size]
+            if not stat.S_ISREG(st.st_mode):  # a FIFO or a link to a device: never read, so never a change
+                continue
     return out
 
 
 def read_snapshot(path: Path) -> dict:
     """A snapshot file written by take_snapshot (the hooks, or --snapshot); PlumbError when it is missing or broken."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(path, limit=P.PAGE_READ_LIMIT))
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: cannot read the snapshot {path} ({exc})\n"
                          f"fix: take one first: python3 {SCRIPT_REL} --snapshot {path}") from None
@@ -4637,7 +4643,7 @@ def load_review(given: str, root: Path) -> Review:
     if not path.is_file():
         raise PlumbError(f"error: {given}: review file not found\nfix: {fix_shape}, save it, and pass its path")
     try:
-        text = path.read_bytes().decode("utf-8-sig")
+        text = P.read_project_text(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: {given}: cannot read the review file ({exc})\nfix: save it as UTF-8 JSON") from None
     try:
@@ -4867,24 +4873,26 @@ def _html_target(given: str, root: Path, skill_dir: Path, settings: dict) -> Tup
                          f"cannot be written\nfix: copy it from the Plumb plugin's assets/skill/templates/ into "
                          f"{rel(skill_dir / 'templates', root)}/ (or run /plumb:upgrade), then run the audit again")
     try:
-        template = tpl.read_text(encoding="utf-8-sig")
+        template = P.read_project_text(tpl)
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: {tpl}: cannot read the report template ({exc})\n"
                          f"fix: restore it from the Plumb plugin's assets/skill/templates/") from None
     if given:
         out = Path(given).resolve()
-        if out.is_file():
-            try:
-                existing = P.read_project_text(out)
-            except (OSError, UnicodeDecodeError):
-                existing = None
-            if existing is None or not P.is_plumb_page(existing, REPORT_HEADER):
-                raise PlumbError(f"error: {given} is not an audit report (not written by audit.py): nothing was written\n"
-                                 f"fix: put --html after the paths (audit.py <path> --html), or pass a new report path, "
-                                 f"e.g. --html docs/design/audit.html")
-        return out, template
-    docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
-    return (root / docs / f"audit-{datetime.date.today().isoformat()}.html").resolve(), template
+    else:
+        docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
+        out = (root / docs / f"audit-{datetime.date.today().isoformat()}.html").resolve()
+    if os.path.lexists(out):  # a page, a folder, a pipe or a device there: only a report of its own is replaced
+        try:
+            mine = P.is_plumb_page(P.read_project_head(out).decode("utf-8", errors="replace"), REPORT_HEADER)
+        except OSError:
+            mine = False
+        if not mine:
+            raise PlumbError(f"error: {given or rel(out, root)} is not an audit report (not written by audit.py): "
+                             f"nothing was written\n"
+                             f"fix: put --html after the paths (audit.py <path> --html), or pass a new report path, "
+                             f"e.g. --html docs/design/audit.html")
+    return out, template
 
 
 def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,

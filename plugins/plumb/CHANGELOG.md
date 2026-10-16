@@ -254,3 +254,6 @@
 - Nothing is installed or downloaded, and no network call is made at run time.
 - `audit.py --html <path>` writes only its own report: an existing page it did not write (`--html app/landing.html`,
   meaning "audit this page") is refused, exit 2, and keeps every byte.
+- The scripts read only regular files from a project, each up to 8 MB (pages and screen files up to 256 MB): a FIFO,
+  a device or a link to one (a committed symlink to `/dev/zero`) is skipped by every walk, refused as unreadable when a
+  command needs it (the tokens file), and never written into, so it cannot make a check hang or fill memory.
