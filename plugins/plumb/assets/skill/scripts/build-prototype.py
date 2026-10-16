@@ -460,13 +460,26 @@ _ATTR_LOAD_FIX = ("use a relative or data: URL (a copy of the file in the projec
 class _LoadScanner(HTMLParser):
     """Every start tag's loading attribute that holds an http(s): or // address, and every style="" attribute that
     loads (the shared CSS scan), as (line, column, what, fix). Comments, and the text of <script> and <style>, are not
-    tags to the parser."""
+    tags to the parser; markup inside <textarea> and <title> is text too, on every Python version (3.9's parser reads
+    it as tags, newer ones as text), so it is skipped here."""
+
+    _TEXT_ONLY = ("textarea", "title")
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.hits: List[Tuple[int, int, str, str]] = []
+        self.inside: Optional[str] = None  # the open <textarea> or <title>
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == self.inside:
+            self.inside = None
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        if self.inside is not None:
+            return  # text, not markup
+        if tag in self._TEXT_ONLY:
+            self.inside = tag
+            return
         line, col = self.getpos()
         names = _LOAD_ATTRS.get(tag, ())
         if tag == "input" and not any(k == "type" and (v or "").strip().lower() == "image" for k, v in attrs):
@@ -485,7 +498,8 @@ class _LoadScanner(HTMLParser):
                     self.hits.append((line, col, found.group(0), _CSS_LOAD_FIX))
 
     def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
-        self.handle_starttag(tag, attrs)
+        if tag not in self._TEXT_ONLY:  # <title/> opens nothing
+            self.handle_starttag(tag, attrs)
 
 
 def screen_network_load(text: str, blocks: List[dict], rel: str) -> Optional[PlumbError]:

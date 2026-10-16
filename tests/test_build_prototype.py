@@ -2018,7 +2018,9 @@ def test_a_screen_file_that_loads_nothing_is_accepted(project: Path) -> None:
                            '    <input type="text" name="url" value="https://example.com" src="https://example.com/x">\n'
                            '    <img src="img/a.png" alt="x" title="<img src=https://example.com/t.png>">\n'
                            '    <svg viewBox="0 0 10 10"><image href="img/i.png"/></svg>\n'
-                           '    <p>Upload from http or https, or //server/share.</p>') \
+                           '    <p>Upload from http or https, or //server/share.</p>\n'
+                           '    <textarea name="note"><img src="https://example.com/t.png"></textarea>\n'
+                           '    <svg viewBox="0 0 1 1"><title><link href="https://example.com/x.css"></title></svg>') \
         .replace("{script}", 'var help = "https://example.com/help"; // fetch("https://example.com") later\n'
                              'var tpl = \'<img src="https://example.com/t.png">\';')
     write(project / SCREENS_REL / "net.html", text)
