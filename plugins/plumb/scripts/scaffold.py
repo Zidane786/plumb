@@ -1050,7 +1050,7 @@ def relocate(root: Path, src_arg: str, dst_arg: str, dry_run: bool) -> int:
             edits.append((makefile, new, f"{makefile.name} ({n} line{'s' if n != 1 else ''})"))
     tokens = sorted((src / "assets/tokens").glob("*.tokens.json"))[0]
     try:
-        copies = json.loads(tokens.read_text(encoding="utf-8")).get("$extensions", {}).get("plumb", {}).get("web", {}).get("copies", [])
+        copies = json.loads(tokens.read_text(encoding="utf-8-sig")).get("$extensions", {}).get("plumb", {}).get("web", {}).get("copies", [])
     except (OSError, ValueError, AttributeError):
         copies = []
     for copy in copies if isinstance(copies, list) else []:
@@ -1062,6 +1062,8 @@ def relocate(root: Path, src_arg: str, dst_arg: str, dry_run: bool) -> int:
         for path, _, label in edits:
             print(f"would update: {label}")
         print(f"would run: {dst_rel}/scripts/build-tokens.py --check")
+        if moved_screens(src, root):
+            print(f"would run: {dst_rel}/scripts/build-prototype.py (the prototype pages name the skill's path)")
         print("dry run: nothing written")
         return 0
     try:
@@ -1077,7 +1079,44 @@ def relocate(root: Path, src_arg: str, dst_arg: str, dry_run: bool) -> int:
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(new)
         print(f"updated: {label}")
-    return check_moved(root, dst_rel)
+    code = check_moved(root, dst_rel)
+    if code == 0 and moved_screens(dst, root):
+        code = rebuild_prototype(root, dst_rel)
+    return code
+
+
+def moved_screens(skill: Path, root: Path) -> bool:
+    """The project has screen files (<docs>/prototype/screens/*.html, docs from the skill's tokens file)."""
+    found = sorted((skill / "assets/tokens").glob("*.tokens.json"))
+    docs = "docs/design"
+    try:
+        given = json.loads(found[0].read_text(encoding="utf-8-sig"))["$extensions"]["plumb"].get("docs_dir")
+        if isinstance(given, str) and given.strip("/\\ "):
+            docs = given.replace("\\", "/").strip("/")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError):
+        pass
+    folder = root / docs / "prototype" / "screens"
+    return folder.is_dir() and any(p.is_file() for p in folder.glob("*.html"))
+
+
+def rebuild_prototype(root: Path, dst_rel: str) -> int:
+    """Runs the moved build-prototype.py once (its pages' headers name the skill's path), as check_moved runs
+    build-tokens.py, and reports the result."""
+    script = root / dst_rel / "scripts" / "build-prototype.py"
+    if not script.is_file():
+        print(f"prototype: not rebuilt ({dst_rel}/scripts/build-prototype.py is missing)")
+        print(f"error: the prototype pages still name the old path\nfix: run /plumb:upgrade to restore "
+              f"{dst_rel}/scripts/build-prototype.py, then python {dst_rel}/scripts/build-prototype.py", file=sys.stderr)
+        return 1
+    r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, encoding="utf-8", cwd=str(root))
+    if r.returncode == 0:
+        print("prototype: rebuilt (build-prototype.py)")
+        return 0
+    out = (r.stdout + r.stderr).strip()
+    print(f"prototype: failed ({out.splitlines()[0] if out else 'no output'})")
+    print(f"error: the moved skill's build-prototype.py did not finish\nfix: python {dst_rel}/scripts/build-prototype.py "
+          f"(do what its fix: line says)", file=sys.stderr)
+    return 1
 
 
 def run_tokens(root: Path, dst_rel: str, *flags: str) -> "Tuple[int, str]":

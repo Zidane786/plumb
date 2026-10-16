@@ -320,7 +320,8 @@ components.
 ### Moving the design system later
 
 If the design system ended up in the wrong place, never move it by hand. Plumb moves it and updates every reference
-(`PLUMB.md`, the `AGENTS.md`/`CLAUDE.md` row, the Makefile) in one step, then checks the generated files:
+(`PLUMB.md`, the `AGENTS.md`/`CLAUDE.md` row, the Makefile) in one step, then checks the generated files (and
+rebuilds the prototype pages once when there are screen files, since their headers name the skill's path):
 
 ```
 python3 <plugin>/scripts/scaffold.py --relocate .github/skills/acme-design-system .claude/skills/acme-design-system --project-root . --dry-run
