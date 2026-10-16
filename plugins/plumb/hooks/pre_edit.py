@@ -830,6 +830,13 @@ def _shell_check(proj: H.Project, command: str, base: str, cwd: str) -> Optional
     for kind, sources in eff.link_writes:  # through a name the command linked to a guarded path earlier
         if why is None:
             why = _shell_paths_refusal(proj, sources, kind in (1, 2), cwd, checked)
+    if why is None and (eff.links_capped or (eff.linked and eff.trouble is not None and eff.trouble[1] == "timeout")):
+        # links the reader did not follow to the end: the command must name no guarded path
+        hit = rule().text(command, tuple(dict.fromkeys((base, cwd))), _until(NAMES_BUDGET))
+        if hit is not None:
+            why = (f"error: this shell command makes more links (or writes through more links) than Plumb follows, "
+                   f"and it names {hit}, a path Plumb guards\nfix: split it into shorter commands, one link and its "
+                   f"writes at a time (and change {hit} the way Plumb's own message for it says)")
     if why is None and eff.loop_targets:
         why = _loop_refusal(proj, eff, rule(), cwd)
     if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one

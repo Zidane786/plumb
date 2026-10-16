@@ -911,6 +911,36 @@ def test_a_link_to_a_guarded_file_made_and_written_in_one_command_is_refused(dec
     actionable(reason)
 
 
+def test_past_the_link_cap_a_guarded_name_refuses(decide):
+    """More links than the reader follows (2000), or more writes through them: a command that names a guarded path is
+    refused with a fix that says to split it; one that names nothing guarded is not refused for the cap alone."""
+    many = "; ".join(f"ln -s s n{i}" for i in range(2001))
+    for command in (f"{many}; ln -s {OWN} z && echo x > z",
+                    "ln -s s q; " + " ".join(f"echo > q/{i};" for i in range(2001)) + f" ln -s {OWN} z && echo x > z"):
+        reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+        assert reason and "more links" in reason and "split" in reason, reason
+        actionable(reason)
+    assert not decide.new(f"{many}; echo x > notes/a.txt")
+
+
+def test_writes_through_many_links_stay_fast(decide):
+    """The re-review's worst case: 2000 links, then one rm of 7000 paths under them (and a guarded write after it):
+    looked up per path, not per link, and inside the deadline, on a Windows runner too."""
+    names = [f"{i:x}" for i in range(2000)]
+    links = ";".join(f"ln -s s {n}" for n in names)
+    rm = "rm " + " ".join(f"{names[i % 2000]}/{i // 2000}" for i in range(7000))
+    commands = (links + ";" + rm, links + ";" + rm + f";echo x > {GEN}")
+
+    def run():
+        for command in commands:
+            decide.pe.H._EFFECTS_CACHE.clear()
+            decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    took = _fastest(decide, run)
+    assert took < 2 * SPEED_LIMIT, f"{took:.2f} s (limit {2 * SPEED_LIMIT} s)"
+    decide.pe.H._EFFECTS_CACHE.clear()
+    assert decide.new(commands[1])
+
+
 @pytest.mark.parametrize("command", LINK_ALLOWED)
 def test_links_written_to_nothing_guarded_are_allowed(decide, command):
     assert not decide.new(command), command

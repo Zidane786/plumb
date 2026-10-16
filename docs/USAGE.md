@@ -1194,7 +1194,8 @@ Three checks, in this order:
    - a name the same command links to a guarded file or folder (`ln`, `ln -s`, `cp -l` / `--link` / `-s`, `mklink`,
      `New-Item -ItemType HardLink` / `SymbolicLink` / `Junction`) is guarded for the rest of the command:
      `ln -s <skill>/scripts/build-tokens.py y && echo x > y` is refused; making the link alone is allowed (a symbolic
-     link is followed by every later command).
+     link is followed by every later command). Past 2,000 links, or 2,000 writes through them, in one command, the
+     guard stops following them and refuses the command when it names a guarded path (`fix:` split it).
 
    Running `build-tokens.py` or `build-prototype.py` is allowed.
 

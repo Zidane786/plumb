@@ -1844,6 +1844,7 @@ class ShellEffects:
         # write or removal through such a name is one of its source (link_writes: (kind, the source paths))
         self.linked: Dict[str, List[str]] = {}
         self.link_writes: List[Tuple[int, List[str]]] = []
+        self.links_capped = False  # more links (or writes through them) than the reader follows: pre_edit decides
         self._words: Optional[List[str]] = None
         self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
@@ -1962,18 +1963,26 @@ class ShellEffects:
         return found
 
     def _through_links(self, kind: int, found: List[str]) -> None:
-        """A write or removal of a name the command linked earlier (or of a path under it): one of the link's source."""
+        """A write or removal of a name the command linked earlier (or of a path under it): one of the link's source.
+        Each path is looked up by its own folders (never against every link), with the time budget checked per path;
+        past _MAX_TARGETS such writes the reader stops and says so (links_capped)."""
         for p in found:
-            for name, sources in list(self.linked.items()):
-                if p == name:
-                    rest = ""
-                elif p.startswith(name.rstrip("/\\") + os.sep) or p.startswith(name.rstrip("/\\") + "/"):
-                    rest = p[len(name.rstrip("/\\")) + 1:]
-                else:
-                    continue
-                if len(self.link_writes) < _MAX_TARGETS:
+            self.tick()
+            here, rest = p, ""
+            while True:
+                sources = self.linked.get(here)
+                if sources is not None:
+                    if len(self.link_writes) >= _MAX_TARGETS:
+                        self.links_capped = True
+                        self.doubt("more writes through links than the reader follows")
+                        return
                     self.link_writes.append((kind, [os.path.normpath(os.path.join(s, rest)) if rest else s
                                                     for s in sources]))
+                parent = os.path.dirname(here)
+                if not parent or parent == here:
+                    break
+                rest = os.path.join(os.path.basename(here), rest) if rest else os.path.basename(here)
+                here = parent
 
     def link(self, name: str, source: str, scope: _Scope) -> None:
         """name is made a link to source (a hard or symbolic link). A symbolic link's relative source counts from the
@@ -1986,8 +1995,11 @@ class ShellEffects:
         if not os.path.isabs(os.path.expanduser(w)) and "$" not in w and "`" not in w:
             sources += [os.path.normpath(os.path.join(os.path.dirname(n), w)) for n in names]
         for n in names:
-            if len(self.linked) < _MAX_TARGETS:
-                self.linked[n] = list(dict.fromkeys(self.linked.get(n, []) + sources))
+            if len(self.linked) >= _MAX_TARGETS and n not in self.linked:
+                self.links_capped = True
+                self.doubt("more links than the reader follows")
+                return
+            self.linked[n] = list(dict.fromkeys(self.linked.get(n, []) + sources))
 
     def write(self, word: str, scope: _Scope, text: Optional[str] = None) -> None:
         """A file write. text: what the file then holds, when the reader knows it (a here-document, echo's words)."""
