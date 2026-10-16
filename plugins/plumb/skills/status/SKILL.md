@@ -74,7 +74,8 @@ end-of-turn check is off while the marker is under 6 hours old: report it ("resu
 
 ## Report (under 200 words)
 
-1. **Version:** project <v> · plugin <v>; `older` → "run `/plumb:upgrade`"; `newer` → "update the plugin" (the commands
+1. **Version:** project <v> · plugin <v>; `older`, or `same` with `files_differ` ("<n> of Plumb's files differ from
+   the plugin's") → "run `/plumb:upgrade`"; `newer` → "update the plugin" (the commands
    in [`copilot.md`](../../reference/copilot.md)).
 2. **System:** the skill path, home or linked, platforms, styling, themes (light and dark, or light-only by decision).
 3. **Placement:** `scaffold.py --verify` ok, or each `problem:` line; when it prints a suggested `--relocate` command,

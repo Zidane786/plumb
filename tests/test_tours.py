@@ -3404,3 +3404,12 @@ def test_leaving_the_page_stops_the_sentence_and_a_cancelled_unload_does_not(bro
         assert errors == []
     finally:
         ctx.close()
+
+
+def test_a_hand_written_page_where_a_tour_page_goes_is_never_replaced(tmp_path: Path) -> None:
+    p = make_tour_project(tmp_path / "p", build=False)
+    mine = "<!doctype html>\n<p>my own walkthrough</p>\n"
+    write(p / DEMO_PAGE, mine)
+    stem = DEMO_PAGE.rpartition("/")[2][: -len(".html")]
+    assert_refusal(run(p), DEMO_PAGE, "not Plumb's", f"mv {DEMO_PAGE} {DOCS}/{stem}.before-plumb.html")
+    assert read(p / DEMO_PAGE) == mine

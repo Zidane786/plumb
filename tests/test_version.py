@@ -64,7 +64,8 @@ def assert_refusal(r, *needles: str) -> None:
 def test_older_lists_every_version_in_between_in_numeric_order(tmp_path: Path, plugin: Path) -> None:
     p = project(tmp_path, "0.9.0")
     out = as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))
-    assert out == {"project": "0.9.0", "plugin": "1.2.0", "state": "older", "between": ["1.0.0", "1.1.0", "1.2.0"]}
+    assert out == {"project": "0.9.0", "plugin": "1.2.0", "state": "older", "between": ["1.0.0", "1.1.0", "1.2.0"],
+                   "files_differ": []}
 
 
 def test_numbers_not_strings(tmp_path: Path, plugin: Path) -> None:
@@ -76,9 +77,9 @@ def test_numbers_not_strings(tmp_path: Path, plugin: Path) -> None:
 
 def test_same_and_newer_have_nothing_in_between(tmp_path: Path, plugin: Path) -> None:
     same = as_json(run("--project", str(project(tmp_path, "1.2.0", "a")), "--plugin", str(plugin), "--json"))
-    assert same == {"project": "1.2.0", "plugin": "1.2.0", "state": "same", "between": []}
+    assert same == {"project": "1.2.0", "plugin": "1.2.0", "state": "same", "between": [], "files_differ": []}
     newer = as_json(run("--project", str(project(tmp_path, "1.3.0", "b")), "--plugin", str(plugin), "--json"))
-    assert newer == {"project": "1.3.0", "plugin": "1.2.0", "state": "newer", "between": []}
+    assert newer == {"project": "1.3.0", "plugin": "1.2.0", "state": "newer", "between": [], "files_differ": []}
 
 
 def test_the_real_plugin_and_a_fresh_project_are_the_same(tmp_path: Path) -> None:
@@ -87,7 +88,7 @@ def test_the_real_plugin_and_a_fresh_project_are_the_same(tmp_path: Path) -> Non
     p = tmp_path / "fresh"
     write(p / "PLUMB.md", template_line + "\n")
     out = as_json(run("--project", str(p), "--plugin", str(PLUGIN), "--json"))
-    assert out == {"project": version, "plugin": version, "state": "same", "between": []}
+    assert out == {"project": version, "plugin": version, "state": "same", "between": [], "files_differ": []}
 
 
 def test_project_may_be_the_plumb_md_file_crlf_and_bom(tmp_path: Path, plugin: Path) -> None:
@@ -135,3 +136,101 @@ def test_refusals(tmp_path: Path, plugin: Path) -> None:
     assert_refusal(run("--project", str(p), "--plugin", str(odd)), "'one'")
     assert_refusal(run("--plugin", str(plugin)), "--project")
     assert_refusal(run("--project", str(p)), "--plugin")
+
+
+# ---------------------------------------------------------------- same version, a newer build of Plumb's files
+
+SKILL = ".claude/skills/demo-design-system"
+
+
+def plugin_files(plugin: Path) -> None:
+    """The plugin's own copies of Plumb's [P] files (assets/skill/...), the ones scaffold.py copies into a project."""
+    src = plugin / "assets/skill"
+    write(src / "scripts/_plumb.py", "core = 1\n")
+    write(src / "scripts/audit.py", "audit = 1\n")
+    write(src / "templates/player.js", "player();\n")
+    write(src / "templates/app-shell.html.tmpl", "<html></html>\n")
+    write(src / "assets/platforms/README.md", "# Platforms\n")
+    write(src / "SKILL.md.tmpl", "yours, never compared\n")
+    write(src / "references/components.md.tmpl", "yours, never compared\n")
+
+
+def copy_into(plugin: Path, root: Path) -> None:
+    src = plugin / "assets/skill"
+    for rel in ("scripts/_plumb.py", "scripts/audit.py", "templates/player.js", "templates/app-shell.html.tmpl",
+                "assets/platforms/README.md"):
+        write(root / SKILL / rel, (src / rel).read_text(encoding="utf-8"))
+
+
+def test_same_version_lists_plumb_files_that_differ_from_the_plugin(tmp_path: Path, plugin: Path) -> None:
+    plugin_files(plugin)
+    p = project(tmp_path, "1.2.0")
+    copy_into(plugin, p)
+    assert as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))["files_differ"] == []
+    write(plugin / "assets/skill/scripts/audit.py", "audit = 2\n")          # a newer build of the same version
+    write(plugin / "assets/skill/templates/chrome-roles.css", ":root{}\n")  # a file new in that build
+    write(p / SKILL / "SKILL.md", "the project's own text\n")              # yours: never compared
+    write(p / SKILL / "scripts/local-helper.py", "x = 1\n")                 # not the plugin's: ignored
+    out = as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))
+    assert out["state"] == "same"
+    assert out["files_differ"] == [f"{SKILL}/scripts/audit.py", f"{SKILL}/templates/chrome-roles.css"]
+    plain = run("--project", str(p), "--plugin", str(plugin))
+    assert plain.returncode == 0
+    assert "2 of Plumb's files" in plain.stdout and "/plumb:upgrade" in plain.stdout
+    assert "up to date" not in plain.stdout
+
+
+def test_line_endings_and_bom_are_not_a_difference(tmp_path: Path, plugin: Path) -> None:
+    plugin_files(plugin)
+    p = project(tmp_path, "1.2.0")
+    copy_into(plugin, p)
+    write(p / SKILL / "scripts/audit.py", "\ufeffaudit = 1\n", "\r\n")  # a Windows checkout
+    assert as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))["files_differ"] == []
+
+
+def test_files_are_compared_only_when_the_version_is_the_same(tmp_path: Path, plugin: Path) -> None:
+    plugin_files(plugin)
+    older = project(tmp_path, "1.1.0", "older")   # the upgrade refreshes them anyway
+    newer = project(tmp_path, "1.3.0", "newer")   # the project's files are the newer ones: never offered back
+    for p in (older, newer):
+        write(p / SKILL / "scripts/audit.py", "something else\n")
+        assert as_json(run("--project", str(p), "--plugin", str(plugin), "--json"))["files_differ"] == []
+
+
+def test_no_design_system_yet_linked_or_odd_paths_compare_nothing(tmp_path: Path, plugin: Path) -> None:
+    plugin_files(plugin)
+    fresh = project(tmp_path, "1.2.0", "fresh")  # PLUMB.md names a skill that isn't there yet
+    assert as_json(run("--project", str(fresh), "--plugin", str(plugin), "--json"))["files_differ"] == []
+    linked = tmp_path / "linked"
+    write(linked / "PLUMB.md", plumb_md("1.2.0") + "Role: linked\n")
+    write(linked / SKILL / "scripts/audit.py", "other\n")
+    assert as_json(run("--project", str(linked), "--plugin", str(plugin), "--json"))["files_differ"] == []
+    outside = tmp_path / "elsewhere"  # a real skill outside the project, with a file that differs
+    write(outside / "scripts/audit.py", "other\n")
+    lines = ("Design system: `../elsewhere/`", f"Design system: `{outside.as_posix()}/`", "Design system: ``")
+    for i, line in enumerate(lines):
+        odd = tmp_path / f"odd{i}"
+        write(odd / "PLUMB.md", plumb_md("1.2.0").replace(f"Design system: `{SKILL}/`", line))
+        assert as_json(run("--project", str(odd), "--plugin", str(plugin), "--json"))["files_differ"] == []
+    nodesign = tmp_path / "nodesign"
+    write(nodesign / "PLUMB.md", "<!-- plumb v1.2.0 · written by /plumb:init, safe to edit values -->\n# Plumb\n")
+    assert as_json(run("--project", str(nodesign), "--plugin", str(plugin), "--json"))["files_differ"] == []
+
+
+def test_the_real_plugin_against_a_scaffolded_copy(tmp_path: Path) -> None:
+    """Every [P] file scaffold.py copies is one version.py compares, and a fresh copy differs in none."""
+    version = json.loads((PLUGIN / ".claude-plugin/plugin.json").read_text(encoding="utf-8"))["version"]
+    p = tmp_path / "real"
+    write(p / "PLUMB.md", plumb_md(version))
+    src = PLUGIN / "assets/skill"
+    rels = [f"scripts/{f.name}" for f in sorted((src / "scripts").glob("*.py"))]
+    rels += [f"templates/{f.name}" for f in sorted((src / "templates").iterdir()) if f.is_file()]
+    rels.append("assets/platforms/README.md")
+    for rel in rels:
+        (p / SKILL / rel).parent.mkdir(parents=True, exist_ok=True)
+        (p / SKILL / rel).write_bytes((src / rel).read_bytes())
+    assert as_json(run("--project", str(p), "--plugin", str(PLUGIN), "--json"))["files_differ"] == []
+    (p / SKILL / "templates/player.js").write_bytes(b"// an older build\n")
+    (p / SKILL / "scripts/audit.py").unlink()
+    out = as_json(run("--project", str(p), "--plugin", str(PLUGIN), "--json"))
+    assert out["files_differ"] == [f"{SKILL}/scripts/audit.py", f"{SKILL}/templates/player.js"]

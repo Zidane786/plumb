@@ -420,6 +420,12 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       session → the second context line says `… run /plumb:upgrade`. `/plumb:upgrade` shows What's new for 1.0.0,
       asks, refreshes Plumb's files, migrates, runs the checks, sets the version line back to 1.0.0 and adds a dated
       "Plumb updates" line. It never deletes a value.
+- [ ] **Same version, newer build:** add a line to the project's copy of `templates/player.js` (or use a project set
+      up with an earlier build of this version) → `/plumb:upgrade` says how many of Plumb's files differ from the plugin's,
+      asks to refresh them, runs the refresh with the dry-run list in the question, rebuilds and ends healthy.
+- [ ] **A page in the way:** put your own `docs/design/app.html` (any HTML without Plumb's header) in a project with
+      screens and run `build-prototype.py` → exit 2, `error: docs/design/app.html is not Plumb's …` with a `mv` to
+      `app.before-plumb.html`; nothing was written. `/plumb:upgrade` asks before moving it.
 - [ ] Remove `theme_switch` and `motion` from the tokens file's `$extensions.plumb` and build: two `note:` lines say
       the defaults apply and name `build-tokens.py --migrate`. Run it → it prints `added … theme_switch = "both"` and
       `added … motion.reduced = "none"`, the next build prints no note, and the generated CSS is unchanged.

@@ -10,8 +10,9 @@ In such a project, in this order:
      GENERATED header), Plumb's block in the copies listed in $extensions.plumb.web.copies (an edit tool's change that
      leaves the text from /* plumb:start ... */ to /* plumb:end */ as it is passes: the rest of a copy is the
      project's; a shell write or removal of a copy is refused), <docs>/specimen.html, <docs>/prototype.html,
-     <docs>/app.html, <docs>/screens.html, <docs>/prototype/screens.json, <docs>/tours/*.html (a tour page that does
-     not carry the GENERATED header is someone's own page and is left alone) and the proposal pages
+     <docs>/app.html, <docs>/screens.html, <docs>/prototype/screens.json, <docs>/tours/*.html (a prototype, app,
+     catalogue or tour page that exists without the GENERATED header naming build-prototype.py is someone's own page,
+     another tool's or hand-written, and is left alone: the build refuses to replace it) and the proposal pages
      <docs>/prototype/proposals/<name>/index.html and <name>/<variant>/{prototype,app,screens}.html (one that does not
      carry the header `build-prototype.py --proposal` writes is someone's own page and is left alone);
    - one of Plumb's own files: the design-system skill's [P] files (scripts/*.py, templates/*,
@@ -93,6 +94,19 @@ def _generated_header(path: str) -> bool:
         return False
     head = "\n".join(head.splitlines()[:5])
     return "GENERATED" in head and re.search(r"do not edit", head, re.I) is not None
+
+
+def _prototype_header(path: str) -> bool:
+    """The page carries the header build-prototype.py writes (GENERATED … naming build-prototype.py): the test
+    build-prototype.py uses before replacing a page. A page another tool generated there, or a hand-written one, is
+    someone's own: the build refuses to replace it, and the guard leaves it alone so it can be moved out of the way."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2000).decode("utf-8", "replace")
+    except OSError:
+        return False
+    head = "\n".join(head.splitlines()[:5])
+    return _generated_header(path) and "plumb:start" not in head and "build-prototype.py" in head
 
 
 def _own(shown: str) -> str:
@@ -206,11 +220,13 @@ def guard(proj: H.Project, path: str) -> Optional[str]:
     if here == f"{docs}/specimen.html":
         return _tokens_output(proj, shown)
     if here in (f"{docs}/prototype.html", f"{docs}/app.html", f"{docs}/screens.html"):
-        return _prototype_output(proj, shown)
+        if not os.path.isfile(path) or _prototype_header(path):
+            return _prototype_output(proj, shown)
+        return None
     if here == f"{docs}/prototype/screens.json":
         return _map_output(proj, shown)
     if here.startswith(f"{docs}/tours/") and here.endswith(".html") and "/" not in here[len(docs) + 7:]:
-        if not os.path.isfile(path) or _generated_header(path):
+        if not os.path.isfile(path) or _prototype_header(path):
             return _tour_output(proj, shown, in_project[len(docs) + 7:-len(".html")])
     proposal = _proposal_page(proj, in_project)
     if proposal is not None and (not os.path.isfile(path) or _proposal_header(path)):

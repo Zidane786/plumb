@@ -2487,6 +2487,45 @@ def orphan_tour_pages(folder: Path, pages: Dict[Path, str]) -> List[Path]:
     return found
 
 
+def not_plumbs(paths, root: Path, rel) -> List[str]:
+    """The pages among `paths` that exist but this script did not write (another tool's page, or one written by hand),
+    project-relative: never replaced."""
+    found = []
+    for path in paths:
+        if path.suffix != ".html" or not path.is_file():
+            continue
+        try:
+            head = path.read_bytes()[:2000].decode("utf-8", errors="replace")
+        except OSError:
+            continue
+        if not P.is_prototype_page(head):
+            found.append(rel(path, root))
+    return found
+
+
+def _before_plumb(page: str) -> str:
+    """Where to move a page that is in the way: next to it, or for a tour page one folder up (every page in tours/ is
+    the build's)."""
+    folder, _, name = page.rpartition("/")
+    if folder.rpartition("/")[2] == "tours":
+        folder = folder.rpartition("/")[0]
+    return (f"{folder}/" if folder else "") + name[: -len(".html")] + ".before-plumb.html"
+
+
+def not_plumbs_error(found: List[str], command: str) -> PlumbError:
+    moves = "; ".join(f"mv {f} {_before_plumb(f)}" for f in found)
+    one = len(found) == 1
+    return _err(f"{', '.join(found)} {'is' if one else 'are'} not Plumb's (not written by build-prototype.py), and this "
+                f"build writes {'that path' if one else 'those paths'}: nothing was written",
+                f"ask the user before moving {'it' if one else 'them'} out of the way ({moves}), then run {command} again")
+
+
+def not_plumbs_lines(found: List[str], command: str) -> List[str]:
+    return [f"not Plumb's: {f} (another tool's page or one written by hand: the build would replace it)" for f in found] + [
+        f"ask the user before moving {'it' if len(found) == 1 else 'them'} out of the way ("
+        + "; ".join(f"mv {f} {_before_plumb(f)}" for f in found) + f"), then run {command}"]
+
+
 def read_template(skill_dir: Path, name: str) -> str:
     tpl = P.find_template(skill_dir, name)
     if tpl is None:
@@ -2701,7 +2740,11 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
     warning = size_warnings(files, root, rel, again, variant_screens)
     for line_ in shared_warnings + id_warnings:
         print(line_, file=sys.stderr)
+    foreign = not_plumbs(files, root, rel)
     if args.check:
+        if foreign:
+            print("\n".join(not_plumbs_lines(foreign, again)))
+            return 1
         stale = []
         for path, text in files.items():
             try:
@@ -2718,6 +2761,8 @@ def run_proposal(args: argparse.Namespace, skill_dir: Path, root: Path, doc: dic
             return 1
         print(f"ok: {line}: up to date")
         return 0
+    if foreign:
+        raise not_plumbs_error(foreign, again)
     wrote = 0
     for path, text in files.items():
         try:
@@ -2960,7 +3005,12 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     count = f"{len(screens)} screens, {len(tours)} tour{'s' if len(tours) != 1 else ''}"
     size_warning = size_warnings(files, root, rel, command, screens)
 
+    foreign = not_plumbs(files, root, rel)
     if args.check:
+        if foreign:
+            for line in not_plumbs_lines(foreign, command):
+                print(line)
+            return 1
         stale = []
         for path, text in files.items():
             try:
@@ -2987,6 +3037,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         print(f"ok: {len(files)} generated files are up to date ({count})")
         return 0
 
+    if foreign:
+        raise not_plumbs_error(foreign, command)
     for s in screens:
         for line in s.warnings[:5]:
             print(f"warning: {line}", file=sys.stderr)

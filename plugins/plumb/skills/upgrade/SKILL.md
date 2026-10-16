@@ -49,8 +49,12 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    step 2: the agreed folder is what `scaffold.py --docs-dir` gets.
 4. `PY "<ROOT>/scripts/version.py" --project "<root>" --plugin "<ROOT>" --json` → **OLD** (`project`), **NEW** (`plugin`),
    `between`:
-   - `same` → "Already on Plumb <NEW>." Still run step 5's checks; if `scaffold.py --verify` or a `--check` reports a
-     problem, offer to fix it. Otherwise stop.
+   - `same` with `files_differ` empty → "Already on Plumb <NEW>." Still run step 5's checks; if `scaffold.py --verify`
+     or a `--check` reports a problem, offer to fix it. Otherwise stop.
+   - `same` with `files_differ` → a newer build of the same version: Plumb's own files differ from the plugin's. Skip
+     step 1 and step 3 (no version in between); ask "Refresh Plumb's files (<n> differ from the plugin's)?" with the
+     list inside the question, then run step 2, step 4 (the version line stays; the "Plumb updates" line says
+     `refreshed Plumb <NEW>'s files`) and step 5.
    - `newer` → the project is newer than the plugin (a teammate upgraded): never downgrade. Print the commands for the
      user to run in their own terminal: `claude plugin marketplace update plumb`, then
      `claude plugin update plumb@plumb`, then `/reload-plugins` (Copilot CLI: `copilot plugin marketplace update plumb`,
@@ -90,7 +94,10 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    say how many inside a question and offer keep, `false`, recommended, as interview.md "Tailwind's default palette"
    says, before the build), then `PY SKILL/scripts/build-tokens.py` (every theme, copy, the specimen and the prototype and proposal token
    blocks), then, when the project has screen files, `PY SKILL/scripts/build-prototype.py`. Exit 2 → show the `error:`
-   and its `fix:`; never hand-edit a generated file or Plumb's scripts to make it pass.
+   and its `fix:`; never hand-edit a generated file or Plumb's scripts to make it pass. `error: <page> is not Plumb's`
+   (a page the new build writes, e.g. `app.html`, is already there, made by another tool or by hand) → ask the user
+   whether to move it to the `.before-plumb.html` name the fix gives (recommended: nothing is lost) or keep it and skip
+   the prototype pages for now; move it only on their yes, then build again.
 5. **Rolling back** (only if something failed and the user agrees): restore Plumb's own files only, one path at a
    time, from the `would write:` list of the dry run:
    - a path git knows (`git ls-files --error-unmatch <path>` exits 0): `git checkout -- <path>`;

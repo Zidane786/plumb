@@ -2797,8 +2797,8 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
             text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
         except (OSError, UnicodeDecodeError):
             text = None  # build-prototype.py --check reports an unreadable page
-        if text is not None and path.parent == tours and not P.is_generated_text(text):
-            continue  # a hand-written page in tours/ is not Plumb's
+        if text is not None and path not in generated_only and not P.is_prototype_page(text):
+            continue  # a page build-prototype.py did not write (another tool's, or by hand) is not Plumb's
         if text is not None and path in generated_only and not P.is_generated_proposal_page(text):
             continue  # nor is a page in proposals/ that build-prototype.py --proposal did not write
         refreshed = refresh_prototype_theme(text, doc) if text is not None else None
