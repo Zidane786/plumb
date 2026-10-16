@@ -2248,8 +2248,8 @@ def _bounded(script: str, stdin: str, cwd: Path, env, limit: float = 20.0):
 
 
 def _quick(script: str, stdin: str, proj: Path, env, limit: float = STALL_LIMIT):
-    took, r = _bounded(script, stdin, proj, env)
-    assert r is not None and took < limit, f"{script} took {took if took is not None else 'more than 20'} s"
+    took, r = _bounded(script, stdin, proj, env, limit + 2.0)
+    assert r is not None and took < limit, f"{script} took {took if took is not None else f'more than {limit + 2:g}'} s"
     return r
 
 
