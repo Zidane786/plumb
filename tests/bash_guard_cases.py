@@ -4,6 +4,7 @@ it must allow) and its in-process shapes. Not a test module."""
 G = "docs/design/screens.html"
 P = "docs/design/prototype.html"
 M = "docs/design/prototype/screens.json"
+DEEP = "a/" * 1200 + "x"  # a relative path deeper than Python's recursion limit, not on disk
 
 
 def writes(S, ABS):
@@ -305,4 +306,9 @@ def rr_writes(S, ABS):
         ("sh -c $1", f"sh -c 'cp /tmp/x \"$1\"' _ {G}"),
         ("busybox sh -c", f"busybox sh -c 'echo x > {G}'"),
         ("script -c", f"script -q -c 'echo x > {G}' /dev/null"),
+        # a final review's: a path deeper than the recursion limit that does not exist (the guard crashed and let the
+        # rest through)
+        ("deep missing path ; redirect", f"echo > {DEEP}; echo x > {G}"),
+        ("rm deep missing path and guarded", f"rm -f {DEEP} {G}"),
+        ("cp to deep path && cp to output", f"cp x.html {DEEP} && cp x.html {S}/assets/platforms/web/tokens.css"),
     ]

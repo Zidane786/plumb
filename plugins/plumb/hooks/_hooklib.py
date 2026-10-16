@@ -477,16 +477,30 @@ def real_path(path: str, cache: Dict[str, str]) -> str:
     """os.path.realpath(path) for an absolute, normalised path, sharing the work in cache: a path that does not exist
     is no link, so its real path is its folder's real path and its name, and the folder is resolved once for all its
     entries (a realpath costs a file system call per part, most on Windows, where it opens every file). The cache
-    belongs to one command: never kept between hook runs."""
+    belongs to one command: never kept between hook runs. A loop walks up to the nearest folder that exists (or one
+    already in the cache), never a recursion per part: a command can name a path thousands of parts deep."""
     found = cache.get(path)
-    if found is None:
-        parent, name = os.path.split(path)
-        if (name and name not in (".", "..") and parent and parent != path and "\x00" not in path
-                and not os.path.lexists(path)):
-            found = os.path.join(real_path(parent, cache), name)
-        else:
-            found = os.path.realpath(path)
-        cache[path] = found
+    if found is not None:
+        return found
+    missing: List[Tuple[str, str]] = []  # (path, its last part), from the deepest up
+    here = path
+    while True:
+        known = cache.get(here)
+        if known is not None:
+            found = known
+            break
+        parent, name = os.path.split(here)
+        if (name and name not in (".", "..") and parent and parent != here and "\x00" not in here
+                and not os.path.lexists(here)):
+            missing.append((here, name))
+            here = parent
+            continue
+        found = os.path.realpath(here)
+        cache[here] = found
+        break
+    for p, name in reversed(missing):
+        found = os.path.join(found, name)
+        cache[p] = found
     return found
 
 

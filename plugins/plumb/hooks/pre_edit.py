@@ -44,6 +44,8 @@ In such a project, in this order:
    ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder. A command longer than SHELL_HUGE, one
    whose brackets nest deeper than the reader reads, and one the reader fails on (a crash, the recursion limit) are
    not read: refused when a word names a guarded file or folder (or a parent of one), else the earlier reader decides;
+   when the check itself fails (shell_decision), the command is refused when the earlier reader's targets or removals,
+   or any of its words, name a guarded path, and allowed only when nothing guarded is named (fail closed);
    a crash, a timeout and a command too long to read log one line with the real outcome.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
@@ -737,6 +739,53 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     return why
 
 
+FALLBACK_BUDGET = 2.0  # seconds to look for guarded paths after the shell check failed; past it: refused
+
+
+def _guarded_text(proj: H.Project, command: str) -> Optional[str]:
+    """The last resort after an error: a guarded name or folder as plain text in the command (no file system)."""
+    names = list(_FIXED_NAMES) + ["tokens.css", "tailwind.tokens.js", "Theme.swift", "Theme.kt", "/tours/", ".kiro",
+                                  proj.docs_rel, H.plugin_root()]
+    names += [proj.skill_rel] if proj.skill_rel else []
+    text = H.fold(command.replace("\\", "/"))
+    return next((n for n in names if n and H.fold(n.replace("\\", "/")) in text), None)
+
+
+def _after_error(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """The decision when the shell check failed (fail closed on guarded paths): refused when the earlier reader's
+    targets or removals (each resolved with a plain os.path.realpath) are guarded by guard()'s rule, or any word of
+    the command names a guarded file or folder (or a parent of one); else allowed. A step that fails too falls through
+    to the next, down to the command's plain text."""
+    try:
+        floor = [(p, False) for p in H.legacy_targets(command, base)] + [(p, True) for p in
+                                                                          H.legacy_removals(command, base)]
+        for path, removal in floor:
+            real = os.path.realpath(path)
+            why = removal_guard(proj, real, cwd) if removal else guard(proj, real)
+            if why:
+                return why
+    except Exception:  # noqa: BLE001 - the words decide
+        pass
+    try:
+        hit = _Guarded(proj, cwd).text(command, tuple(dict.fromkeys((base, cwd))), H.clock() + FALLBACK_BUDGET)
+    except Exception:  # noqa: BLE001 - the plain text decides
+        hit = _guarded_text(proj, command)
+    return _unread_refusal(hit, "Plumb's check failed on it") if hit else None
+
+
+def shell_decision(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """shell_refusal, failing closed: when it raises (a bug, the recursion limit), the command is refused when it names
+    a guarded path (_after_error) and allowed only when it names none; one line is logged with the real outcome."""
+    try:
+        return shell_refusal(proj, command, base, cwd)
+    except Exception as exc:  # noqa: BLE001 - decided below, never failed open on a guarded path
+        why = _after_error(proj, command, base, cwd)
+        H.log_failure(f"the shell check failed ({type(exc).__name__}: {exc})", "the shell command read to the end",
+                      exc=exc, outcome=("refused: the command names a guarded path" if why
+                                        else "allowed: the command names no guarded path"))
+        return why
+
+
 # ---------------------------------------------------------------- prototype first and the edit check
 
 
@@ -866,7 +915,7 @@ def main() -> int:
         return 0
     base = p.cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     if p.command is not None:
-        why = shell_refusal(proj, p.command, base, p.cwd or base)
+        why = shell_decision(proj, p.command, base, p.cwd or base)
         return H.refuse(why, p.copilot) if why else 0
     if not p.changes:
         return 0

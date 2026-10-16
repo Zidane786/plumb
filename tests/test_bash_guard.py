@@ -703,6 +703,48 @@ def test_real_paths_shared_across_a_command_match_realpath(H, tmp_path):
     assert H.real_path(str(paths[1]), cache) == os.path.realpath(str(paths[1]))  # from the cache
 
 
+def test_real_path_walks_a_path_deeper_than_the_recursion_limit(H, tmp_path):
+    """A path of 5000 parts that does not exist: real_path walks up with a loop (no recursion per part), and the
+    cache still serves its parents."""
+    deep = os.path.join(str(tmp_path), *(["a"] * 5000), "x.html")
+    cache: dict = {}
+    assert H.real_path(deep, cache) == os.path.join(os.path.realpath(str(tmp_path)), *(["a"] * 5000), "x.html")
+    parent = os.path.dirname(deep)
+    assert cache[parent] == os.path.dirname(cache[deep])
+    assert H.real_path(parent, cache) == os.path.dirname(cache[deep])
+
+
+def test_a_deep_missing_path_never_lets_a_guarded_write_through(launcher, tmp_path, proj):
+    """Through the launcher: the first word a path deeper than Python's recursion limit, then a write to a generated
+    page; the guard reads it to the end and refuses (it used to crash on the deep path and fail open)."""
+    for command in (f"echo > {CASES.DEEP}; echo x > {GEN}", f"rm -f {CASES.DEEP} {GEN}"):
+        assert WHY[GEN] in refused(claude(launcher, tmp_path, proj, command)), command
+
+
+def test_an_unexpected_error_in_the_guard_fails_closed_on_guarded_paths(decide, monkeypatch):
+    """Defence in depth: when the shell check raises, the command is refused when the earlier reader's targets or
+    removals, or any of its words, name a guarded path; a command that names nothing guarded is allowed (fail open
+    stays the rule there). The real outcome is logged."""
+    pe = decide.pe
+
+    def boom(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(pe, "shell_refusal", boom)
+    logged = []
+    monkeypatch.setattr(pe.H, "log_failure", lambda *a, **k: logged.append((a, k)))
+    cwd = str(decide.proj)
+    for command in (f"echo x > {GEN}", f"rm -f {OWN}", f"cat notes.txt > /tmp/x; cat {GEN}",
+                    f"python3 -c \"open('{MAP}', 'w')\""):
+        reason = pe.shell_decision(decide.project, command, cwd, cwd)
+        assert reason, command
+        actionable(reason)
+    assert "refused" in logged[-1][1]["outcome"]
+    assert pe.shell_decision(decide.project, "echo x > notes/new.txt", cwd, cwd) is None
+    assert pe.shell_decision(decide.project, "ls -la", cwd, cwd) is None
+    assert "allowed" in logged[-1][1]["outcome"] and logged[-1][1]["exc"] is not None
+
+
 @pytest.mark.parametrize("path,drive", [
     ("/c/Users/me/proj", "C:/Users/me/proj"), ("/d", "D:/"), ("/cygdrive/e/x y/z.html", "E:/x y/z.html"),
     ("/c", "C:/"), ("/cd/x", None), ("/tmp/x", None), ("c/x", None), ("C:/x", None), ("/1/x", None),
