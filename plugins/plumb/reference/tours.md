@@ -101,7 +101,8 @@ the frame holds those layers, so zoom works as always.
 - **One caption line:** the voice reads the same caption the player already shows on screen (no second subtitle
   system): a card's title and text, and each step's subtitle. A step's optional `"say"` replaces the caption for speech
   only (an abbreviation spelled out, a name said the way it sounds); the screen still shows the caption. The page's
-  `lang` picks the voice, else the browser's default voice.
+  `lang` picks the local voice, else the computer's default local voice, else the first local one; the browser's own
+  choice is never used (it can be a remote voice).
 - **Pace:** calm, like a product demo, and it follows the speed control: rate about 0.9 at 1× (about 150 words a
   minute), 0.7 at 0.5×, 1.15 at 1.5× and 1.3 at 2× (capped so it stays clear), with a short pause after each sentence.
   With the voice on, each caption stays on screen while it is spoken, then the step's `hold` (scaled by the speed, as
@@ -113,10 +114,11 @@ the frame holds those layers, so zoom works as always.
   page, a `#tour-…` link) waits on its first card with **Start with voice** and **Start without voice** (the
   remembered choice is the primary button; Play or Space starts with it). Leaving that card by Next, Back or a scene
   marker starts the run as Start without voice does (the remembered choice stays). "Start with voice" speaks its first
-  sentence at once, in the browser's default voice while the voice list is still loading. Started from a button on the
+  sentence at once when the voice list is known; while it is still loading the sentence waits for it (at most about a
+  second), so nothing is ever spoken by a voice Plumb did not pick. Started from a button on the
   page, it plays at once. Guide mode is silent. Leaving or reloading the page stops the sentence.
-- **No voice:** no `speechSynthesis`, no voices within about a second, only remote voices, or speech blocked: the Voice button is disabled
-  with "Voice isn't available in this browser", the first card offers only **Start**, and the tour plays with captions
+- **No voice:** no `speechSynthesis`, no voices within about a second, only remote voices, or speech blocked: the
+  Voice button is disabled (a sentence waiting for the list is never spoken) with "Voice isn't available in this browser", the first card offers only **Start**, and the tour plays with captions
   and today's timing. An error during a tour (including speech the browser does not allow, or speech that never ends:
   a safety timer from the sentence's length in words or characters, whichever is longer, so a spelled-out e-mail
   address or long number gets its time) shows and announces once "Voice stopped: continuing with captions"; the voice stays off for the rest of that run and the tour

@@ -962,7 +962,8 @@ spoken). With the voice on, each caption stays on screen while it is spoken, the
 with it off, the usual timing. The pace is calm (about 150 words a minute at 1×) and follows the speed control (slower
 at 0.5×, capped at 1.5× and 2× so it stays clear). Pause, jumps, Back/Next, Hide panel and a speed change keep voice and
 screen in step. A tour that opens in play mode with its page waits on its first card: **Start with voice** or **Start
-without voice** (browsers only speak after a click). No speech in the browser (or only remote voices): the button is disabled with "Voice
+without voice** (browsers only speak after a click; while the browser is still loading its voice list the
+first sentence waits for it, so only a local voice ever speaks). No speech in the browser (or only remote voices): the button is disabled with "Voice
 isn't available in this browser" and the tour plays with captions; an error mid-tour says "Voice stopped: continuing
 with captions" and carries on. **Save subtitles (.vtt)** (in the panel while playing and at the end) downloads
 `<tour id>.vtt` with the real times each caption showed, so it matches a screen recording of that run at any speed.

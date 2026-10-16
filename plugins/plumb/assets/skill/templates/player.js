@@ -283,21 +283,25 @@
     var was = V.avail;
     V.avail = yes ? "yes" : "no";
     if (was === V.avail) return;
-    /* spoken with the browser's default voice while the list loaded, and there is none: captions from here */
-    if (!yes && T.talk) failVoice("unavailable");
+    var k = T.talk;
+    if (!yes && k && k.pending) {  /* waited for the list, and no local voice came: silent, the subtitles carry on */
+      T.talk = null;
+      if (k.run === T.run) k.done();
+    } else if (!yes && k) failVoice("unavailable");
     paintVoice();
     if (T.tour && T.gate) live.textContent = gateHint();  /* the Start card's buttons changed */
+    if (yes && k && k.pending && T.talk === k) { k.pending = false; say(); }  /* the waiting sentence, local voice */
   }
   function gateHint() {
     return V.avail === "no" ? "Press Start to play." : "Choose Start with voice or Start without voice.";
   }
   /* True when this item is spoken: the viewer turned the voice on, the browser has speech (while its voice list is
-     still loading, the default voice speaks: the first sentence must start inside the viewer's click), nothing failed
-     this run. */
+     still loading, the sentence waits for it: say() never speaks before a local voice is known), nothing failed this
+     run. */
   function voiceOn() { return V.on && !V.off && V.avail !== "no" && T.mode === "play" && !T.gate; }
   /* The local voice for the page's lang (exact, else the same language; the system's default among equals), else the
-     default local voice, else the first; null only while the list is still loading (the browser's default voice). A
-     voice is always set when there is a list, so a remote default voice is never used. */
+     default local voice, else the first. say() calls it only once the list is known and holds a local voice, so a
+     voice is always set and the browser's own choice (possibly a remote voice) is never used. */
   function pickVoice(lang) {
     var want = String(lang || "").toLowerCase().replace(/_/g, "-"), base = want.split("-")[0];
     var exact = null, near = null, dflt = null;
@@ -344,6 +348,10 @@
   function say() {
     var k = T.talk;
     if (!k || k.run !== T.run || T.paused) return;  /* paused: Play speaks this sentence again */
+    if (V.avail === "wait") lookVoices();
+    /* the list is not known yet: nothing is spoken (no utterance, no safety timer) until setAvail decides */
+    if (V.avail === "wait") { k.pending = true; return; }
+    k.pending = false;
     var text = k.parts[k.i], rate = RATES[String(T.speed)] || 0.9, token = {}, u;
     try {
       u = new Utterance(text);
@@ -1467,7 +1475,7 @@
      the voice, and the choice is remembered. */
   function begin(withVoice) {
     if (!T.tour || !T.gate) return;
-    if (V.avail === "wait") lookVoices();  /* still loading: the first sentence speaks now, in the browser's default voice */
+    if (V.avail === "wait") lookVoices();  /* still loading: the first sentence waits for a local voice (say) */
     if (V.avail !== "no" && V.on !== !!withVoice) { V.on = !!withVoice; storeVoice(V.on); }
     V.off = false;
     V.noted = false;
