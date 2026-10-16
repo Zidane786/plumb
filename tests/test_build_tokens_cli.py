@@ -728,3 +728,26 @@ def test_a_pair_just_under_the_minimum_fails_and_shows_floored(tmp_path: Path) -
     pair = next(x for x in bt.measure_pairs(json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8")))
                 if (x.fg, x.bg) == ("link", "background"))
     assert pair.failed == ["light"] and 4.4999 < pair.light < 4.5
+
+
+def test_a_translucent_surface_is_skipped_with_a_note(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+    p = make_project(tmp_path, mut)
+    for args in ((), ("--check",), ("--contrast",)):
+        r = run(p, *args)
+        assert r.returncode == 0, (args, r.stdout, r.stderr)
+        assert "note: surface-glass is translucent" in r.stderr, r.stderr
+        assert "$extensions.plumb.contrast.surfaces" in r.stderr and "opaque value" in r.stderr
+        assert r.stderr.count("surface-glass is translucent") == 1, r.stderr
+    table = block(dark_md(p))
+    assert "on surface-glass" not in table and "| on-surface on background |" in table
+
+
+def test_a_translucent_surface_named_in_the_settings_is_refused_with_the_way_out(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+        doc["$extensions"]["plumb"]["contrast"] = {"surfaces": ["background", "surface-glass"]}
+    p = make_project(tmp_path, mut)
+    assert_refusal(run(p, "--contrast"), "surface-glass is transparent", "$extensions.plumb.contrast.surfaces",
+                   "color.surface-glass")
