@@ -3314,8 +3314,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if foreign:
         files.pop(foreign)
         page, target = rel(foreign, root), rel(_free_name(foreign, ".before-plumb.html"), root)
-        foreign_lines = [f"{page} is not Plumb's (not written by build-tokens.py): left as it is, so the specimen was not "
-                         f"updated",
+        foreign_lines = [f"{page} (not written by build-tokens.py): left as it is, so the specimen was not updated",
                          f"fix: ask the user before moving it out of the way (mv {P.shell_word(page)} "
                          f"{P.shell_word(target)}), then run {command}"]
     stale = []
@@ -3338,7 +3337,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
         for note in notes:
             print(note, file=sys.stderr)
         if foreign_lines:
-            print(f"warning: {foreign_lines[0]}\n{foreign_lines[1]}", file=sys.stderr)
+            first, _, why = foreign_lines[0].partition(" ")
+            print(f"warning: {first} is not Plumb's {why}\n{foreign_lines[1]}", file=sys.stderr)
     if args.check:
         if foreign_lines:
             print(f"not Plumb's: {foreign_lines[0]}\n{foreign_lines[1]}")

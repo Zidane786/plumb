@@ -689,7 +689,8 @@ healthy; shows the diff. You commit.
   project more recently. Then it rebuilds and checks as usual.
 - **A page in the way:** if the rebuild would write a page that something else made (for example your own
   `app.html` or `specimen.html`), it stops before writing anything and offers to move it to `app.before-plumb.html` (or the next free
-  `-2`, `-3` name; a tour page goes one folder up); nothing is replaced without your yes.
+  `-2`, `-3` name; a tour page goes one folder up); nothing is replaced without your yes. Keeping it is allowed, but
+  the `--check` commands (and `make tokens-check` in CI) report it until it is moved.
 - **Something went wrong:** it restores only Plumb's own files, one path at a time, from what the dry run listed, and
   asks before deleting anything new.
 
