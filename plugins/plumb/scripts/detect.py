@@ -987,8 +987,13 @@ def human(r: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # shaped like every other refusal
+        self.exit(2, f"error: {message}\nfix: python3 detect.py --cwd <folder> [--json]\n")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Detect the repo layout and UI stack for Plumb init.")
+    ap = _Parser(description="Detect the repo layout and UI stack for Plumb init.")
     ap.add_argument("--cwd", default=".", help="folder the session was opened in")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)

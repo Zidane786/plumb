@@ -444,6 +444,14 @@ def test_bad_cwd_exits_2(tmp_path: Path) -> None:
     assert "Traceback" not in p.stderr
 
 
+@pytest.mark.parametrize("args", [["."], ["--cwd"], ["--nope"]])
+def test_bad_arguments_exit_2_with_a_fix(tmp_path: Path, args: List[str]) -> None:
+    p = subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, encoding="utf-8", cwd=str(tmp_path))
+    assert p.returncode == 2, (p.stdout, p.stderr)
+    assert p.stderr.startswith("error: ") and "\nfix: python3 detect.py --cwd <folder> [--json]" in p.stderr, p.stderr
+    assert "usage:" not in p.stderr and "Traceback" not in p.stderr
+
+
 @pytest.mark.parametrize(
     "name", ["parent", "subfolder", "monorepo-pnpm", "monorepo-front-back", "frontend", "backend", "linked"]
 )
