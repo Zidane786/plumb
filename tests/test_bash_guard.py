@@ -795,6 +795,7 @@ WINDOWS_TOOL_WRITES = [
     f"ren {GEN} old.html",
     "ren docs\\design\\mine.html screens.html",
     "rename docs/design/mine.html screens.html",
+    f"rename 's/screens/old/' {GEN}",  # the Linux rename (EXPR FILE): FILE moves away
     "Rename-Item -Path docs/design/mine.html -NewName screens.html",
     f"Rename-Item -LiteralPath {GEN} -NewName old.html",
     "rni docs/design/mine.html screens.html",

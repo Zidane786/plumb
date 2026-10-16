@@ -2177,8 +2177,9 @@ def _sibling(path: str, name: str) -> str:
 
 def _windows_tool(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -> None:
     """robocopy SRC DEST [FILE …] [/switches] (writes into DEST; /MOV and /MOVE take from SRC), ren / rename SRC NEW
-    and Rename-Item / rni [-Path] SRC [-NewName] NEW (SRC moves away, NEW is written next to it). rename with more
-    words (the Linux tools: EXPR FILE …) moves its files away to names the reader does not work out."""
+    and Rename-Item / rni [-Path] SRC [-NewName] NEW (SRC moves away, NEW is written next to it). rename is also the
+    Linux tools' (EXPR FILE …, FROM TO FILE …): every word of it counts as moved away, to names the reader does not
+    work out."""
     if name == "robocopy":
         pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
         if len(pos) < 2:
@@ -2199,6 +2200,8 @@ def _windows_tool(name: str, args: List[str], scope: _Scope, eff: ShellEffects) 
         new = new if new is not None else (pos[0] if pos else None)
     else:
         pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if name == "rename" and len(pos) == 2:
+            eff.remove(pos[1], scope)  # the Linux rename EXPR FILE: FILE moves away
         if len(pos) > 2:
             eff.doubt("rename's new names are not read")
             for f in pos[1:]:
