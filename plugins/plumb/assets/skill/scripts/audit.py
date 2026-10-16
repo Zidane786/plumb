@@ -4284,8 +4284,6 @@ def _mtimes(root: Path, tracked: Callable[[str], Optional[bool]]) -> Dict[str, L
             if not stat.S_ISREG(st.st_mode):  # a FIFO or a link to a device: never read, so never a change
                 continue
             out[r] = [st.st_mtime_ns, st.st_size]
-            if not stat.S_ISREG(st.st_mode):  # a FIFO or a link to a device: never read, so never a change
-                continue
     return out
 
 
