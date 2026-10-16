@@ -779,6 +779,49 @@ def test_an_unexpected_error_in_the_guard_fails_closed_on_guarded_paths(decide, 
     assert "allowed" in logged[-1][1]["outcome"] and logged[-1][1]["exc"] is not None
 
 
+WINDOWS_TOOL_WRITES = [
+    "xcopy C:\\tmp\\screens.html docs\\design /Y",  # an existing folder: DEST\\screens.html
+    "xcopy C:\\tmp\\screens.html docs/design/",
+    f"xcopy C:\\tmp\\x {GEN} /Y",
+    "xcopy /E /I C:\\tmp\\design docs\\design",
+    "robocopy C:\\tmp\\design docs\\design screens.html",
+    "robocopy C:\\tmp\\design docs\\design /MIR",
+    f"robocopy {SKILL_REL}/scripts C:\\tmp\\old /MOVE",
+    f"cmd /c copy /y C:\\tmp\\x {GEN}",
+    f"cmd.exe /C \"move C:\\tmp\\x {GEN}\"",
+    f"cmd /c del {GEN}",
+    f"cmd /c erase /q {OWN}",
+    f"cmd /k \"copy C:\\tmp\\x docs\\design\\screens.html\"",
+    f"ren {GEN} old.html",
+    "ren docs\\design\\mine.html screens.html",
+    "rename docs/design/mine.html screens.html",
+    "Rename-Item -Path docs/design/mine.html -NewName screens.html",
+    f"Rename-Item -LiteralPath {GEN} -NewName old.html",
+    "rni docs/design/mine.html screens.html",
+    f"Rename-Item {OWN} -NewName old.py",
+    f"clc {GEN}",
+    f"clc -Path {OWN}",
+]
+WINDOWS_TOOL_ALLOWED = [
+    "xcopy C:\\tmp\\a notes\\ /Y", "robocopy C:\\tmp\\a notes /E", "cmd /c copy C:\\tmp\\a notes\\b.txt",
+    "cmd /c dir", "ren notes\\a.txt b.txt", "Rename-Item notes/a.txt -NewName b.txt", "clc notes/a.txt",
+]
+
+
+@pytest.mark.parametrize("command", WINDOWS_TOOL_WRITES)
+def test_windows_copy_rename_and_clear_tools_are_read_as_writes(decide, command):
+    """xcopy, robocopy, cmd /c copy / move / del / erase, ren / rename, Rename-Item / rni and clc (Clear-Content) write,
+    move or remove files: the new reader reads them (the earlier one did not), so a guarded target is refused."""
+    reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    assert reason, command
+    actionable(reason)
+
+
+@pytest.mark.parametrize("command", WINDOWS_TOOL_ALLOWED)
+def test_windows_tools_writing_elsewhere_are_allowed(decide, command):
+    assert not decide.new(command), command
+
+
 @pytest.mark.parametrize("path,drive", [
     ("/c/Users/me/proj", "C:/Users/me/proj"), ("/d", "D:/"), ("/cygdrive/e/x y/z.html", "E:/x y/z.html"),
     ("/c", "C:/"), ("/cd/x", None), ("/tmp/x", None), ("c/x", None), ("C:/x", None), ("/1/x", None),

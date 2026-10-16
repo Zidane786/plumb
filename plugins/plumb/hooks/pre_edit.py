@@ -24,7 +24,9 @@ In such a project, in this order:
    it finds. Refused when the shell reader finds a guarded file among the real write targets: a redirect (>, >>, 1>,
    2>, &>, >|), tee [-a], sed -i / w FILE, perl -i, sort -o, the destination of cp / mv / install / rsync / ln (a
    recursive copy or a move into a folder that holds a guarded file), truncate, dd of=, Set-Content, Add-Content,
-   Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell, eval), a file
+   Out-File, Clear-Content / clc, Copy-Item / Move-Item onto, the Windows tools xcopy and robocopy (into a folder),
+   cmd /c (/k) and its copy / move / del / erase, ren / rename and Rename-Item / rni (the source moves away, the new
+   name is written next to it), a shell's own script (bash -c, a here-document fed to a shell, eval), a file
    the command wrote and then runs, and in inline code (python -c, node -e, a here-document fed to an interpreter)
    open(<path>, "w"|"a"|"x"), Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like, with
    targets put together from the code's constants. A target that uses a for / select / while-read loop variable is

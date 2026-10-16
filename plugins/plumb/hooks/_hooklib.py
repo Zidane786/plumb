@@ -1391,8 +1391,9 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 # tee [-a], sed -i / perl -i / sed's w FILE, sort -o, uniq IN OUT, the destination of cp / mv / install / rsync / ln (a
 # folder destination writes <folder>/<source name>; a recursive copy or a move writes into the folder: refused like a
 # removal when it holds a guarded file), truncate, dd of=, curl -o / --output-dir / wget -O, PowerShell's Set-Content,
-# Add-Content, Out-File, New-Item, Copy-Item, Move-Item; the removals (rm, del, Remove-Item, git rm, the sources of
-# mv …). A shell's own script (bash -c with $1 … mapped, a here-document fed to a shell, eval, source <(echo …),
+# Add-Content, Out-File, Clear-Content (clc), New-Item, Copy-Item, Move-Item, Rename-Item (rni); the Windows tools xcopy,
+# robocopy, ren / rename and cmd /c with its builtins (copy, move, del, erase); the removals (rm, del, Remove-Item,
+# git rm, the sources of mv, ren, Rename-Item …). A shell's own script (bash -c with $1 … mapped, a here-document fed to a shell, eval, source <(echo …),
 # script -c, su -c, watch, find -exec) is read as commands; a file the command wrote and then runs (python FILE,
 # bash FILE, source, make -f, python - < FILE) is read as the code it runs; an interpreter's inline code for its writes
 # (open(…, "w"), Path(…).write_text, shutil, os.replace, fs.writeFile, [IO.File]::WriteAllText …), with write targets
@@ -1407,7 +1408,9 @@ WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\
                         r"::|append|copyfile|\bfs\.|rename|\bcopy\b|cpSync|\bcp\(|\bcurl\b|\bwget\b|new-item|\bni\b|"
                         r"inplace|remove|rmtree|unlink|rmdir|rmSync|tee-object|\bsc\b|\bac\b|\bcpi\b|\bsort\b|\buniq\b|"
                         # removals and moves: rm, del, erase, rd, Remove-Item, ri, move, mi
-                        r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b",
+                        r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b|"
+                        # Windows tools: xcopy, robocopy, ren (rename, Rename-Item: "rename" above), rni, clc
+                        r"\bxcopy\b|\brobocopy\b|\bren\b|\brni\b|\bclc\b",
                         re.I)
 SHELL_BUDGET = 1.5  # seconds this reader may take (the hook's timeout is 10 s); past it the previous reader decides
 # The clock every time budget is measured on: monotonic and fine-grained everywhere (time.monotonic ticks only every
@@ -2101,7 +2104,7 @@ _COPY_VALUE_FLAGS = {
     "rsync": ("-e", "--rsh", "-f", "--filter", "--exclude", "--include", "-T", "--temp-dir", "--backup-dir",
               "--partial-dir", "--chmod", "--chown", "--files-from", "--exclude-from", "--include-from", "-B",
               "--block-size"),
-    "copy": (), "move": (),
+    "copy": (), "move": (), "xcopy": (),
 }
 
 
@@ -2115,6 +2118,12 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
     pos = _positional(args, vf)
     if name in ("copy", "move"):
         pos = [p for p in pos if not re.fullmatch(r"/[A-Za-z-]+", p)]  # cmd's /y /b switches
+    if name == "xcopy":  # xcopy SRC [DEST] [/E /S /I /Y /EXCLUDE:…]: DEST is the current folder when left out
+        pos = [p for p in args if not re.fullmatch(r"/[A-Za-z-]+(?::\S*)?", p)]
+        if len(pos) == 1:
+            pos.append(".")
+        if any(a.lower() in ("/s", "/e") for a in args) and len(pos) >= 2:
+            eff.write_folder(pos[-1], scope)  # a recursive xcopy writes the source's contents into DEST
     recursive = name in ("rsync", "mv", "move") or any(
         re.fullmatch(r"-[a-zA-Z]*[rRa][a-zA-Z]*", a) or a in ("--recursive", "--archive") for a in args)
     if into is not None:
@@ -2149,7 +2158,53 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
 _REMOVERS = ("rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri")
 _PS_REMOVERS = ("remove-item", "ri", "del", "erase", "rd")
 _MOVERS = ("mv", "move", "move-item", "mi")
-_PS_WRITERS = ("set-content", "add-content", "out-file", "clear-content", "sc", "ac", "tee-object", "new-item", "ni")
+_PS_WRITERS = ("set-content", "add-content", "out-file", "clear-content", "clc", "sc", "ac", "tee-object", "new-item",
+               "ni")
+_WIN_SWITCH = re.compile(r"/[A-Za-z0-9]+(?::\S*)?")  # cmd and robocopy switches: /Y, /MIR, /R:3, /XF
+
+
+def _sibling(path: str, name: str) -> str:
+    """Where a rename puts its new name: next to path (a new name with a folder in it stands as it is)."""
+    if re.search(r"[/\\]", name):
+        return name
+    m = re.match(r"^(.*[/\\])", path)
+    return (m.group(1) if m else "") + name
+
+
+def _windows_tool(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -> None:
+    """robocopy SRC DEST [FILE …] [/switches] (writes into DEST; /MOV and /MOVE take from SRC), ren / rename SRC NEW
+    and Rename-Item / rni [-Path] SRC [-NewName] NEW (SRC moves away, NEW is written next to it). rename with more
+    words (the Linux tools: EXPR FILE …) moves its files away to names the reader does not work out."""
+    if name == "robocopy":
+        pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if len(pos) < 2:
+            return
+        src, dest, files = pos[0], pos[1], pos[2:]
+        eff.write_folder(dest, scope)
+        for f in files:
+            eff.write(dest.rstrip("/\\") + "/" + f, scope)
+        if any(a.lower() in ("/mov", "/move") for a in args):
+            for item in ([src.rstrip("/\\") + "/" + f for f in files] if files else [src]):
+                eff.remove(item, scope)
+        return
+    if name in ("rename-item", "rni"):
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        new = _flag_value(args, ("-newname",))
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-newname",))
+        src = value if value is not None else (pos.pop(0) if pos else None)
+        new = new if new is not None else (pos[0] if pos else None)
+    else:
+        pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if len(pos) > 2:
+            eff.doubt("rename's new names are not read")
+            for f in pos[1:]:
+                eff.remove(f, scope)
+            return
+        src, new = (pos + [None, None])[:2]
+    if src:
+        eff.remove(src, scope)
+        if new:
+            eff.write(_sibling(src, new), scope)
 
 
 def _removals(name: str, args: List[str]) -> List[str]:
@@ -2499,6 +2554,13 @@ def _simple(cmd: _Simple, scope: _Scope, eff: ShellEffects, depth: int, before: 
                 eff.write(a.split("=", 1)[1], scope)
             elif re.fullmatch(r"-O.+", a):
                 eff.write(a[2:], scope)
+    elif name in ("robocopy", "ren", "rename", "rename-item", "rni"):
+        _windows_tool(name, args, scope, eff)
+    elif name == "cmd":  # cmd /c COMMAND (or /k, /r): its builtins (copy, move, del, erase, ren) are read
+        eff.doubt("cmd runs a command")
+        at = next((k for k, a in enumerate(args) if a.lower() in ("/c", "/k", "/r")), None)
+        if at is not None and args[at + 1:]:
+            _script(" ".join(args[at + 1:]), scope.copy(), eff, depth + 1)
     elif name in _PS_WRITERS:
         value = _flag_value(args, _PS_PATH_FLAGS)
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
