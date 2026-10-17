@@ -2,4 +2,7 @@
 # The browser tests use this exact Playwright, and so its exact Chromium, on CI and on your machine alike, so a page
 # check that passes here passes there. CI (.github/workflows/test.yml), TEST.md and AGENTS.md install from this file;
 # Dependabot proposes each new version as its own pull request, which runs the whole suite on every OS first.
-playwright==1.63.0
+playwright==1.63.0; python_version >= "3.10"
+# Playwright 1.61 and later need Python 3.10: 1.60.0 is the last for Python 3.9 (CI's 3.9 jobs). Keep it at 1.60.0;
+# a Dependabot bump of this line fails the 3.9 jobs and is closed.
+playwright==1.60.0; python_version < "3.10"
