@@ -129,10 +129,11 @@ Below, `SKILL` is `.claude/skills/demo-design-system`.
    Improvements, filters, light and dark.
 4. `PY SKILL/scripts/audit.py nowhere` → exit 2 with `error:` and `fix:` (nothing checked).
 
-5. Inventory: `mkdir inv && cd inv`, write `package.json` `{"dependencies": {"tailwindcss": "^4.0.0"}}`,
+5. Inventory: `mkdir inv`, and in it write `package.json` `{"dependencies": {"tailwindcss": "^4.0.0"}}`,
    `app/globals.css` with `@import "tailwindcss"; :root { --radius: 0.625rem; --chart-3: #10b981; }` and
    `@theme inline { --radius-lg: var(--radius); }`, and `app/page.tsx` with
-   `<i className="rounded-lg bg-emerald-500" />`. `PY SKILL/scripts/audit.py --inventory --project .`
+   `<i className="rounded-lg bg-emerald-500" />`. From `plumb-scratch` (where you are):
+   `PY SKILL/scripts/audit.py inv --inventory --project inv`
    **Expect:** exit 0; `radius: 1 value in 1 group` with `10px`; a colour group `#10b981 x1 [variable]` and another
    `#10b981 x1 [palette]` (never merged); the line `inventory: radius classes counted at the project's own theme
    radius from app/globals.css (sizes it does not define use Tailwind's defaults)`, and the closing
@@ -340,7 +341,7 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
       `Routes: app (next-app)` recorded and a layout that puts a font's `.variable` on `<body>`, the plan's `by_hand`
       says "move `<name>.variable` to the `<html>` className in app/layout.tsx:<line>" (no `Routes:`, no such line).
 - [ ] A failing white-on-fill (or near-white, e.g. `oklch(0.985 0 0)`) pair (`on-primary` on `primary`) shows "two options in light mode": the fill stepped
-      first with its ratio, then the text, each with its ratio rounded to 2 decimals, normally at least 5.0:1 (4.5 plus the 0.5 spare; when 5.0 cannot be reached the option falls back to the 4.5:1 minimum); a non-white/black text
+      first with its ratio, then the text, each with its ratio floored to 2 decimals (4.49, never 4.50, for a pair that fails), normally at least 5.0:1 (4.5 plus the 0.5 spare; when 5.0 cannot be reached the option falls back to the 4.5:1 minimum); a non-white/black text
       shows one "nearest passing" value as before; on a surface (`on-surface` on `surface`) the text option comes first.
 - [ ] It asks you to pick a direction, then shows the full token set (light and dark) and the `scaffold.py --dry-run`
       file list, each inside a question, and writes only after you say OK; the real scaffold runs with the

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — 2026-10-11
+## 1.0.0 — 2026-10-16
 
 ### Highlights
 
@@ -30,7 +30,9 @@
   same design system; a prototype of every existing route; and an audit of what doesn't match yet.
 - **One token file** (W3C design tokens, light and dark) generates the web theme (Tailwind v4, Tailwind v3 or plain
   CSS, plus an exact copy at your app's path), a SwiftUI theme and a Compose Material 3 theme. Contrast is computed in
-  light and dark and written as evidence in the skill's `dark-mode.md`.
+  light and dark and written as evidence in the skill's `dark-mode.md`. Pass or fail is decided on the unrounded ratio,
+  as WCAG does (4.49995:1 fails 4.5:1), and every ratio is shown floored to 2 decimals (4.49), the same in the
+  evidence, the specimen and the audit.
 - **Your stylesheet stays yours**: in a stylesheet you already have (e.g. `app/globals.css`), Plumb adds and owns only
   a marked block, shown as a diff and asked first. When the file sets its own theme variables (a stock
   create-next-app or shadcn `globals.css`), create and extract show the token each maps onto and, on your OK, move
@@ -45,7 +47,7 @@
   state, light and dark side by side), both built from one file per screen and kept in step with the code both ways.
   `screens.html` stays small on a large prototype: each screen is stored once and drawn in every state and both themes
   by the page (a 20-screen × 10-state prototype stays under half a MB), every copy with its own state, theme and
-  scripts. A state name written with spaces around it (`data-state=" ready "`) is read the same way in every page.
+  scripts. State names are read the same way in every page, spaces around them included (`data-state=" ready "`).
 - **A size warning for large pages**: any page `build-prototype.py` writes (`prototype.html`, `app.html`,
   `screens.html`, the tour pages, the proposal pages) over 10 MB prints one `warning: <page> is <N> MB …` line naming
   every such page, also on `--check`, with the heaviest screen files and what helps: smaller screen files (inline
@@ -99,14 +101,16 @@
   that moment; the player wears the project's tokens (primary, surface, outline, fonts, radius, shadow) where it has
   them.
 - **Voice for tours and exact subtitles**: in play mode the **Voice** button (or `V`) reads the captions aloud with the
-  browser's own speech and the voices already on the computer (nothing downloaded, works offline). Off by default and
-  remembered; the same caption line the player shows, or a step's optional `"say"` for speech only; a calm pace that
-  follows the speed (0.9 at 1×, capped at 1.3 at 2×) with a pause after each sentence, and each step waits for its
-  speech, then its hold; pause, jumps, Hide panel and speed changes keep voice and screen in step. A tour that opens in
-  play mode with its page starts from its first card: **Start with voice** or **Start without voice**. No speech in the
-  browser: the button is disabled ("Voice isn't available in this browser") and the tour plays with captions; an error
-  mid-tour says "Voice stopped: continuing with captions" and carries on. **Save subtitles (.vtt)** downloads
-  `<tour id>.vtt` with the real times each caption showed in that run (kept in memory only, never stored).
+  browser's own speech and the voices already on the computer (nothing downloaded, works offline; a voice that sends
+  the text to a remote service, such as Chrome's "Google …" voices, is never used). Off by default and remembered;
+  the same caption line the player shows, or a step's optional `"say"` for speech only; a calm pace that follows the
+  speed (0.9 at 1×, capped at 1.3 at 2×) with a pause after each sentence, and each step waits for its speech, then
+  its hold; pause, jumps, Hide panel and speed changes keep voice and screen in step. A tour that opens in play mode
+  with its page starts from its first card: **Start with voice** or **Start without voice**. No speech in the browser
+  (or only remote voices): the button is disabled ("Voice isn't available in this browser") and the tour plays with
+  captions; an error mid-tour says "Voice stopped: continuing with captions" and carries on. **Save subtitles
+  (.vtt)** downloads `<tour id>.vtt` with the real times each caption showed in that run (kept in memory only, never
+  stored).
 - **A screen's fixed layers stay in its frame**: in `prototype.html` a `position: fixed` scrim, dialog or toast sits
   inside the screen's frame (as on a device of that width), never over the toolbar or the screens list; a state change
   that opens a dialog scrolls it into view.
@@ -201,9 +205,8 @@
   Linux when the project's file system ignores case (asked of the file system itself: a folder that ignores case, a
   Windows drive in WSL); on Windows it reads Git for Windows' Bash drive paths (`/c/Users/…`,
   `/cygdrive/c/…`) as well as `\` and `/`, drive letters in either case and quoted paths with spaces. Its time budget
-  runs on a fine clock (on Windows before Python 3.13 the coarse one let a budget pass unnoticed), and a long command
-  is checked faster (each folder's real path is worked out once per command), so even a Windows runner stays well
-  inside the hook's timeout.
+  runs on a fine-grained clock on every platform, and each folder's real path is worked out once per command, so a
+  long command stays well inside the hook's timeout, on a Windows runner too.
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
@@ -214,8 +217,9 @@
   `make design-audit` can join Slate's review checks; the Effective HTML skills are optional: used when installed for
   the directions, prototype variants and screens, the extract page and the UX review page, with Plumb's built-in
   quality bar otherwise; `/plumb:init` and `/plumb:status` say which is in use.
-- Works on macOS, Linux and Windows (`py -3`, `python` or `python3`), over SSH and in tmux; every generated page opens
-  offline (no CDN, no hosted fonts).
+- Works on macOS, Linux and Windows (`py -3`, `python` or `python3`: the scripts print their `fix:` commands with the
+  `Python:` that `PLUMB.md` records), over SSH and in tmux; every generated page opens offline (no CDN, no hosted
+  fonts).
 - **Token mapping and contrast fixes**: `build-tokens.py --overrides` maps shadcn's `--sidebar-<x>` names onto the
   project's own `color.sidebar-<role>` / `color.on-sidebar-<role>` token when there is one (`accent` and `active` are
   synonyms) before the generic role; it tells you when a next/font variable is applied on `<body>` rather than on
@@ -253,3 +257,15 @@
   most half a second, else leaving its line out), so hooks failing at the same moment never lose or interleave lines,
   also on Windows, where appends from several processes are not atomic.
 - Nothing is installed or downloaded, and no network call is made at run time.
+- Every screen file is checked before it is inlined, as the shared files are: a hosted font `<link>`, a remote
+  `<img>`, `<iframe>`, `<video>`, `<source>`, `<track>`, SVG `<image>` or image `<input>`, an `@import` or remote
+  `url()` in its styles, or a `fetch(` in its script exits 2 naming the file and line, so a generated page never loads
+  anything from the network.
+- `audit.py --html <path>` writes only its own report: an existing page it did not write (`--html app/landing.html`,
+  meaning "audit this page") is refused, exit 2, and keeps every byte.
+- The scripts read only regular files from a project, each up to 8 MB (pages and screen files up to 256 MB): a FIFO,
+  a device or a link to one (a committed symlink to `/dev/zero`) is skipped by every walk, refused as unreadable when a
+  command needs it (the tokens file), and never written into, so it cannot make a check hang or fill memory.
+- The scripts never write through a link in the project that leads outside it (a committed `tokens.css` pointing at a
+  file in your home folder, or a linked output folder): the build, the audit report and the snapshot stop with an
+  `error:` and a `fix:` that removes only the link, after you are asked.

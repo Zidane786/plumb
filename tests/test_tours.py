@@ -2824,6 +2824,13 @@ FAKE_SPEECH = """
 })();
 """
 NO_VOICES = "window.__voices = [];" + FAKE_SPEECH
+# Chrome's "Google …" voices send the text to a remote service (localService: false): never used
+REMOTE_VOICES = ('window.__voices = [{ name: "Google US English", lang: "en-US", default: true, localService: false, '
+                 'voiceURI: "g" }];' + FAKE_SPEECH)
+MIXED_VOICES = ('window.__voices = [{ name: "Google US English", lang: "en-US", default: true, localService: false, '
+                'voiceURI: "g" }, { name: "Local French", lang: "fr-FR", default: false, localService: true, '
+                'voiceURI: "fr" }, { name: "Unknown English", lang: "en-GB", default: false, voiceURI: "u" }];'
+                + FAKE_SPEECH)
 NO_SPEECH = """Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
 window.SpeechSynthesisUtterance = undefined;"""
 AUTO_END = "window.__speechAuto = 60;"
@@ -3102,7 +3109,22 @@ def test_a_tour_that_opens_in_play_mode_waits_on_its_first_card_for_start(browse
         ctx.close()
 
 
-@pytest.mark.parametrize("init", [NO_SPEECH, NO_VOICES], ids=["no-api", "no-voices"])
+def test_a_network_voice_is_never_used(browser, voiced) -> None:
+    """The page's language matches only a remote voice: the local one speaks (an unknown localService counts as
+    local, as in browsers that do not set it)."""
+    ctx, page, errors, _ = _open(browser, voiced / PROTO_REL, init=MIXED_VOICES)
+    try:
+        _start(page, "demo", "play", step=1)
+        page.click(VOICE_BTN)
+        said = page.evaluate("window.__speech.spoken")
+        assert said and said[0]["voice"] == "Unknown English", said
+        assert all(s["voice"] != "Google US English" for s in said)
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+@pytest.mark.parametrize("init", [NO_SPEECH, NO_VOICES, REMOTE_VOICES], ids=["no-api", "no-voices", "remote-only"])
 def test_without_speech_the_voice_is_disabled_and_captions_keep_todays_timing(browser, voiced, init: str) -> None:
     ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=REMEMBER_VOICE + init)
     try:
@@ -3350,27 +3372,39 @@ def test_the_safety_timer_allows_for_long_tokens(browser, voiced) -> None:
         ctx.close()
 
 
-def test_start_with_voice_speaks_inside_the_click_while_voices_load(browser, voiced) -> None:
+def test_start_with_voice_waits_for_the_voice_list_and_speaks_only_a_local_voice(browser, voiced) -> None:
+    """Nothing is spoken before the voice list is known (the browser's own choice could be a network voice): the
+    sentence waits, then speaks with a local voice once the list arrives."""
     ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init="window.__voicesLater = 600;" + FAKE_SPEECH)
     try:
         page.wait_for_function("window.plumbPlayer.state().waiting")
         page.click("[data-pl=start-voice]")
-        assert _spoken(page) == ["Taking a booking"], "the first sentence starts in the click, default voice"
-        page.wait_for_timeout(1300)
+        assert _spoken(page) == [], "nothing before the list is known"
+        page.wait_for_function("window.__speech.spoken.length > 0", timeout=3000)
+        said = page.evaluate("window.__speech.spoken")
+        assert said[0]["text"] == "Taking a booking" and said[0]["voice"] == "Test English", said
         assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled")
         assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true" and _voice_note(page) == ""
         assert errors == []
     finally:
         ctx.close()
-    # no voices ever come: the voice stops with one note, and the tour goes on with captions
-    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=NO_VOICES)
+
+
+@pytest.mark.parametrize("init", [NO_VOICES, "window.__voicesLater = 300;" + REMOTE_VOICES],
+                         ids=["no-voices", "late-remote-only"])
+def test_without_a_local_voice_nothing_is_ever_spoken(browser, voiced, init: str) -> None:
+    """No voices within the wait, or only remote ones: silent, with the subtitles, and the voice is unavailable."""
+    ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=init)
     try:
         page.wait_for_function("window.plumbPlayer.state().waiting")
-        page.click("[data-pl=start-voice]")
-        assert _spoken(page) == ["Taking a booking"]
+        if page.is_visible("[data-pl=start-voice]"):
+            page.click("[data-pl=start-voice]")
+        else:
+            page.click("[data-pl=start-quiet]")
         page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
-        assert _voice_note(page) == "Voice stopped: continuing with captions"
-        _wait_pos(page, 1, timeout=3000)
+        assert _voice_note(page) == "Voice isn't available in this browser"
+        _wait_pos(page, 1, timeout=4000)  # the tour plays on with its captions
+        assert _spoken(page) == [], "never a sentence for a voice nobody chose"
         assert errors == []
     finally:
         ctx.close()

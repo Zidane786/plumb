@@ -4,7 +4,7 @@ Create, extract, prototype, audit and maintain a project's design system, so eve
 consistent: one token file that generates the web, iOS and Android themes, a clickable prototype of the whole product
 that you approve before anything is built (and the same screens full window, `app.html`, to demo), and checks that
 stop drift while the agent works. Claude Code and GitHub Copilot CLI, macOS, Linux and Windows. You stay in charge: one
-question at a time, nothing written without your OK, nothing installed or downloaded.
+question at a time, nothing written in your project without your OK, nothing installed or downloaded.
 
 **The complete guide:** [docs/USAGE.md](https://github.com/Zidane786/plumb/blob/main/docs/USAGE.md) ·
 **what a project gets:** [docs/what-you-get.html](https://github.com/Zidane786/plumb/blob/main/docs/what-you-get.html)
@@ -30,7 +30,7 @@ then `/restart`. The commands are the same. Copilot asks permission for each scr
 about 10–15 script prompts plus one per file); a permission prompt is never your answer to a Plumb question. To cut
 the prompts, see the "Permission prompts" notes in `reference/copilot.md` (`--add-dir`, `--allow-tool`: your call).
 
-**Kiro (preview, live check pending):** `python3 <plumb>/scripts/kiro.py install` (your home folder) or
+**Kiro (preview, live check pending):** `python3 <plugin root>/scripts/kiro.py install` (this plugin's folder; your home folder) or
 `… install --project <folder>` (that workspace only) copies the skills (`/plumb-init`, …) and the hook files, asking
 first (`--yes` skips the question); run it again after updating Plumb. Details: [reference/kiro.md](reference/kiro.md).
 

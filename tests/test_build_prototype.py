@@ -529,6 +529,29 @@ def test_duplicate_screen_sections_are_refused(project: Path) -> None:
     assert_refusal(run(project), "dup.html:2", "duplicate")
 
 
+DUP_STATES = """<section data-screen="dup" data-title="Dup">
+  <main><div data-state="empty" data-test="main-empty">Nothing yet</div><div data-state="ready" data-test="main-ready">List</div></main>
+  <nav>Shared nav</nav>
+  <aside><div data-state="empty" data-test="side-empty">Add one</div><div data-state=" ready " data-test="side-ready">Details</div></aside>
+</section>
+"""
+
+
+def test_blocks_that_share_a_state_name_show_together(project: Path) -> None:
+    """A state that changes two regions with shared chrome between them: both blocks are that state, listed once."""
+    write(project / SCREENS_REL / "dup.html", DUP_STATES)
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert entry(project, "dup")["states"] == ["empty", "ready"]
+    screen = BP.parse_screen(project / SCREENS_REL / "dup.html", f"{SCREENS_REL}/dup.html")
+    assert screen.states == ["empty", "ready"]
+    static = screen.render("empty")  # the static frame
+    for test_id, hidden in (("main-empty", False), ("side-empty", False), ("main-ready", True), ("side-ready", True)):
+        tag = re.search(r'<div( hidden)? data-state="[^"]*" data-test="' + test_id + '"', static)
+        assert tag and bool(tag.group(1)) == hidden, (test_id, static)
+    assert run(project, "--check").returncode == 0
+
+
 def test_file_without_a_screen_section_is_refused(project: Path) -> None:
     write(project / SCREENS_REL / "loose.html", "<div data-state='ready'>no section</div>\n")
     assert_refusal(run(project), "loose.html", "data-screen")
@@ -1935,6 +1958,76 @@ def test_shared_files_that_load_nothing_are_accepted(project: Path) -> None:
     assert "warning" not in r.stderr, r.stderr
 
 
+NET_SCREEN = """<style>
+[data-screen="net"] h2 { margin: 0; }
+{style}
+</style>
+<section data-screen="net" data-title="Net">
+  <div data-state="ready">
+    <h2>Net</h2>
+    {html}
+  </div>
+</section>
+<script data-screen-script>
+var ok = 1;
+{script}
+</script>
+"""
+
+
+@pytest.mark.parametrize("style, html, script, needle", [
+    ('@import url("https://fonts.example.com/css?family=X");', "", "", "@import"),
+    ('[data-screen="net"] { background: url(https://example.com/bg.png); }', "", "", "url(https://"),
+    ("", '<link rel="stylesheet" href="https://fonts.example.com/css">', "", "https://fonts.example.com/css"),
+    ("", '<img src="//cdn.example.com/x.png" alt="">', "", "//cdn.example.com/x.png"),
+    ("", '<img srcset="a.png 1x, https://example.com/b.png 2x" alt="">', "", "https://example.com/b.png"),
+    ("", "<video poster='https://example.com/p.jpg'></video>", "", "https://example.com/p.jpg"),
+    ("", '<object data="https://example.com/x.svg"></object>', "", "https://example.com/x.svg"),
+    ("", '<iframe src=https://example.com/embed></iframe>', "", "https://example.com/embed"),
+    ("", '<p style="background: url(https://example.com/s.png)">x</p>', "", "url(https://"),
+    ("", '<svg viewBox="0 0 10 10"><image href="https://example.com/i.png"/></svg>', "", "https://example.com/i.png"),
+    ("", '<svg viewBox="0 0 10 10"><image xlink:href="//example.com/x.png"/></svg>', "", "//example.com/x.png"),
+    ("", '<input type="image" src="https://example.com/go.png" alt="Go">', "", "https://example.com/go.png"),
+    ("", '<video><track kind="captions" src="https://example.com/c.vtt"></video>', "", "https://example.com/c.vtt"),
+    ("", '<img alt="a > b" src="https://example.com/gt.png">', "", "https://example.com/gt.png"),
+    ("", "", 'fetch("https://example.com/api");', "fetch("),
+    ("", "", "var x = new XMLHttpRequest();", "XMLHttpRequest"),
+])
+def test_a_screen_file_that_loads_from_the_network_is_refused(project: Path, style, html, script, needle) -> None:
+    text = NET_SCREEN.replace("{style}", style).replace("{html}", html).replace("{script}", script)
+    write(project / SCREENS_REL / "net.html", text)
+    line = next(i for i, l in enumerate(text.split("\n"), 1) if (style or html or script) in l)
+    for args in ((), ("--check",)):
+        r = run(project, *args)
+        assert_refusal(r, f"{SCREENS_REL}/net.html:{line}", needle, "load")
+        assert "nothing from the network" in r.stderr or "relative or data: URL" in r.stderr, r.stderr
+    for page in (PROTO_REL, APP_REL, CATALOGUE_REL):
+        assert "example.com" not in (project / page).read_text(encoding="utf-8")
+
+
+def test_a_screen_file_that_loads_nothing_is_accepted(project: Path) -> None:
+    """False positives: an <a href> to a site, a URL in text, a comment or a string, relative and data: sources."""
+    text = NET_SCREEN.replace("{style}", '[data-screen="net"] .i { background: url(img/bg.png), url("data:image/svg+xml,'
+                                         '%3Csvg xmlns=%27http://www.w3.org/2000/svg%27/%3E"); }') \
+        .replace("{html}", '<a href="https://example.com/help">Help</a> <p>See https://example.com</p>\n'
+                           '    <!-- <img src="https://example.com/old.png"> -->\n'
+                           '    <img src="img/logo.png" srcset="img/logo@2x.png 2x" alt="">\n'
+                           '    <img src="data:image/png;base64,iVBORw0KGgo=" alt="">\n'
+                           '    <link-card href="https://example.com/doc">Docs</link-card>\n'
+                           '    <video-player src="https://example.com/v.mp4"></video-player>\n'
+                           '    <input type="text" name="url" value="https://example.com" src="https://example.com/x">\n'
+                           '    <img src="img/a.png" alt="x" title="<img src=https://example.com/t.png>">\n'
+                           '    <svg viewBox="0 0 10 10"><image href="img/i.png"/></svg>\n'
+                           '    <p>Upload from http or https, or //server/share.</p>\n'
+                           '    <textarea name="note"><img src="https://example.com/t.png"></textarea>\n'
+                           '    <svg viewBox="0 0 1 1"><title><link href="https://example.com/x.css"></title></svg>') \
+        .replace("{script}", 'var help = "https://example.com/help"; // fetch("https://example.com") later\n'
+                             'var tpl = \'<img src="https://example.com/t.png">\';')
+    write(project / SCREENS_REL / "net.html", text)
+    r = run(project)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
 def test_unscoped_shared_css_warns(project: Path) -> None:
     write(project / SHARED_REL / "loose.css", '.card { padding: 4px; }\n[data-screen="home"] h2, button { margin: 0; }\n'
                                               '@media (min-width: 40rem) { [data-screen] .x { color: red; } }\n')
@@ -1964,7 +2057,7 @@ def test_a_refused_shared_file_or_id_does_not_block_the_map(project: Path, tmp_p
     r = run(project, "--approve", "booking", env=clean_env(tmp_path, USER="Ana", USERNAME="Ana"))
     assert r.returncode == 0, r.stderr
     assert entry(project, "booking")["approved"]["by"] == "Ana"
-    assert "warning: the pages were not rebuilt because a shared file or a change id is refused" in r.stderr
+    assert "warning: the pages were not rebuilt because a shared file, a screen file or a change id is refused" in r.stderr
     assert needle in r.stderr and "\nfix: " in r.stderr and r.stderr.count("then run") == 1, r.stderr
     assert read(project / PROTO_REL) == before
     assert_refusal(run(project), needle)
@@ -2198,3 +2291,38 @@ def test_build_tokens_never_replaces_a_specimen_it_did_not_write(tmp_path: Path)
     assert build_tokens(p, "--check").returncode == 0
     write(spec, "")  # a build cut short: rewritten
     assert build_tokens(p).returncode == 0 and P.is_specimen_page(read(spec))
+
+
+def test_the_scripts_leave_no_bytecode_in_the_project(tmp_path: Path) -> None:
+    """A JS repo's `git add .` must not pick up __pycache__/*.pyc from the skill's scripts folder."""
+    project = make_project(tmp_path / "p", build=False)
+    shutil.copy(SCRIPTS / "audit.py", project / SKILL_REL / "scripts" / "audit.py")
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
+    env.pop("PYTHONPYCACHEPREFIX", None)
+    for script in ("build-tokens.py", "build-prototype.py", "audit.py"):
+        subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script)], cwd=str(project),
+                       capture_output=True, text=True, encoding="utf-8", env=env)
+    assert not list((project / SKILL_REL).rglob("__pycache__")), list((project / SKILL_REL).rglob("*.pyc"))
+
+
+def test_blocks_that_share_a_state_name_show_together_in_every_page(browser, tmp_path: Path) -> None:
+    project = make_project(tmp_path / "p", build=False)
+    write(project / SCREENS_REL / "dup.html", DUP_STATES)
+    assert run(project).returncode == 0
+    for rel, hash_ in ((PROTO_REL, "#screen-dup/empty"), (APP_REL, "#/dup/empty")):
+        ctx, page, errors, _ = _open(browser, project / rel, hash_=hash_)
+        try:
+            assert _visible_states(page, "dup") == ["empty", "empty"], rel
+            assert errors == []
+        finally:
+            ctx.close()
+    ctx, page, errors, _ = _open(browser, project / CATALOGUE_REL)
+    try:
+        _copies_ready(page)
+        for state in ("empty", "ready"):
+            shown = _copy(page, f"dup/{state}/light").locator("[data-state]").evaluate_all(
+                "els => els.filter(e => e.offsetParent !== null).map(e => e.dataset.state.trim())")
+            assert shown == [state, state], (state, shown)
+        assert errors == []
+    finally:
+        ctx.close()

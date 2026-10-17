@@ -55,7 +55,9 @@ form.addEventListener("submit", function (event) {
 ```
 
 - **One `<section data-screen>`** with `data-title` (the name in the navigation) and optional `data-order`.
-- **States** are the outermost `data-state` blocks. Name them with plain words: `ready` (or `default`), `loading`,
+- **States** are the outermost `data-state` blocks. Blocks that share a state name show together (one state, listed
+  once), e.g. a state that changes the main area and the side panel with shared navigation between them. Name them
+  with plain words: `ready` (or `default`), `loading`,
   `empty`, `error`, `success`, `disabled`, `long-text`, `zero`, `offline`, … Every state `references/ux.md` asks of this
   screen (`### States per screen`) must exist; the audit suggests the missing ones.
 - **Styles** go in `<style>` and every selector starts with `[data-screen="ID"]`, so screens never style each other.
@@ -171,7 +173,10 @@ any system exists: each direction is a candidate system, so there Effective HTML
 - **Mobile platforms** sit in a phone frame with that platform's conventions (iOS navigation bar and tab bar, Android
   top app bar and navigation bar, 44 pt / 48 dp targets).
 - **Offline:** nothing loaded from the network: no CDN, no hosted fonts, no remote images (system font stacks or the
-  project's own font files).
+  project's own font files). The build checks it: a screen file whose `<style>`, `style=""`, screen script or
+  `src` / `href` / `srcset` / `poster` / `data` / `xlink:href` (on `link`, `script`, `img`, `iframe`, `video`, `audio`,
+  `source`, `track`, `object`, `embed`, an SVG `<image>`, an `<input type="image">`) loads from an `http(s):` or `//`
+  address exits 2 naming the file and line, as a shared file does.
 
 ## Variants (`/plumb:prototype`)
 

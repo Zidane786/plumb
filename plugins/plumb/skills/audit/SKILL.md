@@ -113,7 +113,7 @@ passes) · Slate tickets (only when `<root>/kanban/board.py` exists; otherwise n
 
 **Slate tickets** (only when `kanban/board.py` exists and the user says yes): group findings by area (one ticket per
 area or rule group, not per line), show the list, ask, then write them only with Slate's `board.py`
-(`python3 kanban/board.py new --help` for the flags; `add --dry-run --file <batch>` for several, then `add`), with the
+(`python3 kanban/board.py new --help` for the flags; `add --dry-run --file <batch>` for several, then `add --file <batch>`), with the
 Python command from `SLATE.md`. Each ticket: what to fix, the files, the fix, "the audit exits 0" in done-when
 (`make design-audit` when the Makefile has it, else the audit command from `PLUMB.md`); a ticket that changes a
 screen starts with "prototype approved" and links `<docs>/prototype.html#screen-<id>`. Never edit `kanban/` yourself.

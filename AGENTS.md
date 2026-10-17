@@ -79,6 +79,7 @@ plugins/plumb/                        the installed plugin (only this folder shi
                                       (frozen copy for tests: tests/legacy_guard.py)
   templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,
                                       directions.html (the fallback directions page)
+  kiro/plumb-hooks.json.tmpl          the Kiro hook file kiro.py installs
   upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
   CHANGELOG.md  README.md
 examples/caredesk/                    golden example of `create` (regression fixture; after validation, Task 19)
@@ -256,9 +257,12 @@ After that: **patch** (1.0.x) for fixes and wording, **minor** (1.x.0) for new f
 tokens or options that existing projects keep working with, **major** (x.0.0) only for major
 work: a change that needs `/plumb:upgrade` to reshape existing projects, or drops something.
 
-1. Bump the version in **all** of: `plugins/plumb/.claude-plugin/plugin.json`, the script
-   headers (token generator, audit), `templates/PLUMB.md` (first line), and the tokens schema
-   version + `migrate` if the format changed.
+1. Bump the version in **all** of: `plugins/plumb/.claude-plugin/plugin.json`,
+   `PLUMB_VERSION` in `assets/skill/scripts/_plumb.py` (the script headers read it) and in
+   `scripts/scaffold.py`, `assets/skill/SKILL.md.tmpl` (`plumb: "X.Y.Z"`), the "created with
+   Plumb X.Y.Z" lines of `assets/skill/design.md.tmpl` and `templates/PLUMB.md`, `templates/PLUMB.md`
+   (first line), and the tokens schema version + `migrate` if the format changed.
+   `tests/test_manifest.py` fails when one of these differs from `plugin.json`.
 2. Finish `CHANGELOG.md` and `upgrades/<version>.md` (What's new first, then steps). The
    CHANGELOG section for the version is `## X.Y.Z — YYYY-MM-DD` with the headings **Highlights**,
    **Added**, **Changed**, **Fixed**, **Security**, **Removed**, **Upgrade notes** (leave out

@@ -16,11 +16,14 @@ Token format: W3C Design Tokens (DTCG). Light values are `$value`; dark and brea
 from __future__ import annotations
 
 import bisect
+import decimal
+import errno
 import functools
 import json
 import math
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
@@ -77,13 +80,101 @@ def fill_template(text: str, values: dict, name: str = "template") -> str:
     return _SLOT.sub(sub, text)
 
 
+# ---------------------------------------------------------------- reading project files
+
+# A project file is data, and a cloned repository can hold anything at a path: a committed symlink to /dev/zero or
+# /dev/random, or a FIFO from an archive, reads forever (stat() follows the link and says 0 bytes, so a size check
+# passes). So the scripts read a file they did not write only through read_project_bytes: a regular file, at most
+# PROJECT_READ_LIMIT bytes. 8 MB is well above any real source, tokens or screen file (the audit already skips sources
+# over 5 MB) and small enough that a hostile file cannot make a hook allocate gigabytes.
+PROJECT_READ_LIMIT = 8 * 1024 * 1024
+# Pages and screen files are read whole by the builders and can be large (inline data: images; a page over 10 MB only
+# gets a warning), so they get a higher bound; it still stops a runaway read long before memory runs out.
+PAGE_READ_LIMIT = 256 * 1024 * 1024
+
+
+def _read_regular(path, limit: int, cut: bool) -> bytes:
+    fd = os.open(str(path), os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0))
+    try:
+        mode = os.fstat(fd).st_mode
+        if stat.S_ISDIR(mode):
+            raise IsADirectoryError(errno.EISDIR, "is a folder", str(path))
+        if not stat.S_ISREG(mode):
+            raise OSError(errno.EINVAL, "not a regular file", str(path))
+        chunks: List[bytes] = []
+        total = 0
+        while total <= limit:
+            chunk = os.read(fd, min(1 << 20, limit + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        data = b"".join(chunks)
+        if len(data) > limit:
+            if cut:
+                return data[:limit]
+            raise OSError(errno.EFBIG, f"larger than {limit} bytes", str(path))
+        return data
+    finally:
+        os.close(fd)
+
+
+def read_project_bytes(path, limit: int = PROJECT_READ_LIMIT) -> bytes:
+    """The bytes of a regular file of at most `limit` bytes. Raises OSError (FileNotFoundError when missing,
+    IsADirectoryError for a folder) for anything else: a device, a FIFO or a socket (opened without blocking, refused
+    after fstat), or a longer file. Callers treat that as unreadable, as they do any other read error."""
+    return _read_regular(path, limit, False)
+
+
+def read_project_head(path, size: Optional[int] = None) -> bytes:
+    """The first `size` bytes (default PAGE_HEAD_BYTES) of a regular file, for a header test; OSError as
+    read_project_bytes for anything that is not a regular file."""
+    return _read_regular(path, PAGE_HEAD_BYTES if size is None else size, True)
+
+
+def read_project_text(path, encoding: str = "utf-8-sig", errors: str = "strict", limit: int = PROJECT_READ_LIMIT) -> str:
+    """read_project_bytes decoded (UTF-8 with an optional BOM by default; UnicodeDecodeError when errors='strict')."""
+    return read_project_bytes(path, limit).decode(encoding, errors)
+
+
+def write_problem(path, root) -> Optional[str]:
+    """The refusal (error: and fix: lines) when writing `path` must not happen, else None: a link inside the project
+    (the file itself or a folder on the way) that leads outside it, or a FIFO, device or socket there (opening one for
+    writing blocks, or the text is swallowed). A path outside the project given on purpose (a --snapshot in the OS
+    temp folder) is not a link through the project and is fine."""
+    p = Path(os.path.abspath(str(path)))
+    real_root = Path(os.path.realpath(str(root)))
+    # the project, however its path is spelled (a linked parent folder, macOS /tmp -> /private/tmp): the nearest
+    # folder on the way whose real path is the project's; none means a path outside the project, given on purpose
+    base = next((a for a in p.parents if Path(os.path.realpath(str(a))) == real_root), None)
+    parts = p.relative_to(base).parts if base is not None else ()
+    r = base if base is not None else real_root
+    shown = p.relative_to(r).as_posix() if parts else str(p)
+    cur = r
+    for part in parts:
+        cur = cur / part
+        if os.path.islink(str(cur)):
+            real = Path(os.path.realpath(str(cur)))
+            try:
+                real.relative_to(real_root)
+            except ValueError:
+                link = cur.relative_to(r).as_posix()
+                return (f"error: cannot write {shown}: {link} is a link that leads outside the project ({real}), so the "
+                        f"write would change a file there\nfix: ask the user before removing the link (rm {shell_word(link)}: "
+                        f"only the link goes, not what it points at), then run the same command again")
+    if os.path.exists(str(p)) and not p.is_file() and not p.is_dir():
+        return (f"error: cannot write {shown} (not a regular file: a pipe, a device or a link to one)\n"
+                f"fix: ask the user before removing it (rm {shell_word(shown)}), then run the same command again")
+    return None
+
+
 # ---------------------------------------------------------------- reading tokens
 
 
 def load_tokens(path: Path) -> dict:
     path = Path(path)
     try:
-        text = path.read_text(encoding="utf-8-sig")
+        text = read_project_text(path)
     except FileNotFoundError:
         raise _err(f"{path}: tokens file not found", "run the project's create or extract step, or pass the right path") from None
     except (OSError, UnicodeDecodeError) as exc:
@@ -405,11 +496,29 @@ def _luminance(hexv: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
-def contrast(fg_hex: str, bg_hex: str) -> float:
-    """WCAG 2.x contrast ratio, rounded to 2 decimals; argument order does not matter."""
+def contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+    """WCAG 2.x contrast ratio, unrounded; argument order does not matter. Every pass/fail and headroom decision
+    compares this: WCAG does not round, so 4.49995:1 fails 4.5:1."""
     a, b = _luminance(fg_hex), _luminance(bg_hex)
     hi, lo = max(a, b), min(a, b)
-    return round((hi + 0.05) / (lo + 0.05), 2)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def floor2(ratio: float) -> float:
+    """A ratio floored to 2 decimals, for display: 4.49995 is 4.49, never 4.50 (a shown figure never passes when the
+    ratio fails, however close). The shortest decimal form of the float (repr) is floored, so 4.57 stays 4.57 and
+    nothing is ever rounded up."""
+    return float(decimal.Decimal(repr(float(ratio))).quantize(decimal.Decimal("0.01"), rounding=decimal.ROUND_FLOOR))
+
+
+def ratio_text(ratio: float) -> str:
+    """A ratio as the evidence shows it: floored to 2 decimals ("4.49")."""
+    return f"{floor2(ratio):.2f}"
+
+
+def contrast(fg_hex: str, bg_hex: str) -> float:
+    """WCAG 2.x contrast ratio floored to 2 decimals (what the evidence shows); compare contrast_ratio instead."""
+    return floor2(contrast_ratio(fg_hex, bg_hex))
 
 
 def _lab(hexv: str) -> Tuple[float, float, float]:
@@ -542,12 +651,32 @@ _KEY = re.compile(r"^([A-Za-z][A-Za-z0-9 _/-]*?):(?:\s+(.*)|\s*)$")
 _NOTE = re.compile(r"\s{2,}\((?!\s*(?:next-app|next-pages|nuxt|sveltekit|angular|router)\s*\))[^)]*\)\s*$")
 
 
+# An interpreter name or path, as the hooks take PLUMB.md's `Python:` (hooks/_hooklib._SAFE_PYTHON, the same pattern:
+# tests/test_plumb_core.py pins the two together): it is echoed into fix: lines an agent may run.
+SAFE_PYTHON = re.compile(r"py -3|py(?:\.exe)?|(?:[\w.:/\\-]*[/\\])?python[\d.]*(?:\.exe)?")
+
+
+@functools.lru_cache(maxsize=8)
+def _project_python(root: str) -> str:
+    try:
+        given = str(read_plumb_md(Path(root) / "PLUMB.md").get("Python", "") or "").strip()
+    except PlumbError:
+        given = ""
+    return given if SAFE_PYTHON.fullmatch(given) else "python3"
+
+
+def project_python(root) -> str:
+    """The Python command the printed commands (fix:, next:, the report's rerun line) start with: PLUMB.md's `Python:`
+    when it is an interpreter name or path (`py -3`, `python`, `C:/Python39/python.exe`), else python3."""
+    return _project_python(str(root))
+
+
 def read_plumb_md(path: Path) -> dict:
     """'Key: value' lines of PLUMB.md as a dict. Unknown keys are kept; comments, code fences, headings, bullets
     and tables are ignored; CRLF is fine; a missing file gives {}. A trailing '   (note)' is dropped from a value
     and a value wrapped in backticks is unwrapped."""
     try:
-        text = Path(path).read_text(encoding="utf-8-sig")
+        text = read_project_text(path)
     except (FileNotFoundError, IsADirectoryError):
         return {}
     except (OSError, UnicodeDecodeError) as exc:
@@ -1011,7 +1140,7 @@ def tailwind_project(folder: Path) -> bool:
     pkg = folder / "package.json"
     if pkg.is_file():
         try:
-            return uses_tailwind(pkg.read_text(encoding="utf-8", errors="replace"))
+            return uses_tailwind(read_project_text(pkg, "utf-8", "replace"))
         except OSError:
             return False
     return False
@@ -1664,7 +1793,7 @@ def scan_inventory(roots, exclude, base: Optional[Path] = None, tailwind: Option
             try:
                 if path.stat().st_size > MAX_SOURCE_BYTES:
                     continue
-                text = normalise_text(path.read_bytes().decode("utf-8-sig", errors="replace"))
+                text = normalise_text(read_project_text(path, errors="replace"))
             except OSError:
                 continue
             if is_generated_text(text):

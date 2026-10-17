@@ -10,6 +10,7 @@ import datetime
 import html
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -261,7 +262,33 @@ def test_specimen_colours_in_light_and_dark_with_contrast(project: Path) -> None
         key = f'data-pair="{pair.fg} on {pair.bg}"'
         assert key in text, key
         chunk = text[text.index(key):text.index(key) + 600]
-        assert f"{pair.light:.2f}" in chunk and f"{pair.dark:.2f}" in chunk, chunk
+        assert f"light <b>{P.ratio_text(pair.light)}</b>" in chunk and f"dark <b>{P.ratio_text(pair.dark)}</b>" in chunk, chunk
+
+
+def test_specimen_shows_a_pair_just_under_the_minimum_as_failing(tmp_path: Path) -> None:
+    # #008580 on white is 4.49995:1: it fails 4.5:1 and shows 4.49 (floored), as in dark-mode.md and the audit
+    def mut(doc: dict) -> None:
+        doc["color"]["link"] = {"$value": "#008580", "$extensions": {"plumb": {"dark": "#7fd6d0"}}}
+    p = make_project(tmp_path / "proj", mutate=mut)
+    text = read(p / SPECIMEN_REL)
+    key = 'data-pair="link on background"'
+    chunk = text[text.index(key):text.index(key) + 600]
+    assert "light <b>4.49</b>" in chunk and "verdict-good" not in chunk.split("</li>")[0], chunk
+    found = json.loads(audit(p, "--json").stdout)["findings"]
+    assert any(f["rule"] == "contrast" and "link on background is 4.49:1 in light mode" in f["message"] for f in found)
+
+
+def test_audit_names_a_foreign_specimen_as_a_warning_with_the_move_fix(project: Path) -> None:
+    # build-tokens leaves a specimen.html it did not write as it is; the audit must not ask for a build that cannot clear it
+    write(project / SPECIMEN_REL, "<!doctype html>\n<html><body><h1>Our own specimen</h1></body></html>\n")
+    out = json.loads(audit(project, "--json").stdout)
+    drift = [f for f in out["findings"] if f["rule"] == "generated-drift"]
+    assert len(drift) == 1, drift
+    f = drift[0]
+    assert f["severity"] == "warn" and f["file"] == SPECIMEN_REL and "not Plumb's" in f["message"], f
+    assert "mv docs/design/specimen.html docs/design/specimen.before-plumb.html" in f["fix"], f
+    assert "ask the user" in f["fix"] and "build-tokens.py" in f["fix"]
+    assert not any(x["severity"] == "error" and x["file"] == SPECIMEN_REL for x in out["findings"])
 
 
 def test_specimen_scopes_both_themes_from_the_tokens(project: Path) -> None:
@@ -413,6 +440,41 @@ def test_suggest_rules_have_a_weight_and_a_why() -> None:
             assert r.why and r.why.endswith("."), r.id
 
 
+@pytest.mark.parametrize("given, shown", [("`py -3`", "py -3"), ("python", "python"),
+                                          ("C:/Python39/python.exe", "C:/Python39/python.exe"),
+                                          ("python3; rm -rf ~", "python3"), ("$(evil)", "python3"), ("", "python3")])
+def test_fix_lines_use_the_python_plumb_md_records(project: Path, given: str, shown: str) -> None:
+    write(project / "PLUMB.md", f"Project: demo\nPython: {given}\n\n## Checks\nAllowed raw values: components/ui/**\n")
+    css = project / SKILL_REL / "assets/platforms/web/tokens.css"
+    write(css, read(css) + "/* by hand */\n")
+    r = build_tokens(project, "--check")
+    assert r.returncode == 1 and f"{shown} {SKILL_REL}/scripts/build-tokens.py" in r.stdout + r.stderr, r.stdout + r.stderr
+    found = json.loads(audit(project, "--json").stdout)["findings"]
+    drift = next(f for f in found if f["rule"] == "generated-drift")
+    assert drift["fix"] == f"{shown} {SKILL_REL}/scripts/build-tokens.py", drift
+    if shown == "python3":
+        assert "rm -rf" not in r.stdout + r.stderr and "evil" not in drift["fix"]
+    assert P.project_python(project) == shown
+
+
+def test_audit_warns_about_a_contrast_pair_it_leaves_out(tmp_path: Path) -> None:
+    def glass(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+        doc["color"]["on-surface-glass"] = {"$value": "#111111", "$extensions": {"plumb": {"dark": "#eeeeee"}}}
+    plain = make_project(tmp_path / "plain")
+    p = make_project(tmp_path / "glass", mutate=glass)
+    base, r = audit(plain, "--json"), audit(p, "--json")
+    assert r.returncode == base.returncode, "a left-out pair never changes the exit code"
+    found = [f for f in json.loads(r.stdout)["findings"] if "on-surface-glass on surface-glass" in f["message"]]
+    assert len(found) == 1, found
+    f = found[0]
+    assert f["rule"] == "contrast" and f["severity"] == "warn" and f["file"] == TOKENS_REL
+    assert "is not checked for contrast: surface-glass is translucent" in f["message"]
+    assert "give color.surface-glass an opaque value" in f["fix"] and "contrast.extra_pairs" in f["fix"]
+    assert audit(p, "--html", "out/r.html").returncode == base.returncode
+    assert "on-surface-glass on surface-glass is not checked for contrast" in html.unescape(read(p / "out/r.html"))
+
+
 def test_report_custom_path_and_json_stdout(project: Path) -> None:
     r = audit(project, "--json", "--html", "out/report.html")
     assert r.returncode == 1
@@ -445,6 +507,134 @@ def test_report_with_nothing_to_report(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stdout + r.stderr
     text = read(today_report(p))
     assert "No errors or warnings" in text
+
+
+def test_report_never_replaces_a_page_it_did_not_write(project: Path) -> None:
+    # `audit.py --html app/landing.html` (meaning "audit this page") gives the page to --html: refused, bytes kept.
+    page = "<!doctype html>\n<html><body><h1>Our landing page</h1></body></html>\r\n"
+    write(project / "app/landing.html", page)
+    before = (project / "app/landing.html").read_bytes()
+    r = audit(project, "--html", "app/landing.html")
+    assert_refusal(r, "app/landing.html is not an audit report (not written by audit.py): nothing was written",
+                   "fix: put --html after the paths (audit.py <path> --html), or pass a new report path, "
+                   "e.g. --html docs/design/audit.html")
+    assert (project / "app/landing.html").read_bytes() == before
+    # another tool's GENERATED page is not the audit's either
+    write(project / "out/other.html", "<!doctype html>\n<!-- GENERATED by some-tool. Do not edit. -->\n<p>x</p>\n")
+    assert_refusal(audit(project, "--html", "out/other.html"), "not an audit report")
+
+
+def test_report_rewrites_its_own_report_and_an_empty_file(project: Path) -> None:
+    assert audit(project, "--html", "out/r.html").returncode == 1
+    first = read(project / "out/r.html")
+    assert P.is_plumb_page(first, A.REPORT_HEADER)
+    write(project / "out/r.html", first.replace("</body>", "<p>stale</p></body>"))
+    assert audit(project, "--html", "out/r.html").returncode == 1
+    assert "<p>stale</p>" not in read(project / "out/r.html")
+    write(project / "out/empty.html", "")
+    assert audit(project, "--html", "out/empty.html").returncode == 1
+    assert P.is_plumb_page(read(project / "out/empty.html"), A.REPORT_HEADER)
+
+
+_POSIX = os.name == "posix"
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_a_fifo_in_the_project_is_skipped_not_read(project: Path) -> None:
+    os.mkfifo(project / "app/hang.css")
+    for script, args in (("audit.py", ("--json",)), ("audit.py", ("app",)), ("audit.py", ("--html",)),
+                         ("build-tokens.py", ("--check",))):
+        try:
+            r = subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script), *args], cwd=str(project),
+                               capture_output=True, text=True, encoding="utf-8", timeout=20)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"{script} {args} read the FIFO")
+        assert r.returncode in (0, 1), (script, args, r.stdout, r.stderr)
+        assert "Traceback" not in r.stderr
+        assert "hang.css" not in r.stdout  # never audited
+
+
+@pytest.mark.skipif(not _POSIX or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+def test_a_tokens_file_linked_to_a_device_is_refused_quickly(project: Path) -> None:
+    tokens = project / TOKENS_REL
+    tokens.unlink()
+    tokens.symlink_to("/dev/zero")
+    for script, args in (("build-tokens.py", ("--check",)), ("build-tokens.py", ()), ("audit.py", ("--json",))):
+        try:
+            r = subprocess.run([sys.executable, str(project / SKILL_REL / "scripts" / script), *args], cwd=str(project),
+                               capture_output=True, text=True, encoding="utf-8", timeout=20)
+        except subprocess.TimeoutExpired:
+            pytest.fail(f"{script} {args} read /dev/zero")
+        assert_refusal(r, "not a regular file")
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_report_never_writes_into_a_fifo(project: Path) -> None:
+    os.mkfifo(project / "out.html")
+    try:
+        r = audit_t(project, "--html", "out.html")
+    except subprocess.TimeoutExpired:
+        pytest.fail("--html opened the FIFO")
+    assert_refusal(r, "not an audit report")
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_the_tokens_build_never_writes_into_a_fifo(project: Path) -> None:
+    (project / SPECIMEN_REL).unlink()
+    os.mkfifo(project / SPECIMEN_REL)
+    try:
+        r = build_tokens_t(project)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the build opened the FIFO")
+    assert_refusal(r, "not a regular file", SPECIMEN_REL)
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: symlink")
+def test_no_script_writes_through_a_link_that_leads_outside_the_project(project: Path, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "dotfile"
+    victim.write_text("keep me\n", encoding="utf-8")
+    css = project / SKILL_REL / "assets/platforms/web/tokens.css"
+    css.unlink()
+    css.symlink_to(victim)  # a committed link to a file outside the project
+    r = build_tokens_t(project)
+    assert_refusal(r, f"cannot write {SKILL_REL}/assets/platforms/web/tokens.css", "outside the project",
+                   f"rm {SKILL_REL}/assets/platforms/web/tokens.css")
+    assert victim.read_text(encoding="utf-8") == "keep me\n"
+    css.unlink()
+    assert build_tokens_t(project).returncode == 0  # a plain file again: written
+    (project / "out").symlink_to(outside, target_is_directory=True)  # a linked folder
+    r = audit_t(project, "--html", "out/report.html")
+    assert_refusal(r, "out/report.html", "outside the project", "rm out")
+    assert not (outside / "report.html").exists()
+    r = audit_t(project, "--snapshot", "out/snap.json")
+    assert_refusal(r, "out/snap.json", "outside the project")
+    assert not (outside / "snap.json").exists()
+    # the same project reached through another spelling of its path (a linked parent folder, macOS /tmp ->
+    # /private/tmp): the link in it is still found
+    alias = tmp_path / "alias"
+    alias.symlink_to(project.parent, target_is_directory=True)
+    spelled = alias / project.name / "out"
+    r = audit_t(project, "--html", str(spelled / "r.html"))
+    assert_refusal(r, "outside the project", "rm out")
+    r = audit_t(project, "--snapshot", str(spelled / "s.json"))
+    assert_refusal(r, "outside the project")
+    assert not (outside / "r.html").exists() and not (outside / "s.json").exists()
+    assert audit_t(project, "--snapshot", str(alias / project.name / ".plumb-tmp/s.json")).returncode == 0
+    # a path outside the project given on purpose is not a link through the project: still written
+    r = audit_t(project, "--snapshot", str(outside / "given.json"))
+    assert r.returncode == 0 and (outside / "given.json").is_file(), r.stderr
+
+
+def build_tokens_t(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/build-tokens.py"), *args],
+                          cwd=str(project), capture_output=True, text=True, encoding="utf-8", timeout=20)
+
+
+def audit_t(project: Path, *args: str):
+    return subprocess.run([sys.executable, str(project / SKILL_REL / "scripts/audit.py"), *args], cwd=str(project),
+                          capture_output=True, text=True, encoding="utf-8", timeout=20)
 
 
 def test_report_refusals(project: Path, tmp_path: Path) -> None:

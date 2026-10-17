@@ -3,7 +3,8 @@
 Plumb keeps a project's design true. It gives your project **one design system** that every screen is built
 from, a **clickable prototype** of the whole product that you approve before anything is built, and **checks**
 that stop an agent from drifting off the system while it works. It runs in Claude Code and GitHub Copilot CLI
-(and Kiro, see below), on macOS, Linux and Windows, and it always asks you before it decides or writes anything.
+(and Kiro, see below), on macOS, Linux and Windows, and it always asks you before it decides anything or writes
+anything in your project (its own notes of Plumb mistakes go to `~/.plumb/feedback/`, outside every project).
 
 This guide teaches every part of it. Read "Start here" first; after that, jump to what you need.
 
@@ -80,13 +81,15 @@ Then restart Copilot CLI (`/restart`, or quit and start it again). The commands 
 ### Kiro (built from Kiro's docs; live check pending)
 
 Plumb's skills follow the Agent Skills standard, so Kiro (IDE and CLI v3+) can run them. Kiro has no plugin
-marketplace, so a script copies them in. With Plumb installed in Claude Code or Copilot CLI (or a clone of the Plumb
-repository), run it yourself, one scope at a time:
+marketplace, so a script copies them in. It sits in Plumb's plugin folder, `<plugin root>/scripts/kiro.py`: in a
+clone of the Plumb repository that is `<clone>/plugins/plumb/scripts/kiro.py`; a plugin installed in Claude Code lives
+under `~/.claude/plugins/cache/plumb/plumb/<version>/`, in Copilot CLI under `~/.copilot/installed-plugins/plumb/plumb/`.
+Run it yourself, one scope at a time:
 
 ```
-python3 <plumb>/plugins/plumb/scripts/kiro.py install                       # your home folder only (~/.kiro)
-python3 <plumb>/plugins/plumb/scripts/kiro.py install --project <folder>    # that workspace only (<folder>/.kiro)
-python3 <plumb>/plugins/plumb/scripts/kiro.py uninstall [--project <folder>]
+python3 <plugin root>/scripts/kiro.py install                       # your home folder only (~/.kiro)
+python3 <plugin root>/scripts/kiro.py install --project <folder>    # that workspace only (<folder>/.kiro)
+python3 <plugin root>/scripts/kiro.py uninstall [--project <folder>]
 ```
 
 Each run writes `.kiro/skills/plumb-<name>/SKILL.md` for every command and `.kiro/hooks/plumb.json` in that one scope
@@ -317,7 +320,8 @@ components.
 ### Moving the design system later
 
 If the design system ended up in the wrong place, never move it by hand. Plumb moves it and updates every reference
-(`PLUMB.md`, the `AGENTS.md`/`CLAUDE.md` row, the Makefile) in one step, then checks the generated files:
+(`PLUMB.md`, the `AGENTS.md`/`CLAUDE.md` row, the Makefile) in one step, then checks the generated files (and
+rebuilds the prototype pages once when there are screen files, since their headers name the skill's path):
 
 ```
 python3 <plugin>/scripts/scaffold.py --relocate .github/skills/acme-design-system .claude/skills/acme-design-system --project-root . --dry-run
@@ -846,9 +850,10 @@ pages.
 Every page opens from disk, with no server and no network.
 
 **One source per screen.** Every page is built by `build-prototype.py` from
-`docs/design/prototype/screens/<id>.html`: one file per screen, its states marked with `data-state`, its interactions
-inline, and only the design system's tokens for colours, type, spacing, radius, shadow and motion. Edit a screen file
-and rebuild; every page follows, so they can never disagree. The audit runs on the screen files like on your code.
+`docs/design/prototype/screens/<id>.html`: one file per screen, its states marked with `data-state` (blocks that share
+a state name show together, e.g. a state that changes the main area and the side panel), its interactions inline,
+and only the design system's tokens for colours, type, spacing, radius, shadow and motion. Edit a screen file and
+rebuild; every page follows, so they can never disagree. The audit runs on the screen files like on your code.
 The `_shared/` folder beside the screens holds shared files (below); nothing in it is a screen.
 
 **Shared files.** CSS and scripts several screens use (an app shell's layout, a toast helper) go once in
@@ -950,14 +955,16 @@ of play brings it back with "Play again" (the next step follows your choice agai
 field or hold a modifier key. Your choice is remembered in this browser.
 
 **Voice and subtitles (play mode):** the **Voice** button (or the `V` key) reads the captions aloud with the browser's
-own speech and the voices already on your computer: nothing is downloaded, and it works offline. It is off by default
+own speech and the voices already on your computer: nothing is downloaded, and it works offline. A voice that sends
+the text to a remote service (Chrome's "Google …" voices) is never used. It is off by default
 (screen-reader users already hear the captions) and your choice is remembered in this browser. The voice reads the same
 caption line the player shows on screen, no second subtitle system (a step's optional `"say"` changes only what is
 spoken). With the voice on, each caption stays on screen while it is spoken, then the step's hold, then the next one;
 with it off, the usual timing. The pace is calm (about 150 words a minute at 1×) and follows the speed control (slower
 at 0.5×, capped at 1.5× and 2× so it stays clear). Pause, jumps, Back/Next, Hide panel and a speed change keep voice and
 screen in step. A tour that opens in play mode with its page waits on its first card: **Start with voice** or **Start
-without voice** (browsers only speak after a click). No speech in the browser: the button is disabled with "Voice
+without voice** (browsers only speak after a click; while the browser is still loading its voice list the
+first sentence waits for it, so only a local voice ever speaks). No speech in the browser (or only remote voices): the button is disabled with "Voice
 isn't available in this browser" and the tour plays with captions; an error mid-tour says "Voice stopped: continuing
 with captions" and carries on. **Save subtitles (.vtt)** (in the panel while playing and at the end) downloads
 `<tour id>.vtt` with the real times each caption showed, so it matches a screen recording of that run at any speed.
@@ -1097,6 +1104,7 @@ Edit check: on
 End-of-turn check: on
 Themes: light-and-dark          (light-and-dark | light-only: an explicit decision)
 UI files: app/**, components/** · *.tsx *.jsx *.css
+Routes: app (next-app)
 Allowed raw values: components/ui/**
 
 ## Commands
@@ -1124,6 +1132,7 @@ are the direct commands.
 | `Prototype sync:` | `on`: a new page with no approved screen is refused, and code that changed without its screen stops the agent once |
 | `Themes:` | `light-and-dark`, or `light-only` (turns off the dark rules; a recorded decision) |
 | `UI files:` | Which files the audit and hooks treat as UI |
+| `Routes:` | The app's page roots, each `<path> (<kind>)` (`next-app`, `next-pages`, `nuxt`, `sveltekit`, `angular`, `router`), or `none`: what prototype-first and `route-not-prototyped` read. Not recorded: those checks stay off (`/plumb:init` offers to record it) |
 | `Allowed raw values:` | Paths where primitives live (e.g. `components/ui/**`): raw values are allowed there. Exceptions are by path only, never by a comment in the code |
 
 ### Commands you can run yourself
@@ -1459,7 +1468,10 @@ in the project sees it. (Enforcing it on other tools is outside Plumb; an instal
 
 Every page Plumb generates (prototype, screens, tours, specimen, reports, directions) loads nothing from the network:
 no CDN, no hosted web fonts, no remote images. A project font is used from the project's own font files; otherwise a
-system font stack. Every page opens from disk, offline, on any machine.
+system font stack. Every page opens from disk, offline, on any machine. `build-prototype.py` checks every screen file
+and shared file before it is inlined: a hosted font `<link>`, a remote `<img src>`, `@import`, a remote `url()` or a
+`fetch(` in a screen script exits 2 naming the file and line (copy the file into the project and use a relative or
+`data:` URL).
 
 ### Screenshots without installing anything
 
@@ -1640,13 +1652,13 @@ Run `/plumb:upgrade` when you're ready; nothing breaks meanwhile (the hooks chec
 A teammate upgraded first. Update your plugin (`claude plugin marketplace update plumb`, then
 `claude plugin update plumb@plumb`, then `/reload-plugins`). Plumb never downgrades a project.
 
----
-
 **The hooks never write `~/.plumb/feedback/hooks.md`, even after a crash note.**
 The log is private: if `~/.plumb` or `~/.plumb/feedback` is a symlink or someone else's folder, the hooks write
 nothing there (your own folders with wider permissions are made 0700 instead). Remove the link, or make the folders
 yours, and the next failure is logged. A full log (512 KB) is left alone too: move the old `hooks.md` aside. A
 project's own broken file (a tokens file that is not JSON) is not a Plumb mistake and is never logged.
+
+---
 
 ## FAQ
 

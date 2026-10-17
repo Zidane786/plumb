@@ -22,7 +22,7 @@ Any time you create, change, review or ask about UI in this project. Read this f
 | File | Read or use when |
 |---|---|
 | [design.md](design.md) | Any doubt about the look: brand, colours, type, elevation, motion. It wins every disagreement. |
-| [assets/tokens/{{SLUG}}.tokens.json](assets/tokens/{{SLUG}}.tokens.json) | A value seems missing or wrong. Edit ONLY here, then run the tokens command (`PLUMB.md` → Commands). |
+| [assets/tokens/{{SLUG}}.tokens.json](assets/tokens/{{SLUG}}.tokens.json) | A value seems missing or wrong: every value lives only here, and it changes only through `/plumb:update` (the user starts it; it asks and records the decision). Propose the change; never edit this file without the user's OK. |
 | [assets/icons/icon-map.json](assets/icons/icon-map.json) | Picking an icon: add the concept here first. |
 | [references/components.md](references/components.md) | Building or changing a component: purpose, anatomy, sizes, states, tokens, a11y. |
 | [references/inventory.md](references/inventory.md) | Which component exists where, and what is still to build. |
@@ -48,8 +48,9 @@ The prototype lives in `{{DOCS_DIR}}/` (screens in `{{DOCS_DIR}}/prototype/scree
    with a named variant. Create only when nothing fits, and say why.
 3. **Spec first, platform second.** Read [references/components.md](references/components.md), then only the platform file
    for what differs: {{PLATFORM_SPEC_LINKS}}.
-4. **Name every visual decision with a token.** A missing value goes into the tokens file and `design.md`, then the
-   tokens command, and is flagged in your report.
+4. **Name every visual decision with a token.** A value with no token: stop and tell the user (the nearest token and the
+   value you need). New or changed tokens go through `/plumb:update`, which the user starts; never edit the tokens file
+   or `design.md` without their OK, and never write a raw value in code instead.
 5. **Build every state** from the prototype and `ux.md`: loading, empty, error, success, disabled, focus, long text, zero,
    narrow screens, light and dark, reduced motion.
 6. **Check:** the accessibility checklist, then the check and audit commands in `PLUMB.md` → Commands.

@@ -56,11 +56,13 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
      for each listed file, `git status --short` on them (a local edit), `PLUMB.md`'s latest "Plumb updates" line, and
      the plugin's own date: `git -C "<ROOT>" log -1 --format=%cs` when `<ROOT>` is a git checkout (a plugin loaded
      from a clone), else the modified date of `<ROOT>/.claude-plugin/plugin.json` (when it was installed or updated).
-     Skip step 1 and step 3 (no version in between) and run the rest in order: item 6 below, then step 2, whose
-     step-3 question is the only ask here: put the `files_differ` list, that evidence and the dry-run list in it, with
-     **Refresh from this plugin** recommended unless the evidence shows the project's copy is newer (a teammate's
-     later refresh, a commit after this plugin was installed), then **Keep the project's files** is recommended. Then
-     step 4 (the version line stays; the "Plumb updates" line says `refreshed Plumb <NEW>'s files`), step 5, step 6.
+     Skip step 1 (no version in between) and run the rest in order: item 6 below; step 2, whose step-3 question takes
+     the place of step 1's: put the `files_differ` list, that evidence and the dry-run list in it, with **Refresh from
+     this plugin** recommended unless the evidence shows the project's copy is newer (a teammate's later refresh, a
+     commit after this plugin was installed), then **Keep the project's files** is recommended; step 3 with
+     `<NEW>.md` alone (a project set up with an earlier build of this version may still need its steps: each step's
+     Check says, and a done one is "not needed"); step 4 (the version line stays; the "Plumb updates" line says
+     `refreshed Plumb <NEW>'s files`); step 5; step 6. Every other question in those steps is still asked.
    - `newer` → the project is newer than the plugin (a teammate upgraded): never downgrade. Print the commands for the
      user to run in their own terminal: `claude plugin marketplace update plumb`, then
      `claude plugin update plumb@plumb`, then `/reload-plugins` (Copilot CLI: `copilot plugin marketplace update plumb`,
@@ -103,11 +105,13 @@ a message before it: Claude Code can hide that text; Copilot CLI's ask tool take
    and its `fix:`; never hand-edit a generated file or Plumb's scripts to make it pass. `error: <page> is not Plumb's`
    (a page the new build writes, e.g. `app.html`, is already there, made by another tool or by hand) → ask the user
    whether to move it to the `.before-plumb.html` name the fix gives (recommended: nothing is lost) or keep it and skip
-   the prototype pages for now (say inside the question what keeping costs: `build-prototype.py --check` and
-   `build-tokens.py --check` exit 1 until it is moved, so `make tokens-check` in CI stays red, the session line says
-   "tokens stale" and step 5 cannot come out clean); move it only on their yes, then build again. The tokens build's `warning: <docs>/
-   specimen.html is not Plumb's` (everything else was built; the specimen was left as it is) → the same question for the
-   specimen.
+   the prototype pages for now (say inside the question what keeping costs: `build-prototype.py --check` exits 1 until
+   it is moved, and so does a CI that runs it, and Step 5 cannot come out clean; `build-tokens.py --check` and
+   `make tokens-check` are not affected); move it only on their yes, then build again. The tokens build's `warning:
+   <docs>/specimen.html is not Plumb's` (everything else was built; the specimen was left as it is) → the same
+   question for the specimen (what keeping costs there: `build-tokens.py --check` exits 1 until it is moved, so
+   `make tokens-check` in CI stays red, the session line says "tokens stale", the audit warns, and Step 5 cannot come
+   out clean).
 5. **Rolling back** (only if something failed and the user agrees): restore Plumb's own files only, one path at a
    time, from the `would write:` list of the dry run:
    - a path git knows (`git ls-files --error-unmatch <path>` exits 0): `git checkout -- <path>`;

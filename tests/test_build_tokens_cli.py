@@ -709,3 +709,71 @@ def test_kotlin_without_colours_has_no_empty_class(tmp_path: Path) -> None:
     assert "data class DemoColors()" not in text and "DemoColors(" not in text
     assert "LocalDemoColors" not in text and "val colors: DemoColors" not in text
     assert "fun DemoTheme(" in text and "colorScheme = " in text
+
+
+def test_a_pair_just_under_the_minimum_fails_and_shows_floored(tmp_path: Path) -> None:
+    """#008580 on white is 4.49995:1: WCAG does not round, so it fails, and the evidence never shows it as 4.50."""
+    def mut(doc: dict) -> None:
+        doc["color"]["link"] = {"$value": "#008580", "$extensions": {"plumb": {"dark": "#7fd6d0"}}}
+    p = make_project(tmp_path, mut)
+    assert run(p, "--contrast").returncode == 0
+    table = block(dark_md(p))
+    row = next(l for l in table.splitlines() if l.startswith("| link on background "))
+    assert "| 4.49 |" in row and "fail (light)" in row, row
+    assert "- link on background (light): nearest passing" in table
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bt_floor_test", SCRIPTS / "build-tokens.py")
+    bt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bt)
+    pair = next(x for x in bt.measure_pairs(json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8")))
+                if (x.fg, x.bg) == ("link", "background"))
+    assert pair.failed == ["light"] and 4.4999 < pair.light < 4.5
+
+
+def test_a_translucent_surface_is_skipped_with_a_note(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+    p = make_project(tmp_path, mut)
+    for args in ((), ("--check",), ("--contrast",)):
+        r = run(p, *args)
+        assert r.returncode == 0, (args, r.stdout, r.stderr)
+        assert "note: surface-glass is translucent" in r.stderr, r.stderr
+        assert "opaque value" in r.stderr
+        assert r.stderr.count("surface-glass is translucent") == 1, r.stderr
+    table = block(dark_md(p))
+    assert "on surface-glass" not in table and "| on-surface on background |" in table
+
+
+def test_a_translucent_surface_with_its_own_on_token_never_stops_the_build(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+        doc["color"]["on-surface-glass"] = {"$value": "#111111", "$extensions": {"plumb": {"dark": "#eeeeee"}}}
+    p = make_project(tmp_path, mut)
+    for args in ((), ("--check",), ("--contrast",)):
+        r = run(p, *args)
+        assert r.returncode == 0, (args, r.stdout, r.stderr)
+        assert r.stderr.count("warning: on-surface-glass on surface-glass is not checked for contrast: surface-glass is "
+                              "translucent") == 1, r.stderr
+        fix = next(l for l in r.stderr.splitlines() if l.startswith("fix: ") and "on-surface-glass" in l)
+        assert "give color.surface-glass an opaque value" in fix and "$extensions.plumb.contrast.extra_pairs" in fix
+        assert '["on-surface-glass", "background", "text"]' in fix
+        assert "contrast.surfaces" not in fix  # the project has no such list
+    table = block(dark_md(p))
+    assert "on surface-glass" not in table and "| on-surface on background |" in table
+    doc = json.loads((skill(p) / TOKENS_REL).read_text(encoding="utf-8"))
+    doc["$extensions"]["plumb"]["contrast"] = {"extra_pairs": [["on-surface-glass", "background", "text"]]}
+    write(skill(p) / TOKENS_REL, json.dumps(doc, indent=2))
+    assert run(p, "--contrast").returncode == 0  # the way out the fix names works
+    assert "| on-surface-glass on background |" in block(dark_md(p))
+
+
+def test_a_translucent_surface_named_in_the_settings_is_skipped_with_the_way_out(tmp_path: Path) -> None:
+    def mut(doc: dict) -> None:
+        doc["color"]["surface-glass"] = {"$value": "#ffffffb3", "$extensions": {"plumb": {"dark": "#0f1217b3"}}}
+        doc["$extensions"]["plumb"]["contrast"] = {"surfaces": ["background", "surface-glass"]}
+    p = make_project(tmp_path, mut)
+    r = run(p, "--contrast")
+    assert r.returncode == 0, r.stderr
+    assert "warning: on-surface on surface-glass is not checked for contrast" in r.stderr, r.stderr
+    assert "take surface-glass out of $extensions.plumb.contrast.surfaces" in r.stderr
+    assert "on surface-glass" not in block(dark_md(p))

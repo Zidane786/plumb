@@ -210,6 +210,7 @@ import json
 import os
 import posixpath
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -219,6 +220,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Iterator, List, NamedTuple, Optional, Sequence, Tuple
 
+if __name__ == "__main__":  # run in a project: leave no __pycache__ in the skill's scripts folder (the hooks
+    sys.dont_write_bytecode = True  # import this file as a module and keep their own cache)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _plumb as P  # noqa: E402
@@ -1519,7 +1522,7 @@ class Project:
         self.scales = scales_for(doc)
         self.tokens_name = rel(tokens_file, root) if tokens_file is not None else ""
         self.light_only = _LIGHT_ONLY.match(str(settings.get("Themes", "") or "")) is not None
-        self.build_command = f"python3 {rel(skill_dir / 'scripts' / _BUILD_TOKENS, root)}"
+        self.build_command = f"{P.project_python(root)} {rel(skill_dir / 'scripts' / _BUILD_TOKENS, root)}"
         globs = _split_list(settings.get("Allowed raw values"))
         self.primitive_globs = globs or ["components/ui/**"]
         self.markup = [c for c in ctxs if c.platform == "web" and not c.stylesheet]
@@ -1748,6 +1751,10 @@ def check_contrast(proj: Project) -> Iterator[XHit]:
         what, fix = _plumb_error_parts(pairs)
         yield XHit(proj.tokens_name, 1, what, f"contrast cannot be measured: {what}", fix)
         return
+    left_out = getattr(load_build_tokens(), "translucent_pairs", None)
+    for fg, bg_path, message, fix in (left_out(proj.doc) if left_out is not None and proj.doc is not None else []):
+        # not measured (a translucent background): said, as a warning that never changes the exit code
+        yield XHit(proj.tokens_name, proj.token_line(bg_path), fg, message, fix, severity="warn")
     for pair in pairs:
         for mode in proj.modes():
             ratio = pair.light if mode == "light" else pair.dark
@@ -1764,7 +1771,7 @@ def check_contrast(proj: Project) -> Iterator[XHit]:
                 fix = (f"no {pair.fg} of this hue reaches {num(pair.need)}:1 on {pair.bg} in {mode} mode: change "
                        f"{pair.bg_path} with /plumb:update, then run {proj.build_command}")
             yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
-                       f"{pair.fg} on {pair.bg} is {ratio:.2f}:1 in {mode} mode (needs {num(pair.need)}:1): text "
+                       f"{pair.fg} on {pair.bg} is {P.ratio_text(ratio)}:1 in {mode} mode (needs {num(pair.need)}:1): text "
                        f"this faint is hard to read", fix)
 
 
@@ -1782,10 +1789,11 @@ def check_contrast_headroom(proj: Project) -> Iterator[XHit]:
                 continue
             fg, bg = pair.hex[mode]
             better = bt.nearest_passing(fg, bg, pair.need + spare, lighten=(mode == "dark"))
-            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({better[1]:.2f}:1, {num(spare)} to spare) with "
+            fix = (f"nudge {pair.fg_path} ({mode}) to {better[0]} ({P.ratio_text(better[1])}:1, {num(spare)} to spare) with "
                    f"/plumb:update, then run {proj.build_command}") if better else f"give {pair.bg_path} more contrast in {mode} mode"
             yield XHit(proj.tokens_name, proj.token_line(pair.fg_path), f"{pair.fg} on {pair.bg}",
-                       f"{pair.fg} on {pair.bg} passes at {ratio:.2f}:1 in {mode} mode, only {ratio - pair.need:.2f} "
+                       f"{pair.fg} on {pair.bg} passes at {P.ratio_text(ratio)}:1 in {mode} mode, only "
+                       f"{P.ratio_text(ratio - pair.need)} "
                        f"above the {num(pair.need)}:1 minimum: thin fonts and dim screens push it under", fix)
 
 
@@ -1828,9 +1836,21 @@ def check_generated_drift(proj: Project) -> Iterator[XHit]:
         what, fix = _plumb_error_parts(exc)
         yield XHit(proj.tokens_name, 1, what, f"the generated files cannot be checked: {what}", fix)
         return
+    # A specimen.html build-tokens.py did not write is left as it is (the build skips it): a warning with the way out,
+    # never a build command that cannot clear it.
+    in_the_way = getattr(bt, "specimen_in_the_way", None)
+    foreign = in_the_way(proj.doc, proj.root, files) if in_the_way is not None else None
+    if foreign is not None:
+        files.pop(foreign)
+        page, target = rel(foreign, proj.root), rel(bt._free_name(foreign, ".before-plumb.html"), proj.root)
+        yield XHit(page, 1, page, f"{page} is not Plumb's (not written by build-tokens.py): left as it is, so the "
+                   f"specimen is not updated",
+                   f"ask the user before moving it out of the way (mv {P.shell_word(page)} {P.shell_word(target)}), "
+                   f"then run {proj.build_command}", severity="warn")
     for path, text in files.items():
         try:
-            current = normalise_text(path.read_bytes().decode("utf-8", errors="replace")) if path.is_file() else None
+            current = (normalise_text(P.read_project_text(path, "utf-8", "replace", P.PAGE_READ_LIMIT)) if path.is_file()
+                       else None)
         except OSError:
             current = None
         if current == normalise_text(text):
@@ -2933,7 +2953,7 @@ class Fidelity:
             print(f"note: {_BUILD_PROTOTYPE} is not next to audit.py: prototype fidelity checks skipped", file=sys.stderr)
             return
         self.bp, self.root, self.docs = bp, root, docs
-        self.command = f"python3 {rel(proj.skill_dir / 'scripts' / _BUILD_PROTOTYPE, root)}"
+        self.command = f"{P.project_python(root)} {rel(proj.skill_dir / 'scripts' / _BUILD_PROTOTYPE, root)}"
         self.ux_path = proj.skill_dir / "references" / "ux.md"
         self.where = self.map_rel
         old = bp.read_map(map_path, self.map_rel)
@@ -3848,7 +3868,7 @@ def make_settings(root: Path, doc: Optional[dict]) -> dict:
     src/), so native <select> and checkbox/radio inputs are reported as hand-rolled."""
     settings = {**P.plumb_settings(doc or {}), **P.read_plumb_md(root / "PLUMB.md")}
     try:
-        created = _CREATED.search((root / "PLUMB.md").read_text(encoding="utf-8-sig"))
+        created = _CREATED.search(P.read_project_text(root / "PLUMB.md"))
     except (OSError, UnicodeDecodeError):
         created = None
     if created:
@@ -3918,13 +3938,14 @@ def collect_files(targets: List[Path], root: Path, skill_dir: Path, settings: di
             dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
             for name in filenames:
                 path = Path(dirpath) / name
-                if wanted(path):
+                if wanted(path) and path.is_file():  # a regular file (a FIFO or a link to a device is never read)
                     out.add(path)
     return sorted(out, key=lambda p: rel(p, root))
 
 
 def read_source(path: Path) -> str:
-    return path.read_bytes().decode("utf-8-sig", errors="replace")
+    """A project file's text (regular files only, bounded: P.read_project_bytes; OSError otherwise)."""
+    return P.read_project_text(path, errors="replace")
 
 
 # ---------------------------------------------------------------- session snapshots (--snapshot, --changed; the hooks)
@@ -4206,7 +4227,8 @@ def _screens_status(root: Path, settings: dict) -> Dict[str, str]:
     """{screen id: status} from screens.json as it is now (the end-of-turn check only compares screens that were already
     built when the session started). A missing or broken map gives {}."""
     try:
-        data = json.loads((root / _docs_rel(settings) / "prototype" / "screens.json").read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(root / _docs_rel(settings) / "prototype" / "screens.json",
+                                             limit=P.PAGE_READ_LIMIT))
         return {s["id"]: str(s.get("status", "")) for s in data.get("screens", [])
                 if isinstance(s, dict) and isinstance(s.get("id"), str)}
     except (OSError, ValueError, AttributeError, TypeError):
@@ -4263,6 +4285,8 @@ def _mtimes(root: Path, tracked: Callable[[str], Optional[bool]]) -> Dict[str, L
                 st = path.stat()
             except OSError:
                 continue
+            if not stat.S_ISREG(st.st_mode):  # a FIFO or a link to a device: never read, so never a change
+                continue
             out[r] = [st.st_mtime_ns, st.st_size]
     return out
 
@@ -4270,7 +4294,7 @@ def _mtimes(root: Path, tracked: Callable[[str], Optional[bool]]) -> Dict[str, L
 def read_snapshot(path: Path) -> dict:
     """A snapshot file written by take_snapshot (the hooks, or --snapshot); PlumbError when it is missing or broken."""
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(path, limit=P.PAGE_READ_LIMIT))
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: cannot read the snapshot {path} ({exc})\n"
                          f"fix: take one first: python3 {SCRIPT_REL} --snapshot {path}") from None
@@ -4464,6 +4488,9 @@ def _session_sync(proj: Project, snapshot: dict, changes: List[Change]) -> Itera
 
 
 REPORT_TEMPLATE = "audit-report.html.tmpl"
+# The header write_report's page carries (`<!-- GENERATED by <skill>/scripts/audit.py --html on DAY. Do not edit … -->`):
+# --html replaces only a page with it (or an empty file), never a page the project or another tool wrote.
+REPORT_HEADER = re.compile(r"GENERATED by (?:[^\n]*/)?scripts/audit\.py --html\b")
 _SEV_WORD = {"error": ("Error", "Errors"), "warn": ("Warning", "Warnings"), "suggest": ("Suggestion", "Suggestions")}
 
 
@@ -4634,7 +4661,7 @@ def load_review(given: str, root: Path) -> Review:
     if not path.is_file():
         raise PlumbError(f"error: {given}: review file not found\nfix: {fix_shape}, save it, and pass its path")
     try:
-        text = path.read_bytes().decode("utf-8-sig")
+        text = P.read_project_text(path)
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: {given}: cannot read the review file ({exc})\nfix: save it as UTF-8 JSON") from None
     try:
@@ -4758,13 +4785,17 @@ def render_report(template: str, findings: List[Finding], checked: int, mode: st
         "improvements": report_improvements(findings),
         "scales": report_scales(scales),
         "agent_review": report_review(review),
-        "rerun": _t(f"python3 {script} --html"),
+        "rerun": _t(f"{P.project_python(root)} {script} --html"),
     }
     text = P.fill_template(template, values, REPORT_TEMPLATE)
     return text if text.endswith("\n") else text + "\n"
 
 
 def write_report(out: Path, text: str, root: Path) -> bool:
+    problem = P.write_problem(out, root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return False
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8", newline="\n") as fh:
@@ -4864,14 +4895,27 @@ def _html_target(given: str, root: Path, skill_dir: Path, settings: dict) -> Tup
                          f"cannot be written\nfix: copy it from the Plumb plugin's assets/skill/templates/ into "
                          f"{rel(skill_dir / 'templates', root)}/ (or run /plumb:upgrade), then run the audit again")
     try:
-        template = tpl.read_text(encoding="utf-8-sig")
+        template = P.read_project_text(tpl)
     except (OSError, UnicodeDecodeError) as exc:
         raise PlumbError(f"error: {tpl}: cannot read the report template ({exc})\n"
                          f"fix: restore it from the Plumb plugin's assets/skill/templates/") from None
+    # absolute, links not resolved: write_report refuses a link that leads outside the project
     if given:
-        return Path(given).resolve(), template
-    docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
-    return (root / docs / f"audit-{datetime.date.today().isoformat()}.html").resolve(), template
+        out = Path(os.path.abspath(given))
+    else:
+        docs = str(settings.get("docs_dir") or "docs/design").replace("\\", "/").strip("/") or "docs/design"
+        out = Path(os.path.abspath(root / docs / f"audit-{datetime.date.today().isoformat()}.html"))
+    if os.path.lexists(out):  # a page, a folder, a pipe or a device there: only a report of its own is replaced
+        try:
+            mine = P.is_plumb_page(P.read_project_head(out).decode("utf-8", errors="replace"), REPORT_HEADER)
+        except OSError:
+            mine = False
+        if not mine:
+            raise PlumbError(f"error: {given or rel(out, root)} is not an audit report (not written by audit.py): "
+                             f"nothing was written\n"
+                             f"fix: put --html after the paths (audit.py <path> --html), or pass a new report path, "
+                             f"e.g. --html docs/design/audit.html")
+    return out, template
 
 
 def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optional[dict], settings: dict,
@@ -4884,7 +4928,7 @@ def run_full(args: argparse.Namespace, root: Path, skill_dir: Path, doc: Optiona
             print(f"note: {t} does not exist, skipped", file=sys.stderr)
     if not existing:
         print(f"error: none of {', '.join(str(t) for t in targets)} exist, nothing was checked\n"
-              f"fix: pass the folders that hold your UI code, e.g. python3 {rel(skill_dir / SCRIPT_REL, root)} app components",
+              f"fix: pass the folders that hold your UI code, e.g. {P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)} app components",
               file=sys.stderr)
         return 2
     files = collect_files(existing, root, skill_dir, settings, explicit)
@@ -4931,7 +4975,7 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
     if not ctxs:
         exts = " ".join(sorted(PLATFORM_OF))
         print(f"error: no UI files ({exts}) in {looked}, nothing was checked\n"
-              f"fix: pass the folders that hold your UI code, e.g. python3 {rel(skill_dir / SCRIPT_REL, root)} app components",
+              f"fix: pass the folders that hold your UI code, e.g. {P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)} app components",
               file=sys.stderr)
         return 2
     if doc is not None and load_build_tokens() is None:
@@ -4958,6 +5002,10 @@ def audit_files(files: List[Path], root: Path, skill_dir: Path, doc: Optional[di
 
 def run_snapshot(out: Path, root: Path, skill_dir: Path, settings: dict) -> int:
     snap = take_snapshot(root, skill_dir, settings)
+    problem = P.write_problem(out, root)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8", newline="\n") as fh:

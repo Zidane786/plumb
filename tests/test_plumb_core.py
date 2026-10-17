@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -30,11 +33,26 @@ def test_versions() -> None:
 
 
 def test_contrast_known_ratios() -> None:
-    assert P.contrast("#ffffff", "#14857f") == 4.48
-    assert P.contrast("#ffffff", "#13817b") == 4.72  # the brief says 4.7; the exact ratio is 4.72
+    assert P.contrast("#ffffff", "#14857f") == 4.47  # 4.4765: shown floored to 2 decimals, never rounded up
+    assert P.contrast("#ffffff", "#13817b") == 4.71  # 4.7151
     assert P.contrast("#1b2230", "#ffffff") >= 15
     assert P.contrast("#14857f", "#ffffff") == P.contrast("#ffffff", "#14857f")
     assert P.contrast("#000", "#fff") == 21.0
+
+
+def test_contrast_is_compared_unrounded_and_shown_floored() -> None:
+    # #008580 on white is 4.49995:1. WCAG does not round: it fails 4.5:1, and it is never shown as 4.50.
+    raw = P.contrast_ratio("#008580", "#ffffff")
+    assert 4.4999 < raw < 4.5
+    assert P.contrast("#008580", "#ffffff") == 4.49
+    assert P.ratio_text(raw) == "4.49"
+    assert P.ratio_text(4.57) == "4.57" and P.ratio_text(21.0) == "21.00" and P.ratio_text(4.5) == "4.50"
+    assert P.contrast_ratio("#ffffff", "#008580") == raw
+    # just under a minimum never shows as the minimum, however close
+    for value, shown in ((4.4999999996, "4.49"), (2.9999999999999996, "2.99"), (6.999999999, "6.99"),
+                         (4.57, "4.57"), (4.5, "4.50"), (3.0, "3.00"), (20.999999, "20.99")):
+        assert P.ratio_text(value) == shown, (value, P.ratio_text(value))
+        assert P.floor2(value) <= value
 
 
 def test_delta_e() -> None:
@@ -242,3 +260,68 @@ def test_parse_color_clips_out_of_gamut_and_refuses_bad_oklch() -> None:
         with pytest.raises(P.PlumbError) as exc:
             P.parse_color(bad)
         assert_formatted(exc.value)
+
+
+# ---------------------------------------------------------------- reading project files (regular files only, bounded)
+
+_POSIX = os.name == "posix"
+
+
+def test_read_project_bytes_reads_a_regular_file(tmp_path: Path) -> None:
+    f = tmp_path / "a.css"
+    f.write_bytes(b"\xef\xbb\xbfa { color: red; }\r\n")
+    assert P.read_project_bytes(f) == b"\xef\xbb\xbfa { color: red; }\r\n"
+    assert P.read_project_text(f) == "a { color: red; }\r\n"  # utf-8-sig by default
+    with pytest.raises(FileNotFoundError):
+        P.read_project_bytes(tmp_path / "missing.css")
+
+
+def test_read_project_bytes_refuses_a_file_over_the_limit(tmp_path: Path) -> None:
+    f = tmp_path / "big.css"
+    f.write_bytes(b"x" * 101)
+    with pytest.raises(OSError):
+        P.read_project_bytes(f, limit=100)
+    assert P.read_project_bytes(f, limit=101) == b"x" * 101
+
+
+@pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+def test_read_project_bytes_refuses_a_fifo_without_waiting(tmp_path: Path) -> None:
+    fifo = tmp_path / "hang.css"
+    os.mkfifo(fifo)
+    start = time.monotonic()
+    with pytest.raises(OSError):
+        P.read_project_bytes(fifo)
+    assert time.monotonic() - start < 2
+
+
+@pytest.mark.skipif(not _POSIX or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+def test_a_tokens_file_linked_to_a_device_is_refused_quickly(tmp_path: Path) -> None:
+    link = tmp_path / "demo.tokens.json"
+    link.symlink_to("/dev/zero")
+    start = time.monotonic()
+    with pytest.raises(OSError):
+        P.read_project_bytes(link)
+    with pytest.raises(P.PlumbError) as err:
+        P.load_tokens(link)
+    assert time.monotonic() - start < 2
+    assert_formatted(err.value)
+    assert "not a regular file" in str(err.value)
+
+
+def test_read_project_head_reads_only_the_start(tmp_path: Path) -> None:
+    f = tmp_path / "page.html"
+    f.write_bytes(b"a" * 5000)
+    assert P.read_project_head(f) == b"a" * P.PAGE_HEAD_BYTES
+    assert P.read_project_head(f, 10) == b"a" * 10
+    with pytest.raises(OSError):  # a folder (IsADirectoryError on POSIX, PermissionError on Windows)
+        P.read_project_bytes(tmp_path)
+
+
+def test_the_python_pattern_matches_the_hooks() -> None:
+    hooklib = (REPO / "plugins/plumb/hooks/_hooklib.py").read_text(encoding="utf-8")
+    m = re.search(r'^_SAFE_PYTHON = re\.compile\(r"(.*)"\)$', hooklib, re.M)
+    assert m and m.group(1) == P.SAFE_PYTHON.pattern
+    for ok in ("python3", "py -3", "py", "python", "python3.12", "/usr/bin/python3", "C:\\Python39\\python.exe"):
+        assert P.SAFE_PYTHON.fullmatch(ok), ok
+    for bad in ("python3 -c 'x'", "python3; rm -rf ~", "$(evil)", "node", "C:/Program Files/python.exe"):
+        assert not P.SAFE_PYTHON.fullmatch(bad), bad

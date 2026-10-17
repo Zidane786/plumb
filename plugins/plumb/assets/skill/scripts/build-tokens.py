@@ -70,6 +70,8 @@ from bisect import bisect_right
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+if __name__ == "__main__":  # run in a project: leave no __pycache__ in the skill's scripts folder (the hooks
+    sys.dont_write_bytecode = True  # import this file as a module and keep their own cache)
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import _plumb as P  # noqa: E402
@@ -284,7 +286,7 @@ def read_template(skill_dir: Path, styling: str) -> str:
         path = folder / name
         if path.is_file():
             try:
-                text = path.read_text(encoding="utf-8-sig")
+                text = P.read_project_text(path)
             except (OSError, UnicodeDecodeError) as exc:
                 raise _err(f"{path}: cannot read the template ({exc})", "save it as UTF-8") from None
             return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -863,7 +865,7 @@ def load_icon_map(skill_dir: Path) -> Optional[List[dict]]:
     if not path.is_file():
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json.loads(P.read_project_text(path))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _err(f"{path}: cannot read the icon map ({exc})", "fix the JSON or delete the file to leave icons out") from None
     icons = data.get("icons") if isinstance(data, dict) else None
@@ -1258,7 +1260,7 @@ def copy_output(path: Path, css: str, root: Path) -> CopyPlan:
     no block) becomes the block."""
     shown = rel(path, root)
     try:
-        current = path.read_bytes().decode("utf-8") if path.is_file() else None
+        current = P.read_project_bytes(path).decode("utf-8") if path.is_file() else None
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{shown}: cannot read the web copy ({exc})", f"save {shown} as UTF-8, then run build-tokens.py again") from None
     if current is None or not current.strip("﻿ \t\r\n"):
@@ -1383,7 +1385,7 @@ class Pair:
     def _step(self, opt: Tuple[str, str, str, float], mode: str) -> str:
         name, path, value, ratio = opt
         own = self.bg_path if name == self.bg else self.fg_path
-        text = f"step {name} to {value} ({ratio:.2f}:1"
+        text = f"step {name} to {value} ({P.ratio_text(ratio)}:1"
         if name == self.bg and self.fix_bg.get(mode):
             text += f", {self.fg} stays {self.hex[mode][0]}"
         text += ")"
@@ -1402,7 +1404,7 @@ class Pair:
             own = self.bg_path if name == self.bg else self.fg_path
             alias = f" (it is an alias: change it at the source token {path})" if path != own else ""
             head = "nearest passing" if short and name == self.fg else f"nearest passing {name} in {mode} mode:"
-            return f"{head} {value} ({ratio:.2f}:1){alias}"
+            return f"{head} {value} ({P.ratio_text(ratio)}:1){alias}"
         return ""
 
 
@@ -1475,7 +1477,7 @@ def _walk_lightness(fg: str, bg: str, need: float, lighten: bool) -> Optional[Tu
     while (lightness < 1) if lighten else (lightness > 0):
         lightness = min(1.0, max(0.0, lightness + step))
         cand = _oklch_to_hex(lightness, chroma, hue)
-        ratio = P.contrast(cand, bg)
+        ratio = P.contrast_ratio(cand, bg)
         if ratio >= need:
             return cand, ratio
     return None
@@ -1564,8 +1566,9 @@ def contrast_pairs(doc: dict) -> List[Pair]:
 
     listed = cfg.get("surfaces") or []
     surfaces = [known(n, "$extensions.plumb.contrast.surfaces") for n in listed]
-    if not listed:
-        surfaces = [k for k in keys if not _is_text_name(k) and _is_surface_name(k)]
+    if not listed:  # found by name: a translucent one is skipped (translucent_surfaces; the build prints a note)
+        clear = {name for name, _path, _value, _mode in translucent_surfaces(doc)}
+        surfaces = [k for k in keys if not _is_text_name(k) and _is_surface_name(k) and k not in clear]
     plain_surfaces = [k for k in surfaces if listed or not k.endswith("-container")]
     ui_names = [k for k in keys if k == "outline-input"] + [known(n, "$extensions.plumb.contrast.ui") for n in cfg.get("ui", [])]
 
@@ -1615,6 +1618,92 @@ def contrast_pairs(doc: dict) -> List[Pair]:
     return pairs
 
 
+def translucent_surfaces(doc: dict) -> List[Tuple[str, str, str, str]]:
+    """(name, token path, value, mode) for each surface found by name (no contrast.surfaces list) whose colour is
+    translucent in light or dark: text on it cannot be measured (what shows through is not known), so it is left out
+    of the surfaces measured, never stopping the build."""
+    cfg = _contrast_settings(doc)
+    if cfg.get("surfaces"):
+        return []
+    out: List[Tuple[str, str, str, str]] = []
+    for path, _tok, ttype in P.iter_tokens(doc):
+        if ttype != "color":
+            continue
+        parts = P.path_parts(path)
+        name = "-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)
+        if _is_text_name(name) or not _is_surface_name(name):
+            continue
+        for mode in ("light", "dark"):
+            try:
+                _hex, alpha = _hex_in(doc, path, mode)
+            except PlumbError:
+                break  # measured (and refused) as before
+            if alpha < 1:
+                out.append((name, path, str(P.resolve(doc, path, mode)), mode))
+                break
+    return out
+
+
+def surface_notes(doc: dict) -> List[str]:
+    """The note for each translucent surface left out of the contrast pairs, with the exact way out."""
+    return [f"note: {name} is translucent ({value} in {mode} mode), so text on it is not measured for contrast: give "
+            f"{path} an opaque value, or add a $extensions.plumb.contrast.surfaces list naming only the opaque surfaces "
+            f"text sits on (e.g. [\"background\", \"surface\"])" for name, path, value, mode in translucent_surfaces(doc)]
+
+
+def _translucent_in(doc: dict, path: str) -> Optional[Tuple[str, str]]:
+    """(value, mode) when the colour at path is translucent in light or dark, else None (unreadable: measured, and
+    refused, as before)."""
+    for mode in ("light", "dark"):
+        try:
+            _hex, alpha = _hex_in(doc, path, mode)
+        except PlumbError:
+            return None
+        if alpha < 1:
+            return str(P.resolve(doc, path, mode)), mode
+    return None
+
+
+def translucent_pairs(doc: dict) -> List[Tuple[str, str, str, str]]:
+    """(fg, bg token path, message, fix) for each contrast pair left out because its background is translucent (what
+    shows through is not known): an on-X on a translucent X, or a pair over a surface the settings name. The fix names
+    what the project can really do: an opaque value, the pair checked over the surface it sits on in
+    contrast.extra_pairs, or (when the settings list it) the surface taken out of contrast.surfaces. The build prints
+    them as warning: and fix: lines; the audit reports each as a warning of its contrast rule."""
+    cfg = _contrast_settings(doc)
+    listed = set(cfg.get("surfaces") or [])
+    keys = _colour_keys(doc)
+    ground = next((k for k in ("background", "page", "surface") if k in keys and not _translucent_in(doc, keys[k])),
+                  "background")
+    out: List[Tuple[str, str, str, str]] = []
+    for pair in contrast_pairs(doc):
+        bg_path = keys.get(pair.bg)
+        found = _translucent_in(doc, bg_path) if bg_path else None
+        if not found or bg_path is None:
+            continue
+        value, mode = found
+        kind = "text" if pair.need >= NEED_TEXT else "ui"
+        if pair.bg in listed:
+            fix = (f"take {pair.bg} out of $extensions.plumb.contrast.surfaces (it lists only the surfaces text is "
+                   f"checked over), or give {bg_path} an opaque value")
+        else:
+            fix = (f"give {bg_path} an opaque value, or check {pair.fg} against the surface {pair.bg} sits on in "
+                   f"$extensions.plumb.contrast.extra_pairs (e.g. [\"{pair.fg}\", \"{ground}\", \"{kind}\"])")
+        out.append((pair.fg, bg_path, f"{pair.fg} on {pair.bg} is not checked for contrast: {pair.bg} is translucent "
+                    f"({value} in {mode} mode), so what shows through it is not known", fix))
+    return out
+
+
+def translucent_pair_warnings(doc: dict) -> List[str]:
+    """The warning: and fix: lines the build prints for translucent_pairs."""
+    out: List[str] = []
+    for _fg, _bg_path, message, fix in translucent_pairs(doc):
+        out += [f"warning: {message}", f"fix: {fix}"]
+    return out
+
+
+
+
 def _hex_in(doc: dict, path: str, mode: str) -> Tuple[str, float]:
     try:
         return P.parse_color(P.resolve(doc, path, mode))
@@ -1635,6 +1724,8 @@ def measure_pairs(doc: dict) -> List[Pair]:
             parts = P.path_parts(path)
             paths["-".join(parts[1:]) if parts[0] == "color" and len(parts) > 1 else "-".join(parts)] = path
     listed = set(_contrast_settings(doc).get("surfaces") or [])
+    # a pair over a translucent background is left out (translucent_pair_warnings says so), never stopping the build
+    pairs = [p for p in pairs if not _translucent_in(doc, paths[p.bg])]
     for pair in pairs:
         pair.fg_path, pair.bg_path = paths[pair.fg], paths[pair.bg]
         pair.surface = is_surface_role(pair.bg, listed)
@@ -1642,13 +1733,10 @@ def measure_pairs(doc: dict) -> List[Pair]:
             pair.source[mode] = {pair.fg: _source_path(doc, pair.fg_path, mode), pair.bg: _source_path(doc, pair.bg_path, mode)}
         for mode in ("light", "dark"):
             fg, fa = _hex_in(doc, paths[pair.fg], mode)
-            bg, ba = _hex_in(doc, paths[pair.bg], mode)
-            if ba < 1:
-                raise _err(f"{pair.bg} is transparent, so {pair.fg} on {pair.bg} cannot be measured",
-                           "use an opaque colour for the background in $extensions.plumb.contrast")
+            bg, _ba = _hex_in(doc, paths[pair.bg], mode)
             fg = _blend(fg, fa, bg)
             pair.hex[mode] = (fg, bg)
-            ratio = P.contrast(fg, bg)
+            ratio = P.contrast_ratio(fg, bg)  # unrounded: compared below, floored when shown
             if mode == "light":
                 pair.light = ratio
             else:
@@ -1676,7 +1764,7 @@ def contrast_block(doc: dict) -> str:
     ]
     for p in pairs:
         result = "pass" if not p.failed else "fail (" + ", ".join(p.failed) + ")"
-        L.append(f"| {p.fg} on {p.bg} | {p.light:.2f} | {p.dark:.2f} | {num(p.need)} | {result} |")
+        L.append(f"| {p.fg} on {p.bg} | {P.ratio_text(p.light)} | {P.ratio_text(p.dark)} | {num(p.need)} | {result} |")
     if failing:
         L += ["", "Nearest passing values with 0.5 to spare (the colour nudged in OKLCH lightness, hue kept: the text lighter in dark mode, darker in light mode; for text on a filled control, the fill is the first option, away from the text colour, unless the fill is a surface):", ""]
         for p in failing:
@@ -1705,7 +1793,7 @@ def read_dark_doc(skill_dir: Path) -> Optional[str]:
     if not path.is_file():
         return None
     try:
-        return path.read_bytes().decode("utf-8")
+        return P.read_project_bytes(path).decode("utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{path}: cannot read ({exc})", "save it as UTF-8") from None
 
@@ -1962,7 +2050,7 @@ def _uses_elsewhere(root: Path, copy: Path, project_vars: List[dict], docs_rel: 
             try:
                 if path.stat().st_size > P.MAX_SOURCE_BYTES:
                     continue
-                text = path.read_bytes().decode("utf-8", errors="replace")
+                text = P.read_project_text(path, "utf-8", "replace")
             except OSError:
                 continue
             if "var(" not in text or P.is_generated_text(text[:2000]):
@@ -2055,7 +2143,7 @@ def _next_font_body_notes(root: Path, fontvars: Dict[str, str]) -> List[str]:
     notes: List[str] = []
     for layout in layouts:
         try:
-            text = layout.read_bytes().decode("utf-8")
+            text = P.read_project_bytes(layout).decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         code = P.mask_comments(text, ".tsx")  # same offsets: a <body> in a comment is not the tag
@@ -2076,7 +2164,7 @@ def _next_font_body_notes(root: Path, fontvars: Dict[str, str]) -> List[str]:
                 imported, spec = imports[ident]
                 module = _local_module(root, layout.parent, spec)
                 try:
-                    var = _font_variables(module.read_bytes().decode("utf-8")).get(imported) if module else None
+                    var = _font_variables(P.read_project_bytes(module).decode("utf-8")).get(imported) if module else None
                 except (OSError, UnicodeDecodeError):
                     var = None
             if var in fontvars:
@@ -2097,7 +2185,7 @@ def copy_override_plan(doc: dict, path: Path, root: Path) -> dict:
     dark-variant, the token it is or becomes, the project's values, the token change), the lines to remove, the
     replacements, the project variables that fed them, and what only the person can do (by_hand)."""
     shown = rel(path, root)
-    text = path.read_bytes().decode("utf-8")
+    text = P.read_project_bytes(path).decode("utf-8")
     code = P.mask_comments(P.mask_block(text), ".css")
     L = _Lines(text, code)
     blocks = P.css_blocks(code)
@@ -2383,7 +2471,7 @@ def override_plans(doc: dict, skill_dir: Path, project: Optional[Path]) -> List[
 
 def apply_override_plan(path: Path, plan: dict) -> Optional[str]:
     """The copy's new text after the plan's replacements and removals (None when nothing changes)."""
-    text = path.read_bytes().decode("utf-8")
+    text = P.read_project_bytes(path).decode("utf-8")
     lines = text.split("\n")
     for r in plan["replace"]:
         lines[r["line"] - 1] = lines[r["line"] - 1].replace(r["old"], r["new"], 1)
@@ -2433,6 +2521,11 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
         print("ok: nothing to move: no web copy sets the tokens' variables outside Plumb's block")
         return 0
     news = [apply_override_plan(path, plan) for path, plan in plans]  # all checked before anything is written
+    for (path, _plan), new in zip(plans, news):
+        problem = P.write_problem(path, root) if new is not None else None
+        if problem:
+            print(problem, file=sys.stderr)
+            return 2
     changes = apply_token_changes(doc, [p for _path, p in plans])
     if changes and not _write(tokens_file, json.dumps(doc, indent=2, ensure_ascii=False) + "\n", root):
         return 2
@@ -2451,7 +2544,7 @@ def run_overrides(args: argparse.Namespace, doc: dict, skill_dir: Path, project:
             print(f"note: {plan['file']} {note}")
         for note in plan["by_hand"]:
             print(f"by hand: {plan['file']} {note}")
-    print(f"next: python3 {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")
+    print(f"next: {P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)} (rebuild), then the audit")
     return 0
 
 
@@ -2639,7 +2732,7 @@ def _chrome_text_ok(doc: dict, path: str, picked: Dict[str, Optional[str]]) -> b
             else:
                 bg = CHROME_NEUTRAL[ground][mode]
             fg, fa = P.parse_color(P.resolve(doc, path, mode))
-            if P.contrast(_blend(fg, fa, bg), bg) < CHROME_FLOOR:
+            if P.contrast_ratio(_blend(fg, fa, bg), bg) < CHROME_FLOOR:
                 return False
     return True
 
@@ -2794,7 +2887,8 @@ def prototype_page_outputs(doc: dict, root: Path) -> Dict[Path, str]:
         generated_only.update(found)
     for path in paths:
         try:
-            text = P.normalise_text(path.read_text(encoding="utf-8")) if path.is_file() else None
+            text = (P.normalise_text(P.read_project_text(path, "utf-8", limit=P.PAGE_READ_LIMIT)) if path.is_file()
+                    else None)
         except (OSError, UnicodeDecodeError):
             text = None  # build-prototype.py --check reports an unreadable page
         if text is not None and path not in generated_only and not P.is_prototype_page(text):
@@ -2814,7 +2908,7 @@ def specimen_in_the_way(doc: dict, root: Path, files: Dict[Path, str]) -> Option
     if path not in files or not path.is_file():
         return None
     try:
-        head = path.read_bytes()[:P.PAGE_HEAD_BYTES].decode("utf-8", errors="replace")
+        head = P.read_project_head(path).decode("utf-8", errors="replace")
     except OSError:
         return None
     return None if P.is_specimen_page(head) else path
@@ -2861,7 +2955,7 @@ def _verdict(passed: bool) -> str:
 
 def _pair_item(pair: "Pair") -> str:
     return (f'<li class="pair" data-pair="{_e(pair.fg)} on {_e(pair.bg)}"><span class="pair-name">{_e(pair.fg)} on {_e(pair.bg)}'
-            f'</span><span class="ratio">light <b>{pair.light:.2f}</b></span><span class="ratio">dark <b>{pair.dark:.2f}</b>'
+            f'</span><span class="ratio">light <b>{P.ratio_text(pair.light)}</b></span><span class="ratio">dark <b>{P.ratio_text(pair.dark)}</b>'
             f'</span><span class="need">needs {num(pair.need)}</span>{_verdict(not pair.failed)}</li>')
 
 
@@ -3104,7 +3198,7 @@ def specimen_output(doc: dict, skill_dir: Path, root: Path, tokens_file: Path, h
     if tpl is None:
         return None
     try:
-        template = tpl.read_text(encoding="utf-8-sig")
+        template = P.read_project_text(tpl)
     except (OSError, UnicodeDecodeError) as exc:
         raise _err(f"{tpl}: cannot read the specimen template ({exc})", "restore it from the Plumb plugin's assets/skill/templates/") from None
     return specimen_path(doc, root), build_specimen(doc, template, header, rel(tokens_file, root))
@@ -3120,6 +3214,10 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _write(path: Path, text: str, root: Path) -> bool:
+    problem = P.write_problem(path, root)  # a link out of the project, a FIFO (it would block) or a device
+    if problem:
+        print(problem, file=sys.stderr)
+        return False
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -3173,7 +3271,7 @@ def print_first_block(path: Path, new: str, root: Path) -> None:
     as a unified diff, so it can be shown to the person and agreed before anything is written."""
     shown = rel(path, root)
     try:
-        old = path.read_bytes().decode("utf-8", errors="replace")
+        old = P.read_project_text(path, "utf-8", "replace")
     except OSError:
         old = ""
     print(f"would add Plumb's block to {shown} (first time; every other line stays as it is). The change:")
@@ -3204,7 +3302,8 @@ def template_notes(doc: dict, skill_dir: Path, missing: bool = True) -> List[str
                        f"assets/skill/assets/platforms/web/)")
         elif missing and has and not given:
             default, choices = MISSING_DEFAULTS[key]
-            command = f"python3 {rel(skill_dir / SCRIPT_REL, find_project_root(skill_dir))} --migrate"
+            found_root = find_project_root(skill_dir)
+            command = f"{P.project_python(found_root)} {rel(skill_dir / SCRIPT_REL, found_root)} --migrate"
             out.append(f"note: $extensions.plumb.{key} is not set, so the default {default} applies; keep it with "
                        f"`{command}` (records the defaults, changes nothing else), or record another choice "
                        f"({choices}) with /plumb:update")
@@ -3281,6 +3380,8 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
             print(f"added {line}")
         print(f"wrote {rel(tokens_file, root)}")
         return 0
+    for line in surface_notes(doc) + translucent_pair_warnings(doc):
+        print(line, file=sys.stderr)
     if args.contrast:
         found = contrast_output(doc, skill_dir, required=True)
         assert found is not None
@@ -3306,7 +3407,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     if P.find_template(skill_dir, SPECIMEN_TEMPLATE) is None:
         print(f"note: specimen.html was not written: templates/{SPECIMEN_TEMPLATE} is missing from the skill; "
               f"copy it from the Plumb plugin's assets/skill/templates/ (or run /plumb:upgrade)", file=sys.stderr)
-    command = f"python3 {rel(skill_dir / SCRIPT_REL, root)}"
+    command = f"{P.project_python(root)} {rel(skill_dir / SCRIPT_REL, root)}"
     # A specimen.html this script did not write is never replaced: everything else is built, the specimen is left as it
     # is, and the build says so (--check: exit 1).
     foreign = specimen_in_the_way(doc, root, files)
@@ -3320,7 +3421,7 @@ def _run(args: argparse.Namespace, skill_dir: Path, project: Optional[Path]) -> 
     stale = []
     for path, text in files.items():
         try:
-            current = path.read_bytes() if path.exists() else None
+            current = P.read_project_bytes(path, P.PAGE_READ_LIMIT) if path.exists() else None
         except OSError:
             current = None
         if current == text.encode("utf-8"):

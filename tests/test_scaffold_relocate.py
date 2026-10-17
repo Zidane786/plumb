@@ -62,6 +62,45 @@ def test_relocate_moves_the_skill_and_updates_every_reference(tmp_path: Path) ->
     assert cli(root, "--verify").returncode == 0
 
 
+PROTO_FIXTURE = Path(__file__).resolve().parent / "fixtures/prototype"
+
+
+def _proto_check(root: Path, skill: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.run([sys.executable, str(root / skill / "scripts/build-prototype.py"), "--check"],
+                          capture_output=True, text=True, encoding="utf-8", cwd=str(root))
+
+
+def test_relocate_rebuilds_the_prototype_pages_when_there_are_screens(tmp_path: Path) -> None:
+    root = project_with_everything(tmp_path)
+    shutil.copytree(PROTO_FIXTURE / "screens", root / "docs/design/prototype/screens", dirs_exist_ok=True)
+    built = subprocess.run([sys.executable, str(root / SKILL_REL / "scripts/build-prototype.py")],
+                           capture_output=True, text=True, encoding="utf-8", cwd=str(root))
+    assert built.returncode == 0, built.stdout + built.stderr
+    r = cli(root, "--relocate", SKILL_REL, NEW)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "prototype: rebuilt (build-prototype.py)" in r.stdout, r.stdout
+    check = _proto_check(root, NEW)
+    assert check.returncode == 0, check.stdout + check.stderr
+    assert SKILL_REL not in (root / "docs/design/prototype.html").read_text(encoding="utf-8")[:2000]
+
+
+def test_relocate_without_screens_runs_no_prototype_build(tmp_path: Path) -> None:
+    root = project_with_everything(tmp_path)
+    r = cli(root, "--relocate", SKILL_REL, NEW)
+    assert r.returncode == 0 and "prototype:" not in r.stdout, r.stdout
+
+
+def test_relocate_reads_a_tokens_file_saved_with_a_bom(tmp_path: Path) -> None:
+    root = project_with_everything(tmp_path)
+    tokens = next((root / SKILL_REL / "assets/tokens").glob("*.tokens.json"))
+    doc = json.loads(tokens.read_text(encoding="utf-8"))
+    doc["$extensions"]["plumb"]["web"]["copies"] = ["nowhere/at/all.css"]
+    tokens.write_text("\ufeff" + json.dumps(doc, indent=2), encoding="utf-8")
+    r = cli(root, "--relocate", SKILL_REL, NEW, "--dry-run")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "note: web copy 'nowhere/at/all.css' does not resolve inside the project" in r.stdout, r.stdout
+
+
 def test_relocate_dry_run_lists_changes_and_writes_nothing(tmp_path: Path) -> None:
     root = project_with_everything(tmp_path)
     before = {p: (root / p).read_bytes() for p in tree(root)}
