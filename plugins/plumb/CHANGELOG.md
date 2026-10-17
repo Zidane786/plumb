@@ -98,8 +98,10 @@
   the element already was (a sticky sidebar); an element fixed to the window (a bottom-corner toast) is never scrolled
   to, and the panel (or its pill) moves to the top of the window, with the subtitle, for a step whose element it
   would cover at the bottom; title cards stay in the window; a hint or the end of play brings a hidden panel back for
-  that moment; the player wears the project's tokens (primary, surface, outline, fonts, radius, shadow) where it has
-  them.
+  that moment; a step's page stays where it scrolled to (the panel's room is sized before the step scrolls); the
+  marks follow an element that moves on its own while its step shows (an animation, a late image, content a script
+  adds above it); the player wears the project's tokens (primary, surface, outline, fonts, radius,
+  shadow) where it has them.
 - **Voice for tours and exact subtitles**: in play mode the **Voice** button (or `V`) reads the captions aloud with the
   browser's own speech and the voices already on the computer (nothing downloaded, works offline; a voice that sends
   the text to a remote service, such as Chrome's "Google …" voices, is never used). Off by default and remembered;
@@ -109,8 +111,9 @@
   with its page starts from its first card: **Start with voice** or **Start without voice**. No speech in the browser
   (or only remote voices): the button is disabled ("Voice isn't available in this browser") and the tour plays with
   captions; an error mid-tour says "Voice stopped: continuing with captions" and carries on. **Save subtitles
-  (.vtt)** downloads `<tour id>.vtt` with the real times each caption showed in that run (kept in memory only, never
-  stored).
+  (.vtt)** downloads `<tour id>.vtt` with the real times each caption showed in that run, taken once the page has
+  drawn it (the first at 00:00.000), so a slow computer's drawing time never counts as caption time (kept in memory
+  only, never stored).
 - **A screen's fixed layers stay in its frame**: in `prototype.html` a `position: fixed` scrim, dialog or toast sits
   inside the screen's frame (as on a device of that width), never over the toolbar or the screens list; a state change
   that opens a dialog scrolls it into view.

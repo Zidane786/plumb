@@ -171,7 +171,7 @@
 
   /* ------------------------------------------------------------ the player's state */
   var T = { tour: null, mode: null, seq: [], scenes: [], pos: 0, speed: 1, paused: false, ended: false, run: 0, timer: null,
-            wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, zoomTimer: null,
+            wait: null, plan: 1, spent: 0, opener: null, turn: null, raf: 0, redraw: null, follow: 0, zoomTimer: null,
             panelHidden: storedHidden(), reveal: false, step: null,
             gate: false, talk: null, cues: [], cue: null, t0: null };
 
@@ -457,8 +457,10 @@
 
   /* ------------------------------------------------------------ subtitles: when each caption really shows */
   /* Kept in memory for this run only (never in storage, never sent): T.t0 is when play started, T.cues the captions
-     shown since (text, start, end), T.cue the one on screen. */
-  function record() { T.cues = []; T.cue = null; T.t0 = now(); }
+     shown since (text, start, end), T.cue the one on screen. Every time is taken when the page has finished drawing the
+     change, just before it is announced: play starts as its first caption shows (T.fresh), never when the drawing
+     began, so a slow computer's drawing time is not counted as caption time. */
+  function record() { T.cues = []; T.cue = null; T.t0 = now(); T.fresh = true; }
   function cueText(item) {
     if (item.kind === "card") return item.title + (item.text ? "\n" + item.text : "");
     return item.step.caption || itemTitle(item);
@@ -475,7 +477,9 @@
     var text = cueText(item), last = T.cues[T.cues.length - 1];
     /* the same item shown again at once (the voice turned on): one cue */
     if (last && last.pos === T.pos && last.text === text && now() - last.end < 50) { T.cue = T.cues.pop(); return; }
-    T.cue = { pos: T.pos, text: text, start: now(), end: null };
+    var at = now();
+    if (T.fresh) { T.t0 = at; T.fresh = false; }  /* the first caption of this play: its start is play's start */
+    T.cue = { pos: T.pos, text: text, start: at, end: null };
   }
   function vttTime(ms) {
     ms = Math.max(0, Math.round(ms));
@@ -1059,8 +1063,35 @@
       T.zoomTimer = setTimeout(function () { if (T.redraw) T.redraw(); }, calm() ? 0 : 400);
     }
     draw(step, point);
+    follow(step);
+  }
+  /* Where the step's targets and its labels' targets are now, to the half pixel. */
+  function whereTargets(step) {
+    var sels = step.targets.concat(step.labels.map(function (lab) { return lab.target; }));
+    return sels.map(function (s) { return find(step, s); }).filter(function (n) { return n && !clipped(n); })
+      .map(function (n) {
+        var b = box(n);
+        return [b.x, b.y, b.w, b.h].map(function (v) { return Math.round(v * 2); }).join(",");
+      }).join(";");
+  }
+  /* A target can move with no scroll or resize event: the screen's own animation, an image that loads late, a script
+     that adds content above it. While the step shows, its marks are checked once a frame and redrawn when a target
+     moved; measuring never scrolls. Stops with the step (clearStep). */
+  function follow(step) {
+    cancelAnimationFrame(T.follow);
+    var redraw = T.redraw, last = whereTargets(step);
+    function look() {
+      T.follow = 0;
+      if (!T.redraw || T.redraw !== redraw) return;  /* another step, or none */
+      var now = whereTargets(step);
+      if (now !== last) { last = now; T.redraw(); }
+      T.follow = requestAnimationFrame(look);
+    }
+    T.follow = requestAnimationFrame(look);
   }
   function clearStep() {
+    cancelAnimationFrame(T.follow);
+    T.follow = 0;
     clearOverlays();
     unzoom();
     T.redraw = null;
@@ -1289,6 +1320,9 @@
     badge.hidden = guide || T.ended || T.gate;
     badge.textContent = (T.paused ? "❚❚ Paused" : "▶ Playing") + " · " + times(T.speed);
     paintProgress();
+    /* the page's room for the panel follows its new content now, before a step scrolls its element into view: left to
+       the resize observer, the page would get shorter a frame later and jump under the step */
+    if (T.tour) sizeDock();
   }
   function paintProgress() {
     if (!T.tour) return;
@@ -1330,8 +1364,6 @@
     if (T.panelHidden && !dock.hidden) showPanel();  /* back to the viewer's choice after a hint or the end of play */
     var item = T.seq[T.pos];
     T.plan = planOf(item) + (voiceOn() ? talkPlan(item) : 0);
-    if (T.mode === "play" && !T.gate) openCue(item);
-    else closeCue();
     if (item.kind === "step") api.go(item.step.screen, item.step.state, { history: null });
     writeHash();
     paintDock();
@@ -1373,6 +1405,8 @@
     if (T.gate) live.textContent += " " + gateHint();
     var active = document.activeElement;
     if (opts.focus || (inChrome(active) && (active.hidden || active.disabled || !active.getClientRects().length))) focusPrimary();
+    if (T.mode === "play" && !T.gate) openCue(item);  /* drawn: its caption shows now */
+    else closeCue();
     emit();
     if (T.mode === "play" && !T.paused) { playItem(item); if (!T.raf && !calm()) T.raf = requestAnimationFrame(tick); }
   }
@@ -1405,13 +1439,13 @@
     T.ended = true;
     T.paused = true;
     subtitle.hidden = true;
-    closeCue();
     paintDock();
     var had = inChrome(document.activeElement);
     showPanel();  /* Play again and Leave are in the panel: it comes back at the end, the choice stays */
     if (had && focusLost()) focusPrimary();
     fill.style.width = "100%";
     live.textContent = "Played to the end. Press Play again to watch it again, or Leave to look around.";
+    closeCue();  /* drawn: the last caption is gone now */
     emit();
   }
   function focusPrimary() {

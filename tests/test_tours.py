@@ -599,7 +599,12 @@ def _start(page, tour: str = "demo", mode: str = "guide", step=None, speed=None)
     page.evaluate("([t, o]) => window.plumbPlayer.start(t, o)", [tour, opts])
 
 
-def _wait_pos(page, pos: int, timeout: int = 8000) -> None:
+# How long a test waits for something that must happen (the tour moves on, a note appears) before it fails: a
+# ceiling for a stalled runner, never a timing promise. Timing promises are checked against the page's own clock
+# (window.__log, the subtitles) with their measured margins.
+WAIT_MS = 15000
+
+def _wait_pos(page, pos: int, timeout: int = WAIT_MS) -> None:
     try:
         page.wait_for_function("(p) => window.plumbPlayer.state().pos === p", arg=pos, timeout=timeout)
     except Exception:  # Playwright's timeout: say where the tour stood, so a failure on a CI runner explains itself
@@ -685,6 +690,8 @@ def test_play_mode_advances_by_itself_at_1x_and_2x(browser, built) -> None:
             assert errors == []
         finally:
             ctx.close()
+    # a step's planned 700 ms at 1x and 350 ms at 2x, on the page's own clock: measured 703/353 ms, 716/368 ms with the
+    # CPU slowed 10x and 742/397 ms at 20x; the upper bounds leave about half a second for a runner that stalls
     assert 600 <= timings[1] <= 1300, timings
     assert 280 <= timings[2] <= 800, timings
     assert timings[2] < timings[1] * 0.75, timings
@@ -717,7 +724,7 @@ def test_space_pauses_and_resumes_play(browser, built) -> None:
         assert _state(page)["pos"] == 2, "paused play does not move"
         page.keyboard.press(" ")
         assert _state(page)["paused"] is False
-        _wait_pos(page, 3, timeout=3000)
+        _wait_pos(page, 3, timeout=WAIT_MS)
         page.click(".pl-dock [data-pl=play]")
         assert _state(page)["paused"] is True
         page.click(".pl-dock [data-pl=play]")
@@ -739,7 +746,7 @@ def test_scene_markers_are_the_chapters_and_jump(browser, built) -> None:
         s = _state(page)
         assert s["pos"] == 4 and s["card"] == "chapter" and s["mode"] == "play"
         assert "Take the booking" in page.inner_text(".pl-card")
-        _wait_pos(page, 5, timeout=3000)
+        _wait_pos(page, 5, timeout=WAIT_MS)
         page.click(".pl-dock [data-pl=restart]")
         assert _state(page)["pos"] == 0
         assert errors == []
@@ -845,7 +852,7 @@ def test_your_turn_is_played_by_itself_in_play_mode(browser, built) -> None:
     ctx, page, errors, _ = _open(browser, built / PROTO_REL)
     try:
         _start(page, "demo", "play", step=4, speed=2)
-        page.wait_for_function("window.plumbPlayer.state().step === 5", timeout=6000)
+        page.wait_for_function("window.plumbPlayer.state().step === 5", timeout=WAIT_MS)
         assert errors == []
     finally:
         ctx.close()
@@ -931,7 +938,7 @@ def test_play_runs_to_the_end_at_2x(browser, built) -> None:
     try:
         _start(page, "demo", "play", speed=2)
         page.wait_for_function("window.__log.some(e => e.card === 'closing')", timeout=15000)
-        page.wait_for_function("!window.plumbPlayer.state().active || window.plumbPlayer.state().ended", timeout=5000)
+        page.wait_for_function("!window.plumbPlayer.state().active || window.plumbPlayer.state().ended", timeout=WAIT_MS)
         steps = [e["step"] for e in page.evaluate("window.__log") if e.get("step")]
         assert steps == [1, 2, 3, 4, 5, 6]
         assert errors == []
@@ -991,7 +998,7 @@ def test_standalone_pages_open_straight_into_the_tour(browser, built) -> None:
         assert page.evaluate("window.plumbPrototype.view") == "app"
         assert _shown(page, ".pp-side") == 0 and _shown(page, "#pp-rail") == 0 and _shown(page, "#theme-toggle") == 0
         _press_start(page)
-        _wait_pos(page, 1, timeout=3000)
+        _wait_pos(page, 1, timeout=WAIT_MS)
         page.keyboard.press("Escape")
         assert _state(page)["active"] is False
         assert page.evaluate("location.hash") == "#/home", "leaving names the screen in the app's own route"
@@ -1009,7 +1016,7 @@ def test_standalone_pages_open_straight_into_the_tour(browser, built) -> None:
         first = page.evaluate("window.__log[0]")
         assert first["tour"] == "walk" and first["mode"] == "play" and first["pos"] == 0
         _press_start(page)
-        _wait_pos(page, 1, timeout=3000)
+        _wait_pos(page, 1, timeout=WAIT_MS)
         page.keyboard.press("Escape")
         assert _state(page)["active"] is False
         page.click('.pp-nav [data-nav="menu"]')
@@ -1037,7 +1044,7 @@ def test_reduced_motion_still_plays_without_the_glide(browser, built) -> None:
     try:
         _start(page, "demo", "play", step=2)
         page.wait_for_function("document.querySelector('.pl-cursor') && !document.querySelector('.pl-cursor').hidden",
-                               timeout=4000)
+                               timeout=WAIT_MS)
         assert page.evaluate("getComputedStyle(document.querySelector('.pl-cursor')).transitionDuration") == "0s"
         _wait_pos(page, 4)
         s = _state(page)
@@ -1051,7 +1058,7 @@ def test_reduced_motion_still_plays_without_the_glide(browser, built) -> None:
         page.wait_for_function("window.__log.length > 0")
         assert page.evaluate("window.__log[0]")["mode"] == "play"
         _press_start(page)
-        _wait_pos(page, 1, timeout=3000)
+        _wait_pos(page, 1, timeout=WAIT_MS)
         assert errors == []
     finally:
         ctx.close()
@@ -1818,16 +1825,28 @@ RING_ON = """(sel) => { var t = document.querySelector(sel).getBoundingClientRec
     var r = n[0].getBoundingClientRect(), a = [r.left + 4, r.top + 4, r.width - 8, r.height - 8];
     return [t.left, t.top, t.width, t.height].every(function (v, i) { return Math.abs(v - a[i]) <= 1; }); }"""
 
+# what a ring's place depends on, for a failure message: the layer it is drawn in, the stage it is measured from, the
+# frame, the window's scroll, the zoom
+RING_WHERE = """() => { const layer = document.querySelector('.pl-layer'), stage = layer && layer.parentElement;
+    const top = n => n ? Math.round(n.getBoundingClientRect().top * 100) / 100 : null, f = document.getElementById('pp-frame');
+    const ring = document.querySelector('.pl-ring');
+    return { layer: top(layer), stage: top(stage), frame: top(f), ringStyleTop: ring && ring.style.top,
+      layerParent: layer && (layer.offsetParent ? layer.offsetParent.id || layer.offsetParent.className : null),
+      stagePos: stage && getComputedStyle(stage).position, stageClass: stage && stage.className,
+      frameClass: f && f.className, frameTransform: f && getComputedStyle(f).transform,
+      scrollY: window.scrollY, docH: document.documentElement.scrollHeight }; }"""
+
 
 def _ringed(page, sel: str) -> None:
-    # the step may still be scrolling its target into view (a slow runner): the ring must settle on it, not be there
-    # on the first frame
+    # the ring settles on its target: the player follows a target that moves after the step is drawn (see
+    # test_a_ring_follows_its_target_when_it_moves_without_a_scroll_or_resize), so this waits for that, not a time
     try:
-        page.wait_for_function(RING_ON, arg=sel, timeout=3000)
+        page.wait_for_function(RING_ON, arg=sel, timeout=WAIT_MS)
     except Exception:  # Playwright's timeout (playwright is not imported at module level: 3.9 runs without it)
         pass  # the assertion below names what was found
-    rings, want = page.evaluate(RINGS), page.evaluate(RECT, sel)
-    assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want)), (sel, rings, want)
+    rings, want = page.evaluate(f"(sel) => [({RINGS})(), ({RECT})(sel)]", sel)  # one call: the same frame
+    assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want)), (sel, rings, want,
+                                                                                       page.evaluate(RING_WHERE))
 
 
 @pytest.mark.parametrize("step, sel, width, smooth", [
@@ -2134,6 +2153,52 @@ def test_a_drawer_moved_off_by_exactly_its_width_is_skipped(browser, staged, wid
     try:
         _start(page, "staged", "guide", step=16)
         _ringed(page, '#pp-frame [data-screen="boxes"] p > .slide3')
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+# where an element is, every frame for a while after a step opens (top in the window, the window's scroll, page height)
+SETTLE = """(sel) => new Promise(done => { const out = [], t0 = performance.now();
+  (function look() { const r = document.querySelector(sel).getBoundingClientRect();
+    out.push([Math.round(r.top * 10) / 10, Math.round(window.scrollY), document.documentElement.scrollHeight]);
+    if (performance.now() - t0 < 600) requestAnimationFrame(look); else done(out); })(); })"""
+
+
+def test_the_page_does_not_move_under_a_step_once_it_opens(browser, staged) -> None:
+    """The page's room for the panel follows the panel's new content before the step scrolls: left to the resize
+    observer, the page got 37 px shorter a frame later and jumped under the step (the element away from where it was
+    scrolled to, the window's scroll clamped)."""
+    sel = '#pp-frame [data-screen="boxes"] p > .slide3'
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, width=390)
+    try:
+        # the step opens and the sampling starts in the same task: its first frame is in the record
+        seen = page.evaluate(f"(sel) => {{ window.plumbPlayer.start('staged', {{mode: 'guide', step: 16}}); "
+                             f"return ({SETTLE})(sel); }}", sel)
+        assert len(set(map(tuple, seen))) == 1, seen[:4]
+        assert errors == []
+    finally:
+        ctx.close()
+
+
+TWO_FRAMES = "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_a_ring_follows_its_target_when_it_moves_without_a_scroll_or_resize(browser, staged, width: int) -> None:
+    """A screen's own animation, a late image or a script can move a target with no scroll or resize event: the ring
+    goes with it, and stops following once the walkthrough is left."""
+    sel = '#pp-frame [data-screen="boxes"] p > .slide3'
+    ctx, page, errors, _ = _open(browser, staged / PROTO_REL, width=width)
+    try:
+        _start(page, "staged", "guide", step=16)
+        _ringed(page, sel)
+        page.evaluate("(sel) => { document.querySelector(sel).parentElement.style.transform = 'translateY(37px)'; }", sel)
+        _ringed(page, sel)  # it arrives (a frame or two; more on a loaded runner); without following it never would
+        page.evaluate("window.plumbPlayer.leave()")
+        page.evaluate("(sel) => { document.querySelector(sel).parentElement.style.transform = 'none'; }", sel)
+        page.evaluate(TWO_FRAMES)
+        assert page.evaluate(RINGS) == [], "no marks once the walkthrough is left"
         assert errors == []
     finally:
         ctx.close()
@@ -2832,7 +2897,8 @@ FAKE_SPEECH = """
   S.listeners = [];
   if (window.__voicesLater) {  /* the voice list arrives late, as in some browsers */
     const later = S.voices; S.voices = [];
-    setTimeout(() => { S.voices = later; S.listeners.forEach(f => f()); }, window.__voicesLater);
+    setTimeout(() => { S.voices = later; S.voicesAt = performance.now(); S.listeners.forEach(f => f()); },
+               window.__voicesLater);
   }
   Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
   window.SpeechSynthesisUtterance = function (text) {
@@ -2864,6 +2930,12 @@ window.__writes = [];
 });
 """
 VOICE_BTN = ".pl-dock [data-pl=voice]"
+CUE_SLACK_MS = 25  # a subtitle's recorded time against the page's own event for the same change
+# Start with voice while it is on the card, else Start: chosen and clicked in one task in the page, so a voice list
+# that arrives between a visibility check and the click (a slow runner) cannot hide the button being clicked
+START_AS_SHOWN = """() => { const v = document.querySelector('[data-pl=start-voice]');
+    const voice = !!v && !v.hidden && v.offsetParent !== null;
+    document.querySelector(voice ? '[data-pl=start-voice]' : '[data-pl=start-quiet]').click(); return voice; }"""
 SAY_1 = "Here are tonight's tables. All of them, in time order."
 ODD_CAPTION = "Back on the list: tables & times <b>now</b> --> next."
 LONG_TOKENS = "Write to front.desk@example-clinic.org or call 004420794600001234567890."  # 6 words, 72 characters
@@ -2997,7 +3069,7 @@ def test_a_step_waits_for_its_speech_then_a_pause_then_its_hold(browser, voiced)
         page.wait_for_timeout(1200)
         assert _state(page)["pos"] == 2, "the second sentence is still being spoken"
         ended = page.evaluate("(() => { window.__speech.end(); return performance.now(); })()")
-        _wait_pos(page, 3, timeout=4000)
+        _wait_pos(page, 3, timeout=WAIT_MS)
         moved = page.evaluate("window.__log.filter(e => e.pos === 3).at(-1).t")
         assert moved - ended >= 350 + 700 - 50, "then the pause and the step's hold, as today"
         # a card speaks its title, then its text
@@ -3111,7 +3183,7 @@ def test_a_tour_that_opens_in_play_mode_waits_on_its_first_card_for_start(browse
         page.wait_for_timeout(300)
         assert _spoken(page) == [] and page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
         assert page.evaluate("localStorage.getItem('plumb.player.voice')") is None
-        _wait_pos(page, 1, timeout=3000)
+        _wait_pos(page, 1, timeout=WAIT_MS)
         assert errors == []
     finally:
         ctx.close()
@@ -3146,7 +3218,7 @@ def test_a_network_voice_is_never_used(browser, voiced) -> None:
 def test_without_speech_the_voice_is_disabled_and_captions_keep_todays_timing(browser, voiced, init: str) -> None:
     ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=REMEMBER_VOICE + init)
     try:
-        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
+        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=WAIT_MS)
         assert _voice_note(page) == "Voice isn't available in this browser"
         assert page.get_attribute(VOICE_BTN, "title") == "Voice isn't available in this browser"
         assert page.get_attribute(VOICE_BTN, "aria-describedby") == "pl-voice-note"
@@ -3157,7 +3229,7 @@ def test_without_speech_the_voice_is_disabled_and_captions_keep_todays_timing(br
         page.keyboard.press("v")
         page.click("[data-pl=start-quiet]")
         assert _state(page)["voice"] is False
-        _wait_pos(page, 1, timeout=3000)  # the intro's 600 ms hold, as today
+        _wait_pos(page, 1, timeout=WAIT_MS)  # the intro's 600 ms hold, as today
         assert errors == []
     finally:
         ctx.close()
@@ -3173,7 +3245,7 @@ def test_an_error_mid_run_says_so_once_and_continues_with_captions(browser, voic
         assert "Voice stopped: continuing with captions" in _live(page)
         assert page.get_attribute(VOICE_BTN, "aria-pressed") == "false"
         assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled")
-        _wait_pos(page, 3, timeout=4000)  # the step's own timing
+        _wait_pos(page, 3, timeout=WAIT_MS)  # the step's own timing
         page.wait_for_timeout(300)
         assert _spoken(page) == ["Here are tonight's tables."], "voice off for the rest of the run"
         assert page.evaluate("localStorage.getItem('plumb.player.voice')") == "on", "the viewer's choice stays"
@@ -3193,10 +3265,10 @@ def test_speech_that_never_ends_falls_back_after_a_safety_timer(browser, voiced)
         _start(page, "demo", "play", step=2)  # say "Look.": one word
         assert _spoken(page) == ["Look."]
         page.wait_for_function("document.querySelector('.pl-voice-note').textContent === "
-                               "'Voice stopped: continuing with captions'", timeout=6000)
+                               "'Voice stopped: continuing with captions'", timeout=WAIT_MS)
         noted = page.evaluate("performance.now()")
         assert noted - started >= 1500, "the safety timer allows the expected time and a margin first"
-        _wait_pos(page, 4, timeout=6000)
+        _wait_pos(page, 4, timeout=WAIT_MS)
         assert errors == []
     finally:
         ctx.close()
@@ -3245,14 +3317,14 @@ def test_subtitles_are_exact_from_a_play_through(browser, voiced, voice: bool) -
                 first[e["pos"]] = e["t"]
         t0 = first[0]
         for i, c in enumerate(cues):
-            # within a few frames of when the page showed it (Windows' timer and a busy runner add ~30 ms)
-            assert abs(c["start"] - (first[i] - t0)) <= 60, (i, c, first[i] - t0)
+            # stamped as the page finishes drawing the caption, in the same task as the event: measured at most 2 ms
+            # apart with the CPU slowed 20x; 25 ms leaves room for a runner that stalls between the two
+            assert abs(c["start"] - (first[i] - t0)) <= CUE_SLACK_MS, (i, c, first[i] - t0)
             assert c["end"] > c["start"]
             if i + 1 < len(cues):
                 assert abs(cues[i + 1]["start"] - c["end"]) <= 2, "back to back: one caption ends as the next shows"
         ended = next(e["t"] for e in log if e["ended"])
-        # the last caption closes as the tour ends, with the same few frames of timer slack as the starts
-        assert abs(cues[-1]["end"] - (ended - t0)) <= 60, (cues[-1], ended - t0)
+        assert abs(cues[-1]["end"] - (ended - t0)) <= CUE_SLACK_MS, (cues[-1], ended - t0)  # closes as the end shows
         if voice:
             assert len(_spoken(page)) > len(cues), "every card and step was spoken (cards say two sentences)"
         with page.expect_download() as dl:
@@ -3277,8 +3349,7 @@ def test_save_subtitles_is_in_the_panel_while_playing(browser, voiced) -> None:
             page.click(".pl-dock [data-pl=vtt]")
         cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
         assert [c["text"] for c in cues] == ["The host lands on tonight's tables, in time order."]
-        # the first caption opens as play starts: within a few milliseconds (a slower runner takes one or two to render)
-        assert cues[0]["start"] <= 50 and cues[0]["end"] >= 350, "the caption on screen, up to now"
+        assert cues[0]["start"] == 0 and cues[0]["end"] >= 350, "play starts as its first caption shows, up to now"
         assert errors == []
     finally:
         ctx.close()
@@ -3369,7 +3440,7 @@ def test_leaving_the_start_card_another_way_starts_the_run_without_voice(browser
         with page.expect_download() as dl:
             page.click(".pl-dock [data-pl=vtt]")
         cues = _cues(Path(dl.value.path()).read_text(encoding="utf-8"))
-        assert cues[0]["text"] == want and cues[0]["start"] <= 50, cues  # opens as play starts (render time aside)
+        assert cues[0]["text"] == want and cues[0]["start"] == 0, cues  # play starts as its first caption shows
         assert errors == []
     finally:
         ctx.close()
@@ -3385,7 +3456,7 @@ def test_the_safety_timer_allows_for_long_tokens(browser, voiced) -> None:
         page.wait_for_timeout(5500)
         assert _voice_note(page) == "" and _state(page)["voice"] is True, "an e-mail address and a long number take longer"
         page.evaluate("window.__speech.end()")
-        _wait_pos(page, 8, timeout=4000)
+        _wait_pos(page, 8, timeout=WAIT_MS)
         assert errors == []
     finally:
         ctx.close()
@@ -3397,10 +3468,12 @@ def test_start_with_voice_waits_for_the_voice_list_and_speaks_only_a_local_voice
     ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init="window.__voicesLater = 600;" + FAKE_SPEECH)
     try:
         page.wait_for_function("window.plumbPlayer.state().waiting")
+        # at a normal pace the click comes while the list is still loading (600 ms), so the sentence has to wait
         page.click("[data-pl=start-voice]")
-        assert _spoken(page) == [], "nothing before the list is known"
-        page.wait_for_function("window.__speech.spoken.length > 0", timeout=3000)
-        said = page.evaluate("window.__speech.spoken")
+        page.wait_for_function("window.__speech.spoken.length > 0", timeout=8000)
+        said, arrived = page.evaluate("[window.__speech.spoken, window.__speech.voicesAt]")
+        # the promise itself, whatever the computer's speed: every sentence after the list is known, in a local voice
+        assert arrived is not None and all(s["t"] >= arrived for s in said), (said, arrived)
         assert said[0]["text"] == "Taking a booking" and said[0]["voice"] == "Test English", said
         assert not page.evaluate(f"document.querySelector('{VOICE_BTN}').disabled")
         assert page.get_attribute(VOICE_BTN, "aria-pressed") == "true" and _voice_note(page) == ""
@@ -3416,11 +3489,8 @@ def test_without_a_local_voice_nothing_is_ever_spoken(browser, voiced, init: str
     ctx, page, errors, _ = _open(browser, voiced / DEMO_PAGE, init=init)
     try:
         page.wait_for_function("window.plumbPlayer.state().waiting")
-        if page.is_visible("[data-pl=start-voice]"):
-            page.click("[data-pl=start-voice]")
-        else:
-            page.click("[data-pl=start-quiet]")
-        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
+        page.evaluate(START_AS_SHOWN)
+        page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=WAIT_MS)
         assert _voice_note(page) == "Voice isn't available in this browser"
         _wait_pos(page, 1)  # the tour plays on with its captions
         assert _spoken(page) == [], "never a sentence for a voice nobody chose"

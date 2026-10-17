@@ -70,14 +70,16 @@ the frame holds those layers, so zoom works as always.
   opens, its first element is scrolled into view inside that scroller, once. One a box that does not scroll keeps out
   of view (a carousel's other slide, a collapsed accordion) is passed over for the next match. Nothing else scrolls:
   other elements and labels that a scroller holds out of view are left out, the marks follow your own scrolling inside
-  the screen, and a redraw never undoes it. A
-  `display: contents` element is pointed at through its first child that has a box.
+  the screen, and a redraw never undoes it. They also follow an element that moves on its own while the step shows
+  (the screen's own animation, an image that loads late, a script that adds content above it): checked once a frame,
+  redrawn only when it moved. A `display: contents` element is pointed at through its first child that has a box.
 - **Long pages:** a step scrolls its element into the room between the top bar and the panel, at once (whatever
-  `scroll-behavior` the page sets). Its labels come into view with it, also when the element already was (one in a
-  sticky sidebar, labels on the page header after a step lower down): the element and every label together when they
-  fit, else the element and its first label. For an element taller than that room, its top edge and its topmost label
-  come into view together when they fit, else the topmost label; with no labels it scrolls only when none of it is in
-  view. Title cards stay pinned in the window.
+  `scroll-behavior` the page sets), with the panel's room already sized for the step, so the page stays where it
+  scrolled to. Its labels come into view with it, also when the element already was (one in a sticky sidebar, labels on
+  the page header after a step lower down): the element and every label together when they fit, else the element and its
+  first label. For an element taller than that room, its top edge and its topmost label come into view together when
+  they fit, else the topmost label; with no labels it scrolls only when none of it is in view. Title cards stay pinned
+  in the window.
 - **Out of the way of the step:** an element fixed to the window (a toast in a bottom corner, in the app view) is never
   scrolled to, since scrolling cannot move it (only its labels are brought in). When the panel, or its pill, would
   cover a step's element at the bottom of the window, it moves to the top of the window for that step (below the top
@@ -123,11 +125,12 @@ the frame holds those layers, so zoom works as always.
   a safety timer from the sentence's length in words or characters, whichever is longer, so a spelled-out e-mail
   address or long number gets its time) shows and announces once "Voice stopped: continuing with captions"; the voice stays off for the rest of that run and the tour
   goes on with its own timing, never stalling.
-- **Subtitles (.vtt):** while a tour plays, the player notes when each caption really appears and goes, from the start
-  of play; "Save subtitles (.vtt)" (in the panel while playing and at the end) downloads `<tour id>.vtt`, a WebVTT file
-  made in the page, that matches a screen recording of that run at any speed, voice on or off. The times are kept
-  only in memory for the current run (never in `localStorage`, never written anywhere or sent) and are gone on reload
-  unless you save them; only the Voice on/off choice is stored. Nothing is written to the repo.
+- **Subtitles (.vtt):** while a tour plays, the player notes when each caption really appears and goes, taken once the
+  page has drawn the change (play starts as its first caption shows, at 00:00.000); "Save subtitles (.vtt)" (in the
+  panel while playing and at the end) downloads `<tour id>.vtt`, a WebVTT file made in the page, that matches a screen
+  recording of that run at any speed, voice on or off. The times are kept only in memory for the current run (never in
+  `localStorage`, never written anywhere or sent) and are gone on reload unless you save them; only the Voice on/off
+  choice is stored. Nothing is written to the repo.
 
 ## The file
 
