@@ -1827,6 +1827,20 @@ def _ringed(page, sel: str) -> None:
     except Exception:  # Playwright's timeout (playwright is not imported at module level: 3.9 runs without it)
         pass  # the assertion below names what was found
     rings, want = page.evaluate(RINGS), page.evaluate(RECT, sel)
+    if not (len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want))):
+        info = page.evaluate("""(sel) => {
+          const t = document.querySelector(sel), f = document.getElementById('pp-frame');
+          const stage = document.querySelector('.pl-layer').parentElement, sr = stage.getBoundingClientRect();
+          const scrolled = [...document.querySelectorAll('*')].filter(n => n.scrollTop || n.scrollLeft)
+            .map(n => [n.id || n.className || n.tagName, n.scrollTop, n.scrollLeft, f.contains(n), stage.contains(n)]);
+          return { winY: window.scrollY, docH: document.documentElement.scrollHeight, innerH: window.innerHeight,
+            stage: [stage.id || stage.className, sr.top, sr.height], frame: f.getBoundingClientRect().top,
+            scrolled, state: window.plumbPlayer.state(), fonts: document.fonts && document.fonts.status };
+        }""", sel)
+        page.evaluate("window.dispatchEvent(new Event('resize'))")
+        page.wait_for_timeout(300)
+        print("\nRDIAG", sel, "ring", rings, "want", want, "info", info,
+              "after-redraw", page.evaluate(RINGS), page.evaluate(RECT, sel))
     assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want)), (sel, rings, want)
 
 

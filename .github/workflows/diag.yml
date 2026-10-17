@@ -21,6 +21,12 @@ jobs:
         run: |
           python -m pip install pytest playwright
           python -m playwright install chromium
+      - name: Tour tests three times, then the full suite, with ring evidence (macOS only)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          for i in 1 2 3; do python -m pytest -q -s -p no:cacheprovider tests/test_tours.py 2>&1 | grep -E "RDIAG|^FAILED|passed|failed" || true; done
+          python -m pytest -q -s -p no:cacheprovider 2>&1 | grep -E "RDIAG|^FAILED|passed|failed" || true
       - name: Ring diagnostics
         shell: bash
         run: python -m pytest -q -s -p no:cacheprovider tests/test_zz_ring_diag.py tests/test_zz_voice_diag.py 2>&1 | grep -E "DIAG|passed|failed|error" || true
