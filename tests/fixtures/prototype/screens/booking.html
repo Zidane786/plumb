@@ -1,0 +1,42 @@
+<style>
+[data-screen="booking"] { font-family: var(--font-sans); color: var(--color-on-surface); background: var(--color-background); padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="booking"] h2 { margin: 0 0 var(--spacing-4); font-size: var(--text-lg); line-height: var(--text-lg--line-height); }
+[data-screen="booking"] form { display: grid; gap: var(--spacing-3); max-width: 28rem; }
+[data-screen="booking"] label { display: grid; gap: var(--spacing-1); font-size: var(--text-sm); }
+[data-screen="booking"] input { font: inherit; min-height: var(--size-control); padding: 0 var(--spacing-3); color: var(--color-on-surface); background: var(--color-surface); border: var(--border-thin) solid var(--color-outline-input); border-radius: var(--radius-sm); }
+[data-screen="booking"] button { font: inherit; min-height: var(--size-control); padding: 0 var(--spacing-4); color: var(--color-on-primary); background: var(--color-primary); border: 0; border-radius: var(--radius-sm); cursor: pointer; justify-self: start; }
+[data-screen="booking"] .field-error { color: var(--color-danger); font-size: var(--text-sm); }
+[data-screen="booking"] .banner { padding: var(--spacing-3) var(--spacing-4); border-radius: var(--radius-md); background: var(--color-surface); border: var(--border-thin) solid var(--color-outline); }
+[data-screen="booking"] a { color: var(--color-link); }
+@container plumb-frame (min-width: 48rem) {
+  [data-screen="booking"] form { grid-template-columns: 1fr 1fr; }
+}
+</style>
+<section data-screen="booking" data-title="New booking" data-order="2">
+  <h2>New booking</h2>
+  <div data-state="ready">
+    <form class="booking-form" novalidate>
+      <label>Guest name <input name="guest" autocomplete="off" data-test="guest"></label>
+      <label>Guests <input name="count" inputmode="numeric" value="2"></label>
+      <p class="field-error" data-test="guest-error" hidden>Enter the guest's name so the team can greet them.</p>
+      <button type="submit" data-test="save">Book the table</button>
+    </form>
+  </div>
+  <div data-state="error">
+    <p class="banner" role="alert">That table was just taken. Pick another time; nothing was booked.</p>
+  </div>
+  <div data-state="success">
+    <p class="banner" role="status">Booked. <a href="#screen-home">Back to today's tables</a></p>
+  </div>
+</section>
+<script data-screen-script>
+screen.setAttribute("data-script-ran", "yes");
+var form = screen.querySelector(".booking-form");
+var error = screen.querySelector("[data-test=guest-error]");
+form.addEventListener("submit", function (event) {
+  event.preventDefault();
+  var name = form.elements.guest.value.trim();
+  error.hidden = name !== "";
+  if (name) plumb.setState("success");
+});
+</script>

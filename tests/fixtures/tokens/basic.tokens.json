@@ -1,0 +1,42 @@
+{
+  "$description": "Plumb fixture tokens 🎨 for Café Ünïcode",
+  "$extensions": {
+    "plumb": {
+      "schema": 1,
+      "project": "Café Ünïcode",
+      "platforms": ["web"],
+      "web": { "styling": "tailwind-v4", "copies": ["app/globals.css"] },
+      "contrast": { "extra_pairs": [["on-primary", "primary", "text"]] }
+    }
+  },
+  "color": {
+    "$type": "color",
+    "background": { "$value": "#ffffff", "$extensions": { "plumb": { "dark": "#0f1217" } } },
+    "on-surface": { "$value": "#1b2230", "$extensions": { "plumb": { "dark": "#e7eaef" } } },
+    "primary": {
+      "$value": "#14857f",
+      "$description": "Accent ✨ for focus and primary actions",
+      "$extensions": { "plumb": { "dark": "#4fb3c4" } }
+    },
+    "on-primary": { "$value": "#ffffff" },
+    "link": { "$value": "{color.primary}" },
+    "danger": {
+      "$value": { "colorSpace": "srgb", "components": [0.8, 0.1, 0.1], "alpha": 1, "hex": "#cc1a1a" }
+    }
+  },
+  "typography": {
+    "$type": "typography",
+    "xs": { "$value": { "fontSize": "12px", "lineHeight": "16px" } },
+    "sm": {
+      "$value": { "fontSize": "16px", "lineHeight": "24px" },
+      "$extensions": { "plumb": { "md": { "fontSize": "14px", "lineHeight": "20px" } } }
+    },
+    "lg": { "$value": { "fontSize": "20px", "lineHeight": "28px" } }
+  },
+  "spacing": {
+    "$type": "dimension",
+    "2": { "$value": "8px" },
+    "4": { "$value": "16px" },
+    "6": { "$value": "24px" }
+  }
+}

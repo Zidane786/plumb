@@ -15,13 +15,14 @@ Copilot CLI and other agent tools all read the same text. Edit this file, never 
 | Need | Read |
 |---|---|
 | What Plumb is, every decision | `docs/specs/2026-10-11-plumb-design.md` |
-| How a release was built (contracts) | `docs/plans/*-build-plan.md` (newest last) |
-| What a project gets, as a page | `docs/what-you-get.html` |
+| How a release is built: tasks, contracts, owner amendments | `docs/plans/*-build-plan.md` (newest last) |
+| The complete usage guide | `docs/USAGE.md` |
+| What a project gets, as a page | `docs/what-you-get.html` (offline; check it headless in both themes when you change it) |
 | User-facing overview | `README.md`, `plugins/plumb/README.md` |
-| Every script command and flag, "use it when…" | `plugins/plumb/reference/` |
+| Every script command and flag, "use it when…", the shared rules | `plugins/plumb/reference/` |
 | What changed per version | `plugins/plumb/CHANGELOG.md` |
-| How to test on a machine by hand | `TEST.md` |
-| The exact output of `create` | `examples/caredesk/` |
+| How to test on a machine by hand | `TEST.md` (both CLIs, Kiro pending its live check) |
+| The exact output of `create` | `examples/caredesk/` (added after the owner validates it, Task 19) |
 | Reference implementations (**read only, never write there**) | below |
 
 The spec is the source of truth while Plumb is being designed; update this file when it changes
@@ -47,28 +48,49 @@ to a temporary folder to test against them):
 
 ## 2. Layout
 
+Marked *in progress* = planned in the build plan, not in the tree yet; remove the mark when it lands.
+
 ```
 .claude-plugin/marketplace.json      marketplace "plumb" → plugins/plumb
 .claude/settings.json                 repo settings for agents (no AI attribution)
 plugins/plumb/                        the installed plugin (only this folder ships)
   .claude-plugin/plugin.json          name + VERSION (source of truth for the plugin version)
-  skills/<name>/SKILL.md              /plumb:init create extract audit update upgrade status
-  assets/                             the design-system skill template copied into projects
-                                      (SKILL.md, design.md, tokens, references, build-tokens.py, audit)
-  hooks/                              hooks.json, run.sh / run.cmd (python launchers), the hook scripts
-  templates/                          PLUMB.md and the CLAUDE.md / AGENTS.md rows for projects
-  reference/                          shared reference all skills link
-  upgrades/<version>.md               per-release "What's new" + upgrade steps
+  skills/<name>/SKILL.md              the 11 commands: init create extract prototype tour audit ux
+                                      update upgrade status feedback (Plumb's own mistakes →
+                                      ~/.plumb/feedback/, outside every project)
+  reference/                          shared reference all skills link (scripts, rules, prototypes, tours, …)
+  assets/skill/                       the design-system skill template copied into projects
+    SKILL.md.tmpl  design.md.tmpl     filled from the interview answers
+    references/                       reference templates (web/, mobile/ios, mobile/android)
+    assets/                           icons, tokens, platforms/web (tokens.css templates)
+    scripts/                          _plumb.py (shared core), build-tokens.py, audit.py,
+                                      build-prototype.py: copied into projects, tested here
+    templates/                        specimen, audit report, prototype shell, app shell (app.html, the
+                                      full-window app view), screens page and proposal index templates,
+                                      player.js / player.css (the walkthrough player), chrome-roles.css
+                                      (the --pl-* roles both shells share)
+  scripts/                            plugin-side helpers the skills run (not copied into projects)
+    detect.py  scaffold.py            repo layout + stack detection; copy/fill the template
+    version.py  screenshot.py  kiro.py   project vs plugin version; headless screenshots; Kiro install
+    check-tour.py                     plays a tour page headless (guide + play) and checks every step
+  hooks/                              hooks.json, run.sh / run.cmd, _hooklib.py, session_start / pre_edit / stop_check
+                                      (a hook that fails open also logs one line to ~/.plumb/feedback/hooks.md);
+                                      _shell_legacy.py: the Bash guard's earlier reader, kept as its floor
+                                      (frozen copy for tests: tests/legacy_guard.py)
+  templates/                          PLUMB.md, agents-row.md, decision-entry.md, Makefile.snippet,
+                                      directions.html (the fallback directions page)
+  kiro/plumb-hooks.json.tmpl          the Kiro hook file kiro.py installs
+  upgrades/<version>.md               per-release "What's new" + upgrade steps (README.md explains)
   CHANGELOG.md  README.md
-examples/caredesk/                    golden example: the full skill `create` produces (a regression fixture)
-tests/                                pytest suite
-.github/workflows/test.yml            CI: Windows/macOS/Linux × Python 3.9/3.13
-.github/workflows/release.yml         publishes vX.Y.Z releases from the CHANGELOG on merge
-.github/dependabot.yml                keeps the GitHub Actions up to date
-scripts/release_notes.py              prints a version's release notes from the CHANGELOG
-scripts/check_version_bump.py         CI guard: plugin changes carry a new version + CHANGELOG section
+examples/caredesk/                    golden example of `create` (regression fixture; after validation, Task 19)
+tests/                                pytest suite; fixtures/ holds audit cases and sample projects;
+                                      conftest.py enforces the skip rules
+docs/                                 specs/, plans/, USAGE.md (the complete guide), what-you-get.html
+scripts/                              repo tooling: release_notes.py, check_version_bump.py
+.github/                              workflows/test.yml (CI: Windows/macOS/Linux × Python 3.9/3.13),
+                                      workflows/release.yml (publishes vX.Y.Z from the CHANGELOG on
+                                      merge), dependabot.yml (keeps the Actions up to date)
 TEST.md                               hands-on test guide for any machine
-docs/                                 specs, build plans, what-you-get.html
 ```
 
 ## 3. Rules that must hold in every change
@@ -100,6 +122,48 @@ docs/                                 specs, build plans, what-you-get.html
   `.claude/skills/<project>-design-system/` by default (the repo root in a monorepo; the frontend
   repo when frontend and backend are separate). Both tools read it there: Copilot CLI loads skills
   from `.claude/skills`, `.github/skills`, `~/.copilot/skills` and `~/.agents/skills`.
+- **Prototype first.** UI work goes prototype → the user approves → build. Hooks refuse a new
+  page or route with no approved screen; skills never skip it for visual changes.
+- **Light and dark, everywhere.** Every colour token has a dark value; a missing one is an audit
+  error unless marked same-in-dark. Pages never write `dark:` overrides. Every generated page
+  and check covers both themes. Light-only is allowed only as a recorded decision
+  (`Themes: light-only` in `PLUMB.md` + the decision log).
+- **No downloads.** Plumb and its skills never install or download anything (no pip, npm,
+  browsers, fonts): they tell the user what is missing, ask, and wait.
+- **Plumb's own files are guarded in projects.** The copied `[P]` files (`scripts/*.py`,
+  `templates/*`) and the plugin's files are never hand-edited there; improvements go upstream to
+  this repo and reach projects through `/plumb:upgrade`. The guard is off here (no `PLUMB.md`).
+- **Scripts are the floor, not the ceiling.** `detect.py` is a first guess: the skill verifies it
+  and the user confirms before anything is written. `audit.py` rules catch what can be
+  expressed; an agent review pass covers the rest, and recurring findings become new rules.
+- **Hooks run only the plugin's own code.** They never import or run a project's copied
+  scripts (a cloned repo must not get code run by containing a `PLUMB.md`); the project is data
+  only. Every hook git call goes through the hardened helper (config overrides as environment
+  pairs, no lazy fetch, absolute git from PATH, shared 3 s budget, fail open). Keep
+  `SECURITY.md` "Trust boundary" exact when this changes.
+- **The Bash guard: the earlier reader decides.** A shell command the earlier reader
+  (`hooks/_shell_legacy.py`) refuses stays refused unless the new reader proves one of four
+  patterns (`pre_edit._proven`): (a) a data text written to a file the command never uses again,
+  (b) a read-only program's words, (c) inline code that only reads its guarded literals, or
+  (d) a `git commit` message, unless git is given an option that runs something, a variable is
+  set before it, or the command wrote a hook. Never widen them without a review, and never change the earlier reader to allow more; `tests/legacy_guard.py`
+  is its frozen copy, and `tests/test_bash_guard.py` asserts the guard refuses everything it
+  refuses, with no exemptions.
+- **Exceptions by path, never by comment.** Audit allowances live on `PLUMB.md`'s allow list
+  (e.g. `components/ui/**`); no `// plumb-ignore` style comments.
+- **Generated pages load nothing from the network:** no CDN, no hosted fonts; system font
+  stacks or the project's own files. Generated files start with a `GENERATED … do not edit`
+  header.
+- **Every design choice goes in the decision log** (`docs/design/decisions.md` in a project):
+  directions, variants, screens, light-only. The prototype shows it.
+- **Kiro is supported too** (skills via `scripts/kiro.py`, hooks through an adapter in
+  `_hooklib.py`), built from Kiro's documented formats; the live check on a real Kiro is pending.
+- **Plumb's own mistakes go to `/plumb:feedback`.** Every skill keeps the pointer next to "Scripts give evidence,
+  not answers"; every pointer says "Plumb mistakes" / "Plumb's own mistakes"; the log lives in `~/.plumb/feedback/`,
+  never in a project, and the hooks' own log (`hooks.md`) stays private and redacted and can never fail or block a
+  hook. `tests/conftest.py` gives every test a throwaway `HOME`/`USERPROFILE` (keeping `PLAYWRIGHT_BROWSERS_PATH` on
+  the real browser cache) and fails the run if your real `~/.plumb` changed; `hook_env` adds a per-test home. Read your own
+  log with `/plumb:feedback` before planning fixes (docs/USAGE.md, "How to read findings").
 - **Lean skills.** `SKILL.md` files stay short; details go in `reference/` and are loaded only
   when needed.
 - **Product text never mentions internal projects.** Plumb is generic.
@@ -137,17 +201,32 @@ claude plugin validate --strict plugins/plumb
   label-sm, sm, xs`); run `audit` on that copy and on the two prototypes and look at the HTML
   reports.
 - **CI (`.github/workflows/test.yml`)** runs on every PR and push to `main`, but the full suite
-  runs only when one of these changed: `plugins/**`, `tests/**`, `scripts/**`,
-  `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes (README,
-  TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code changed".
-  A manual run always runs everything. Keep this list and the workflow's list in step.
-- `tests/test_docs_consistency.py` fails if a skill/doc mentions a command that doesn't exist,
-  or a skill doesn't link the reference — keep it green.
+  runs only when one of these changed: `plugins/**`, `tests/**`, `examples/**`,
+  `scripts/**`, `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes
+  (README, TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code
+  changed". CI installs Playwright + Chromium and runs the browser tests on every OS; unexpected
+  skips fail the run (`PLUMB_STRICT_SKIPS=1`, `tests/conftest.py`: a skip reason must start with
+  `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`, e.g.
+  `requires POSIX: FIFO`; `tests/test_skip_reasons.py` pins the list). A manual run always runs
+  everything. Keep this list and the workflow's list in step.
+- `tests/test_docs_consistency.py` fails if a skill, reference or user doc (README.md, the plugin README,
+  `docs/USAGE.md`, TEST.md, `docs/what-you-get.html`) mentions a command that doesn't exist, a skill doesn't link
+  the reference, a link points nowhere, `docs/USAGE.md` lacks a section for a command, a README doesn't link
+  `docs/USAGE.md` near the top, a message the docs quote is no longer printed by the code, the what-you-get page
+  loads anything from the network, TEST.md's expected output no longer matches the code that prints it, or an
+  internal project name appears under `plugins/` or in the user docs (extra names, uncommitted:
+  `PLUMB_INTERNAL_NAMES=a,b`) — keep it green.
+  `tests/test_portability.py` covers every `.py` in `plugins/`, `scripts/` and `tests/`.
+- **Parallel work, safely.** Each task runs in its own isolated git worktree, branched from
+  `feat/1.0.0`, and is reviewed before it merges. Merge one at a time, with a merge commit. After
+  every merge run the full suite, Playwright included, on Python 3.13 and 3.9 before pushing.
+  Never force-push.
 
 ## 5. Keeping docs in step (do this in the SAME change as the feature)
 
 Every feature, fix or behaviour change updates **all** that apply, before it's considered done:
 
+- [ ] **`docs/USAGE.md`**, the complete usage guide (every command, flag and flow).
 - [ ] **`plugins/plumb/reference/`** — new/changed commands and flags, "use it when…".
 - [ ] **Skills** (`plugins/plumb/skills/*/SKILL.md`) that should use or mention it.
 - [ ] **`plugins/plumb/templates/PLUMB.md`** if projects need to know or configure it.
@@ -160,7 +239,7 @@ Every feature, fix or behaviour change updates **all** that apply, before it's c
 - [ ] **`TEST.md`** — add or adjust the hands-on check for the feature (and the expected result).
 - [ ] **Spec** (`docs/specs/…`) for new decisions or commands.
 - [ ] **Tests** — unit tests, docs-consistency, portability and Copilot checks as relevant.
-- [ ] **This file (`AGENTS.md`)** if the rules, layout or workflow changed.
+- [ ] **This file (`AGENTS.md`)** whenever layout, rules or workflow change, in the same change.
 
 ## 6. Releasing a version
 
@@ -178,9 +257,12 @@ After that: **patch** (1.0.x) for fixes and wording, **minor** (1.x.0) for new f
 tokens or options that existing projects keep working with, **major** (x.0.0) only for major
 work: a change that needs `/plumb:upgrade` to reshape existing projects, or drops something.
 
-1. Bump the version in **all** of: `plugins/plumb/.claude-plugin/plugin.json`, the script
-   headers (token generator, audit), `templates/PLUMB.md` (first line), and the tokens schema
-   version + `migrate` if the format changed.
+1. Bump the version in **all** of: `plugins/plumb/.claude-plugin/plugin.json`,
+   `PLUMB_VERSION` in `assets/skill/scripts/_plumb.py` (the script headers read it) and in
+   `scripts/scaffold.py`, `assets/skill/SKILL.md.tmpl` (`plumb: "X.Y.Z"`), the "created with
+   Plumb X.Y.Z" lines of `assets/skill/design.md.tmpl` and `templates/PLUMB.md`, `templates/PLUMB.md`
+   (first line), and the tokens schema version + `migrate` if the format changed.
+   `tests/test_manifest.py` fails when one of these differs from `plugin.json`.
 2. Finish `CHANGELOG.md` and `upgrades/<version>.md` (What's new first, then steps). The
    CHANGELOG section for the version is `## X.Y.Z — YYYY-MM-DD` with the headings **Highlights**,
    **Added**, **Changed**, **Fixed**, **Security**, **Removed**, **Upgrade notes** (leave out

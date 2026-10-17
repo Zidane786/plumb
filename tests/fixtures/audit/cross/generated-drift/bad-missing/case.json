@@ -1,0 +1,9 @@
+{
+  "build": false,
+  "expect": [
+    [
+      ".claude/skills/demo-design-system/assets/platforms/web/tokens.css",
+      1
+    ]
+  ]
+}

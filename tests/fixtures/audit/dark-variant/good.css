@@ -1,0 +1,4 @@
+/* expect: none */
+@media (prefers-color-scheme: dark) {
+  html.dark:root { color-scheme: dark; }
+}

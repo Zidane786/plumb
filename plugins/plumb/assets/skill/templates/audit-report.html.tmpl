@@ -1,0 +1,379 @@
+<!doctype html>
+{{header}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
+   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
+:where(:root), :where(.pl-light) {
+  --pl-bg: #fbfbfa;
+  --pl-surface: #ffffff;
+  --pl-sunk: #f0f0ed;
+  --pl-text: #1d1f23;
+  --pl-muted: #5b616b;
+  --pl-border: #dcdcd6;
+  --pl-border-strong: #858a93;
+  --pl-accent: #2f5d8a;
+  --pl-on-accent: #ffffff;
+  --pl-focus: #2f5d8a;
+  --pl-bad: #b42318;
+  --pl-on-bad: #ffffff;
+  --pl-warn: #8a5a00;
+  --pl-good: #067647;
+  color-scheme: light;
+}
+:where(:root[data-theme="dark"]), :where(.pl-dark) {
+  --pl-bg: #121315;
+  --pl-surface: #1a1c1f;
+  --pl-sunk: #0c0d0f;
+  --pl-text: #e8e9eb;
+  --pl-muted: #a2a7af;
+  --pl-border: #2e3136;
+  --pl-border-strong: #6f747d;
+  --pl-accent: #8db8e3;
+  --pl-on-accent: #0d1117;
+  --pl-focus: #8db8e3;
+  --pl-bad: #f97066;
+  --pl-on-bad: #1a0b0a;
+  --pl-warn: #fdb022;
+  --pl-good: #47cd89;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme="light"])) {
+    --pl-bg: #121315;
+    --pl-surface: #1a1c1f;
+    --pl-sunk: #0c0d0f;
+    --pl-text: #e8e9eb;
+    --pl-muted: #a2a7af;
+    --pl-border: #2e3136;
+    --pl-border-strong: #6f747d;
+    --pl-accent: #8db8e3;
+    --pl-on-accent: #0d1117;
+    --pl-focus: #8db8e3;
+    --pl-bad: #f97066;
+    --pl-on-bad: #1a0b0a;
+    --pl-warn: #fdb022;
+    --pl-good: #47cd89;
+    color-scheme: dark;
+  }
+}
+:where(:root) {
+  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --pl-radius: 8px;
+  --pl-radius-sm: 4px;
+  --pl-space-1: 4px;
+  --pl-space-2: 8px;
+  --pl-space-3: 12px;
+  --pl-space-4: 16px;
+  --pl-space-6: 24px;
+  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
+  --pl-duration: 150ms;
+  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --pl-text-control: 15px;
+  --pl-text-small: 13px;
+  --pl-text-title: 22px;
+}
+</style>
+<style>
+{{theme_css}}
+</style>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--pl-bg);
+  color: var(--pl-text);
+  font-family: var(--pl-font);
+  font-size: 16px;
+  line-height: 1.5;
+}
+code, .mono { font-family: var(--pl-mono); font-size: 0.875em; }
+a { color: var(--pl-accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.wrap { max-width: 76rem; margin: 0 auto; padding: 0 16px; }
+.top { border-bottom: 1px solid var(--pl-border); background: var(--pl-surface); }
+.top-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; padding-top: 28px; padding-bottom: 20px; }
+.top-row > div { min-width: 0; flex: 1 1 20rem; }
+.eyebrow { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+h1 { margin: 0; font-size: clamp(26px, 5vw, 36px); line-height: 1.15; text-wrap: balance; overflow-wrap: anywhere; }
+h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
+h3 { margin: 0; font-size: 15px; }
+.lede { margin: 8px 0 0; max-width: 65ch; color: var(--pl-muted); }
+.theme-toggle {
+  font: inherit; font-size: 14px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 14px;
+  color: var(--pl-text); background: var(--pl-bg);
+  border: 1px solid var(--pl-border-strong); border-radius: 999px; cursor: pointer;
+}
+.theme-toggle:hover { background: var(--pl-sunk); }
+.theme-icon { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+.note, .empty { color: var(--pl-muted); max-width: 65ch; }
+.footer { border-top: 1px solid var(--pl-border); margin-top: 48px; padding: 20px 0 40px; color: var(--pl-muted); font-size: 14px; }
+.footer p { margin: 4px 0; max-width: 70ch; }
+.footer code { overflow-wrap: anywhere; color: var(--pl-text); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+[hidden] { display: none !important; }
+main { padding-top: 8px; }
+section { padding: 32px 0 8px; }
+.section-head p { margin: 0 0 16px; }
+ul[role="list"], ol[role="list"] { list-style: none; margin: 0; padding: 0; }
+
+/* Summary: the rollup first. */
+.verdict-line { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; font-size: 18px; font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); gap: 12px; margin: 0; }
+.stat { background: var(--pl-surface); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); padding: 14px 16px; min-width: 0; }
+.stat dt { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--pl-muted); }
+.stat dd { margin: 4px 0 0; font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.mode-note { margin: 16px 0 0; }
+
+/* Severity: a shape and a word, never colour alone. Error = diamond, warning = triangle, suggestion = circle. */
+.sev { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; white-space: nowrap; }
+.sev-shape { display: inline-block; width: 10px; height: 10px; flex: none; }
+.sev-error { color: var(--pl-bad); }
+.sev-error .sev-shape { background: var(--pl-bad); transform: rotate(45deg) scale(0.85); }
+.sev-warn { color: var(--pl-warn); }
+.sev-warn .sev-shape { background: var(--pl-warn); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.sev-suggest { color: var(--pl-accent); }
+.sev-suggest .sev-shape { background: var(--pl-accent); border-radius: 50%; }
+.sev-pass { color: var(--pl-good); }
+.sev-pass .sev-shape { background: var(--pl-good); border-radius: 2px; }
+
+/* Filters */
+.filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  margin: 28px 0 0; padding: 12px 16px; background: var(--pl-surface);
+  border: 1px solid var(--pl-border); border-radius: var(--pl-radius);
+}
+.sev-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-filter {
+  font: inherit; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 12px; color: var(--pl-text); background: var(--pl-bg);
+  border: 1px solid var(--pl-border-strong); border-radius: 999px; cursor: pointer;
+}
+.chip-filter[aria-pressed="false"] { color: var(--pl-muted); border-style: dashed; background: transparent; }
+.chip-filter[aria-pressed="false"] .sev-shape { opacity: 0.35; }
+.chip-filter[aria-pressed="true"]::after { content: ""; width: 6px; height: 10px; margin-left: 2px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-2px); }
+.rule-filter { display: flex; align-items: center; gap: 8px; font-size: 14px; min-width: 0; max-width: 100%; }
+.rule-filter select {
+  font: inherit; font-size: 14px; min-height: 36px; max-width: 100%; min-width: 0; padding: 0 8px;
+  color: var(--pl-text); background: var(--pl-bg); border: 1px solid var(--pl-border-strong); border-radius: var(--pl-radius-sm);
+}
+.shown { margin: 0; font-size: 14px; color: var(--pl-muted); font-variant-numeric: tabular-nums; }
+
+/* Issues */
+.sev-group { margin: 0 0 24px; }
+.sev-h { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-size: 16px; }
+.count { font-size: 13px; font-weight: 600; color: var(--pl-muted); font-variant-numeric: tabular-nums; }
+.rule-group { margin: 0 0 16px; }
+.rule-group > h4 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0; padding: 8px 0; font-size: 14px; border-bottom: 1px solid var(--pl-border); }
+.rule-group > h4 code { font-weight: 600; }
+.rule-msg { font-weight: 400; color: var(--pl-muted); }
+.finding { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 4px 20px; padding: 12px 0; border-bottom: 1px solid var(--pl-border); }
+.f-where { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.loc { color: var(--pl-text); overflow-wrap: break-word; }
+.loc .seg { white-space: nowrap; }
+.f-what { min-width: 0; }
+.msg { margin: 0; overflow-wrap: anywhere; }
+.fix { margin: 6px 0 0; overflow-wrap: anywhere; color: var(--pl-muted); }
+.fix-label, .why-label { display: inline-block; margin-right: 6px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-text); }
+.fix code, .msg code { font-size: 0.9em; }
+.fix-group { margin: 0; }
+.shared-fix { margin: 0; padding: 10px 0 2px; color: var(--pl-text); }
+.shared-fix .count { font-weight: 400; }
+.finding.compact { padding: 8px 0; }
+.none-match { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 12px 0 0; padding: 12px 16px;
+  background: var(--pl-sunk); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); }
+.none-match p { margin: 0; font-weight: 600; }
+.reset {
+  font: inherit; font-size: 14px; font-weight: 600; min-height: 36px; padding: 0 14px; cursor: pointer;
+  color: var(--pl-on-accent); background: var(--pl-accent); border: 1px solid transparent; border-radius: 999px;
+}
+
+/* Improvements: ranked by impact. The rank is real order, so it is numbered. */
+.improvement { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr); gap: 4px 12px; padding: 16px 0; border-top: 1px solid var(--pl-border); }
+.rank { font-size: 22px; font-weight: 700; color: var(--pl-muted); font-variant-numeric: tabular-nums; line-height: 1.2; }
+.imp-body { min-width: 0; }
+.imp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.imp-head h3 { font-size: 16px; }
+.impact { font-size: 13px; color: var(--pl-muted); font-variant-numeric: tabular-nums; }
+.why { margin: 6px 0 8px; max-width: 75ch; }
+.improvement .finding { grid-template-columns: minmax(0, 13rem) minmax(0, 1fr); padding: 8px 0; }
+.improvement .finding:last-child { border-bottom: 0; }
+/* Agent review: judgement, not a rule. Marked with a word in a dashed outline, never colour alone. */
+.agent-mark { display: inline-block; padding: 1px 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--pl-text); border: 1px dashed var(--pl-border-strong); border-radius: 999px; white-space: nowrap; }
+.finding.agent .why { margin: 6px 0 0; color: var(--pl-muted); }
+.empty { padding: 16px; background: var(--pl-surface); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); max-width: none; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--pl-border); border-radius: var(--pl-radius); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--pl-border); vertical-align: top; }
+thead th { border-top: 0; background: var(--pl-sunk); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--pl-muted); }
+
+@media (max-width: 44rem) {
+  .finding, .improvement .finding { grid-template-columns: minmax(0, 1fr); }
+  .improvement { grid-template-columns: 1.75rem minmax(0, 1fr); }
+}
+</style>
+<script>
+/* Theme: follows the system until the toggle picks one. data-theme always says which theme is showing; the .dark /
+   .light class (what the project's --css-vars export switches on) is set only once the viewer has chosen. */
+(function () {
+  var root = document.documentElement;
+  var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var chosen = null;
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    if (chosen) {
+      root.classList.toggle("dark", theme === "dark");
+      root.classList.toggle("light", theme === "light");
+    }
+    var button = document.getElementById("theme-toggle");
+    if (button) {
+      var next = theme === "dark" ? "light" : "dark";
+      button.setAttribute("aria-label", "Switch to the " + next + " theme");
+      var label = button.querySelector(".theme-label");
+      if (label) label.textContent = next === "dark" ? "Dark theme" : "Light theme";
+    }
+  }
+  apply(media && media.matches ? "dark" : "light");
+  if (media && media.addEventListener) {
+    media.addEventListener("change", function (e) { if (!chosen) apply(e.matches ? "dark" : "light"); });
+  }
+  window.plumbTheme = {
+    toggle: function () {
+      chosen = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      apply(chosen);
+    },
+    refresh: function () { apply(root.getAttribute("data-theme") || "light"); }
+  };
+})();
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-row">
+    <div>
+      <p class="eyebrow">Design audit</p>
+      <h1>{{project}}</h1>
+      <p class="lede">{{date}} · {{mode}} · Plumb {{plumb_version}}</p>
+    </div>
+    <button type="button" id="theme-toggle" class="theme-toggle" onclick="window.plumbTheme.toggle()"><span class="theme-icon" aria-hidden="true"></span><span class="theme-label">Dark theme</span></button>
+  </div>
+</header>
+<main class="wrap">
+  <section id="summary" aria-labelledby="summary-h">
+    <h2 id="summary-h" class="sr-only">Summary</h2>
+    <p class="verdict-line">{{verdict}}</p>
+    <dl class="stats">
+      <div class="stat"><dt><span class="sev sev-error"><span class="sev-shape" aria-hidden="true"></span></span>Errors</dt><dd data-count="errors">{{errors}}</dd></div>
+      <div class="stat"><dt><span class="sev sev-warn"><span class="sev-shape" aria-hidden="true"></span></span>Warnings</dt><dd data-count="warnings">{{warnings}}</dd></div>
+      <div class="stat"><dt><span class="sev sev-suggest"><span class="sev-shape" aria-hidden="true"></span></span>Suggestions</dt><dd data-count="suggestions">{{suggestions}}</dd></div>
+      <div class="stat"><dt>Files checked</dt><dd data-count="files">{{files}}</dd></div>
+    </dl>
+{{mode_note}}
+    <div class="filters" id="filters" hidden>
+      <div class="sev-filters" role="group" aria-label="Show severities">
+        <button type="button" class="chip-filter" data-filter-severity="error" aria-pressed="true"><span class="sev sev-error"><span class="sev-shape" aria-hidden="true"></span></span>Errors</button>
+        <button type="button" class="chip-filter" data-filter-severity="warn" aria-pressed="true"><span class="sev sev-warn"><span class="sev-shape" aria-hidden="true"></span></span>Warnings</button>
+        <button type="button" class="chip-filter" data-filter-severity="suggest" aria-pressed="true"><span class="sev sev-suggest"><span class="sev-shape" aria-hidden="true"></span></span>Suggestions</button>
+      </div>
+      <div class="rule-filter">
+        <label for="rule-filter">Rule</label>
+        <select id="rule-filter">
+          <option value="">All rules</option>
+{{rule_options}}
+        </select>
+      </div>
+      <p class="shown" id="shown" aria-live="polite"></p>
+    </div>
+    <div class="none-match" id="none-match" hidden>
+      <p>No findings match these filters.</p>
+      <button type="button" class="reset" id="reset-filters">Show all findings</button>
+    </div>
+  </section>
+  <section id="issues" aria-labelledby="issues-h">
+    <div class="section-head">
+      <h2 id="issues-h">Issues</h2>
+      <p class="note">Errors fail the audit; warnings are reported only. Each says where it is, what is wrong and how to fix it.</p>
+    </div>
+{{issues}}
+  </section>
+  <section id="improvements" aria-labelledby="improvements-h">
+    <div class="section-head">
+      <h2 id="improvements-h">Improvements</h2>
+      <p class="note">Not failures: ways to make the code and the design system better, ranked by impact (the rule's weight times how often it occurs). Token changes go through <code>/plumb:update</code>.</p>
+    </div>
+{{improvements}}
+  </section>
+{{agent_review}}
+{{scales}}
+</main>
+<footer class="footer">
+  <div class="wrap">
+    <p>Run it again: <code>{{rerun}}</code>, or <code>/plumb:audit</code> in Claude Code or Copilot CLI. The terminal prints the same findings; exit code 0 means no errors.</p>
+    <p>Generated by Plumb {{plumb_version}} on {{date}}. This page is a snapshot: re-run the audit instead of editing it.</p>
+  </div>
+</footer>
+<script>
+/* Filters: by severity (toggle buttons) and by rule. A group with nothing left to show is hidden. */
+(function () {
+  var filters = document.getElementById("filters");
+  var rows = [].slice.call(document.querySelectorAll("li.finding"));
+  if (!filters || !rows.length) return;
+  filters.hidden = false;
+  var buttons = [].slice.call(filters.querySelectorAll("[data-filter-severity]"));
+  var select = document.getElementById("rule-filter");
+  var shown = document.getElementById("shown");
+  var groups = [].slice.call(document.querySelectorAll("[data-group]"));
+  function update() {
+    var on = {};
+    buttons.forEach(function (b) { on[b.getAttribute("data-filter-severity")] = b.getAttribute("aria-pressed") === "true"; });
+    var rule = select.value;
+    var count = 0;
+    rows.forEach(function (row) {
+      var show = on[row.getAttribute("data-severity")] && (!rule || row.getAttribute("data-rule") === rule);
+      row.hidden = !show;
+      if (show) count += 1;
+    });
+    groups.forEach(function (g) { g.hidden = !g.querySelector("li.finding:not([hidden])"); });
+    shown.textContent = "Showing " + count + " of " + rows.length + (rows.length === 1 ? " finding" : " findings");
+    none.hidden = count > 0;
+  }
+  var none = document.getElementById("none-match");
+  document.getElementById("reset-filters").addEventListener("click", function () {
+    buttons.forEach(function (b) { b.setAttribute("aria-pressed", "true"); });
+    select.value = "";
+    update();
+    buttons[0].focus();
+  });
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () {
+      b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true");
+      update();
+    });
+  });
+  select.addEventListener("change", update);
+  update();
+})();
+window.plumbTheme.refresh();
+</script>
+</body>
+</html>

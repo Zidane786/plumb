@@ -1,0 +1,212 @@
+/* Plumb walkthrough player and guide panel (inlined by build-prototype.py into prototype.html and every tour page).
+   Colours come from the shell's --pl-* roles, which the token block maps to the project's tokens, so the player follows
+   the project's palette in light and dark. Overlays sit on the stage and never take a click from the screen. */
+/* The "video" colours. Subtitles, the play badge, the cursor, the dimming of a spotlight and the shadows under floating
+   marks keep one fixed, high-contrast look in every project and both themes (like captions on a film), so they are not
+   project tokens. They are defined once, here, by name; every other colour in the player is a --pl-* role mapped to the
+   project's tokens. A prototype scan can exempt exactly these names (generator-owned). */
+:root {
+  --pl-video-ink: #ffffff;            /* subtitle text, cursor fill */
+  --pl-video-ink-soft: #f5f5f5;       /* badge text */
+  --pl-video-outline: #111111;        /* cursor outline */
+  --pl-video-scrim: rgb(12 13 15 / 0.84);   /* subtitle background */
+  --pl-video-badge: rgb(15 17 20 / 0.86);   /* play badge background */
+  --pl-video-dim: rgb(10 12 16 / 0.52);     /* spotlight: the rest of the screen */
+  --pl-video-shadow: rgb(0 0 0 / 0.3);      /* under labels, beacons and the cursor */
+  --pl-video-shadow-strong: rgb(0 0 0 / 0.35);  /* under the dock */
+}
+/* The player's own chrome takes the project's tokens where Plumb's format names one (radius.lg, shadow.popover);
+   today's look is the fallback. */
+:where(:root) {
+  --pl-chrome-radius: var(--radius-lg, 14px);
+  --pl-chrome-shadow: var(--shadow-popover, 0 12px 32px -6px var(--pl-video-shadow-strong));
+}
+#pp-stage { position: relative; }
+/* The frame is its own stacking context: whatever z-index a screen gives its dialogs, toasts or sheets, they stay
+   under the walkthrough's dock, subtitle, cursor and labels. */
+#pp-frame { isolation: isolate; }
+/* While a zoom lasts the stage clips the scaled frame; clip (not hidden) keeps a screen's sticky header and sidebar
+   sticking in the app view, where the stage is the page. */
+#pp-stage.pl-zooming { overflow: hidden; overflow: clip; }
+#pp-frame.pl-zoom-in { transition: transform 360ms var(--pl-ease); }
+
+.pl-layer { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; border-radius: 12px; }
+.pl-layer > * { position: absolute; }
+.pl-dim { left: 0; top: 0; }
+.pl-dim path { fill: var(--pl-video-dim); }
+.pl-edge, .pl-ring {
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px var(--pl-accent), 0 0 0 7px color-mix(in srgb, var(--pl-accent) 28%, transparent);
+}
+.pl-edge { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pl-accent) 85%, var(--pl-video-ink)); }
+.pl-flash .pl-ring, .pl-flash .pl-edge { animation: pl-flash 0.5s ease-in-out 2; }
+@keyframes pl-flash { 50% { box-shadow: 0 0 0 5px var(--pl-warn), 0 0 0 10px color-mix(in srgb, var(--pl-warn) 30%, transparent); } }
+
+.pl-arrow { display: grid; justify-items: center; gap: 2px; color: var(--pl-accent); }
+.pl-arrow svg { width: 22px; height: 30px; display: block; }
+.pl-arrow-up { grid-auto-flow: row; }
+.pl-arrow-label, .pl-label {
+  font: 600 12px/1.25 var(--pl-font); white-space: nowrap; max-width: 14rem; overflow: hidden; text-overflow: ellipsis;
+  padding: 4px 9px; border-radius: 999px; color: var(--pl-on-accent); background: var(--pl-accent);
+  box-shadow: 0 2px 6px var(--pl-video-shadow);
+}
+.pl-label { padding: 3px 8px; }
+
+.pl-beacon { width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--pl-accent);
+  border: 2px solid var(--pl-surface); box-shadow: 0 1px 4px var(--pl-video-shadow); }
+.pl-beacon::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--pl-accent);
+  animation: pl-pulse 1.6s ease-out infinite; }
+@keyframes pl-pulse { from { transform: scale(1); opacity: 0.9; } to { transform: scale(3); opacity: 0; } }
+
+.pl-callout, .pl-note {
+  font: 500 14px/1.4 var(--pl-font); max-width: min(18rem, calc(100% - 16px)); padding: 9px 12px;
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong); border-radius: 10px;
+  box-shadow: var(--pl-shadow-lg); overflow-wrap: anywhere;
+}
+.pl-callout::before { content: ""; position: absolute; width: 10px; height: 10px; background: inherit;
+  border: inherit; border-width: 0 0 1px 1px; }
+.pl-side-bottom::before { top: -6px; left: calc(50% - 5px); transform: rotate(135deg); }
+.pl-side-top::before { bottom: -6px; left: calc(50% - 5px); transform: rotate(-45deg); }
+.pl-side-right::before { left: -6px; top: calc(50% - 5px); transform: rotate(45deg); }
+.pl-side-left::before { right: -6px; top: calc(50% - 5px); transform: rotate(-135deg); }
+.pl-note { border-left: 4px solid var(--pl-accent); font-size: 13px; }
+
+.pl-cursor { width: 24px; height: 24px; margin: -3px 0 0 -5px; z-index: 3; color: var(--pl-video-outline);
+  transition: left 700ms var(--pl-ease), top 700ms var(--pl-ease); filter: drop-shadow(0 2px 3px var(--pl-video-shadow-strong)); }
+.pl-cursor svg { display: block; width: 24px; height: 24px; }
+.pl-cursor svg path { fill: var(--pl-video-ink); stroke: var(--pl-video-outline); stroke-width: 1.5; stroke-linejoin: round; }
+.pl-cursor.pl-still { transition: none; }
+.pl-cursor::after { content: ""; position: absolute; left: -6px; top: -6px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--pl-accent); opacity: 0; }
+.pl-cursor.pl-tap::after { animation: pl-tap 0.36s ease-out; }
+@keyframes pl-tap { from { transform: scale(0.4); opacity: 0.7; } to { transform: scale(1.8); opacity: 0; } }
+
+.pl-badge { top: 10px; right: 10px; z-index: 4; font: 600 12px/1 var(--pl-mono); padding: 6px 9px; border-radius: 6px;
+  color: var(--pl-video-ink-soft); background: var(--pl-video-badge); }
+.pl-subtitle { left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 4; width: max-content;
+  max-width: calc(100% - 24px); margin: 0; padding: 8px 14px; border-radius: 8px; text-align: center; text-wrap: balance;
+  font: 500 16px/1.4 var(--pl-font); color: var(--pl-video-ink); background: var(--pl-video-scrim); }
+
+/* A title card is pinned to the window (the player fits it to the part of the stage in view), so on a long page it
+   never sits off screen. */
+.pl-card { position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 4; display: grid; place-items: center;
+  padding: 16px; border-radius: 12px; background: color-mix(in srgb, var(--pl-bg) 90%, transparent); }
+.pl-card-box { max-width: 30rem; display: grid; gap: 10px; text-align: center; padding: 28px 24px; font-family: var(--pl-font);
+  background: var(--pl-surface); border: 1px solid var(--pl-border); border-radius: var(--pl-chrome-radius);
+  box-shadow: var(--pl-shadow-lg); }
+.pl-card-box h2 { margin: 0; font-size: clamp(20px, 3vw, 26px); line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.pl-card-box p { margin: 0; color: var(--pl-muted); overflow-wrap: anywhere; }
+.pl-card-link { justify-self: center; font-weight: 600; color: var(--pl-accent); text-underline-offset: 2px; }
+/* A tour that opens in play mode waits on its first card for Start, with or without voice. */
+.pl-card-start { justify-content: center; margin-top: 6px; }
+.pl-card-start[hidden] { display: none; }
+
+/* "Skip to the walkthrough": the first stop in the tab order while a tour runs, off the window until it has focus, so
+   it never takes room from the screen (on every page with the player, the app view included). */
+.pl-skip { position: fixed; left: 8px; top: -60px; z-index: 45; padding: 8px 12px; font: 600 14px/1.3 var(--pl-font);
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong);
+  border-radius: var(--pl-radius-sm); }
+.pl-skip:focus { top: 8px; }
+.pl-eyebrow { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+.pl-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The dock: the walkthrough's own controls, at the bottom of the window. */
+.pl-dock {
+  position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 40; margin: 0 auto; max-width: 46rem;
+  max-height: 55vh; overflow: auto; display: grid; gap: 8px; padding: 12px 14px; font-family: var(--pl-font);
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong);
+  border-radius: var(--pl-chrome-radius); box-shadow: var(--pl-chrome-shadow);
+}
+body.pl-docked { padding-bottom: calc(var(--pl-dock-h, 12rem) + 16px); }
+/* The real control a wrong click should have hit blinks (any pointing style, also none). */
+.pl-attn { outline: 3px solid var(--pl-warn) !important; outline-offset: 3px; animation: pl-attn 0.4s ease-in-out 3; }
+@keyframes pl-attn { 50% { outline-color: transparent; } }
+.pl-dock .pl-eyebrow { font-size: 12px; letter-spacing: 0; text-transform: none; overflow-wrap: anywhere; }
+.pl-dock-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-dock-top .pl-group { flex: none; flex-wrap: nowrap; }
+/* Hide panel (the button or H): the dock steps aside and this pill is all that is left, at the bottom of the window;
+   in guide mode it names the step, in play mode the subtitle already does. */
+.pl-pill {
+  position: fixed; left: 50%; bottom: 8px; z-index: 40; transform: translateX(-50%); max-width: calc(100% - 16px);
+  display: flex; align-items: center; gap: 10px; padding: 5px; font: 600 14px/1.3 var(--pl-font);
+  color: var(--pl-text); background: var(--pl-surface); border: 1px solid var(--pl-border-strong); border-radius: 999px;
+  box-shadow: var(--pl-chrome-shadow);
+}
+.pl-pill[hidden], .pl-pill [hidden] { display: none; }
+/* For a step whose target the panel would cover at the bottom of the window (a toast fixed to a bottom corner), the
+   dock or the pill moves to the top, below the shell's sticky bar (--pl-top, set by the player). */
+.pl-dock.pl-at-top, .pl-pill.pl-at-top { top: calc(var(--pl-top, 0px) + 8px); bottom: auto; }
+.pl-pill-title { min-width: 0; padding-left: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pl-pill .pl-btn { flex: none; }
+.pl-dock .pl-title { margin: 0; font-size: 17px; line-height: 1.3; overflow-wrap: anywhere; }
+.pl-dock .pl-caption { margin: 0; color: var(--pl-text); overflow-wrap: anywhere; }
+.pl-dock .pl-caption:empty { display: none; }
+.pl-hint { margin: 0; padding: 8px 10px; border-radius: 8px; font-size: 14px; color: var(--pl-text);
+  background: color-mix(in srgb, var(--pl-warn) 14%, var(--pl-surface)); border: 1px solid var(--pl-warn); }
+.pl-progress { position: relative; height: 24px; }
+.pl-track { position: absolute; left: 0; right: 0; top: 9px; height: 6px; border-radius: 999px; background: var(--pl-sunk);
+  box-shadow: inset 0 0 0 1px var(--pl-border); overflow: hidden; }
+.pl-fill { height: 100%; width: 0; background: var(--pl-accent); border-radius: inherit; }
+.pl-marks { position: absolute; inset: 0; }
+.pl-marks button { position: absolute; top: 0; width: 24px; height: 24px; margin-left: -12px; padding: 0; border: 0;
+  background: transparent; cursor: pointer; }
+.pl-marks button::before { content: ""; position: absolute; left: 7px; top: 5px; width: 10px; height: 14px; border-radius: 3px;
+  background: var(--pl-surface); border: 2px solid var(--pl-border-strong); }
+.pl-marks button[aria-current="step"]::before { background: var(--pl-accent); border-color: var(--pl-accent); }
+.pl-marks button:hover::before { border-color: var(--pl-accent); }
+.pl-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.pl-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pl-controls .pl-spacer { flex: 1 1 0; min-width: 0; }
+.pl-btn {
+  font: inherit; font-size: 14px; font-weight: 600; min-height: 36px; padding: 0 14px; border-radius: 999px; cursor: pointer;
+  color: var(--pl-text); background: var(--pl-bg); border: 1px solid var(--pl-border-strong);
+}
+.pl-btn:hover { background: var(--pl-sunk); }
+.pl-btn:disabled { opacity: 0.5; cursor: default; }
+.pl-btn.pl-primary { color: var(--pl-on-accent); background: var(--pl-accent); border-color: var(--pl-accent); }
+.pl-btn.pl-primary:hover { background: color-mix(in srgb, var(--pl-accent) 88%, var(--pl-text)); }
+.pl-speeds .seg { min-height: 32px; padding: 0 10px; }
+/* Voice: a toggle (aria-pressed); disabled with a note when the browser has no speech. */
+.pl-btn[data-pl="voice"][aria-pressed="true"] { color: var(--pl-on-accent); background: var(--pl-accent); border-color: var(--pl-accent); }
+.pl-voice-note { font-size: 12px; line-height: 1.3; color: var(--pl-muted); }
+.pl-typing { outline: 2px solid var(--pl-accent) !important; outline-offset: 2px; }
+.pl-show { position: relative; z-index: 1; }
+
+/* The guide panel: this screen, what you can do, try it, walkthroughs, what just happened. */
+.pp-guide:not([hidden]) { display: grid; gap: 12px; padding: 16px; background: var(--pl-surface);
+  border: 1px solid var(--pl-border); border-radius: 12px; }
+.pl-guide-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-guide-top h2 { font-size: 15px; line-height: 1.3; }
+.pl-guide-top .pp-btn { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.pl-guide-body { display: grid; gap: 14px; }
+.pl-guide-body section { display: grid; gap: 6px; }
+.pl-guide-body h3 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-muted); }
+.pl-guide-body p, .pl-guide-body li { font-size: 14px; overflow-wrap: anywhere; }
+.pl-gs-title { font-weight: 600; }
+.pl-guide-body ul, .pl-guide-body ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pl-gs-do button { font: inherit; font-size: 14px; text-align: left; width: 100%; padding: 6px 8px; border-radius: 6px;
+  color: var(--pl-text); background: transparent; border: 1px solid transparent; cursor: pointer; }
+.pl-gs-do button:hover { background: var(--pl-sunk); border-color: var(--pl-border); }
+.pl-gs-do .pl-from { display: block; font-size: 12px; color: var(--pl-muted); }
+.pl-gs-do .pl-chip { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px; font-weight: 700;
+  line-height: 18px; letter-spacing: 0.04em; border-radius: 999px; color: var(--pl-text); background: var(--pl-sunk);
+  border: 1px solid var(--pl-border); font-variant-numeric: tabular-nums; vertical-align: 1px; }
+.pl-gs-try, .pl-tours li .pl-group { display: flex; flex-wrap: wrap; gap: 6px; }
+.pl-guide-body .pl-btn { min-height: 32px; font-size: 13px; padding: 0 12px; }
+.pl-tours li { display: grid; gap: 6px; padding: 8px 0; border-top: 1px solid var(--pl-border); }
+.pl-tours li:first-child { border-top: 0; padding-top: 0; }
+.pl-tour-meta { font-size: 12px !important; color: var(--pl-muted); }
+.pl-feed li { font-size: 13px !important; color: var(--pl-muted); }
+.pl-feed li:first-child { color: var(--pl-text); }
+
+@media (max-width: 30rem) {
+  .pl-dock { padding: 10px 12px; }
+  .pl-subtitle { font-size: 14px; bottom: 10px; }
+  .pl-card-box { padding: 20px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-cursor, #pp-frame.pl-zoom-in { transition: none !important; }
+  .pl-beacon::after { animation: none !important; transform: scale(1.8); opacity: 0.45; }
+  .pl-cursor.pl-tap::after { animation: none !important; opacity: 0.5; transform: scale(1.4); }
+  .pl-flash .pl-ring, .pl-flash .pl-edge, .pl-attn { animation: none !important; }
+}

@@ -1,0 +1,16 @@
+# iOS conventions
+
+SwiftUI, using the generated `{{THEME_NAME}}Theme.swift` ([../../../assets/platforms/mobile/ios/](../../../assets/platforms/mobile/ios/)).
+Shared mobile rules: [../README.md](../README.md).
+
+- **Navigation:** `TabView` for top-level places, `NavigationStack` for depth, sheets (`.sheet`) for focused tasks; the
+  system back swipe always works.
+- **Controls:** native SwiftUI controls styled with the theme, never custom replacements for `Button`, `Toggle`, `Picker`,
+  `TextField`, `Menu`.
+- **Colours, type, spacing, radius, motion:** only the generated theme values; no `Color(red:...)` or fixed font sizes in views.
+- **Icons:** SF Symbols, by the names in `assets/icons/icon-map.json`.
+- **Dynamic Type:** every text style scales; layouts reflow at the largest accessibility size.
+- **VoiceOver:** each element has a label, a trait and a logical order; group related elements; custom actions for swipe actions.
+- **Haptics:** confirmation and user-caused errors only.
+- **Dark mode:** follows the system appearance; the theme switches by itself.
+- **Safe areas:** content respects them; backgrounds may extend.

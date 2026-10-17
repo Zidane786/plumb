@@ -56,16 +56,33 @@ project can run.
 | `/plumb:extract` | Existing UI | Inventories every value in use → clusters → a clean token set → the same design system. |
 | `/plumb:prototype` | A new screen, tab, flow or interaction | 2–3 variants, each as a clickable prototype and an every-state screens view → you pick → written into the main prototype, the reference to build. |
 | `/plumb:tour` | An extra or custom walkthrough | Writes a walkthrough script beyond the default one prototype makes (a client demo, another audience, several flows); the prototype plays it in guide mode or play mode. |
-| `/plumb:audit` | Any time | Full consistency report (HTML + terminal + exit code); offers Slate tickets. |
+| `/plumb:audit [fix\|improve]` | Any time | Report (HTML + terminal + exit code); `fix` repairs issues with your OK; `improve` finds and, with your OK, makes the system and screens better (prototype first). Offers Slate tickets. |
 | `/plumb:ux` | After building a screen or flow | UX review against the project's UX rules and its prototype; HTML report; offers Slate tickets. |
 | `/plumb:update` | The design changes | Change or add tokens and components, add a platform, improve a part; regenerate; record; audit. |
 | `/plumb:upgrade` | The plugin has a new version | Brings the project's copied files, tokens format and `PLUMB.md` up to the plugin's version. |
-| `/plumb:status` | Health | Version, platforms, stale files, audit counts, hooks on/off, linked repos. |
+| `/plumb:status` | Health | Version, platforms, stale files, audit counts, hooks on/off, linked repos. Writes no file; in a set-up project never suggests create or extract. |
+| `/plumb:feedback` | Plumb itself got something wrong | Plumb mistakes only: the agent records each Plumb result it corrected in `~/.plumb/feedback/` (outside the project); typed, it reports every record grouped, most frequent first, and drafts GitHub issue text (never sent). Model-invocable. |
 
 Every skill asks one question at a time through the question tool, with options and a
 recommendation first, and never writes into a project without saying where. Skills that run a
 heavy flow (create, extract, upgrade, update) only run when the user typed them; other skills may
 *offer* them.
+
+**What the user confirms is inside the question** (live test 2): the "Plumb found" block, the
+"Right?" summary, decisions, the token set, the dry-run file list, a diff or a mapping is the
+question text (or the recommended option's preview), never only a message before it, because
+Claude Code can hide text printed right before a question; Copilot CLI's ask tool takes it in
+the question text. **Scripts give evidence, not answers:** no script output is golden; the agent
+checks every result against the code, corrects or adds to it (marked `(corrected: <why>)` /
+`(added: <why>)`) and shows that inside the question; a script wrong in a way that will recur is
+reported upstream (an audit false positive may go on `PLUMB.md`'s `Allowed raw values:` after the
+user's OK), and every Plumb mistake the agent corrects is recorded with `/plumb:feedback` (§3.10). **Investigate first:** before asking, the agent gathers every fact the code can answer
+into an evidence table (fact, value, `file:line`, confidence); facts are shown as `found: …` to
+confirm, and only what the code cannot tell is asked. **Scripts read what the user confirmed;
+they don't guess the layout:** the UI files and the route roots (`PLUMB.md` `UI files:` and
+`Routes:`) come from the investigation, are confirmed with matched-file counts, and are what the
+audit and the hooks read. Every skill resolves the plugin root and the project root first and
+reads files only under them; scratch files go only in `<root>/.plumb-tmp/` (status writes none).
 
 ### 3.1 `/plumb:init`
 
@@ -80,9 +97,61 @@ heavy flow (create, extract, upgrade, update) only run when the user typed them;
 ```
 
 Re-running init in a set-up project shows status and offers `/plumb:upgrade` when the plugin is
-newer. It never overwrites an existing design system.
+newer. It never overwrites an existing design system. A skill path the repo's `.gitignore`
+ignores is never accepted silently: init shows the ignoring line and asks (un-ignore the skill
+folder with `.claude/*` + `!.claude/skills/`, recommended, or another location), and the check
+runs again after the change. A leftover marker `<root>/.plumb-tmp/setup-in-progress` marks a
+half-finished setup: init offers to resume. A new `AGENTS.md` is a
+whole file (title, `## Read before you work`, the table header, the row).
 
 ### 3.2 `/plumb:create`
+
+**Nothing is written without the user's OK.** Every fact Plumb detects (project root, framework,
+styling, platforms, brand colours and fonts found in the code) is a suggestion the user confirms or
+corrects. Before generating, the user approves the full token set (light and dark); before writing,
+the dry-run list of every file and path; each contrast fix; and which components are written, in
+which framework and where. When a web copy is a stylesheet the project already has (e.g.
+`app/globals.css`), the build's change is shown first (`build-tokens.py --check` prints the diff)
+and asked: Plumb adds and owns only a marked `plumb:start … plumb:end` block; the rest stays the
+project's. When that stylesheet sets its own variables in the tokens' namespaces (a stock
+create-next-app `@theme inline { --color-background; --color-foreground; --font-sans; --font-mono }`,
+the audit's `block-override`), create and extract show each with the token it maps onto
+(`build-tokens.py --overrides`) and ask once, "move them into the tokens" recommended; only on yes
+does `--overrides --apply` add the tokens and remove the lines, so a fresh create on a stock app
+ends with the audit at 0. Two choices become tokens settings the generator honours: how the app switches themes
+(`$extensions.plumb.web.theme_switch`: `both`, `system`, `class` or `data-theme`, the attribute
+next-themes sets by default; answers key `theme_switch`)
+and reduced motion (`$extensions.plumb.motion.reduced`: `keep-fades` or `none`; answers key
+`reduced_motion`); extract always asks both, recommending what the app already does. The same
+applies to extract (each token group, the screens to prototype, the files to write) and to init's
+wire-in steps. `PLUMB.md` names the direct commands; the `(make …)` hints are added only when the
+user says yes to the Makefile targets, and `scaffold.py --verify` reports a make target `PLUMB.md`
+names that the Makefile lacks.
+
+**Checkpoints that stop and wait** (live test 2, where an agent skipped the direction pick, the
+token set and the file list and ran the scaffold unasked): create and extract are numbered
+checkpoints, each ending "STOP: ask, wait for the answer"; a tool's permission prompt never
+counts as the user's OK. The real scaffold needs `--confirm <token>`, printed only by the dry run
+the user approved (in create, extract, update and upgrade alike). Tailwind projects record
+`$extensions.plumb.web.reset_palette` (answers key `reset_palette`; the reset covers all six
+namespaces, and with `false` the audit still flags off-scale defaults such as `text-lg`): create
+on a new app recommends the reset (only the tokens' values exist);
+extract, or create on an app that already uses Tailwind's palette classes, recommends keeping
+them, with the count, and the audit suggests moving them onto tokens. The theme-switch
+recommendation follows one ordered rule (next-themes `attribute="class"` → `class`), with the
+evidence `file:line` in the question; Tailwind's own dark config (v4 `@custom-variant dark`, v3
+`darkMode`) counts as evidence, and an attribute Plumb doesn't follow leads to recommending a
+switch to `class`. The UX patterns are seven questions. **Setup in progress is the marker file
+`<root>/.plumb-tmp/setup-in-progress`**: only init, create and extract write it, from the
+placement OK to the end of setup; the end-of-turn check stands down while it exists, and init's
+resume check and status read it; setup ends by removing the whole `.plumb-tmp/`. Other commands
+may keep scratch files in `.plumb-tmp/` and clean up their own, never writing the marker. A long
+diff in a question is a summary plus the first ~40 lines, with the full diff in `.plumb-tmp/`.
+`PLUMB.md` `Routes:` is `<path> (<kind>)` (`next-app`, `next-pages`, `nuxt`, `sveltekit`,
+`router`, `angular`) or `none`; the kind comes from the investigation, never from a folder name.
+Before saying done, the agent walks a final checklist: every checkpoint that applied asked (any
+that did not: which and why), contrast evidence, components, the decision log, a first prototype
+screen (or the user's "later"), the wire-in, `.plumb-tmp/` removed.
 
 **A. The product first** (questions grouped up to four at a time, each with suggestions drawn from
 the brief, README, `AGENTS.md`/`CLAUDE.md`, `SLATE.md` and any prototype or brand files found):
@@ -155,6 +224,8 @@ real frontend:
 - `docs/design/screens.html`: the catalogue. A navigation sidebar and every screen in every state
   (loading, empty, error, success, disabled, long text, zero, offline where relevant), plus every
   control state (default, hover, focus, pressed, disabled, loading).
+- `docs/design/app.html`: the app view, for a demo. Every screen full window, with none of the
+  prototype's panels (§3.4.2).
 
 **One source per screen.** Both pages are assembled from `docs/design/prototype/screens/<id>.html`
 (one file per screen, its states marked with `data-state`, its interactions inline) by
@@ -162,6 +233,21 @@ real frontend:
 screen's id, title, states, its route and the source files that implement it. Editing one screen
 file updates both pages, so they cannot disagree. The token block in every page comes from
 `build-tokens.py --css-vars`, so prototypes are token-true, and `audit.py` must exit 0 on them.
+
+**Shared files.** CSS and scripts several screens use live once in `<screens folder>/_shared/*.css` and `*.js` (the
+main `prototype/screens/` and each variant's `screens/`; the folder is reserved, nothing in it is a screen). The CSS
+is inlined once per page in name order, selectors scoped by the author (`[data-screen]`; anything else is a warning);
+each JS file runs for every screen, before the screen's own script, as `function (screen, plumb)` with the same API, in
+name order, in every page (the catalogue's copies and the tour pages included). They are part of every screen's
+approval hash (with none, it is the screen file's own hash, so approvals recorded before stand): editing one makes
+those approvals stale, and the build names the file. Shared files are checked before they are inlined: no `</script>` /
+`</style>` inside, nothing loaded from the network or another file.
+
+**Change ids.** A change may mark each element it touched `data-guide="<ID> · what changed and why"`, `<ID>` a letter
+and digits (`F01`). A proposal lists its ids in `proposals/<name>/changes.md` (`- **F01** title: what and why`);
+`--proposal` refuses an id used but not listed (naming the screen and the id), warns about a listed id no screen uses,
+and the index lists the changes. The main screens' ids are checked only when `docs/design/prototype/changes.md`
+exists. The Guide panel shows the id as a chip; data-guide text without an id is never checked.
 
 **Decisions are visible in the prototype.** `build-prototype.py` reads `docs/design/decisions.md`
 and shows, on every screen, a "Why it looks like this" panel with the decisions that affect it
@@ -225,10 +311,15 @@ you to confirm, without blocking.
 from the existing app (every route, at the same level of interaction). When tokens change,
 `/plumb:update` rebuilds the token blocks and the drift check covers them.
 
-**Effective HTML is the reference for every prototype.** Variants, screen files and the shell
-follow the `html-prototype` and `design-artifact` skills when installed; when they are not,
-`reference/prototypes.md` carries the rules Plumb needs from them (real content, every state,
-working interactions, keyboard and focus, both themes, reduced motion, no generic look).
+**The project's design system outranks Effective HTML.** In a project, its
+`<project>-design-system` (tokens, `design.md`, references) is the authority for every page and
+screen Plumb produces. Variants, screen files and pages follow the `html-prototype` and
+`design-artifact` skills when installed, for craft only (real content, every state, working
+interactions, keyboard and focus, accessibility, polish); the palette, typography, spacing, radius
+and motion always come from the system, and where the two disagree the system wins. When the skills
+are not installed, `reference/prototypes.md` carries the same craft rules. Prototypes use only the
+inlined token block and the audit exits 0 on them. The one exception is create's directions page,
+written before any system exists: each direction is a candidate system.
 
 ### 3.4.1 Walkthroughs and `/plumb:tour`
 
@@ -285,8 +376,66 @@ network, so it can be emailed to a client or put in training material; viewers c
 and click around the prototype. It is generated: the guard blocks hand edits, `--check` fails when
 it is stale, and it is rebuilt whenever a screen or the tour changes.
 
+**Where a tour plays (owner amendment, 2026-10-14).** Each tour file has `"view": "app" | "prototype"`;
+**missing means `app`**, and anything else exits 2 naming the tour file, the line and the fix.
+`tours/<id>.html` follows it: `app` is the app view (§3.4.2) with the player on top, a `<base
+href="../">`, opening straight into the tour, its closing card linking "Open the prototype";
+`prototype` is the prototype page (its screens list and decisions rail fold away while the tour
+runs). `prototype.html#tour-<id>` keeps playing every tour in the prototype, and `app.html` itself
+carries no player. `/plumb:tour` asks **"Where should it play?"** right after the audience
+question (*Full-window app (Recommended)* · *Prototype page (with the screens list and the decisions
+rail, for a design review)*), records it and shows both links at the end; `/plumb:prototype`'s
+default tours are written without `view`. In both views `#tour-<id>[-<n>]` links work and the
+player moves between screens (also through the clicks it makes) without adding history entries.
+Because the page scrolls in the app view, a step's element is brought into view clear of the
+screen's own top-anchored fixed or sticky bars (those across its columns, sticking to the window,
+under half its height), and a zoom step on a screen showing a fixed layer points with a spotlight
+instead (a transform on the frame would make it the containing block of those layers and pull
+them to the top of the page). Both shells take the player's `--pl-*` roles from one shared
+template, `templates/chrome-roles.css`, and `prototype.html` links "Open as app" to
+`app.html#/<screen>[/<state>]`.
+
+**Tour checks (owner amendment, 2026-10-14).** `build-prototype.py --check-tour <file>` validates one tour file against
+the screens, as the build does, and writes nothing (exit 0 / 2). It also **warns** when a step's target, label or
+action element sits in an element the screen's own CSS hides at some frame widths (`display: none`, `visibility:
+hidden` or an off-canvas `transform` outside an `@container plumb-frame (min-width: …)` rule that shows it again, or
+the reverse): "visible only when the frame is ≥ 48rem". It reads the `_shared/*.css` files and the screen's own styles (in the page's order): their top-level rules and
+`@container plumb-frame` blocks with a standard-library reader (cascade by `!important`, specificity and order) and the selector
+subset above; what it cannot read is left out. The runtime pass is plugin-side (ruling B4), `scripts/check-tour.py
+<docs>/tours/<id>.html` (not copied into projects, like `screenshot.py`): with a browser screenshot.py's search finds
+(or `--browser`), it writes a scratch copy under `<project>/.plumb-tmp/` (its `<base>` pointed at the original's
+folder) with a checker script, runs it headless with `--dump-dom` and `--virtual-time-budget` at 1280 and 1440 wide
+(light theme), and the checker walks every step in guide and in play mode through the player's API (play paused at
+once, nothing waits real time). Per step: the page shows the step's screen and state; each target, label and action
+element is laid out, not `visibility: hidden` or `opacity: 0`, not zero-size, inside the window and not covered at
+its centre (the panel, a screen's fixed or sticky layer); the dock is not
+covered (`elementFromPoint` at its centre). The results come back as JSON in the dumped DOM. Problems: exit 2, one line
+per step and problem with the widths and modes (`step 12 (Users › Invite): the target ".invite" is hidden
+(visibility: hidden) at 1280 (guide, play)`); no result or a hung browser: exit 1; no browser: exit 3 with a note and
+a fix. Nothing is downloaded. `/plumb:tour` runs both after the build, fixes the steps they name, and with no browser
+says so and asks whether to continue.
+
 Turning a tour into in-app onboarding in the live product is out of scope
 for 1.0.0.
+
+**Voice and subtitles (owner amendment, 2026-10-15).** Play mode can speak its captions with the browser's built-in
+speech (`speechSynthesis`) and the voices already on the computer: no download, no package, offline. A "Voice" button
+(a toggle, `aria-pressed`) and the `V` key (not while typing, no modifiers, no repeat); off by default (screen-reader
+users must not hear captions twice); the choice is kept in `localStorage` (try/catch). The voice reads the same caption
+line the player shows (cards: title and text; steps: the subtitle); a step's optional `"say"` (validated like
+`caption`) replaces it for speech only. The page's `lang` picks the voice. Rate follows the speed: ≈ 0.9 at 1× (about
+150 words a minute), 0.7 at 0.5×, capped at 1.15 and 1.3 at 1.5× and 2×, with a short pause after each sentence; with
+the voice on a caption stays while it is spoken, then the step's hold, then the next. Pause stops the sentence and
+Play speaks it again; restart, chapter jumps, Back/Next, leaving, Hide panel and a speed change cancel or restart the
+sentence. Browsers speak only after a user gesture, so a tour that opens in play mode with its page waits on its
+first card with **Start with voice** / **Start without voice** (the remembered choice is the default; Play or Space
+starts with it; Next, Back or a scene marker start it without voice). No `speechSynthesis`, no voices after ~1 s, or speech blocked → the Voice button is disabled with
+"Voice isn't available in this browser", the first card offers only Start, captions and today's timing; an error
+mid-run (`onerror`, or no `onend` within a safety time from the sentence's length in words or characters) → one note "Voice stopped: continuing with
+captions", voice off for the rest of the run, never a stall. **Subtitles:** the player records when each caption
+really shows, in memory for the current run only (never stored or sent); "Save subtitles (.vtt)" (in the panel while
+playing and at the end) downloads `<tour id>.vtt` (WebVTT, a Blob made in the page) matching a screen recording of
+that run at any speed. Only the Voice on/off choice is stored.
 
 `/plumb:prototype` **always writes a default walkthrough** for each flow it builds (you review
 its steps and words together with the screens), and updates it when the flow changes.
@@ -299,6 +448,42 @@ the prototype.
 HTML, real tokens, audited, clickable, kept in step with the code). Figma remains better for
 freehand visual exploration and illustration, designers editing together on one canvas, and
 handoff to teams that don't build with agents.
+
+### 3.4.2 The app view (`app.html`)
+
+`build-prototype.py` also writes `<docs>/app.html` from the same screens, tokens and scripts:
+every screen full window, with no prototype panels (no screens list, state switcher, frame or theme
+toggles, decisions rail or player). **prototype.html is for reviewing, app.html for demoing**;
+`/plumb:prototype` and the proposal index name both.
+
+- **Routes:** `#/ID` and `#/ID/STATE`; `#screen-ID[/STATE]` works too, so the screens' own links
+  and the prototype's addresses keep working. It opens on the first screen by `data-order` (no
+  project-specific forwarding); an unknown id opens that first screen.
+- **The same screen-script API** as `prototype.html`: `function (screen, plumb)` with
+  `plumb.setState`, `plumb.go`, `plumb.state`, `plumb.catalogue === false`, plus `window.plumbTheme`
+  and `window.plumbPrototype` (`go`, `setState`, `current`, `screen`, `setTheme`, `on`).
+- **Theme:** the system setting until a screen's own toggle picks one, then remembered in
+  `localStorage` (a per-viewer convenience: when storage is off or throws, the page still renders
+  and the choice lasts the visit).
+- **The window is the frame:** the frame (`#pp-frame`, inside the stage `#pp-stage` a tour page's
+  player draws over) is `container: plumb-frame / inline-size` and spans the window, so the md
+  breakpoint follows the window; it has `isolation: isolate`, so a screen's z-indexes never cover
+  what is drawn over it.
+- **Sidebar hook:** an element with `data-app-sidebar` in a screen is `position: sticky; top: 0;
+  height: 100dvh` from the md breakpoint. Nothing else about a screen's layout is assumed.
+- **Dialogs:** a long screen scrolls the page, so a change that opens a dialog (`dialog[open]`,
+  `role="dialog"` or `"alertdialog"`, `aria-modal="true"`) brings it into view: a state change on the
+  same screen, `plumb.go(other, state)` or a link straight to that state. Only a dialog the change made
+  visible counts (on another screen: compared with its first state), so a dialog that was showing
+  already (a docked help panel) never moves the page.
+- **Fixed elements:** the frame is an inline-size container, which is no containing block for
+  `position: fixed`, so a screen's fixed toasts and bars sit on the window as in the product. The frame
+  and stage must not get `transform`, `filter`, `perspective`, `contain: layout`/`paint` or the like.
+- **The md breakpoint** is the frame's width, the window minus a classic scrollbar (about 17 px on
+  Windows): a window just over 48rem with such a scrollbar shows the layout below md.
+- Generated like the other pages (byte-stable, offline, light and dark; `--check` reports it stale
+  or missing; the tokens build refreshes its token block). Each proposal variant gets its own
+  `proposals/<name>/<variant>/app.html`. `app.html` itself carries no player.
 
 ### 3.5 `/plumb:audit`
 
@@ -315,6 +500,30 @@ with `file:line`, what's wrong, the token or component to use, the fix), prints 
 and exits 0 when there are no errors. When Slate is set up, it offers to create tickets for the
 fixes, grouped by area, written only through `board.py`. With no design system yet (a prototype or
 a project before extract) it runs in inconsistency-only mode.
+
+**The script is the floor, not the ceiling.** `audit.py` catches everything that can be written as
+a rule, the same way every time (and is what the hooks and CI rely on). The audit skill does not
+rely on it alone: after the script, the agent reviews the screens in scope against `design.md`,
+`ux.md` and the prototype for what no rule expresses (hierarchy broken while still using tokens,
+two screens solving the same thing differently, wording off the vocabulary, an unhelpful state,
+something that looks wrong in dark mode). Those findings are marked **agent review** in the report,
+separate from rule findings; when the agent keeps finding the same kind of problem, it proposes it
+as a new rule.
+
+**Three modes.** `/plumb:audit` reports only (errors, warnings, and the Improvements list).
+`/plumb:audit fix` fixes errors and warnings: it groups them (e.g. "12 raw colours → tokens"), shows
+each group, asks, applies it, and re-runs until clean; anything that changes how a screen looks goes
+through the prototype first. `/plumb:audit improve` is for a project that already passes (or after
+`fix`): it goes beyond the rules with the suggestions plus a design pass across the product
+(hierarchy, spacing rhythm, consistency between screens, states, dark-mode polish, accessibility
+beyond AA), produces a ranked improvement plan, and for each item the user picks: prototype first →
+approval → build. Changes to the design system itself are proposed here and made in `/plumb:update` (§3.7). `improve` also improves **the design
+system itself** when the findings show it should change (a missing or mergeable token, a component
+spec that needs a variant, a `ux.md` or `design.md` rule that screens keep breaking for a good
+reason): with the user's OK, `/plumb:update` updates tokens and specs, regenerates the themes,
+refreshes the prototypes, records the decision, and re-runs the audit. Every change is recorded in the decision
+log; any item can become a Slate ticket instead. `/plumb:ux` remains the deep review of one screen
+or flow; `audit improve` looks across the whole product and the system.
 
 ### 3.6 `/plumb:ux`
 
@@ -339,6 +548,12 @@ Android": generates the themes, references and starters), or improves a part (e.
 Regenerates every output and prototype token block, records the decision, runs the audit and shows
 the diff.
 
+**Improving the system from the audit.** `/plumb:update` reads the latest audit's system-level
+suggestions (missing or mergeable tokens, component specs that need a variant, `ux.md` or
+`design.md` rules that real screens keep breaking for a good reason), proposes them one at a time
+with options and a recommendation, and applies what the user approves: tokens and specs updated,
+themes regenerated, prototypes refreshed, the decision recorded, and the audit re-run.
+
 ### 3.8 `/plumb:upgrade`
 
 The Slate model:
@@ -354,11 +569,64 @@ The Slate model:
 The session-start hook nudges ("run /plumb:upgrade") when `PLUMB.md` is older than the plugin.
 Upgrade never runs on its own.
 
+**Same version, another build** (owner amendment, 2026-10-16): when the versions match but Plumb's own `[P]` files in
+the project differ from the plugin's (a pre-release or branch build, or a hand edit), `version.py` lists them
+(`files_differ`), the session-start line and `/plumb:status` say so, and `/plumb:upgrade` shows the evidence (each
+file's last commit, a local edit, the latest "Plumb updates" line) and asks before refreshing; the files cannot tell
+which build is newer, so the user decides. **A page in the way:** `build-prototype.py` never replaces a page at one of
+its paths that it did not write (no header of its own: another tool's page or a hand-written one); it stops before
+writing anything and names a free `<name>.before-plumb.html` to move it to, after the user's yes; `build-tokens.py`
+leaves a `specimen.html` it did not write as it is (everything else is built; a `warning:` and a `fix:` say how to move
+it; `--check` exits 1).
+
 ### 3.9 `/plumb:status`
 
 Plugin and project versions, platforms, home or linked repo, stale generated files
 (`build-tokens.py --check`), audit error and warning counts, hooks on/off, prototypes and their
 freshness.
+
+### 3.10 `/plumb:feedback`
+
+A local log of **Plumb's own mistakes**, for Plumb's developers (owner decision, 2026-10-13). Scripts give
+evidence, not answers, so the agent corrects them; each correction is also a bug report for Plumb, and this command
+keeps it.
+
+- **Scope: Plumb mistakes only.** The test: *would fixing this mean changing Plumb, not the project?* In: a script's
+  wrong or incomplete result the agent corrected; a hook's wrong refusal, missed refusal, crash or timeout that failed
+  open, or confusing message; a skill step that was unclear, wrong or missing; a template or doc that disagrees with
+  the code; a per-CLI quirk. Out: the project's design issues (→ `/plumb:audit`), decisions (→ the decision log), the
+  project's own bugs, and its source code (a record holds only paths, `file:line`, the repo's shape and short exact
+  text; never a secret). Examples: `detect.py` proposing `src/**` for a UI in `frontend/src/` is feedback; a
+  hard-coded `#123456` in a page is an audit finding.
+- **Where:** `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on Windows), plain Markdown, outside every
+  project, never written into one. One file per finding, `YYYY-MM-DD-<script>-<category>-<project>.md` (a `-2`, `-3`
+  suffix when taken); `hooks.md` for the hooks' own failures (§8); `handled.md`, the index of groups marked handled.
+- **One skill, model-invocable** (`skills/feedback/SKILL.md`, the single teacher and collector). Its description says
+  when to use it: "Record a mistake in Plumb itself: a Plumb script, hook, skill, template or doc that gave a wrong,
+  incomplete or confusing result you had to correct. Not for the project's own design issues — those are audit
+  findings." Its first lines: "Plumb mistakes only", the test, where non-Plumb things go, the two examples.
+- **Log mode** (the agent loads it after correcting a Plumb result, or the user types `/plumb:feedback log …`): one
+  record with the fields When (date, Plumb version, CLI, OS) · Project shape · Where it failed (file → function, rule
+  or step) · Command (exact, with cwd) · Given (exact output) · Expected · Evidence (`file:line`, match counts) · Repro
+  (minimal repo shape) · Category (missed structure | wrong guess | false positive | missed problem | crash | timeout
+  | confusing message | skill gap | docs mismatch | CLI quirk; `timeout` added in review, for the hooks' log) · Suggested fix in Plumb · Handled here; a crash adds the exit code
+  and the traceback's last lines, a hook mistake its event, tool, path, exit code and message. Written with the
+  agent's normal file-write tool: the CLI's permission mode governs; Plumb adds no question. Then one line to the user
+  and back to the task.
+- **Report mode** (the user types `/plumb:feedback`): read every record (all projects) and `hooks.md`; group by
+  script · function · category with counts and projects, most frequent first, given vs expected; then one question at
+  a time: show a group in full · draft a GitHub issue for Plumb (text only, projects only by shape, never sent) · mark
+  a group handled (`handled in <version>` in `handled.md`; records are never deleted) · filter by project, script or
+  date.
+- **Pointers only; the format lives in the skill.** Every Plumb skill, next to "Scripts give evidence, not answers":
+  "When a Plumb script or hook is wrong and you correct it, record the Plumb mistake with /plumb:feedback."; the
+  `AGENTS.md`/`CLAUDE.md` row ends "· Plumb's own mistakes → /plumb:feedback"; `PLUMB.md` says "Plumb's own mistakes
+  (a script, hook or skill got it wrong): /plumb:feedback. The project's design issues: /plumb:audit."; session start
+  adds one short line, "Plumb mistakes (a Plumb script, hook or skill got it wrong) → /plumb:feedback" (it covers a
+  project that declined the `AGENTS.md` offer); Kiro installs the skill as `/plumb-feedback`. Every pointer says
+  "Plumb mistakes" or "Plumb's own mistakes" (a docs test enforces it).
+- **Developer flow:** a group → a minimal repro → a failing test in the Plumb repo → the fix → a patch release → mark
+  the group handled. Nothing leaves the machine.
 
 ## 4. Placement
 
@@ -372,6 +640,13 @@ Init never assumes the folder it was opened in is the project.
 | Separate frontend repo | UI dependencies (next, react, vue, svelte, angular, tailwind), Xcode project, Compose | Skill + `PLUMB.md` in this repo. |
 | Backend-only repo | Python/Go/Java/… markers, no UI | Asks: (a) the frontend is in another repo (give the path; set up there), (b) the frontend will live here (create here), (c) design only for now (create here, platforms later). |
 | Several UI repos share one system | Named at init | One **home** repo owns the system. Other repos get only `PLUMB.md` with `Design system: <path to the home skill>` and the AGENTS/CLAUDE row pointing there; agents read it there. The home's `build-tokens.py` can write generated copies into those repos (paths in its tokens JSON). |
+
+**Detection is a first guess, never the decision.** `detect.py` only looks for well-known marker
+files and folders, and no script can know every layout. The init skill must not rely on it alone:
+it reads the result, and when the result is uncertain, empty or odd it looks through the folders
+itself; it then always shows the user what it found and asks them to confirm or correct it. What
+the user confirms is what gets written, and it is recorded in `PLUMB.md` so later commands never
+guess again.
 
 Before writing, init shows what it found and what it will create, and waits for confirmation:
 
@@ -387,6 +662,13 @@ I'll create:
   generated copy → apps/web/app/globals.css
 OK, or change something?
 ```
+
+**Moving it later.** If the design system ends up in the wrong place, or the user later wants it
+elsewhere, `scaffold.py --relocate FROM TO` moves the skill and updates every reference in one step
+(`PLUMB.md`, the `AGENTS.md`/`CLAUDE.md` row, Makefile targets), then runs the generator check.
+`/plumb:status` runs `scaffold.py --verify` and offers the move when `PLUMB.md` and the actual
+location disagree; init uses the same step when the user changes their placement answer. Files are
+never moved by hand, so no reference is left pointing at the old place.
 
 The default skill location is `.claude/skills/<project>-design-system/`; both tools read it
 (Copilot CLI loads skills from `.claude/skills`, `.github/skills`, `~/.copilot/skills` and
@@ -428,21 +710,25 @@ guard hook blocks it) · `[Y]` yours (written at create from your answers; chang
 │   ├── web/  stack.md · components.md · ux-guidelines.md · dark-mode.md     [Y] per chosen platform
 │   └── mobile/  README.md · components.md · ios/ · android/                  [Y]
 └── scripts/
-    ├── build-tokens.py                 [P] write every theme · --check · --migrate · --contrast · --css-vars
+    ├── build-tokens.py                 [P] write every theme · --check · --migrate · --contrast · --css-vars · --overrides
     ├── audit.py                        [P] full audit · --quick · --changed · --json · --html
-    ├── build-prototype.py              [P] screens/*.html → prototype.html + screens.html + screens.json · --check
+    ├── build-prototype.py              [P] screens/*.html → prototype.html + app.html + screens.html + screens.json + tour pages · --check
     └── _plumb.py                       [P] shared: token loading, colour maths, contrast, the inventory scanner
 docs/design/
 ├── specimen.html                       [G] every token and component, light and dark (fixed template)
 ├── decisions.md                        [Y] the design decision log (every direction, variant and screen chosen)
 ├── directions.html                     the create directions (kept as the record)
 ├── prototype.html                      [G] the main prototype: the whole product, clickable
+├── app.html                            [G] the app view: every screen full window, no prototype panels (for a demo)
 ├── screens.html                        [G] every screen × every state, control states, navigation
 ├── prototype/screens/<id>.html         [Y] one source per screen (states + interactions)
+├── prototype/screens/_shared/*.css|js  [Y] CSS and scripts several screens use (inlined once per page)
+├── prototype/changes.md                [Y] change ids (F01 …) the main screens' Guide chips use (optional)
 ├── prototype/screens.json              [G] screen → route, source files, states, sync status
 ├── prototype/tours/<flow>.json         [Y] walkthrough scripts (guide mode + play mode)
-├── tours/<tour>.html                   [G] one shareable file per tour: the prototype + that tour
-├── prototype/proposals/<name>/         variants from /plumb:prototype (both views) + index.html
+├── tours/<tour>.html                   [G] one shareable file per tour, in its view (app, default, or prototype)
+├── prototype/proposals/<name>/         variants from /plumb:prototype: per variant screens/ (+ _shared/), idea.md [Y]
+│                                       and prototype.html · app.html · screens.html [G]; changes.md [Y]; index.html [G]
 └── audit-*.html · ux-review-*.html · extract.html
 ```
 
@@ -497,8 +783,11 @@ project's own framework, from `references/components.md`, and must pass `audit.p
 ## 6. Engine
 
 Four standard-library Python 3.9 files, copied into each project's skill `scripts/`. The
-project's copy is what runs everywhere (Make, the hooks, CI, Windows), so the hook and the full
-audit always apply the same rules, and `upgrade` updates them together. The plugin repo keeps the
+project's copy is what explicit commands run (Make, CI, the skills), and `upgrade` keeps it in step
+with the plugin. **The hooks never run a project's copy:** they run the plugin's own installed
+scripts, so a cloned repository cannot get code executed just by containing a `PLUMB.md`; when the
+project's copy is a different version, the hook says "run /plumb:upgrade" (trust boundary
+documented in `SECURITY.md`). The plugin repo keeps the
 masters in `plugins/plumb/assets/skill/scripts/`.
 
 ### 6.1 `build-tokens.py`
@@ -511,8 +800,11 @@ masters in `plugins/plumb/assets/skill/scripts/`.
   (light/dark), type, radii, spacing, motion, icons. Android: Compose Material 3 colour schemes,
   type, shapes, motion.
 - `--check` exits 1 when any output, copy or prototype token block is stale. `--migrate` upgrades
-  the tokens schema additively. `--contrast` rewrites only the contrast block. `--css-vars` prints
-  the plain-CSS export used by prototypes and the specimen.
+  the tokens schema additively (and records the `theme_switch` / `motion.reduced` defaults the build
+  applies when they are missing). `--contrast` rewrites only the contrast block. `--css-vars` prints
+  the plain-CSS export used by prototypes and the specimen. `--overrides` prints, as JSON, a web
+  copy's own variables in the tokens' namespaces with the token each maps onto and the exact edits;
+  `--overrides --apply` makes them, only after the user's OK.
 - **Contrast** is computed with WCAG 2.2 relative luminance, in light and dark: every `on-X` over
   `X`, every text token over every surface, plus `extra_pairs`. Thresholds: 4.5:1 text, 3:1 large
   text and UI boundaries. Failures are listed with the nearest passing value.
@@ -542,23 +834,65 @@ reported only), platforms, check, and a token-aware fix (`#14857F` → `bg-prima
 - `extract`'s inventory uses the same scanner as inconsistency-only mode (in `_plumb.py`).
 - Exit codes: 0 no errors, 1 errors found, 2 nothing checked or bad input (with `fix:`).
 
+**Suggestions (improvements, not violations).** A third severity, `suggest`, never affects the
+exit code. It says what could be better, with a reason and a concrete fix: a missing token (the
+same raw value used 3+ times), unused or near-duplicate tokens in the system itself, components to
+consolidate into a variant, contrast headroom (a pair that only just passes, in light or dark, with
+a nearby value that passes comfortably), inconsistent spacing or radius for the same element, a
+screen missing a state that `ux.md` asks for, dark-mode polish (an elevation or boundary barely
+visible in dark), and accessibility beyond the minimum (icon-only controls without labels, weak
+focus rings). The HTML report shows them in an **Improvements** section after the issues, ranked by
+impact; each can become a Slate ticket, and `/plumb:update` can apply token suggestions with the
+user's OK.
+
 ### 6.3 `build-prototype.py`
 
 Assembles the main prototype from the screen files: `prototype.html` (an app shell with
 navigation, hash routing between screens, a state switcher, phone/desktop and light/dark toggles,
 each screen's own interactions, the per-screen decisions panel plus a Decisions page from
 `docs/design/decisions.md`, the per-screen guide panel, and the walkthrough player for every file
-in `tours/`) and `screens.html` (sidebar navigation, every screen × every
-`data-state`, and the control-state sheet generated from the tokens and components). It inlines
-`build-tokens.py --css-vars`, a small dependency-free runtime, and each screen's scripts, so both
-pages are single files that open from disk.
+in `tours/`), `app.html` (the app view of §3.4.2: every screen full window, hash routes `#/ID` and
+`#/ID/STATE`, the same screen-script API, no panels, from `templates/app-shell.html.tmpl`),
+`tours/<id>.html` per tour file (in the tour's `view`: the app shell with the player on top, the
+default, or the prototype shell; §3.4.1) and
+`screens.html` (sidebar navigation, every screen × every `data-state`, and the control-state sheet
+generated from the tokens and components). The two shells take the `--pl-*` roles of Plumb's own
+chrome from one shared template, `templates/chrome-roles.css`. It inlines `build-tokens.py --css-vars`, a small
+dependency-free runtime, and each screen's scripts, so every page is a single file that opens from
+disk. In `screens.html` each screen's markup, styles and scripts are in the page once (one
+`<template>` each), shared by its light and dark copies in every state; the page builds each copy's
+iframe from them and hides every outer state block but the copy's, and the token block is there
+once, so the page grows with the screens, not screens × states × 2. Any page it writes (the main
+pages, the tour pages, the proposal pages) over 10 MB prints one `warning: <page> is <N> MB, …`
+line naming every such page (also on `--check`, exit code unchanged), a note naming the heaviest
+screen files, and what helps: smaller screen files (every page holds each one once: inline `data:`
+images and large SVG moved into image files, very long sample content cut), or git-ignoring the
+pages with the build run in CI instead of `--check` (a git-ignored page is missing on a fresh
+clone). Splitting a screen into several files does not help, since every page still holds all of
+them.
 
 It is the **only writer of `screens.json`** (as Slate's `board.py` is of `tickets.json`): skills
-change it through commands, never by editing it. `--map <id> --route <route> --files <globs>`
+change it through commands, never by editing it. `--map <id> --route=<route> --files <globs>`
 sets a screen's route and source files (confirmed with you); `--approve <id>` records your
-approval (git `user.name`, date, hash of the screen file); `--synced <id>` marks a screen updated
-from already-built code. `--check` exits 1 when either page or the token blocks are stale, or a
+approval (git `user.name`, date, hash of the screen file and of its folder's `_shared/` files, whose own
+hashes are kept so a stale approval names the shared file that changed); `--synced <id>` marks a screen updated
+from already-built code. `--check` exits 1 when a page (`app.html` included) is stale or missing,
+the token blocks are stale, or a
 walkthrough step names a screen, state or element that does not exist. Same exit-code and error conventions as §6.1.
+`--check-tour <file>` checks one tour file the same way, writes nothing, and warns about a step element the screen's
+CSS hides below or above a frame breakpoint (§3.4.1, "Tour checks"); the browser pass is the plugin's `check-tour.py`.
+
+`--proposal <name>` builds `/plumb:prototype`'s variants instead of the main prototype: from each
+`docs/design/prototype/proposals/<name>/<variant>/screens/*.html` (and an optional `idea.md` with the variant's idea and
+trade-offs) it writes that variant's `prototype.html`, `app.html` and `screens.html` (light and dark, the token block
+inlined) and `proposals/<name>/index.html` with the variants side by side, each linking prototype.html to review and
+app.html to demo. The pages are generated (never edited) and
+byte-stable; `--check --proposal <name>` exits 1 when one is stale; `screens.json` is not touched. A variant or
+proposal folder that leads outside the proposals folder is refused. When tokens change, the main build and
+`build-tokens.py` refresh the token block of every generated proposal page, so old variants keep rendering. With
+`--proposal` (and `--check`) every change id a variant's screens use must be listed in `proposals/<name>/changes.md`
+(exit 2 naming the screen file and the id; a listed id no screen uses is a warning; §3.4 "Change ids"); shared files
+(§3.4 "Shared files") are read from each variant's `screens/_shared/` and inlined into that variant's pages only.
 
 ## 7. UX layer
 
@@ -581,15 +915,38 @@ UX is checked while building, not only after:
 4. **After:** `/plumb:ux` (§3.6) reviews the screen against `ux.md`, the prototype and usability
    heuristics, with screenshots when a browser is available.
 
+## 7a. Light and dark, everywhere
+
+Every design system Plumb makes works in **both themes** by default; a light-only project is an
+explicit decision recorded in the decision log and in `PLUMB.md` (`Themes: light-only`), which
+turns the dark rules off.
+
+- **Tokens:** every colour token has a dark value (`$extensions.plumb.dark`); a missing one is an
+  audit **error**, unless the token is marked `"same-in-dark": true` (a deliberate constant).
+- **Contrast:** every pair is computed in light and dark; the evidence table in `dark-mode.md`
+  shows both.
+- **Components:** built only from tokens, so they switch automatically; pages never write `dark:`
+  overrides; raw colours are errors because they don't switch.
+- **create / extract:** dark mode is part of the interview's design decisions by default;
+  directions show each direction in light and dark.
+- **Prototype:** `prototype.html` and every variant have a light/dark toggle; `screens.html`
+  shows every screen in every state in **both themes side by side**; tours play in either theme.
+- **Specimen, audit fidelity, `/plumb:ux`:** both themes (screenshots and checks in light and
+  dark when a browser is available).
+- **Tests:** browser checks render every generated page in light and dark.
+
 ## 8. Hooks
 
 Three scripts behind Slate's launchers: `run.sh` (python3 / python / py -3, 3.9+), `run.cmd` and
 a `powershell` command on every hook for Windows Copilot. All three apply in **both tools**.
+In Kiro (§12b) the same scripts run with `--kiro`; on Windows each Kiro hook starts through PowerShell
+(`powershell -NoProfile -NonInteractive -EncodedCommand …`, the same fail-open body as the
+Copilot hooks), which adds about 0.3 s per hook.
 
 | Script | Event · matcher | Job |
 |---|---|---|
-| `session_start.py` | SessionStart | One status line (`Plumb: caredesk-design-system 1.0.0 · tokens up to date · 3 audit issues · read the skill before UI changes`); "run /plumb:upgrade" when `PLUMB.md` is older than the plugin; a warning when a linked design system path is missing. Copilot: `{"additionalContext"}`. Takes the session snapshot (hash of every UI file already changed or untracked). Silent in projects without `PLUMB.md`. |
-| `pre_edit.py` | PreToolUse · `Edit\|Write\|MultiEdit\|Bash\|PowerShell` | **Prototype first:** refuses creating a new page or route file that has no approved screen in `screens.json` (when prototype sync is on). **Guard:** refuses hand edits to generated files (themes, copies, `specimen.html`, `prototype.html`, `screens.html`, `screens.json`, `tours/*.html`), including shell writes (`sed -i`, `>`, `tee`, …, parsed as Slate parses them); running `build-tokens.py` is allowed. **Edit check** (when on): computes the file before and after the edit, runs `audit.py --quick`, refuses only errors the edit adds. |
+| `session_start.py` | SessionStart | One status line (`Plumb: caredesk-design-system 1.0.0 · tokens up to date · 3 audit issues · read the skill before UI changes`); "run /plumb:upgrade" when `PLUMB.md` is older than the plugin, a note when Plumb's own files differ from the plugin's at the same version; a warning when a linked design system path is missing. Copilot: `{"additionalContext"}`. Takes the session snapshot (hash of every UI file already changed or untracked). Silent in projects without `PLUMB.md`. |
+| `pre_edit.py` | PreToolUse · `Edit\|Write\|MultiEdit\|Bash\|PowerShell` | **Prototype first:** refuses creating a new page or route file that has no approved screen in `screens.json` (when prototype sync is on). **Guard:** refuses hand edits to generated files (themes, copies, `specimen.html`, `prototype.html`, `app.html`, `screens.html`, `screens.json`, `tours/*.html`, and a proposal's `index.html` and each variant's `prototype.html`, `app.html`, `screens.html`; a `specimen.html`, `prototype.html`, `app.html`, `screens.html`, tour or proposal page without the header Plumb's build writes is the project's own and is left alone; one that is empty or cannot be read counts as Plumb's) and to Plumb's own files: the `[P]` files in the project's design-system skill (`scripts/*.py`, `templates/*`) and the plugin's helpers and hooks ("this is Plumb's file; upgrades replace it: use `/plumb:update` for design changes, or propose the improvement to the Plumb repo"); only in projects with a `PLUMB.md`, so developing Plumb itself is never blocked; including shell writes, read for their real write targets (a redirect, `tee`, `sed -i`, the destination of `cp` / `mv`, `rm`, inline code's `open("…", "w")`, …; a read-only program's words, a here-document written to another file the same command does not run, and inline code that only reads or imports a guarded file are allowed); the earlier, stricter reading (`hooks/_shell_legacy.py`) decides, and its refusal becomes an allow only when the new reading proves a data text written to a file the command never runs, imports or uses again (and no program picks up by itself), a read-only program's words, inline code that only reads its guarded literals, or a `git commit` message; every other word must name no guarded path, even one not built yet; a command too long or too deeply nested to read, or one the reader fails on, is refused when it names a guarded path, and so is one the check itself fails on; the whole check of a command has one deadline well under the hook's timeout: a step that runs out of time refuses, and past the deadline the earlier reading decides (or a guarded path or name in the command refuses it); an existing hard link of any guarded file (the plugin's files included; a generated theme anywhere, by its header) is guarded like it, and so is a name the same command links (`ln`, `ln -s`, `cp -l`, `mklink`, `New-Item -ItemType HardLink`) to a guarded file or folder; the hooks read only regular project files, each up to 8 MB, never waiting on one; running `build-tokens.py` is allowed. **Edit check** (when on): computes the file before and after the edit, runs `audit.py --quick`, refuses only errors the edit adds. |
 | `stop_check.py` | Stop | **End-of-turn check** (when on): if no UI file changed since the snapshot, silent. Otherwise `audit.py --changed`, which includes **prototype sync** (a screen whose source files changed this session while its `screens/<id>.html` did not); new errors block the stop once with the list and fixes (`{"decision": "block", "reason": …}`); with `stop_hook_active` set it only reports, so it cannot loop. A clean run prints one line. |
 
 **Copilot CLI differences** (pinned by `tests/test_copilot.py`): edits arrive as apply_patch text
@@ -597,16 +954,39 @@ a `powershell` command on every hook for Windows Copilot. All three apply in **b
 fails, only added lines are checked); camelCase `toolName`/`toolArgs` input; no
 `permission_mode`; `tool_result` instead of `tool_response`; exit-2 stderr is hidden, so with
 `COPILOT_CLI` set a refusal is `{"permissionDecision": "deny", …}` on stdout (flat and in
-`hookSpecificOutput`) with exit 0; session start returns `{"additionalContext": …}`. Whether a
-plugin's `Stop` hook reaches Copilot's `agentStop` and can make it continue is verified first in
-the build; if not, Copilot shows the end-of-turn summary only and the edit check remains the hard
-guard there, and the README says so.
+`hookSpecificOutput`) with exit 0; session start returns `{"additionalContext": …}`. A plugin's
+`Stop` hook reaches Copilot's `agentStop` and makes it continue (live run, 2026-10-12): the block
+arrives as a new prompt, so it can override an earlier "don't fix now"; the skills say to report
+and stop then. Copilot ignores a skill's `allowed-tools`, so every script run asks: the skills run
+a checkpoint's scripts in one shell call, keep temporary files in `<root>/.plumb-tmp/` (ignored
+through its own `.gitignore`, removed at the end of setup or of the command) instead of the OS
+temp folder, and pass routes as
+`--route=<route>` (a bare `/` reads as a path). Copilot's skill tool lists only skills the model
+may start, so the user-only skills say they are already loaded (else Copilot prints a harmless
+`Skill not found`). Even batched, a full init with create or extract asks for about 10–15
+script runs plus one per file the agent writes; Copilot has no setting that pre-allows only
+Plumb's scripts (`--allow-tool 'shell(python3)'` allows every `python3` command, `--add-dir`
+removes the plugin folder's path prompts): the user's choice, documented in `copilot.md`.
 
 **Safety:** hooks fail open (no Python, no `PLUMB.md`, a missing or broken `audit.py`, unreadable
 input → exit 0 with at most one stderr line); non-UI edits exit in about 50 ms and UI edits stay
 under 1 s (a test measures it); at most 10 issues per refusal, each `error: line N: …` + `fix: …`;
 snapshots go in the OS temp folder keyed by project and session, never in the repo; switches are
-read from `PLUMB.md` on every run.
+read from `PLUMB.md` on every run. **The hook log** (§3.10): a hook that fails open (a crash, a plugin script it
+cannot load, a session-start script that times out or crashes) also appends one line to
+`~/.plumb/feedback/hooks.md`, in Given / Expected form with the hook, Plumb version, CLI, OS, project folder name,
+event, tool, project-relative path and exit code; only in a project with a `PLUMB.md`, the same line once a day (a
+timeout once per project and Plumb version), at most 512 KB in all. Given and Expected are redacted (`redact`: quoted
+literals over three characters → `'<redacted>'`, absolute paths outside the project → their base name, token-like
+strings and key=value secrets → `<redacted>`). It is private like the snapshot folder: `~/.plumb` and `feedback/`
+created 0700 (the user's own wider folders are tightened to 0700 through an `O_NOFOLLOW` handle, by the hooks and at
+every session start; none is created there), `hooks.md` 0600 and created with its header already in it (a temporary
+file hard-linked into place), nothing written when either folder is a symlink (or reparse point) or someone else's,
+or when `hooks.md` is a symlink; a `PlumbError` (the project's own broken files) is not logged; the log never fails or
+blocks a hook and never prints. Session start's last line is the pointer to `/plumb:feedback`. The setup marker `<root>/.plumb-tmp/setup-in-progress` is an
+unprotected soft switch: anything that can write in the project can create it, and it turns off
+only the end-of-turn check (never the edit check or the guards), for at most 6 hours from its
+modification time; after that it is stale and session start says so.
 
 ## 9. `PLUMB.md`
 
@@ -623,10 +1003,12 @@ Platforms: web
 UI packages: . (Next.js · Tailwind v4 · shadcn)
 Python: `python3`
 No downloads: nothing is installed or downloaded; if something is missing, ask the user and wait for their decision.
+Plumb's own mistakes (a script, hook or skill got it wrong): /plumb:feedback. The project's design issues: /plumb:audit.
 
 ## Checks
 Edit check: on
 End-of-turn check: on
+Themes: light-and-dark          (light-and-dark | light-only: an explicit decision)
 UI files: app/**, components/** · *.tsx *.jsx *.css
 Allowed raw values: components/ui/**
 
@@ -635,7 +1017,7 @@ tokens `python3 .claude/skills/caredesk-design-system/scripts/build-tokens.py` (
 check `… build-tokens.py --check` (make tokens-check) · audit `… audit.py` (make design-audit)
 
 ## Prototype
-Main: docs/design/prototype.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
+Main: docs/design/prototype.html · app: docs/design/app.html · screens: docs/design/screens.html · map: docs/design/prototype/screens.json
 Prototype sync: on               (end-of-turn check stops once when a built screen changed without its prototype)
 
 ## Plumb updates
@@ -652,7 +1034,7 @@ Each asked first, never silent:
   `<skill>/SKILL.md`; UI work is prototype first: update or create the screen with
   `/plumb:prototype`, get the user's approval, then build it to match. Don't install or download
   anything; if something is missing, ask the user and wait for their decision; never decide on
-  their behalf*;
+  their behalf · Plumb's own mistakes → /plumb:feedback*;
 - `Makefile` targets `tokens`, `tokens-check`, `design-audit` (plain `python` commands in
   `PLUMB.md` for machines without make);
 - the generated copy at the app's path (e.g. `app/globals.css`);
@@ -678,6 +1060,27 @@ Same `.claude-plugin/` manifest, skills and Claude-format `hooks.json`. Install 
 Commands are the same (`/plumb:init`, …). Skills resolve the plugin root from
 `${CLAUDE_PLUGIN_ROOT}`, falling back to the skill's base directory. Windows needs Python
 (`py -3`, `python` or `python3`). VS Code Copilot Chat is not supported.
+
+## 12b. Kiro
+
+Plumb also works in **Kiro** (IDE and CLI v3+), from the same files:
+
+- **Skills:** Kiro follows the Agent Skills standard (`SKILL.md`). Kiro has no plugin marketplace,
+  so `python3 <plumb>/scripts/kiro.py install [--project P]` copies Plumb's skills into
+  `~/.kiro/skills/plumb-<name>/` (global, IDE) or `<project>/.kiro/skills/plumb-<name>/`
+  (workspace, IDE and CLI), with `${CLAUDE_PLUGIN_ROOT}` replaced by the absolute plugin path;
+  commands are `/plumb-init`, `/plumb-create`, …. `kiro.py uninstall` removes them.
+- **Instructions:** Kiro loads `AGENTS.md` as steering, so Plumb's row applies; init can also write
+  `.kiro/steering/plumb.md` (always included) pointing to the design-system skill, which stays in
+  one place (no copy into `.kiro/skills/`).
+- **Hooks:** `kiro.py install` writes `~/.kiro/hooks/plumb.json` (CLI) and, per project,
+  `.kiro/hooks/plumb.json` (the IDE reads workspace hooks): `SessionStart` → `session_start.py`,
+  `PreToolUse` (`write`, `shell`) → `pre_edit.py`, `Stop` → `stop_check.py`. A Kiro adapter in
+  `_hooklib.py` reads `hook_event_name`, `tool_name`, `tool_input` (`fs_write`, `execute_bash`)
+  and refuses with exit 2 + stderr; `Stop` blocks with `{"decision":"block","reason":…}`.
+- **Verification:** built and CI-tested from Kiro's documented formats; the live Kiro run waits
+  until Kiro can be installed on the test machine (which exit code blocks and the exact stdin
+  fields are confirmed then).
 
 ## 12a. Dependencies and enterprise control
 
@@ -723,12 +1126,13 @@ own CI.
 .claude-plugin/marketplace.json           marketplace "plumb" → plugins/plumb
 plugins/plumb/
   .claude-plugin/plugin.json               version 1.0.0
-  skills/{init,create,extract,prototype,tour,audit,ux,update,upgrade,status}/SKILL.md   lean
+  skills/{init,create,extract,prototype,tour,audit,ux,update,upgrade,status,feedback}/SKILL.md   lean
   reference/   interview.md · rules.md · tokens-format.md · placement.md · scripts.md ·
                prototypes.md · ux.md · copilot.md
   assets/skill/   the design-system template: SKILL.md, design.md and references/* skeletons;
                   scripts/{build-tokens.py, audit.py, build-prototype.py, _plumb.py};
-                  web templates (v4, v3, css); specimen, report and prototype-shell templates
+                  web templates (v4, v3, css); specimen, report, prototype-shell and app-shell
+                  templates
   hooks/       hooks.json · run.sh · run.cmd · session_start.py · pre_edit.py · stop_check.py
   templates/   PLUMB.md · the AGENTS/CLAUDE row · decision entry · Makefile snippet
   upgrades/    README.md · 1.0.0.md
@@ -736,7 +1140,7 @@ plugins/plumb/
 examples/caredesk/        the golden output of create on CareDesk Lite, with its input brief
 tests/                    see §14
 docs/specs · docs/plans · docs/what-you-get.html
-TEST.md · README.md (like Slate's: what Plumb does, install in both tools, updating, a table
+docs/USAGE.md (the complete usage guide: start here; walkthroughs by situation; every command with an example session; the daily prototype-first loop; prototypes and tours; the design-system files and who owns them; hooks and their messages; team and enterprise use; troubleshooting and FAQ — linked from both READMEs) · TEST.md · README.md (like Slate's: what Plumb does, install in both tools, updating, a table
 explaining what every command does and when to use it, how it flows, what a project gets, the
 hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE.md) · SECURITY.md
 .github/workflows/{test.yml, release.yml} · .github/dependabot.yml · scripts/
@@ -751,6 +1155,9 @@ hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE
 - `test_hooks.py`: guard (file and shell writes), prototype first (a new route without an
   approved screen), edit check (new-only), stop check (silent, block once, no loop, prototype
   sync), fail-open paths, timing budget.
+- `test_bash_guard.py`: every shell write form refused on a Plumb file and a generated file (Claude Code and
+  Copilot CLI payloads), and commands that only mention a guarded file allowed (a Makefile here-document,
+  `json.load`, `importlib`, quoted `>`).
 - `test_copilot.py`: apply_patch, camelCase input, deny JSON, additionalContext, `tool_result`,
   `powershell` on every hook.
 - `test_placement.py`: every layout in §4 on fixture trees.
@@ -774,12 +1181,17 @@ hooks, configuration, Slate and Effective HTML, releases) · AGENTS.md (+ CLAUDE
   Windows), with real hook input in both Claude Code and Copilot CLI formats, on fixture projects,
   and the exit code, stdout JSON and stderr are asserted (refusals, passes, fail-open, timing).
   Browser checks of the generated pages (specimen, prototype, screens, walkthrough player) run
-  in the same suite when Playwright is installed; CI installs it on the Ubuntu jobs only (a test
-  dependency, never a runtime one), and the tests skip with a reason elsewhere. What CI cannot
+  in the same suite when Playwright is installed; CI installs it with Chromium on every runner (a
+  test dependency, never a runtime one), and with `PLUMB_STRICT_SKIPS=1` any skip that is not a
+  platform or tool skip (its reason starts with `requires macOS`, `requires Windows`,
+  `requires POSIX` or `requires xcrun`)
+  fails the run (`tests/conftest.py`); locally the browser tests skip with a reason when
+  Playwright is missing. What CI cannot
   run: the two CLIs themselves (they need sign-in), so the live tmux runs below are done by hand
   before every release and recorded in the PR.
-- **Two small sample apps, one per path:** a minimal Next.js + Tailwind v4 app and a minimal
-  Angular app (plain CSS/SCSS), kept as source trees under `tests/fixtures/apps/`. Both CLIs run
+- **Three small sample apps:** a minimal Next.js + Tailwind v4 app, a minimal Angular app (plain
+  CSS/SCSS) and a minimal SwiftUI app (its generated theme and views type-checked with `swiftc` on
+  macOS), kept as source trees under `tests/fixtures/apps/`. Both CLIs run
   init, create or extract, prototype, tour, the hooks (edit check, prototype first, end-of-turn,
   guard) and audit on each, in tmux. If npm is reachable on the test machine, the apps are also
   run so the audit's screenshot comparison and `/plumb:ux` are exercised against the real pages;
@@ -803,14 +1215,15 @@ placeholder named.
 
 ## 16. Out of scope for 1.0.0
 
-VS Code Copilot Chat; React Native and Flutter themes; shipped component templates for any
+VS Code Copilot Chat; React Native and Flutter themes (React Native is a candidate for 1.1.0); shipped component templates for any
 framework (components are agent-written from specs); a hosted or shared prototype server
 (prototypes are local files; pixel-perfect visual diffing); importing from Figma.
 
 ## 17. Verified during the build (not assumed)
 
 1. A plugin `Stop` hook in Copilot CLI: does it map to `agentStop`, and can it make the agent
-   continue? Decides the Copilot end-of-turn behaviour in §8.
+   continue? Decides the Copilot end-of-turn behaviour in §8. (Live run 2026-10-12: yes, it
+   continues.)
 2. Do both tools load root `.claude/skills/` when a session opens inside a monorepo package?
    Decides the pointer row in §4.
 3. Copilot's edit tool names for the PreToolUse matcher (Slate's matcher is the starting point).

@@ -1,0 +1,16 @@
+<h1>New booking</h1>
+<ng-container *ngIf="problem; else form">
+  <ng-container *ngTemplateOutlet="errorTpl" />
+</ng-container>
+<ng-template #form>
+  <form (ngSubmit)="save()">
+    <label for="guests">Guests</label>
+    <input id="guests" name="guests" type="number" />
+    <button type="submit" [disabled]="inFlight">
+      <ng-container *ngIf="inFlight; else label"><ng-container *ngTemplateOutlet="loadingTpl" /></ng-container>
+      <ng-template #label>Confirm booking</ng-template>
+    </button>
+  </form>
+</ng-template>
+<ng-template #loadingTpl><span class="spinner" aria-hidden="true"></span>Saving…</ng-template>
+<ng-template #errorTpl><p role="alert">We could not save the booking</p></ng-template>

@@ -1,0 +1,88 @@
+# Components: the shared spec ({{PLATFORMS}})
+
+One spec per component, the same on every platform. Token names are paths in
+`assets/tokens/{{SLUG}}.tokens.json` ({{TOK_EXAMPLES}} ...). How each one
+is built per platform is in the platform files linked from [SKILL.md](../SKILL.md). Where each exists today:
+[inventory.md](inventory.md).
+
+**Every component, every platform:** states default, pressed or active, focused (keyboard ring on web, accessibility focus
+on mobile), disabled (still readable), loading where it acts, error where it takes input, selected where it can be chosen.
+Touch targets at least 44pt (iOS), 48dp (Android) or 44px on touch web layouts, even when the drawing is smaller. Motion per
+[motion.md](motion.md); accessibility per [accessibility.md](accessibility.md). This list is the starting set: edit it as the
+product's real components are decided, and keep [inventory.md](inventory.md) in step.
+
+## Primitives
+
+### Button
+| | |
+|---|---|
+| Purpose | Start an action. Exactly one primary per view. |
+| Anatomy | Optional leading icon, label (verb + object, see [vocabulary.md](vocabulary.md)), spinner while loading. |
+| Variants | primary (`primary` / `on-primary`), secondary (`surface`, 1px `outline-input`), ghost (no chrome), link (`link`), destructive (`danger` / `on-danger`, confirmations only). |
+| Sizes | sm, md, lg; icon-only is square. Radius {{TOK_RADIUS_CONTROL}}. Text {{TOK_TYPE_LABEL}}. |
+| States | loading: spinner, activation blocked, focus kept. Disabled: reduced opacity, still readable. |
+| A11y | The visible text is the label; icon-only buttons need an accessible label (and a tooltip on web). |
+
+### Input (text field)
+| | |
+|---|---|
+| Purpose | One line of text, a number or a date. |
+| Anatomy | Label above, field, helper or error text under it. |
+| Tokens | `surface`, border `outline-input`, focus border `primary` plus the focus ring, invalid border `danger`. |
+| States | focus, invalid (border and words, announced), disabled, read-only. |
+| A11y | Label tied to the field; error linked to it. Never show an error on the first keystroke. |
+
+### Select, checkbox, radio, switch
+| | |
+|---|---|
+| Purpose | Choose one or several from a known list; switch is for an immediate on/off. |
+| Rules | Use the platform's accessible primitive. A switch applies at once; a checkbox waits for submit. |
+| States | unchecked, checked, indeterminate (checkbox), focus, disabled, invalid. |
+| A11y | The label is clickable and 44px tall; groups have a legend. |
+
+### Card
+| | |
+|---|---|
+| Purpose | Group related content on `surface`. |
+| Tokens | `surface`, 1px `outline`, {{TOK_RADIUS_CARD}}, {{TOK_SHADOW_CARD}} only when it lifts above the page. |
+| Rules | A card that is clickable is one control with one focus ring; never nest clickable cards. |
+
+### Badge and chip
+| | |
+|---|---|
+| Purpose | A short status or category. Status is always a word plus an icon. |
+| Tokens | Neutral on `sunk`; status uses the `success` / `danger` pairs. |
+
+### Dialog and sheet
+| | |
+|---|---|
+| Purpose | Dialog: a decision that blocks. Sheet: a task on the side (web) or bottom (mobile). |
+| Rules | Focus moves in and is trapped; Escape or back closes; focus returns to the trigger. One primary action. |
+| A11y | Title is the accessible name; the scrim is `scrim` and never the only boundary. |
+
+### Menu, tabs, tooltip
+Use the platform primitives. Menus open on the keyboard, arrows move, Escape closes. Tabs show the selected one with more
+than colour. Tooltips never hold information that is not available elsewhere.
+
+### Toast
+| | |
+|---|---|
+| Purpose | Confirm something that already happened. |
+| Rules | Announced politely; stays at least 5 seconds; never the only way to learn about an error; offers undo for reversible actions. |
+
+## Patterns
+
+### Empty state
+An icon, one line saying what is missing and why, one action that fixes it. Never a blank area.
+
+### Error state
+What happened in words, what to do next, a retry. Keep the user's input. Never only red.
+
+### Skeleton
+Same layout as the content, shown after 200 ms, no flashing; the only continuous animation besides the in-button spinner.
+
+### Page header
+Title ({{TOK_TYPE_TITLE}}), optional description, primary action at the end. One per page.
+
+### App shell
+Navigation, page area, optional side panel. Navigation model and responsive behaviour are in [ux.md](ux.md).

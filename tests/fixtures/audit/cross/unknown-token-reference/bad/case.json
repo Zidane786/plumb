@@ -1,0 +1,8 @@
+{
+  "expect": [
+    [".claude/skills/demo-design-system/references/components.md", 5],
+    [".claude/skills/demo-design-system/references/components.md", 5],
+    [".claude/skills/demo-design-system/references/components.md", 6],
+    [".claude/skills/demo-design-system/design.md", 3]
+  ]
+}

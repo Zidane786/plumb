@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{{CWD}}",
+  "session_id": "{{SESSION}}",
+  "tool_name": "fs_write",
+  "tool_input": {
+    "command": "str_replace",
+    "path": "{{FILE}}",
+    "old_str": "{{OLD}}",
+    "new_str": "{{NEW}}",
+    "summary": "Change the file"
+  }
+}

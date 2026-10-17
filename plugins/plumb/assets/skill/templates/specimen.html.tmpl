@@ -1,0 +1,394 @@
+<!doctype html>
+{{header}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
+   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
+:where(:root), :where(.pl-light) {
+  --pl-bg: #fbfbfa;
+  --pl-surface: #ffffff;
+  --pl-sunk: #f0f0ed;
+  --pl-text: #1d1f23;
+  --pl-muted: #5b616b;
+  --pl-border: #dcdcd6;
+  --pl-border-strong: #858a93;
+  --pl-accent: #2f5d8a;
+  --pl-on-accent: #ffffff;
+  --pl-focus: #2f5d8a;
+  --pl-bad: #b42318;
+  --pl-on-bad: #ffffff;
+  --pl-warn: #8a5a00;
+  --pl-good: #067647;
+  color-scheme: light;
+}
+:where(:root[data-theme="dark"]), :where(.pl-dark) {
+  --pl-bg: #121315;
+  --pl-surface: #1a1c1f;
+  --pl-sunk: #0c0d0f;
+  --pl-text: #e8e9eb;
+  --pl-muted: #a2a7af;
+  --pl-border: #2e3136;
+  --pl-border-strong: #6f747d;
+  --pl-accent: #8db8e3;
+  --pl-on-accent: #0d1117;
+  --pl-focus: #8db8e3;
+  --pl-bad: #f97066;
+  --pl-on-bad: #1a0b0a;
+  --pl-warn: #fdb022;
+  --pl-good: #47cd89;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme="light"])) {
+    --pl-bg: #121315;
+    --pl-surface: #1a1c1f;
+    --pl-sunk: #0c0d0f;
+    --pl-text: #e8e9eb;
+    --pl-muted: #a2a7af;
+    --pl-border: #2e3136;
+    --pl-border-strong: #6f747d;
+    --pl-accent: #8db8e3;
+    --pl-on-accent: #0d1117;
+    --pl-focus: #8db8e3;
+    --pl-bad: #f97066;
+    --pl-on-bad: #1a0b0a;
+    --pl-warn: #fdb022;
+    --pl-good: #47cd89;
+    color-scheme: dark;
+  }
+}
+:where(:root) {
+  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --pl-radius: 8px;
+  --pl-radius-sm: 4px;
+  --pl-space-1: 4px;
+  --pl-space-2: 8px;
+  --pl-space-3: 12px;
+  --pl-space-4: 16px;
+  --pl-space-6: 24px;
+  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
+  --pl-duration: 150ms;
+  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --pl-text-control: 15px;
+  --pl-text-small: 13px;
+  --pl-text-title: 22px;
+}
+</style>
+<style>
+{{theme_css}}
+</style>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--pl-bg);
+  color: var(--pl-text);
+  font-family: var(--pl-font);
+  font-size: 16px;
+  line-height: 1.5;
+}
+code, .mono { font-family: var(--pl-mono); font-size: 0.875em; }
+a { color: var(--pl-accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.wrap { max-width: 76rem; margin: 0 auto; padding: 0 16px; }
+.top { border-bottom: 1px solid var(--pl-border); background: var(--pl-surface); }
+.top-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; padding-top: 28px; padding-bottom: 20px; }
+.top-row > div { min-width: 0; flex: 1 1 20rem; }
+.eyebrow { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+h1 { margin: 0; font-size: clamp(26px, 5vw, 36px); line-height: 1.15; text-wrap: balance; overflow-wrap: anywhere; }
+h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
+h3 { margin: 0; font-size: 15px; }
+.lede { margin: 8px 0 0; max-width: 65ch; color: var(--pl-muted); }
+.theme-toggle {
+  font: inherit; font-size: 14px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 14px;
+  color: var(--pl-text); background: var(--pl-bg);
+  border: 1px solid var(--pl-border-strong); border-radius: 999px; cursor: pointer;
+}
+.theme-toggle:hover { background: var(--pl-sunk); }
+.theme-icon { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+.note, .empty { color: var(--pl-muted); max-width: 65ch; }
+.footer { border-top: 1px solid var(--pl-border); margin-top: 48px; padding: 20px 0 40px; color: var(--pl-muted); font-size: 14px; }
+.footer p { margin: 4px 0; max-width: 70ch; }
+.footer code { overflow-wrap: anywhere; color: var(--pl-text); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+.toc { list-style: none; margin: 0; padding: 0 0 16px; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14px; }
+.toc a { display: inline-block; padding: 4px 0; }
+main { padding-top: 8px; }
+section { padding: 36px 0 8px; scroll-margin-top: 8px; }
+section > .note { margin: 0 0 16px; }
+.group-h { margin: 20px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+ul[role="list"] { list-style: none; margin: 0; padding: 0; }
+.tok { font-weight: 600; color: var(--pl-text); overflow-wrap: anywhere; }
+.var { color: var(--pl-muted); overflow-wrap: anywhere; }
+.desc { margin: 4px 0 0; font-size: 14px; color: var(--pl-muted); max-width: 40ch; overflow-wrap: anywhere; }
+.val { display: block; font-size: 14px; color: var(--pl-muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.row-meta { min-width: 0; }
+
+/* Colour: each token in light and dark side by side, with the contrast of every pair it is part of. */
+.swatch-row {
+  display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 12px 24px;
+  padding: 16px 0; border-top: 1px solid var(--pl-border);
+}
+.swatch-name { min-width: 0; }
+.swatch-name code { display: block; }
+.swatch-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.swatch { background: var(--pl-surface); color: var(--pl-text); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); padding: 8px; min-width: 0; }
+.swatch-chip {
+  display: flex; align-items: center; height: 56px; padding: 0 12px; border-radius: var(--pl-radius-sm);
+  background: var(--chip); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pl-text) 14%, transparent);
+}
+.swatch-chip.alpha {
+  background: linear-gradient(var(--chip), var(--chip)),
+    repeating-conic-gradient(var(--pl-sunk) 0 25%, var(--pl-surface) 0 50%) 0 0 / 12px 12px;
+}
+.swatch-sample { font-size: 22px; font-weight: 600; line-height: 1; }
+.swatch-meta { margin: 6px 0 0; font-size: 13px; display: flex; flex-wrap: wrap; gap: 0 8px; }
+.swatch-meta code { overflow-wrap: anywhere; }
+.mode { color: var(--pl-muted); }
+.pairs { grid-column: 2; display: grid; gap: 4px; font-size: 13px; }
+.pair { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; font-variant-numeric: tabular-nums; }
+.pair-name { font-family: var(--pl-mono); min-width: 0; overflow-wrap: anywhere; flex: 1 1 12rem; }
+.need { color: var(--pl-muted); }
+.verdict { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.verdict-shape { width: 9px; height: 9px; flex: none; }
+.verdict-good .verdict-shape { border-radius: 50%; background: var(--pl-good); }
+.verdict-bad { color: var(--pl-bad); }
+.verdict-bad .verdict-shape { background: var(--pl-bad); transform: rotate(45deg); }
+
+/* Type */
+.type-list > li { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 8px 24px; padding: 16px 0; border-top: 1px solid var(--pl-border); align-items: baseline; }
+.type-meta code { display: block; }
+.type-sample { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+
+/* Spacing and radii */
+.spacing-list > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 15rem); gap: 8px 24px; align-items: center; padding: 10px 0; border-top: 1px solid var(--pl-border); }
+.space-bar { display: block; height: 16px; max-width: 100%; min-width: 1px; background: color-mix(in srgb, var(--pl-accent) 70%, transparent); border-radius: 2px; }
+.radius-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 16px; }
+.radius-list > li { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.radius-box { display: block; width: 72px; height: 72px; background: var(--pl-sunk); border: 2px solid var(--pl-accent); }
+
+/* Shadows, in both themes */
+.shadow-list > li { padding: 16px 0; border-top: 1px solid var(--pl-border); display: grid; gap: 12px; }
+.shadow-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: 12px; }
+.shadow-stage { background: var(--pl-bg); color: var(--pl-text); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); padding: 24px; min-width: 0; }
+.shadow-card { background: var(--pl-surface); border-radius: var(--pl-radius); padding: 20px; font-weight: 600; }
+.shadow-stage .val { margin: 12px 0 0; }
+
+/* Motion: hover or focus a row to play it; static when the system asks for reduced motion. */
+.motion-list > li { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 8px 24px; align-items: center; padding: 12px 8px; margin: 0 -8px; border-top: 1px solid var(--pl-border); border-radius: var(--pl-radius-sm); cursor: default; }
+.motion-track { position: relative; display: block; height: 24px; background: var(--pl-sunk); border-radius: 999px; min-width: 0; }
+.motion-dot { position: absolute; top: 4px; left: 4px; width: 16px; height: 16px; border-radius: 50%; background: var(--pl-accent); transition-property: left; }
+.motion-row:hover .motion-dot, .motion-row:focus-visible .motion-dot { left: calc(100% - 20px); }
+.reduced-note { display: none; }
+
+/* Components: built only from the page roles, so they follow the project's tokens in each theme. */
+.comp-themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 32rem), 1fr)); gap: 16px; }
+.comp-panel { background: var(--pl-bg); color: var(--pl-text); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); padding: 16px; min-width: 0; }
+.comp-panel > .group-h { margin-top: 0; }
+.comp-row { padding: 12px 0; border-top: 1px solid var(--pl-border); }
+.comp-row h4 { margin: 0 0 10px; font-size: 14px; }
+.comp-states { display: flex; flex-wrap: wrap; gap: 14px 16px; }
+.comp-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; }
+.state-name { font-size: 12px; color: var(--pl-muted); }
+.spinner { display: inline-block; width: 1em; height: 1em; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: pl-spin 0.8s linear infinite; }
+@keyframes pl-spin { to { transform: rotate(360deg); } }
+
+.c-btn {
+  font: inherit; font-size: var(--pl-text-control); font-weight: 600; line-height: 1.2;
+  display: inline-flex; align-items: center; gap: var(--pl-space-2);
+  min-height: 40px; padding: var(--pl-space-2) var(--pl-space-4);
+  border: 1px solid transparent; border-radius: var(--pl-radius); cursor: pointer;
+  transition: background-color var(--pl-duration) var(--pl-ease), border-color var(--pl-duration) var(--pl-ease),
+    transform var(--pl-duration) var(--pl-ease);
+}
+.c-btn-primary { --fill: var(--pl-accent); --ink: var(--pl-on-accent); }
+.c-btn-danger { --fill: var(--pl-bad); --ink: var(--pl-on-bad); }
+.c-btn-primary, .c-btn-danger { background: var(--fill); color: var(--ink); }
+.c-btn-primary:hover:not(:disabled), .c-btn-danger:hover:not(:disabled), .c-btn-primary.is-hover, .c-btn-danger.is-hover { background: color-mix(in srgb, var(--fill) 86%, var(--pl-text)); }
+.c-btn-primary:active:not(:disabled), .c-btn-danger:active:not(:disabled), .c-btn-primary.is-pressed, .c-btn-danger.is-pressed { background: color-mix(in srgb, var(--fill) 72%, var(--pl-text)); transform: translateY(1px); }
+.c-btn-secondary { background: var(--pl-sunk); color: var(--pl-text); border-color: var(--pl-border); }
+.c-btn-secondary:hover:not(:disabled), .c-btn-secondary.is-hover { background: color-mix(in srgb, var(--pl-sunk) 86%, var(--pl-text)); }
+.c-btn-secondary:active:not(:disabled), .c-btn-secondary.is-pressed { background: color-mix(in srgb, var(--pl-sunk) 74%, var(--pl-text)); transform: translateY(1px); }
+.c-btn-outline { background: transparent; color: var(--pl-text); border-color: var(--pl-border-strong); }
+.c-btn-outline:hover:not(:disabled), .c-btn-outline.is-hover { background: var(--pl-sunk); }
+.c-btn-outline:active:not(:disabled), .c-btn-outline.is-pressed { background: color-mix(in srgb, var(--pl-sunk) 80%, var(--pl-text)); transform: translateY(1px); }
+.c-btn:focus-visible, .c-btn.is-focus, .c-chip:focus-visible, .c-chip.is-focus, .c-card.is-focus, .c-card:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.c-btn:disabled, .c-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.is-loading { cursor: progress; }
+
+.c-field { position: relative; display: inline-flex; align-items: center; max-width: 100%; }
+.c-input {
+  font: inherit; font-size: var(--pl-text-control); width: 13rem; max-width: 100%; min-height: 40px;
+  padding: 0 var(--pl-space-3); color: var(--pl-text); background: var(--pl-bg);
+  border: 1px solid var(--pl-border-strong); border-radius: var(--pl-radius);
+  transition: border-color var(--pl-duration) var(--pl-ease);
+}
+.c-input:hover:not(:disabled), .c-field.is-hover .c-input { border-color: var(--pl-text); }
+.c-input:focus-visible, .c-field.is-focus .c-input { outline: 2px solid var(--pl-focus); outline-offset: 1px; border-color: var(--pl-focus); }
+.c-field.is-pressed .c-input { border-color: var(--pl-focus); background: var(--pl-sunk); }
+.c-input:disabled { opacity: 0.45; background: var(--pl-sunk); cursor: not-allowed; }
+.c-field.is-loading .c-input { padding-right: 36px; }
+.c-field .spinner { position: absolute; right: 12px; color: var(--pl-muted); }
+
+.c-chip {
+  font: inherit; font-size: var(--pl-text-small); font-weight: 600; line-height: 1.2;
+  display: inline-flex; align-items: center; gap: var(--pl-space-1);
+  min-height: 32px; padding: var(--pl-space-1) var(--pl-space-3);
+  color: var(--pl-text); background: var(--pl-sunk); border: 1px solid var(--pl-border); border-radius: 999px; cursor: pointer;
+  transition: background-color var(--pl-duration) var(--pl-ease);
+}
+.c-chip:hover:not(:disabled), .c-chip.is-hover { background: color-mix(in srgb, var(--pl-sunk) 86%, var(--pl-text)); }
+.c-chip:active:not(:disabled), .c-chip.is-pressed { background: color-mix(in srgb, var(--pl-accent) 22%, var(--pl-sunk)); border-color: var(--pl-accent); }
+
+.c-card {
+  display: flex; flex-direction: column; gap: var(--pl-space-1); width: 14rem; max-width: 100%;
+  padding: var(--pl-space-4); color: var(--pl-text); background: var(--pl-surface);
+  border: 1px solid var(--pl-border); border-radius: var(--pl-radius); box-shadow: var(--pl-shadow);
+  transition: box-shadow var(--pl-duration) var(--pl-ease), border-color var(--pl-duration) var(--pl-ease), transform var(--pl-duration) var(--pl-ease);
+}
+.c-card.is-hover { box-shadow: var(--pl-shadow-lg); border-color: var(--pl-border-strong); }
+.c-card.is-pressed { transform: translateY(1px); border-color: var(--pl-focus); }
+.c-card[aria-disabled="true"] { opacity: 0.45; box-shadow: none; }
+.c-card-title { font-weight: 600; }
+.c-card-body { font-size: var(--pl-text-small); color: var(--pl-muted); }
+.skeleton { display: block; height: 12px; width: 100%; border-radius: 4px; background: var(--pl-sunk); }
+.skeleton.short { width: 60%; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--pl-border); border-radius: var(--pl-radius); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--pl-border); vertical-align: top; }
+thead th { border-top: 0; background: var(--pl-sunk); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--pl-muted); }
+
+@media (max-width: 44rem) {
+  .swatch-row, .type-list > li, .motion-list > li, .spacing-list > li { grid-template-columns: minmax(0, 1fr); }
+  .pairs { grid-column: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reduced-note { display: block; }
+  .spinner { animation: none; border-right-color: currentColor; opacity: 0.6; }
+}
+</style>
+<script>
+/* Theme: follows the system until the toggle picks one. data-theme always says which theme is showing; the .dark /
+   .light class (what the project's --css-vars export switches on) is set only once the viewer has chosen. */
+(function () {
+  var root = document.documentElement;
+  var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var chosen = null;
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    if (chosen) {
+      root.classList.toggle("dark", theme === "dark");
+      root.classList.toggle("light", theme === "light");
+    }
+    var button = document.getElementById("theme-toggle");
+    if (button) {
+      var next = theme === "dark" ? "light" : "dark";
+      button.setAttribute("aria-label", "Switch to the " + next + " theme");
+      var label = button.querySelector(".theme-label");
+      if (label) label.textContent = next === "dark" ? "Dark theme" : "Light theme";
+    }
+  }
+  apply(media && media.matches ? "dark" : "light");
+  if (media && media.addEventListener) {
+    media.addEventListener("change", function (e) { if (!chosen) apply(e.matches ? "dark" : "light"); });
+  }
+  window.plumbTheme = {
+    toggle: function () {
+      chosen = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      apply(chosen);
+    },
+    refresh: function () { apply(root.getAttribute("data-theme") || "light"); }
+  };
+})();
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-row">
+    <div>
+      <p class="eyebrow">Design system specimen</p>
+      <h1>{{project}}</h1>
+      <p class="lede">Every token in <code>{{source}}</code> ({{summary}}), light and dark side by side, and the basic controls in every state. Built from the tokens: change the tokens, not this page.</p>
+    </div>
+    <button type="button" id="theme-toggle" class="theme-toggle" onclick="window.plumbTheme.toggle()"><span class="theme-icon" aria-hidden="true"></span><span class="theme-label">Dark theme</span></button>
+  </div>
+  <nav class="wrap" aria-label="Sections">
+    <ul class="toc" role="list">
+      <li><a href="#colour">Colour</a></li>
+      <li><a href="#type">Type</a></li>
+      <li><a href="#spacing">Spacing</a></li>
+      <li><a href="#radius">Radii</a></li>
+      <li><a href="#shadow">Shadows</a></li>
+      <li><a href="#motion">Motion</a></li>
+      <li><a href="#components">Components</a></li>
+      <li><a href="#other">Other tokens</a></li>
+    </ul>
+  </nav>
+</header>
+<main class="wrap">
+  <section id="colour" aria-labelledby="colour-h">
+    <h2 id="colour-h">Colour</h2>
+    <p class="note">Each colour in light and dark, with the contrast of every text and boundary pair it is part of (WCAG 2.x: text needs 4.5:1, large text and UI boundaries 3:1).</p>
+{{colours}}
+  </section>
+  <section id="type" aria-labelledby="type-h">
+    <h2 id="type-h">Type</h2>
+    <p class="note">Families and the type scale: size / line height, weight and tracking.</p>
+{{type}}
+  </section>
+  <section id="spacing" aria-labelledby="spacing-h">
+    <h2 id="spacing-h">Spacing</h2>
+{{spacing}}
+  </section>
+  <section id="radius" aria-labelledby="radius-h">
+    <h2 id="radius-h">Radii</h2>
+{{radii}}
+  </section>
+  <section id="shadow" aria-labelledby="shadow-h">
+    <h2 id="shadow-h">Shadows</h2>
+    <p class="note">Each shadow on the light and the dark background.</p>
+{{shadows}}
+  </section>
+  <section id="motion" aria-labelledby="motion-h">
+    <h2 id="motion-h">Motion</h2>
+    <p class="note">Hover or focus a row to play it. Durations run on the standard easing; easings run on the longest duration.</p>
+    <p class="note reduced-note">Reduced motion is on for this device, so the demos are static.</p>
+{{motion}}
+  </section>
+  <section id="components" aria-labelledby="components-h">
+    <h2 id="components-h">Components</h2>
+    <p class="note">The basic controls drawn from the tokens alone, in every state, in both themes. They show what the tokens give a component; the project's own components live in its code.</p>
+{{components}}
+  </section>
+  <section id="other" aria-labelledby="other-h">
+    <h2 id="other-h">Other tokens</h2>
+{{other}}
+  </section>
+</main>
+<footer class="footer">
+  <div class="wrap">
+    <p>Generated by Plumb {{plumb_version}} from <code>{{source}}</code>. Do not edit this page: change the tokens, then run <code>build-tokens.py</code>.</p>
+  </div>
+</footer>
+<script>window.plumbTheme.refresh();</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Mobile components
+
+Mobile-only components and the mobile behaviour of the shared ones in [../components.md](../components.md). Where each is
+built per platform: {{MOBILE_PLATFORM_LINKS}}.
+
+## Mobile behaviour of shared components
+
+| Component | On mobile |
+|---|---|
+| Button | Height is the touch target; pressed state (slight scale and darker fill) instead of hover. |
+| Input | Right keyboard type and return key; label stays visible; error appears under the field and is announced. |
+| Dialog | Short, with the primary action at the end; long content becomes a sheet or a full screen. |
+| Menu | Becomes an action sheet or a platform menu. |
+| Toast | Brief, above the tab bar, with undo when reversible. |
+
+## Mobile-only components
+
+### Tab bar (bottom navigation)
+Three to five top-level places; icon plus word; the selected one differs by more than colour; badge counts are words for screen readers.
+
+### Sheet
+Bottom sheet for a focused task; grabber, drag to dismiss and a close control; detents only when content needs them.
+
+### Swipe actions
+Never the only way to do something; the same actions exist in a menu or detail screen; destructive action needs confirmation or undo.
+
+### Pull to refresh, empty and error screens
+Use the platform control; empty and error states follow [../ux.md](../ux.md).
+
+Add the product's own mobile components here as they are decided.

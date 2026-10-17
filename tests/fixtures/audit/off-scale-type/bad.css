@@ -1,0 +1,4 @@
+/* expect: off-scale-type@3 */
+.lead {
+  font-size: 15px;
+}
