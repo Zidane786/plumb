@@ -1,0 +1,25 @@
+# Diagnostic only (branch diag/ring-macos, never merged): the drawer ring on macOS with the newest Playwright.
+name: diag-ring
+on:
+  push:
+    branches: ["diag/**"]
+permissions:
+  contents: read
+jobs:
+  ring:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install pytest and Playwright (as test.yml does)
+        run: |
+          python -m pip install pytest playwright
+          python -m playwright install chromium
+      - name: Ring diagnostics
+        run: python -m pytest -q -s -p no:cacheprovider tests/test_zz_ring_diag.py 2>&1 | grep -E "DIAG|passed|failed|error" || true
