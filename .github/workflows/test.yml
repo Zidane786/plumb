@@ -97,7 +97,7 @@ jobs:
       - name: Install Playwright and Chromium (browser tests run on every runner)
         if: steps.changes.outputs.code == 'true'
         run: |
-          python -m pip install playwright
+          python -m pip install -r tests/requirements.txt  # the pinned Playwright, the same as on your machine
           if [ "$RUNNER_OS" = "Linux" ]; then
             python -m playwright install --with-deps chromium
           else

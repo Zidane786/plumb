@@ -84,7 +84,8 @@ plugins/plumb/                        the installed plugin (only this folder shi
   CHANGELOG.md  README.md
 examples/caredesk/                    golden example of `create` (regression fixture; after validation, Task 19)
 tests/                                pytest suite; fixtures/ holds audit cases and sample projects;
-                                      conftest.py enforces the skip rules
+                                      conftest.py enforces the skip rules; requirements.txt pins the
+                                      Playwright the browser tests use (CI and local alike)
 docs/                                 specs/, plans/, USAGE.md (the complete guide), what-you-get.html
 scripts/                              repo tooling: release_notes.py, check_version_bump.py
 .github/                              workflows/test.yml (CI: Windows/macOS/Linux × Python 3.9/3.13),
@@ -178,7 +179,7 @@ TEST.md                               hands-on test guide for any machine
 ## 4. Develop and test
 
 ```
-uv run --with pytest pytest -q                  # full suite
+uv run --with pytest --with-requirements tests/requirements.txt pytest -q   # full suite, browser tests included
 uv run --python 3.9 --with pytest pytest -q     # oldest supported Python
 claude plugin validate --strict .
 claude plugin validate --strict plugins/plumb
@@ -204,7 +205,12 @@ claude plugin validate --strict plugins/plumb
   runs only when one of these changed: `plugins/**`, `tests/**`, `examples/**`,
   `scripts/**`, `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes
   (README, TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code
-  changed". CI installs Playwright + Chromium and runs the browser tests on every OS; unexpected
+  changed". CI installs the Playwright pinned in `tests/requirements.txt` (the same one locally, so a
+  browser test behaves the same on CI and on your machine; Dependabot proposes each bump as its own PR) +
+  Chromium and runs the browser tests on every OS. A browser test waits for the thing it checks (a
+  state, an element, an event), not for a guessed time; a time limit is only for a timing promise and
+  carries its measured margin in a comment. Every browser test must pass with the CPU slowed 10×, the
+  way a busy runner behaves: `PLUMB_CPU_SLOW=10` (`tests/conftest.py`) before the full-suite command. Unexpected
   skips fail the run (`PLUMB_STRICT_SKIPS=1`, `tests/conftest.py`: a skip reason must start with
   `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`, e.g.
   `requires POSIX: FIFO`; `tests/test_skip_reasons.py` pins the list). A manual run always runs

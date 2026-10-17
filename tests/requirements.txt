@@ -1,0 +1,5 @@
+# Test-only tools: Plumb itself ships with none (standard library only).
+# The browser tests use this exact Playwright, and so its exact Chromium, on CI and on your machine alike, so a page
+# check that passes here passes there. CI (.github/workflows/test.yml), TEST.md and AGENTS.md install from this file;
+# Dependabot proposes each new version as its own pull request, which runs the whole suite on every OS first.
+playwright==1.63.0

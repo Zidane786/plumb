@@ -55,19 +55,20 @@ PowerShell hook tests, and, on macOS with xcrun, the Swift type-check of the gen
 missing on this machine: `requires Playwright` for the browser tests, and a missing git, hook launcher (`sh` or
 PowerShell) or Python command. Report the last line (`N passed, M skipped …`).
 
-To run the browser tests too (they render every generated page in light and dark, headless):
+To run the browser tests too (they render every generated page in light and dark, headless), with the Playwright
+version CI uses (pinned in `tests/requirements.txt`, so a browser test that passes here passes on CI):
 
 ```
-uv run --with pytest --with playwright python -m playwright install chromium
-uv run --with pytest --with playwright pytest -q -rs
+uv run --with pytest --with-requirements tests/requirements.txt python -m playwright install chromium
+uv run --with pytest --with-requirements tests/requirements.txt pytest -q -rs
 ```
 
 **CI** (`.github/workflows/test.yml`) runs the whole suite on Ubuntu, macOS and Windows × Python 3.9 and 3.13, installs
-Playwright and Chromium on every runner, and sets `PLUMB_STRICT_SKIPS=1`: `tests/conftest.py` allows only skips whose
+the pinned Playwright and its Chromium on every runner, and sets `PLUMB_STRICT_SKIPS=1`: `tests/conftest.py` allows only skips whose
 reason starts with `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`; any other skip (such as
 `requires Playwright`) fails the run. A missing git, hook launcher or Python command is not an allowed skip: in strict
 mode it fails the run on purpose, because CI must have them.
-To reproduce that locally: `PLUMB_STRICT_SKIPS=1 uv run --with pytest --with playwright pytest -q -rs`.
+To reproduce that locally: `PLUMB_STRICT_SKIPS=1 uv run --with pytest --with-requirements tests/requirements.txt pytest -q -rs`.
 
 **Windows notes:** run from Git Bash or PowerShell. If many JSON or golden-file tests fail, check
 `git config core.autocrlf` (should be `false` or `input`; `.gitattributes` pins LF for the files that need it).

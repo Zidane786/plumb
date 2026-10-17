@@ -4,6 +4,9 @@ Strict skips: with PLUMB_STRICT_SKIPS=1 (set in CI only) any skipped test whose 
 with one of ALLOWED_SKIP_REASONS (a platform or platform-tool reason, e.g. "requires POSIX: FIFO",
 "requires Windows: real PowerShell/cmd launcher") fails the session. Browser tests skip locally when Playwright is
 missing ("requires Playwright"); on CI that must never happen silently.
+
+Slow runners: with PLUMB_CPU_SLOW=N every browser test's page runs with Chromium's CPU slowed N times (DevTools
+Emulation.setCPUThrottlingRate), the way a busy CI runner behaves. Browser tests must pass at PLUMB_CPU_SLOW=10.
 """
 
 import os
@@ -109,6 +112,24 @@ def pytest_configure(config) -> None:
     os.environ["HOME"] = fake
     os.environ["USERPROFILE"] = fake
     _REAL_HOME[:] = [real, _real_plumb_state(real), fake]
+    if os.environ.get("PLUMB_CPU_SLOW"):
+        _slow_pages(float(os.environ["PLUMB_CPU_SLOW"]))
+
+
+def _slow_pages(rate: float) -> None:
+    """PLUMB_CPU_SLOW: every new page runs with the CPU slowed `rate` times (Chromium only)."""
+    try:
+        from playwright.sync_api._generated import BrowserContext
+    except ImportError:
+        return  # no Playwright: the browser tests skip anyway
+    new_page = BrowserContext.new_page
+
+    def slow_page(self, *args, **kwargs):
+        page = new_page(self, *args, **kwargs)
+        self.new_cdp_session(page).send("Emulation.setCPUThrottlingRate", {"rate": rate})
+        return page
+
+    BrowserContext.new_page = slow_page
 
 
 def _real_home_problem() -> str:
