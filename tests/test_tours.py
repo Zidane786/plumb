@@ -600,7 +600,11 @@ def _start(page, tour: str = "demo", mode: str = "guide", step=None, speed=None)
 
 
 def _wait_pos(page, pos: int, timeout: int = 8000) -> None:
-    page.wait_for_function("(p) => window.plumbPlayer.state().pos === p", arg=pos, timeout=timeout)
+    try:
+        page.wait_for_function("(p) => window.plumbPlayer.state().pos === p", arg=pos, timeout=timeout)
+    except Exception:  # Playwright's timeout: say where the tour stood, so a failure on a CI runner explains itself
+        state = page.evaluate("JSON.stringify(window.plumbPlayer.state())")
+        raise AssertionError(f"the tour never reached step {pos} within {timeout} ms; player state: {state}")
 
 
 def _visible_screen(page) -> str:
@@ -3418,7 +3422,7 @@ def test_without_a_local_voice_nothing_is_ever_spoken(browser, voiced, init: str
             page.click("[data-pl=start-quiet]")
         page.wait_for_function(f"document.querySelector('{VOICE_BTN}').disabled", timeout=3000)
         assert _voice_note(page) == "Voice isn't available in this browser"
-        _wait_pos(page, 1, timeout=4000)  # the tour plays on with its captions
+        _wait_pos(page, 1)  # the tour plays on with its captions
         assert _spoken(page) == [], "never a sentence for a voice nobody chose"
         assert errors == []
     finally:
