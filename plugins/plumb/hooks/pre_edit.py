@@ -18,12 +18,18 @@ In such a project, in this order:
    - one of Plumb's own files: the design-system skill's [P] files (scripts/*.py, templates/*,
      assets/platforms/README.md) and anything under the plugin root (CLAUDE_PLUGIN_ROOT): upgrades replace them; and
      the Kiro files kiro.py installed (a marked .kiro/hooks/plumb.json, a .kiro/skills/plumb-<name>/ whose SKILL.md is
-     marked, in the project or the home folder): editing them could switch the checks off.
+     marked, in the project or the home folder): editing them could switch the checks off;
+   - a hard link of any of these (the same file under another name: ln, cp -l, mklink /H; the plugin's own files too;
+     a generated *Theme.swift / *Theme.kt anywhere, by build-tokens.py's header): that file's refusal; and in a shell
+     command, a name the command linked to a guarded file or folder earlier (ln, ln -s, cp -l / -s, mklink, New-Item
+     -ItemType HardLink / SymbolicLink / Junction): written or removed, it is that path.
    Shell commands (shell_refusal): the earlier reader (_shell_legacy.py) decides, and _hooklib's shell reader adds what
    it finds. Refused when the shell reader finds a guarded file among the real write targets: a redirect (>, >>, 1>,
    2>, &>, >|), tee [-a], sed -i / w FILE, perl -i, sort -o, the destination of cp / mv / install / rsync / ln (a
    recursive copy or a move into a folder that holds a guarded file), truncate, dd of=, Set-Content, Add-Content,
-   Out-File, Copy-Item / Move-Item onto, a shell's own script (bash -c, a here-document fed to a shell, eval), a file
+   Out-File, Clear-Content / clc, Copy-Item / Move-Item onto, the Windows tools xcopy and robocopy (into a folder),
+   cmd /c (/k) and its copy / move / del / erase, ren / rename and Rename-Item / rni (the source moves away, the new
+   name is written next to it), a shell's own script (bash -c, a here-document fed to a shell, eval), a file
    the command wrote and then runs, and in inline code (python -c, node -e, a here-document fed to an interpreter)
    open(<path>, "w"|"a"|"x"), Path(<path>).write_text / write_bytes, shutil.copy, fs.writeFile and the like, with
    targets put together from the code's constants. A target that uses a for / select / while-read loop variable is
@@ -44,6 +50,10 @@ In such a project, in this order:
    ${HOME}, %USERPROFILE% and $env:USERPROFILE in a path are the home folder. A command longer than SHELL_HUGE, one
    whose brackets nest deeper than the reader reads, and one the reader fails on (a crash, the recursion limit) are
    not read: refused when a word names a guarded file or folder (or a parent of one), else the earlier reader decides;
+   when the check itself fails (shell_decision), the command is refused when the earlier reader's targets or removals,
+   or any of its words, name a guarded path, and allowed only when nothing guarded is named (fail closed). The whole
+   check has one deadline (SHELL_DEADLINE, well under the hook's timeout); a stage that runs out of time refuses, and
+   past the deadline the earlier reader decides, or a guarded path or name in the command refuses it;
    a crash, a timeout and a command too long to read log one line with the real outcome.
 2. Prototype first (PLUMB.md `Prototype sync: on`): refuses an edit that creates a new route (a new page file, or a new
    path in a router config, under PLUMB.md's `Routes:` only; with no `Routes:` line it allows the edit, and the session
@@ -66,13 +76,19 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 from typing import List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _hooklib as H  # noqa: E402
+try:
+    import _hooklib as H  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 - a half-updated plugin folder: fail open (Kiro blocks on any non-zero exit)
+    sys.stderr.write(f"plumb: pre_edit.py skipped: the plugin's hooks/_hooklib.py does not load "
+                     f"({type(_exc).__name__}); reinstall the Plumb plugin\n")
+    sys.exit(0)
 
 MAX_ISSUES = 10
 # Matched without case where paths are compared without it (H.CASELESS, settled once the project is known).
@@ -91,10 +107,10 @@ _MISSING = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
 
 def _generated_header(path: str) -> bool:
     """A GENERATED … do not edit header in the first five lines. A file that exists but cannot be read counts as
-    generated (fail closed: making a file unreadable never takes the guard off it)."""
+    generated (fail closed: making a file unreadable never takes the guard off it), and so does one that is not a regular
+    file (H.read_regular never reads a FIFO or a device)."""
     try:
-        with open(path, "rb") as fh:
-            head = fh.read(1500).decode("utf-8", "replace")
+        head = H.read_regular(path, 1500, head=True).decode("utf-8", "replace")
     except _MISSING:
         return False
     except OSError:
@@ -112,10 +128,10 @@ _SPECIMEN_HEADER = re.compile(r"GENERATED by [^\n]+?/scripts/build-tokens\.py fr
 
 def _page_head(path: str) -> Optional[str]:
     """The first five lines of a page's first 2000 bytes; "" for an empty page; None when it cannot be read (fail
-    closed: the callers treat that as Plumb's, so making a page unreadable never takes the guard off it)."""
+    closed: the callers treat that as Plumb's, so making a page unreadable never takes the guard off it), as for one
+    that is not a regular file (never read)."""
     try:
-        with open(path, "rb") as fh:
-            head = fh.read(2000).decode("utf-8", "replace")
+        head = H.read_regular(path, 2000, head=True).decode("utf-8", "replace")
     except OSError:
         return None
     return "\n".join(head.splitlines()[:5]) if head.strip() else ""
@@ -209,7 +225,55 @@ def _kiro_own(proj: H.Project, shown: str, base: str) -> str:
 
 
 def guard(proj: H.Project, path: str) -> Optional[str]:
-    """The refusal for writing this absolute path by hand, or None."""
+    """The refusal for writing this absolute path by hand, or None. A hard link of a guarded file (the same file under
+    another name: ln, cp -l, mklink /H) gets that file's refusal (_hard_link_refusal)."""
+    why = _guard_path(proj, path)
+    return why if why is not None else _hard_link_refusal(proj, path)
+
+
+def _hard_link_files(proj: H.Project) -> List[str]:
+    """Every guarded file a hard link can be made of: the listed guarded files and every file under the plugin root."""
+    files = [f for f in guarded_files(proj, proj.root_s) if os.path.isfile(f)]
+    for folder, dirs, names in os.walk(H.plugin_root()):
+        dirs[:] = [d for d in dirs if d != "__pycache__"]
+        files += [os.path.join(folder, n) for n in names]
+    return files
+
+
+def _hard_link_refusal(proj: H.Project, path: str) -> Optional[str]:
+    """For an existing regular file with more than one link: the refusal of the guarded file it is (the same device and
+    inode: the guarded files and the plugin's own, listed once per hook run), or, for a file that carries
+    build-tokens.py's GENERATED header (a theme anywhere in the project under another name), the generated-file
+    refusal; else None."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    if st.st_nlink < 2 or not stat.S_ISREG(st.st_mode):
+        return None
+    index = getattr(proj, "_hard_links", None)
+    if index is None:
+        index = {}
+        for f in _hard_link_files(proj):
+            try:
+                g = os.stat(f)
+            except (OSError, ValueError):
+                continue
+            if g.st_nlink > 1 and stat.S_ISREG(g.st_mode):
+                index.setdefault((g.st_dev, g.st_ino), f)
+        proj._hard_links = index  # type: ignore[attr-defined]
+    twin = index.get((st.st_dev, st.st_ino))
+    if twin is not None:
+        return _guard_path(proj, twin)
+    head = _page_head(path) or ""
+    if re.search(r"do not edit", head, re.I) and _SPECIMEN_HEADER.search(head):  # build-tokens.py's header
+        in_project = H.under(path, proj.root_s)
+        return _tokens_output(proj, in_project if in_project else path)
+    return None
+
+
+def _guard_path(proj: H.Project, path: str) -> Optional[str]:
+    """guard() by the path alone."""
     if H.under(path, H.plugin_root()) is not None:
         return _own(path)
     in_project = H.under(path, proj.root_s)
@@ -271,12 +335,11 @@ def copy_edit_keeps_block(path: str, change: H.Change) -> bool:
     if change.kind in ("delete", "move", "path"):
         return False
     try:
-        with open(path, "rb") as fh:
-            before: Optional[str] = H.normalise(fh.read().decode("utf-8", "replace"))
+        before: Optional[str] = H.normalise(H.read_regular(path).decode("utf-8", "replace"))
     except FileNotFoundError:
         before = None
     except OSError:
-        return False
+        return False  # unreadable, not a regular file (a FIFO, a device) or too large: its block cannot be checked
     if before is None:
         return True  # no file yet: nothing generated to protect
     block = H.block_text(before)
@@ -323,11 +386,8 @@ def unapplied_patch_keeps_block(before: str, change: H.Change) -> bool:
 
 
 def _has_block(path: str) -> bool:
-    try:
-        with open(path, "rb") as fh:
-            return H.BLOCK_START in fh.read().decode("utf-8", "replace")
-    except OSError:
-        return False
+    data = H.regular_bytes(path)
+    return data is not None and H.BLOCK_START in data.decode("utf-8", "replace")
 
 
 def copy_shown(proj: H.Project, path: str) -> str:
@@ -421,6 +481,29 @@ def _shell_paths_refusal(proj: H.Project, paths: List[str], removal: bool, cwd: 
 
 SHELL_HUGE = 64 * 1024  # characters: a longer command is not read; it is refused when it names a guarded path
 NAMES_BUDGET = 3.0  # seconds to look for guarded paths in a command the reader could not read; past it: refused
+# One deadline for the whole shell check (the reader and every stage after it): pre_edit's timeout in hooks.json is
+# 10 s and a CLI timeout lets the command through, so the check, the look for guarded paths past it (_past_deadline)
+# and the fallback after an error (each FALLBACK_BUDGET) all fit with room to spare. No stage gets a fresh budget past
+# it, and a stage that runs out of time refuses ("a path Plumb ran out of time to check"): never an allow.
+SHELL_DEADLINE = 4.0
+_SHELL_END: List[float] = [float("inf")]  # when the current command's check must end (shell_refusal sets it)
+
+
+class _PastDeadline(Exception):
+    """The command's deadline passed before an allow: _past_deadline decides (the earlier reader, or a guarded path in
+    the command refuses)."""
+
+
+def _until(seconds: float) -> float:
+    """A stage's deadline: its own budget, never past the command's."""
+    return min(H.clock() + seconds, _SHELL_END[0])
+
+
+def _past_end() -> None:
+    """Raise _PastDeadline once the command's deadline passed: only where the check would otherwise allow (after the
+    reader, before an allow). Inside a stage, running out of time is that stage's refusal."""
+    if H.clock() >= _SHELL_END[0]:
+        raise _PastDeadline()
 _DOCS_PAGES = ("specimen.html", "prototype.html", "app.html", "screens.html", "prototype/screens.json")
 _FIXED_NAMES = ("specimen.html", "prototype.html", "app.html", "screens.html", "screens.json", "build-tokens.py",
                 "build-prototype.py")
@@ -575,7 +658,7 @@ def _proven(proj: H.Project, eff: "H.ShellEffects", cwd: str, rule: Optional[_Gu
     if eff.unsure:
         return False
     rule = rule or _Guarded(proj, cwd)
-    deadline = H.clock() + NAMES_BUDGET
+    deadline = _until(NAMES_BUDGET)
     if any(rule.text(text, bases, deadline) for text, bases in eff.other):
         return False
     for target in eff.code_writes:
@@ -595,7 +678,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
     when the target's own text names a guarded folder or file, or the command names a guarded path anywhere. Past the
     number of tries or the time the check has, the command-wide rule decides alone: refused when the command names a
     guarded path, else the earlier reader decides."""
-    deadline = H.clock() + NAMES_BUDGET
+    deadline = _until(NAMES_BUDGET)
     command_hit: List[Optional[str]] = []
     literal_seen: dict = {}
     yields: dict = {}
@@ -604,7 +687,7 @@ def _loop_refusal(proj: H.Project, eff: "H.ShellEffects", rule: "_Guarded", cwd:
     def in_command() -> Optional[str]:
         if not command_hit:
             command_hit.append(rule.target(eff.command_words(), tuple(dict.fromkeys((cwd, proj.root_s))),
-                                           H.clock() + NAMES_BUDGET))
+                                           _until(NAMES_BUDGET)))
         return command_hit[0]
 
     def unknown(word: str, scope) -> Optional[str]:
@@ -672,7 +755,7 @@ def _unread(proj: H.Project, command: str, base: str, cwd: str, rule: Optional[_
     """For a command the reader could not read: the first of its words that names a guarded file or folder (or a
     parent of one) by the guard's rule, or None."""
     bases = tuple(dict.fromkeys((base, cwd)))
-    return (rule or _Guarded(proj, cwd)).text(command, bases, H.clock() + NAMES_BUDGET)
+    return (rule or _Guarded(proj, cwd)).text(command, bases, _until(NAMES_BUDGET))
 
 
 def _unread_refusal(hit: str, why: str) -> str:
@@ -687,11 +770,44 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
     data or reads (_proven). A command it does not read (over SHELL_HUGE, brackets nested past the reader's depth) or
     one the reader failed on (a crash, the recursion limit) is refused when any of its words names a guarded file or
     folder; a write or removal target it cannot work out is refused when it names a guarded path in full
-    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. A crash, a timeout
-    and a command too long to read are logged once, with the real outcome."""
+    (_Guarded.target); a reader that ran out of time leaves the decision to the earlier reader. The whole check has
+    one deadline (SHELL_DEADLINE); past it the earlier reader decides, or a guarded name in the command refuses it
+    (_past_deadline). A crash, a timeout and a command too long to read are logged once, with the real outcome."""
     command = command.replace("\x00", "")  # a NUL byte never reaches a shell: read the rest
     if not H.WRITE_HINT.search(command):
         return None
+    _SHELL_END[0] = H.clock() + SHELL_DEADLINE
+    try:
+        return _shell_check(proj, command, base, cwd)
+    except _PastDeadline:
+        _SHELL_END[0] = float("inf")
+        why = _past_deadline(proj, command, base, cwd)
+        H.log_failure(f"the shell check ran past its {SHELL_DEADLINE:g} s deadline", "the command checked in time",
+                      category="timeout", outcome=f"{'refused' if why else 'allowed'}: the earlier reader decided, "
+                                                  f"or a guarded name in the command")
+        return why
+    finally:
+        _SHELL_END[0] = float("inf")
+
+
+def _past_deadline(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """Past the command's deadline: the earlier reader's decision, or refused when any word of the command names a
+    guarded path by guard()'s rule (_Guarded.text, with a fresh FALLBACK_BUDGET; running out of it refuses), or its
+    plain text names a guarded file or folder (_guarded_text: a glob such as docs/design/*.html counts)."""
+    floor = (_shell_paths_refusal(proj, H.legacy_targets(command, base), False, cwd)
+             or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd))
+    if floor is not None:
+        return floor
+    try:
+        hit = _Guarded(proj, cwd).text(command, tuple(dict.fromkeys((base, cwd))), H.clock() + FALLBACK_BUDGET)
+    except Exception:  # noqa: BLE001 - the plain text decides
+        hit = None
+    hit = hit or _guarded_text(proj, command)
+    return _unread_refusal(hit, "it takes longer to check than Plumb has") if hit else None
+
+
+def _shell_check(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """shell_refusal's work, within the command's deadline (_SHELL_END)."""
     built: List[_Guarded] = []
 
     def rule() -> _Guarded:  # built once per command, only when needed (it globs the guarded files)
@@ -705,15 +821,26 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
         H.log_failure(f"a shell command of {size}, too long to read", "the command read (a guarded path in it refuses "
                       "it)", category="timeout", outcome=f"{'refused' if hit else 'allowed'} without reading it")
         return _unread_refusal(hit, size) if hit else None
-    eff = H.shell_effects(command, base, proj.root_s)
+    eff = H.shell_effects(command, base, proj.root_s, deadline=_SHELL_END[0])
+    _past_end()  # the reader used the whole deadline: _past_deadline decides
     checked = _Checked()  # paths found allowed are not checked again
     why = (_shell_paths_refusal(proj, eff.writes, False, cwd, checked)
            or _shell_paths_refusal(proj, eff.removals, True, cwd, checked)
            or _shell_paths_refusal(proj, eff.folder_writes, True, cwd, checked))
+    for kind, sources in eff.link_writes:  # through a name the command linked to a guarded path earlier
+        if why is None:
+            why = _shell_paths_refusal(proj, sources, kind in (1, 2), cwd, checked)
+    if why is None and (eff.links_capped or (eff.linked and eff.trouble is not None and eff.trouble[1] == "timeout")):
+        # links the reader did not follow to the end: the command must name no guarded path
+        hit = rule().text(command, tuple(dict.fromkeys((base, cwd))), _until(NAMES_BUDGET))
+        if hit is not None:
+            why = (f"error: this shell command makes more links (or writes through more links) than Plumb follows, "
+                   f"and it names {hit}, a path Plumb guards\nfix: split it into shorter commands, one link and its "
+                   f"writes at a time (and change {hit} the way Plumb's own message for it says)")
     if why is None and eff.loop_targets:
         why = _loop_refusal(proj, eff, rule(), cwd)
     if why is None and eff.computed:  # a target it cannot work out ($( ), `…`, ${…}, a loop variable) naming one
-        deadline = H.clock() + NAMES_BUDGET
+        deadline = _until(NAMES_BUDGET)
         named = next((n for n in (rule().target(words, bases, deadline) for words, bases in eff.computed) if n), None)
         if named is not None:
             why = (f"error: this shell command writes to or removes a path Plumb cannot work out, and that path is "
@@ -729,12 +856,71 @@ def shell_refusal(proj: H.Project, command: str, base: str, cwd: str) -> Optiona
                  or _shell_paths_refusal(proj, H.legacy_removals(command, base), True, cwd, checked))
         if floor is not None and not _proven(proj, eff, cwd, rule()):
             why = floor
+    if why is None:
+        _past_end()  # an allow reached past the deadline: _past_deadline decides
     if eff.trouble is not None and eff.trouble[1] != "deep":  # deep nesting is the command's, not Plumb's mistake
         given, category, exc = eff.trouble
         outcome = ("refused without reading it (it names a guarded path)" if hit is not None
                    else f"{'refused' if why else 'allowed'}: the earlier reader decided")
         H.log_failure(given, "the command read within the budget", category=category, exc=exc, outcome=outcome)
     return why
+
+
+FALLBACK_BUDGET = 2.0  # seconds to look for guarded paths after the shell check failed; past it: refused
+
+
+def _guarded_text(proj: H.Project, command: str) -> Optional[str]:
+    """The last resort (the guarded-path check failed, or no time is left): a guarded name or folder as plain text in
+    the command. Every class guard() guards is named: the pages, the generated outputs and themes, the tokens file, the
+    web copies, Kiro's files, the plugin root, the docs folder and the skill, and the names of the skill's [P] files
+    (the plugin's own scripts and templates) and of every guarded file that exists."""
+    names = list(_FIXED_NAMES) + ["tokens.css", "tailwind.tokens.js", "Theme.swift", "Theme.kt", ".tokens.json",
+                                  "/tours/", ".kiro", "platforms/README.md", proj.docs_rel, H.plugin_root()]
+    names += ([proj.skill_rel] if proj.skill_rel else []) + list(proj.copies)
+    try:
+        own = Path(H.PLUGIN_SCRIPTS).parent
+        names += [f.name for f in own.glob("scripts/*.py")] + [f.name for f in own.glob("templates/*") if f.is_file()]
+        names += [os.path.basename(f) for f in guarded_files(proj, proj.root_s)
+                  if os.path.isfile(f) and os.path.basename(f) != "README.md"]
+    except Exception:  # noqa: BLE001 - the fixed names still decide
+        pass
+    text = H.fold(command.replace("\\", "/"))
+    return next((n for n in names if n and H.fold(n.replace("\\", "/")) in text), None)
+
+
+def _after_error(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """The decision when the shell check failed (fail closed on guarded paths): refused when the earlier reader's
+    targets or removals (each resolved with a plain os.path.realpath) are guarded by guard()'s rule, or any word of
+    the command names a guarded file or folder (or a parent of one); else allowed. A step that fails too falls through
+    to the next, down to the command's plain text."""
+    try:
+        floor = [(p, False) for p in H.legacy_targets(command, base)] + [(p, True) for p in
+                                                                          H.legacy_removals(command, base)]
+        for path, removal in floor:
+            real = os.path.realpath(path)
+            why = removal_guard(proj, real, cwd) if removal else guard(proj, real)
+            if why:
+                return why
+    except Exception:  # noqa: BLE001 - the words decide
+        pass
+    try:
+        hit = _Guarded(proj, cwd).text(command, tuple(dict.fromkeys((base, cwd))), H.clock() + FALLBACK_BUDGET)
+    except Exception:  # noqa: BLE001 - the plain text decides
+        hit = _guarded_text(proj, command)
+    return _unread_refusal(hit, "Plumb's check failed on it") if hit else None
+
+
+def shell_decision(proj: H.Project, command: str, base: str, cwd: str) -> Optional[str]:
+    """shell_refusal, failing closed: when it raises (a bug, the recursion limit), the command is refused when it names
+    a guarded path (_after_error) and allowed only when it names none; one line is logged with the real outcome."""
+    try:
+        return shell_refusal(proj, command, base, cwd)
+    except Exception as exc:  # noqa: BLE001 - decided below, never failed open on a guarded path
+        why = _after_error(proj, command, base, cwd)
+        H.log_failure(f"the shell check failed ({type(exc).__name__}: {exc})", "the shell command read to the end",
+                      exc=exc, outcome=("refused: the command names a guarded path" if why
+                                        else "allowed: the command names no guarded path"))
+        return why
 
 
 # ---------------------------------------------------------------- prototype first and the edit check
@@ -819,6 +1005,10 @@ def checks(p: H.Payload, proj: H.Project, base: str) -> Optional[str]:
         items.append((c, path, rel))
     if not items:
         return None
+    unreadable = proj.tokens_unreadable()
+    if unreadable:  # the plugin's audit.py would wait on it: skipped, the guards stay on
+        H.note(unreadable)
+        return None
     A = H.load_script("audit.py", "plumb_audit")
     if A is None:
         return None
@@ -830,9 +1020,10 @@ def checks(p: H.Payload, proj: H.Project, base: str) -> Optional[str]:
         for c, path, rel in items:
             before = None
             if os.path.isfile(path):
-                if os.path.getsize(path) > A.MAX_BYTES:
-                    continue
-                before = A.read_source(Path(path))
+                data = H.regular_bytes(path, A.MAX_BYTES)
+                if data is None:
+                    continue  # larger than the audit reads, or no longer a regular file
+                before = data.decode("utf-8-sig", "replace")
             after = c.after(before)
             partial = after is None and c.kind == "update" and before is not None
             if after is None and not partial:
@@ -866,7 +1057,7 @@ def main() -> int:
         return 0
     base = p.cwd or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     if p.command is not None:
-        why = shell_refusal(proj, p.command, base, p.cwd or base)
+        why = shell_decision(proj, p.command, base, p.cwd or base)
         return H.refuse(why, p.copilot) if why else 0
     if not p.changes:
         return 0

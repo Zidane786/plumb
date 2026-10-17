@@ -684,6 +684,113 @@ def test_the_time_budget_holds_on_a_coarse_clock(decide, monkeypatch):
     H._EFFECTS_CACHE.clear()
 
 
+def test_one_deadline_for_the_whole_command_fits_the_hook_timeout(decide):
+    """The reader and every stage after it share one deadline, and with the fallback after an error it stays well under
+    the shortest hook timeout in hooks.json (a CLI timeout is an allow)."""
+    import json
+    hooks = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    shortest = min(h["timeout"] for event in hooks.values() for entry in event for h in entry["hooks"])
+    pe = decide.pe
+    # the deadline, then a fresh look for guarded paths past it, then the fallback after an error, with room to spare
+    assert pe.SHELL_DEADLINE + 2 * pe.FALLBACK_BUDGET + 2.0 <= shortest
+    assert pe.H.SHELL_BUDGET < pe.SHELL_DEADLINE and pe.NAMES_BUDGET < pe.SHELL_DEADLINE
+
+
+def test_past_the_command_deadline_the_earlier_reader_decides_or_a_guarded_name_refuses(decide, monkeypatch):
+    """With no time left, no stage gets a fresh budget of its own: the earlier reader's decision stands, and a command
+    that names a guarded path is refused; one that names none is allowed. Each decision is quick."""
+    pe = decide.pe
+    monkeypatch.setattr(pe, "SHELL_DEADLINE", 0.0)
+    monkeypatch.setattr(pe, "NAMES_BUDGET", 1000.0)  # a stage that took its own budget would never end in time
+    monkeypatch.setattr(pe.H, "log_failure", lambda *a, **k: None)
+    cwd = str(decide.proj)
+    cases = {f"git commit -m 'never > {GEN} by hand'": True, f"echo x > {GEN}": True,
+             "for f in docs/design/*.html; do echo x > \"$f\"; done": True,
+             "for f in a b; do echo x > \"/tmp/plumb-$f\"; done": False, "echo x > notes/a.txt": False,
+             "out=$(mktemp); echo x > \"$out\"": False}
+    for command, want in cases.items():
+        pe.H._EFFECTS_CACHE.clear()
+        t = time.perf_counter()
+        reason = pe.shell_refusal(decide.project, command, cwd, cwd)
+        assert time.perf_counter() - t < SPEED_LIMIT, command
+        assert bool(reason) is want, (command, reason)
+        if reason:
+            actionable(reason)
+    pe.H._EFFECTS_CACHE.clear()
+
+
+SLOW_CASES = [  # (cwd: "skill" or "root", command): refused by the earlier build when the target check was slow
+    ("skill", 'for f in $(cat /tmp/l); do echo x > "$f"; done; cat scripts/audit.py'),
+    ("skill", 'echo x > "$(echo scripts)/audit.py"'),
+    ("skill", 'for f in $(cat /tmp/l); do echo x > "scripts/$f"; done'),
+    ("root", 'for f in $(cat /tmp/l); do echo x > "ds/scripts/$f"; done'),
+    ("root", 'for f in $(cat /tmp/l); do echo x > "$f"; done; cat ds/scripts/audit.py'),
+    ("root", 'echo x > "$(echo ds)/scripts/audit.py"'),
+    ("root", f'echo x > "$(echo {SKILL_REL})/scripts/audit.py"'),
+]
+
+
+@pytest.mark.parametrize("slowed", ["target", "text"])
+def test_a_check_that_runs_out_of_the_command_deadline_never_allows(tmp_path, monkeypatch, slowed):
+    """Ruling (re-review I-1): when the command's deadline runs out inside a guarded-path check (simulated: the clock
+    jumps 100 s as the check starts), "ran out of time" stays a refusal, never an allow. The six commands the re-review
+    found (a cwd-relative path, a symlinked folder) and every write the earlier reader refuses stay refused."""
+    proj = make_project(tmp_path, "Slow Proj")
+    (proj / "notes").mkdir(exist_ok=True)
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(proj.parent))
+    monkeypatch.setenv("USERPROFILE", str(proj.parent))
+    d = Decider(proj)
+    pe, H = d.pe, d.pe.H
+    skill = proj / SKILL_REL
+    cases = list(SLOW_CASES)
+    try:
+        (proj / "ds").symlink_to(skill, target_is_directory=True)
+    except (OSError, NotImplementedError):  # Windows without developer mode: the cases through the link are left out
+        cases = [(w, c) for w, c in cases if "ds/" not in c and "echo ds" not in c]
+    monkeypatch.setattr(H, "log_failure", lambda *a, **k: None)
+    real, offset = H.clock, [0.0]
+    monkeypatch.setattr(H, "clock", lambda: real() + offset[0])
+    original = getattr(pe._Guarded, slowed)
+
+    def slow(self, *args):
+        offset[0] += 100.0  # this check is slow: the command's deadline passes inside it
+        return original(self, *args)
+
+    monkeypatch.setattr(pe._Guarded, slowed, slow)
+
+    def refuses(command: str, cwd: str) -> bool:
+        offset[0] = 0.0
+        H._EFFECTS_CACHE.clear()
+        return pe.shell_refusal(H.Project(proj), command, cwd, cwd) is not None
+
+    if slowed == "target":  # the six run through the target check
+        allowed_now = [(w, c) for w, c in cases if not refuses(c, str(skill if w == "skill" else proj))]
+        assert not allowed_now, allowed_now
+    commands = [(cmd, rest[0] if rest else "") for _label, cmd, *rest in CASES.writes(SKILL_REL, str(proj))]
+    commands += [(cmd, "") for _label, cmd in CASES.rr_writes(SKILL_REL, str(proj))]
+    misses = [cmd for cmd, sub in commands
+              if d.old(cmd, sub) and not refuses(cmd, str(proj / sub) if sub else str(proj))]
+    assert not misses, misses
+
+
+def test_the_plain_text_last_resort_names_every_guarded_class(decide):
+    """_guarded_text (when even the guarded-path check failed, and past the deadline): every class the guard guards is
+    named by its text: the skill's [P] scripts and templates, the generated outputs and themes, the tokens file, the
+    web copies, the pages, Kiro's files and the plugin's own files."""
+    pe = decide.pe
+    plugin = pe.H.plugin_root().replace("\\", "/")
+    for command in ("cat x > lib/audit.py", "cp a _plumb.py", "cp a templates/player.js", "rm player.js",
+                    "mv a build-prototype.py", "echo x > web/tokens.css", "echo x > tailwind.tokens.js",
+                    "echo > demo.tokens.json", "echo x > app/globals.css", "echo > ios/App/AppTheme.swift",
+                    "echo > android/AppTheme.kt", "echo > docs/design/tours/a.html", f"echo x > {plugin}/hooks/x.py",
+                    "rm -rf .kiro/hooks", f"echo > {GEN}", f"rm {SKILL_REL}/assets/platforms/README.md"):
+        assert pe._guarded_text(decide.project, command), command
+    for command in ("echo x > notes/a.txt", "cp a b", "rm -rf build/"):
+        assert pe._guarded_text(decide.project, command) is None, command
+
+
 def test_real_paths_shared_across_a_command_match_realpath(H, tmp_path):
     (tmp_path / "real" / "sub").mkdir(parents=True)
     (tmp_path / "real" / "f.txt").write_text("x", encoding="utf-8")
@@ -701,6 +808,156 @@ def test_real_paths_shared_across_a_command_match_realpath(H, tmp_path):
     for p in paths:
         assert H.real_path(str(p), cache) == os.path.realpath(str(p)), p
     assert H.real_path(str(paths[1]), cache) == os.path.realpath(str(paths[1]))  # from the cache
+
+
+def test_real_path_walks_a_path_deeper_than_the_recursion_limit(H, tmp_path):
+    """A path of 5000 parts that does not exist: real_path walks up with a loop (no recursion per part), and the
+    cache still serves its parents."""
+    deep = os.path.join(str(tmp_path), *(["a"] * 5000), "x.html")
+    cache: dict = {}
+    assert H.real_path(deep, cache) == os.path.join(os.path.realpath(str(tmp_path)), *(["a"] * 5000), "x.html")
+    parent = os.path.dirname(deep)
+    assert cache[parent] == os.path.dirname(cache[deep])
+    assert H.real_path(parent, cache) == os.path.dirname(cache[deep])
+
+
+def test_a_deep_missing_path_never_lets_a_guarded_write_through(launcher, tmp_path, proj):
+    """Through the launcher: the first word a path deeper than Python's recursion limit, then a write to a generated
+    page; the guard reads it to the end and refuses (it used to crash on the deep path and fail open)."""
+    for command in (f"echo > {CASES.DEEP}; echo x > {GEN}", f"rm -f {CASES.DEEP} {GEN}"):
+        assert WHY[GEN] in refused(claude(launcher, tmp_path, proj, command)), command
+
+
+def test_an_unexpected_error_in_the_guard_fails_closed_on_guarded_paths(decide, monkeypatch):
+    """Defence in depth: when the shell check raises, the command is refused when the earlier reader's targets or
+    removals, or any of its words, name a guarded path; a command that names nothing guarded is allowed (fail open
+    stays the rule there). The real outcome is logged."""
+    pe = decide.pe
+
+    def boom(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(pe, "shell_refusal", boom)
+    logged = []
+    monkeypatch.setattr(pe.H, "log_failure", lambda *a, **k: logged.append((a, k)))
+    cwd = str(decide.proj)
+    for command in (f"echo x > {GEN}", f"rm -f {OWN}", f"cat notes.txt > /tmp/x; cat {GEN}",
+                    f"python3 -c \"open('{MAP}', 'w')\""):
+        reason = pe.shell_decision(decide.project, command, cwd, cwd)
+        assert reason, command
+        actionable(reason)
+    assert "refused" in logged[-1][1]["outcome"]
+    assert pe.shell_decision(decide.project, "echo x > notes/new.txt", cwd, cwd) is None
+    assert pe.shell_decision(decide.project, "ls -la", cwd, cwd) is None
+    assert "allowed" in logged[-1][1]["outcome"] and logged[-1][1]["exc"] is not None
+
+
+WINDOWS_TOOL_WRITES = [
+    "xcopy C:\\tmp\\screens.html docs\\design /Y",  # an existing folder: DEST\\screens.html
+    "xcopy C:\\tmp\\screens.html docs/design/",
+    f"xcopy C:\\tmp\\x {GEN} /Y",
+    "xcopy /E /I C:\\tmp\\design docs\\design",
+    "robocopy C:\\tmp\\design docs\\design screens.html",
+    "robocopy C:\\tmp\\design docs\\design /MIR",
+    f"robocopy {SKILL_REL}/scripts C:\\tmp\\old /MOVE",
+    f"cmd /c copy /y C:\\tmp\\x {GEN}",
+    f"cmd.exe /C \"move C:\\tmp\\x {GEN}\"",
+    f"cmd /c del {GEN}",
+    f"cmd /c erase /q {OWN}",
+    f"cmd /k \"copy C:\\tmp\\x docs\\design\\screens.html\"",
+    f"ren {GEN} old.html",
+    "ren docs\\design\\mine.html screens.html",
+    "rename docs/design/mine.html screens.html",
+    f"rename 's/screens/old/' {GEN}",  # the Linux rename (EXPR FILE): FILE moves away
+    "Rename-Item -Path docs/design/mine.html -NewName screens.html",
+    f"Rename-Item -LiteralPath {GEN} -NewName old.html",
+    "rni docs/design/mine.html screens.html",
+    f"Rename-Item {OWN} -NewName old.py",
+    f"clc {GEN}",
+    f"clc -Path {OWN}",
+]
+WINDOWS_TOOL_ALLOWED = [
+    "xcopy C:\\tmp\\a notes\\ /Y", "robocopy C:\\tmp\\a notes /E", "cmd /c copy C:\\tmp\\a notes\\b.txt",
+    "cmd /c dir", "ren notes\\a.txt b.txt", "Rename-Item notes/a.txt -NewName b.txt", "clc notes/a.txt",
+]
+
+
+LINK_THEN_WRITE = [  # a name linked to a guarded file earlier in the same command is guarded too
+    f"ln {OWN} y.py && echo x > y.py",
+    f"ln -s {OWN} z.py && echo x > z.py",
+    f"ln -sf ../{OWN} notes/t.py && sed -i.bak s/a/b/ notes/t.py",  # a symbolic link's source, from the link's folder
+    f"cp -l {OWN} w.py; echo x > w.py",
+    f"cp --link {OWN} w.py; echo x >> w.py",
+    f"cp -s $PWD/{OWN} notes/ && echo x > notes/build-tokens.py",  # into a folder: <folder>/<source name>
+    f"ln -s {GEN} g.html && cat a > g.html",
+    f"ln -s {GEN} g.html; rm g.html; echo x > g.html",
+    "ln -s docs/design d && echo x > d/screens.html",  # a link to a folder Plumb owns
+    f"ln -s {SKILL_REL}/scripts s && rm -rf s/",
+    f"mklink /H y.py {OWN} & echo x > y.py",
+    f"cmd /c \"mklink y.py {OWN}\" && echo x > y.py",
+    f"New-Item -ItemType HardLink -Path y.py -Target {OWN}; Set-Content y.py x",
+    f"ni -ItemType SymbolicLink -Path y.py -Value {OWN}; Add-Content y.py x",
+]
+LINK_ALLOWED = [
+    f"ln -s ../{OWN} notes/own.py", f"ln -s {OWN} y.py && cat y.py", "ln -s notes/a z && echo x > z",
+    "cp -l notes/a w; echo x > w", "echo x > y.py; ln -s notes/a y.py",
+]
+
+
+@pytest.mark.parametrize("command", LINK_THEN_WRITE)
+def test_a_link_to_a_guarded_file_made_and_written_in_one_command_is_refused(decide, command):
+    reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    assert reason, command
+    actionable(reason)
+
+
+def test_past_the_link_cap_a_guarded_name_refuses(decide):
+    """More links than the reader follows (2000), or more writes through them: a command that names a guarded path is
+    refused with a fix that says to split it; one that names nothing guarded is not refused for the cap alone."""
+    many = "; ".join(f"ln -s s n{i}" for i in range(2001))
+    for command in (f"{many}; ln -s {OWN} z && echo x > z",
+                    "ln -s s q; " + " ".join(f"echo > q/{i};" for i in range(2001)) + f" ln -s {OWN} z && echo x > z"):
+        reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+        assert reason and "more links" in reason and "split" in reason, reason
+        actionable(reason)
+    assert not decide.new(f"{many}; echo x > notes/a.txt")
+
+
+def test_writes_through_many_links_stay_fast(decide):
+    """The re-review's worst case: 2000 links, then one rm of 7000 paths under them (and a guarded write after it):
+    looked up per path, not per link, and inside the deadline, on a Windows runner too."""
+    names = [f"{i:x}" for i in range(2000)]
+    links = ";".join(f"ln -s s {n}" for n in names)
+    rm = "rm " + " ".join(f"{names[i % 2000]}/{i // 2000}" for i in range(7000))
+    commands = (links + ";" + rm, links + ";" + rm + f";echo x > {GEN}")
+
+    def run():
+        for command in commands:
+            decide.pe.H._EFFECTS_CACHE.clear()
+            decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    took = _fastest(decide, run)
+    assert took < 2 * SPEED_LIMIT, f"{took:.2f} s (limit {2 * SPEED_LIMIT} s)"
+    decide.pe.H._EFFECTS_CACHE.clear()
+    assert decide.new(commands[1])
+
+
+@pytest.mark.parametrize("command", LINK_ALLOWED)
+def test_links_written_to_nothing_guarded_are_allowed(decide, command):
+    assert not decide.new(command), command
+
+
+@pytest.mark.parametrize("command", WINDOWS_TOOL_WRITES)
+def test_windows_copy_rename_and_clear_tools_are_read_as_writes(decide, command):
+    """xcopy, robocopy, cmd /c copy / move / del / erase, ren / rename, Rename-Item / rni and clc (Clear-Content) write,
+    move or remove files: the new reader reads them (the earlier one did not), so a guarded target is refused."""
+    reason = decide.pe.shell_refusal(decide.project, command, str(decide.proj), str(decide.proj))
+    assert reason, command
+    actionable(reason)
+
+
+@pytest.mark.parametrize("command", WINDOWS_TOOL_ALLOWED)
+def test_windows_tools_writing_elsewhere_are_allowed(decide, command):
+    assert not decide.new(command), command
 
 
 @pytest.mark.parametrize("path,drive", [
@@ -908,7 +1165,7 @@ def test_a_reader_crash_is_logged_once_with_the_real_outcome(decide, monkeypatch
     lines = []
     monkeypatch.setattr(H, "log_failure", lambda given, expected, **kw: lines.append(kw.get("outcome")))
 
-    def crashed(command, cwd, root=None):
+    def crashed(command, cwd, root=None, deadline=None):
         eff = H.ShellEffects(root, time.monotonic() + 5)
         eff.doubt("the reader failed (RecursionError)")
         eff.trouble = ("the shell reader failed (RecursionError: deep)", "crash", RecursionError("deep"))

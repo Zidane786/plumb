@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session_start.py",
-            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path $s) { & $s session_start.py; exit $LASTEXITCODE }; exit 0",
+            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path -LiteralPath $s) { & $s session_start.py; exit $LASTEXITCODE }; exit 0",
             "timeout": 15
           }
         ]
@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" pre_edit.py",
-            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path $s) { & $s pre_edit.py; exit $LASTEXITCODE }; exit 0",
+            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path -LiteralPath $s) { & $s pre_edit.py; exit $LASTEXITCODE }; exit 0",
             "timeout": 10
           }
         ]
@@ -32,7 +32,7 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop_check.py",
-            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path $s) { & $s stop_check.py; exit $LASTEXITCODE }; exit 0",
+            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path -LiteralPath $s) { & $s stop_check.py; exit $LASTEXITCODE }; exit 0",
             "timeout": 30
           }
         ]

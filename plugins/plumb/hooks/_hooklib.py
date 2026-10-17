@@ -38,7 +38,9 @@ need no import at all (a non-UI edit stays far under 150 ms).
 Trust boundary: the checks load audit.py (and through it build-prototype.py, build-tokens.py, _plumb.py) only from the
 plugin's own install (PLUGIN_SCRIPTS, next to these hooks), never the copies in the project's design-system skill: the
 project is data (PLUMB.md, the tokens JSON, screens.json, screen and source files); the git calls in audit.py turn off
-the commands a repository's config can name (see SECURITY.md "Trust boundary"). When the project's copies are another
+the commands a repository's config can name (see SECURITY.md "Trust boundary"). The hooks read a project file only
+when it is a regular file, at most PROJECT_FILE_LIMIT bytes, opened without waiting (read_regular): a FIFO or a link to
+a device never stalls a hook. When the project's copies are another
 version, scripts_note() says so (run /plumb:upgrade); the checks still use the plugin's. When loading fails the checks
 are skipped with one stderr line: hooks fail open. Snapshots live in a private per-user temp folder (snapshot_dir).
 
@@ -52,6 +54,7 @@ Python 3.9+, standard library only.
 
 from __future__ import annotations
 
+import errno
 import fnmatch
 import glob
 import hashlib
@@ -294,8 +297,10 @@ class Change:
         return "\n".join(ln[1:] for h in self.hunks for ln in h.lines if ln[0] == "-")
 
 
-PATCH_HEADER = re.compile(r"^\*\*\* (Update File|Add File|Delete File|Move to):[ \t]*(.+?)[ \t]*$")
-PATCH_RE = re.compile(r"^\*\*\* (?:Begin Patch|Update File:|Add File:|Delete File:)", re.MULTILINE)
+# A header may be indented (the reference apply_patch parser trims each line before it matches one): reading an indented
+# header as a file section only finds more targets.
+PATCH_HEADER = re.compile(r"^[ \t]*\*\*\* (Update File|Add File|Delete File|Move to):[ \t]*(.+?)[ \t]*$")
+PATCH_RE = re.compile(r"^[ \t]*\*\*\* (?:Begin Patch|Update File:|Add File:|Delete File:)", re.MULTILINE)
 _PATCH_KIND = {"Update File": "update", "Add File": "add", "Delete File": "delete", "Move to": "move"}
 
 
@@ -477,16 +482,30 @@ def real_path(path: str, cache: Dict[str, str]) -> str:
     """os.path.realpath(path) for an absolute, normalised path, sharing the work in cache: a path that does not exist
     is no link, so its real path is its folder's real path and its name, and the folder is resolved once for all its
     entries (a realpath costs a file system call per part, most on Windows, where it opens every file). The cache
-    belongs to one command: never kept between hook runs."""
+    belongs to one command: never kept between hook runs. A loop walks up to the nearest folder that exists (or one
+    already in the cache), never a recursion per part: a command can name a path thousands of parts deep."""
     found = cache.get(path)
-    if found is None:
-        parent, name = os.path.split(path)
-        if (name and name not in (".", "..") and parent and parent != path and "\x00" not in path
-                and not os.path.lexists(path)):
-            found = os.path.join(real_path(parent, cache), name)
-        else:
-            found = os.path.realpath(path)
-        cache[path] = found
+    if found is not None:
+        return found
+    missing: List[Tuple[str, str]] = []  # (path, its last part), from the deepest up
+    here = path
+    while True:
+        known = cache.get(here)
+        if known is not None:
+            found = known
+            break
+        parent, name = os.path.split(here)
+        if (name and name not in (".", "..") and parent and parent != here and "\x00" not in here
+                and not os.path.lexists(here)):
+            missing.append((here, name))
+            here = parent
+            continue
+        found = os.path.realpath(here)
+        cache[here] = found
+        break
+    for p, name in reversed(missing):
+        found = os.path.join(found, name)
+        cache[p] = found
     return found
 
 
@@ -653,12 +672,55 @@ def plumb_md_keys(text: str) -> Dict[str, str]:
     return out
 
 
-def _read(path: str) -> Optional[str]:
+# The most the hooks read of one project file. Generous: a tokens file, PLUMB.md, a copied script or a page is far
+# smaller (the audit itself skips source files over 5 MB), so only a file no project writes by hand is left out; small
+# enough that a hostile file costs a hook at most this much memory and a moment of reading.
+PROJECT_FILE_LIMIT = 8 * 1024 * 1024
+_READ_FLAGS = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+
+
+def read_regular(path: str, limit: int = PROJECT_FILE_LIMIT, head: bool = False) -> bytes:
+    """The bytes of a project file, read only when it is a regular file: opened non-blocking (a FIFO never makes the
+    open wait for a writer; Windows has no O_NONBLOCK, the regular-file check alone holds there), then fstat-ed on
+    the open file, so a symlink to /dev/zero, a device, a FIFO or a folder is never read. At most limit bytes: a larger
+    file raises (with head=True its first limit bytes are returned). Raises OSError as os.open does
+    (FileNotFoundError for a missing file), and OSError(EINVAL) for a file that is not regular or is too large."""
+    fd = os.open(path, _READ_FLAGS)
     try:
-        with open(path, "rb") as fh:
-            return fh.read().decode("utf-8-sig", "replace")
-    except OSError:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(errno.EINVAL, "not a regular file", path)
+        if st.st_size > limit and not head:
+            raise OSError(errno.EFBIG, "larger than the hooks read", path)
+        chunks: List[bytes] = []
+        left = limit + 1  # one byte more than the limit tells a file that grew past it
+        while left > 0:
+            chunk = os.read(fd, min(left, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        data = b"".join(chunks)
+        if len(data) > limit:
+            if not head:
+                raise OSError(errno.EFBIG, "larger than the hooks read", path)
+            data = data[:limit]
+        return data
+    finally:
+        os.close(fd)
+
+
+def regular_bytes(path: str, limit: int = PROJECT_FILE_LIMIT) -> Optional[bytes]:
+    """read_regular, or None for a file that is missing, not regular, too large or unreadable."""
+    try:
+        return read_regular(path, limit)
+    except (OSError, ValueError):
         return None
+
+
+def _read(path: str) -> Optional[str]:
+    data = regular_bytes(path)
+    return data.decode("utf-8-sig", "replace") if data is not None else None
 
 
 def find_project(start: str) -> Optional[Path]:
@@ -697,6 +759,7 @@ class Project:
         self.python = python if _SAFE_PYTHON.fullmatch(python) else "python3"
         self._doc: Optional[dict] = None
         self._doc_read = False
+        self.tokens_refused: Optional[Path] = None  # the tokens file, when it is not a regular file within the limit
 
     def on(self, key: str) -> bool:
         return _ON.match(self.keys.get(key, "") or "") is not None
@@ -721,11 +784,27 @@ class Project:
             found = sorted(folder.glob("*.tokens.json")) if folder is not None and folder.is_dir() else []
             if len(found) == 1:
                 try:
-                    doc = json.loads(found[0].read_bytes().decode("utf-8-sig"))
+                    doc = json.loads(read_regular(str(found[0])).decode("utf-8-sig"))
                     self._doc = doc if isinstance(doc, dict) else None
-                except (OSError, ValueError):
+                except OSError as exc:
+                    self._doc = None
+                    if exc.errno in (errno.EINVAL, errno.EFBIG):
+                        self.tokens_refused = found[0]
+                except ValueError:
                     self._doc = None
         return self._doc
+
+    def tokens_unreadable(self) -> Optional[str]:
+        """A note when the tokens file is not a regular file or is larger than the hooks read (a symlink to a device, a
+        FIFO): the checks that load it (the plugin's audit.py and build-tokens.py) are skipped so they never wait on
+        it; else None."""
+        self.tokens_doc()
+        bad = self.tokens_refused
+        if bad is None:
+            return None
+        rel = under(str(bad), self.root_s) or str(bad)
+        return (f"{rel} is not a regular file of at most {PROJECT_FILE_LIMIT // (1024 * 1024)} MB, so the design checks "
+                f"that read it are skipped (the guards stay on)")
 
     def _plumb_settings(self) -> dict:
         doc = self.tokens_doc() or {}
@@ -883,9 +962,8 @@ def scripts_note(project: Project) -> Optional[str]:
 
 
 def _same_bytes(a: Path, b: Path) -> bool:
-    try:
-        x, y = a.read_bytes(), b.read_bytes()
-    except OSError:
+    x, y = regular_bytes(str(a)), regular_bytes(str(b))
+    if x is None or y is None:
         return False
     norm = lambda data: data[3:].replace(b"\r\n", b"\n") if data.startswith(b"\xef\xbb\xbf") \
         else data.replace(b"\r\n", b"\n")  # noqa: E731 - a Windows checkout
@@ -1317,8 +1395,9 @@ def log_failure(given: str, expected: str, category: str = "crash", exc: Optiona
 # tee [-a], sed -i / perl -i / sed's w FILE, sort -o, uniq IN OUT, the destination of cp / mv / install / rsync / ln (a
 # folder destination writes <folder>/<source name>; a recursive copy or a move writes into the folder: refused like a
 # removal when it holds a guarded file), truncate, dd of=, curl -o / --output-dir / wget -O, PowerShell's Set-Content,
-# Add-Content, Out-File, New-Item, Copy-Item, Move-Item; the removals (rm, del, Remove-Item, git rm, the sources of
-# mv …). A shell's own script (bash -c with $1 … mapped, a here-document fed to a shell, eval, source <(echo …),
+# Add-Content, Out-File, Clear-Content (clc), New-Item, Copy-Item, Move-Item, Rename-Item (rni); the Windows tools xcopy,
+# robocopy, ren / rename and cmd /c with its builtins (copy, move, del, erase); the removals (rm, del, Remove-Item,
+# git rm, the sources of mv, ren, Rename-Item …). A shell's own script (bash -c with $1 … mapped, a here-document fed to a shell, eval, source <(echo …),
 # script -c, su -c, watch, find -exec) is read as commands; a file the command wrote and then runs (python FILE,
 # bash FILE, source, make -f, python - < FILE) is read as the code it runs; an interpreter's inline code for its writes
 # (open(…, "w"), Path(…).write_text, shutil, os.replace, fs.writeFile, [IO.File]::WriteAllText …), with write targets
@@ -1333,7 +1412,9 @@ WRITE_HINT = re.compile(r">|\btee\b|\bsed\b|\bperl\b|\bcp\b|\bmv\b|\binstall\b|\
                         r"::|append|copyfile|\bfs\.|rename|\bcopy\b|cpSync|\bcp\(|\bcurl\b|\bwget\b|new-item|\bni\b|"
                         r"inplace|remove|rmtree|unlink|rmdir|rmSync|tee-object|\bsc\b|\bac\b|\bcpi\b|\bsort\b|\buniq\b|"
                         # removals and moves: rm, del, erase, rd, Remove-Item, ri, move, mi
-                        r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b",
+                        r"\brm\b|\bdel\b|\berase\b|\brd\b|remove-item|\bri\b|\bmove\b|\bmi\b|"
+                        # Windows tools: xcopy, robocopy, ren (rename, Rename-Item: "rename" above), rni, clc
+                        r"\bxcopy\b|\brobocopy\b|\bren\b|\brni\b|\bclc\b|\bmklink\b",
                         re.I)
 SHELL_BUDGET = 1.5  # seconds this reader may take (the hook's timeout is 10 s); past it the previous reader decides
 # The clock every time budget is measured on: monotonic and fine-grained everywhere (time.monotonic ticks only every
@@ -1759,6 +1840,11 @@ class ShellEffects:
         # pre_edit asks of each whether the variable could hold a guarded path, or a name the target turns into one
         self.loop_targets: List[Tuple[int, str, Dict[str, List[Tuple]], "_Scope"]] = []
         self._loop_seen: set = set()
+        # names the command made links to other paths (ln, cp -l / -s, mklink, New-Item -ItemType HardLink …): a later
+        # write or removal through such a name is one of its source (link_writes: (kind, the source paths))
+        self.linked: Dict[str, List[str]] = {}
+        self.link_writes: List[Tuple[int, List[str]]] = []
+        self.links_capped = False  # more links (or writes through them) than the reader follows: pre_edit decides
         self._words: Optional[List[str]] = None
         self._seen: Dict[int, set] = {0: set(), 1: set(), 2: set(), 3: set()}
 
@@ -1864,6 +1950,8 @@ class ShellEffects:
         lst = (self.writes, self.removals, self.folder_writes, self.code_writes)[kind]
         seen = self._seen[kind]
         found = self._paths(word, scope, True, kind < 3)
+        if kind < 3 and self.linked:
+            self._through_links(kind, found)
         for p in found:
             if p in seen:
                 continue
@@ -1873,6 +1961,45 @@ class ShellEffects:
             seen.add(p)
             lst.append(p)
         return found
+
+    def _through_links(self, kind: int, found: List[str]) -> None:
+        """A write or removal of a name the command linked earlier (or of a path under it): one of the link's source.
+        Each path is looked up by its own folders (never against every link), with the time budget checked per path;
+        past _MAX_TARGETS such writes the reader stops and says so (links_capped)."""
+        for p in found:
+            self.tick()
+            here, rest = p, ""
+            while True:
+                sources = self.linked.get(here)
+                if sources is not None:
+                    if len(self.link_writes) >= _MAX_TARGETS:
+                        self.links_capped = True
+                        self.doubt("more writes through links than the reader follows")
+                        return
+                    self.link_writes.append((kind, [os.path.normpath(os.path.join(s, rest)) if rest else s
+                                                    for s in sources]))
+                parent = os.path.dirname(here)
+                if not parent or parent == here:
+                    break
+                rest = os.path.join(os.path.basename(here), rest) if rest else os.path.basename(here)
+                here = parent
+
+    def link(self, name: str, source: str, scope: _Scope) -> None:
+        """name is made a link to source (a hard or symbolic link). A symbolic link's relative source counts from the
+        link's folder as well as from the command's."""
+        names = self._paths(name, scope, False)
+        if not names or not source:
+            return
+        sources = list(self._paths(source, scope, False))
+        w = source.replace("\\", "/") if os.sep == "/" else source
+        if not os.path.isabs(os.path.expanduser(w)) and "$" not in w and "`" not in w:
+            sources += [os.path.normpath(os.path.join(os.path.dirname(n), w)) for n in names]
+        for n in names:
+            if len(self.linked) >= _MAX_TARGETS and n not in self.linked:
+                self.links_capped = True
+                self.doubt("more links than the reader follows")
+                return
+            self.linked[n] = list(dict.fromkeys(self.linked.get(n, []) + sources))
 
     def write(self, word: str, scope: _Scope, text: Optional[str] = None) -> None:
         """A file write. text: what the file then holds, when the reader knows it (a here-document, echo's words)."""
@@ -2027,7 +2154,7 @@ _COPY_VALUE_FLAGS = {
     "rsync": ("-e", "--rsh", "-f", "--filter", "--exclude", "--include", "-T", "--temp-dir", "--backup-dir",
               "--partial-dir", "--chmod", "--chown", "--files-from", "--exclude-from", "--include-from", "-B",
               "--block-size"),
-    "copy": (), "move": (),
+    "copy": (), "move": (), "xcopy": (),
 }
 
 
@@ -2041,8 +2168,16 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
     pos = _positional(args, vf)
     if name in ("copy", "move"):
         pos = [p for p in pos if not re.fullmatch(r"/[A-Za-z-]+", p)]  # cmd's /y /b switches
+    if name == "xcopy":  # xcopy SRC [DEST] [/E /S /I /Y /EXCLUDE:…]: DEST is the current folder when left out
+        pos = [p for p in args if not re.fullmatch(r"/[A-Za-z-]+(?::\S*)?", p)]
+        if len(pos) == 1:
+            pos.append(".")
+        if any(a.lower() in ("/s", "/e") for a in args) and len(pos) >= 2:
+            eff.write_folder(pos[-1], scope)  # a recursive xcopy writes the source's contents into DEST
     recursive = name in ("rsync", "mv", "move") or any(
         re.fullmatch(r"-[a-zA-Z]*[rRa][a-zA-Z]*", a) or a in ("--recursive", "--archive") for a in args)
+    linking = name == "ln" or (name == "cp" and any(
+        re.fullmatch(r"-[a-zA-Z]*[ls][a-zA-Z]*", a) or a in ("--link", "--symbolic-link") for a in args))
     if into is not None:
         folder, sources = into, pos
         eff.write(folder, scope)
@@ -2056,6 +2191,8 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
         if recursive and (not exists or any(s.endswith(("/", "\\", "/.")) for s in sources)):
             eff.write_folder(dest, scope)
         if not (len(pos) > 2 or dest.endswith(("/", "\\")) or exists):
+            if linking:
+                eff.link(dest, sources[0], scope)
             return
         folder = dest
     else:
@@ -2070,12 +2207,63 @@ def _copy_writes(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -
             eff.write(target, scope)
             if recursive:
                 eff.write_folder(target, scope)
+            if linking:
+                eff.link(target, s, scope)
 
 
 _REMOVERS = ("rm", "rmdir", "unlink", "del", "erase", "rd", "remove-item", "ri")
 _PS_REMOVERS = ("remove-item", "ri", "del", "erase", "rd")
 _MOVERS = ("mv", "move", "move-item", "mi")
-_PS_WRITERS = ("set-content", "add-content", "out-file", "clear-content", "sc", "ac", "tee-object", "new-item", "ni")
+_PS_WRITERS = ("set-content", "add-content", "out-file", "clear-content", "clc", "sc", "ac", "tee-object", "new-item",
+               "ni")
+_WIN_SWITCH = re.compile(r"/[A-Za-z0-9]+(?::\S*)?")  # cmd and robocopy switches: /Y, /MIR, /R:3, /XF
+
+
+def _sibling(path: str, name: str) -> str:
+    """Where a rename puts its new name: next to path (a new name with a folder in it stands as it is)."""
+    if re.search(r"[/\\]", name):
+        return name
+    m = re.match(r"^(.*[/\\])", path)
+    return (m.group(1) if m else "") + name
+
+
+def _windows_tool(name: str, args: List[str], scope: _Scope, eff: ShellEffects) -> None:
+    """robocopy SRC DEST [FILE …] [/switches] (writes into DEST; /MOV and /MOVE take from SRC), ren / rename SRC NEW
+    and Rename-Item / rni [-Path] SRC [-NewName] NEW (SRC moves away, NEW is written next to it). rename is also the
+    Linux tools' (EXPR FILE …, FROM TO FILE …): every word of it counts as moved away, to names the reader does not
+    work out."""
+    if name == "robocopy":
+        pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if len(pos) < 2:
+            return
+        src, dest, files = pos[0], pos[1], pos[2:]
+        eff.write_folder(dest, scope)
+        for f in files:
+            eff.write(dest.rstrip("/\\") + "/" + f, scope)
+        if any(a.lower() in ("/mov", "/move") for a in args):
+            for item in ([src.rstrip("/\\") + "/" + f for f in files] if files else [src]):
+                eff.remove(item, scope)
+        return
+    if name in ("rename-item", "rni"):
+        value = _flag_value(args, _PS_PATH_FLAGS)
+        new = _flag_value(args, ("-newname",))
+        pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-newname",))
+        src = value if value is not None else (pos.pop(0) if pos else None)
+        new = new if new is not None else (pos[0] if pos else None)
+    else:
+        pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if name == "rename" and len(pos) == 2:
+            eff.remove(pos[1], scope)  # the Linux rename EXPR FILE: FILE moves away
+        if len(pos) > 2:
+            eff.doubt("rename's new names are not read")
+            for f in pos[1:]:
+                eff.remove(f, scope)
+            return
+        src, new = (pos + [None, None])[:2]
+    if src:
+        eff.remove(src, scope)
+        if new:
+            eff.write(_sibling(src, new), scope)
 
 
 def _removals(name: str, args: List[str]) -> List[str]:
@@ -2425,12 +2613,29 @@ def _simple(cmd: _Simple, scope: _Scope, eff: ShellEffects, depth: int, before: 
                 eff.write(a.split("=", 1)[1], scope)
             elif re.fullmatch(r"-O.+", a):
                 eff.write(a[2:], scope)
+    elif name in ("robocopy", "ren", "rename", "rename-item", "rni"):
+        _windows_tool(name, args, scope, eff)
+    elif name == "mklink":  # cmd's mklink [/D | /H | /J] LINK TARGET
+        pos = [a for a in args if not _WIN_SWITCH.fullmatch(a)]
+        if len(pos) >= 2:
+            eff.write(pos[0], scope)
+            eff.link(pos[0], pos[1], scope)
+    elif name == "cmd":  # cmd /c COMMAND (or /k, /r): its builtins (copy, move, del, erase, ren) are read
+        eff.doubt("cmd runs a command")
+        at = next((k for k, a in enumerate(args) if a.lower() in ("/c", "/k", "/r")), None)
+        if at is not None and args[at + 1:]:
+            _script(" ".join(args[at + 1:]), scope.copy(), eff, depth + 1)
     elif name in _PS_WRITERS:
         value = _flag_value(args, _PS_PATH_FLAGS)
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS)
+        kind = _flag_value(args, ("-itemtype", "-type")) if name in ("new-item", "ni") else None
+        source = _flag_value(args, ("-target", "-value")) if kind and kind.lower() in (
+            "hardlink", "symboliclink", "junction") else None
         for item in ([value] if value else pos[:1]):
             for x in item.split(","):
                 eff.write(x.strip(), scope)
+                if source:
+                    eff.link(x.strip(), source, scope)
     elif name in ("copy-item", "move-item", "cpi", "mi"):
         value = _flag_value(args, ("-destination",))
         pos = _positional(args, _PS_VALUE_FLAGS + _PS_PATH_FLAGS + ("-destination",))
@@ -3597,17 +3802,18 @@ def _nesting(command: str) -> int:
     return most
 
 
-def shell_effects(command: str, cwd: str, root: Optional[str] = None) -> ShellEffects:
+def shell_effects(command: str, cwd: str, root: Optional[str] = None, deadline: Optional[float] = None) -> ShellEffects:
     """What a shell command (Bash or PowerShell) writes, removes and how it is judged, run in cwd, in the project at
-    root (for $CLAUDE_PROJECT_DIR and a cd the reader can only guess). Past its time budget, or on an internal error,
-    the reader is unsure (the earlier reader decides) and eff.trouble says why (pre_edit logs it with the outcome)."""
+    root (for $CLAUDE_PROJECT_DIR and a cd the reader can only guess). Past its time budget (or deadline, the whole
+    check's, on the clock() scale, when it comes first), or on an internal error, the reader is unsure (the earlier
+    reader decides) and eff.trouble says why (pre_edit logs it with the outcome)."""
     key = (command, cwd, root)
     if key not in _EFFECTS_CACHE:
         try:  # PLUMB_SHELL_BUDGET: seconds, for tests
             budget = float(os.environ.get("PLUMB_SHELL_BUDGET") or SHELL_BUDGET)
         except ValueError:
             budget = SHELL_BUDGET
-        eff = ShellEffects(root, clock() + budget)
+        eff = ShellEffects(root, min(clock() + budget, deadline if deadline is not None else float("inf")))
         eff.command = command
         scope = _Scope((cwd,), {})
         try:

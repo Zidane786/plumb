@@ -1160,7 +1160,10 @@ CI to keep everyone honest.
 Three hooks run in Claude Code and Copilot CLI (and Kiro, pending its live check). They do nothing in a folder without
 `PLUMB.md`. They run **only the plugin's own installed scripts**, never the copies inside your project, so a cloned
 repository can't get code run just by containing a `PLUMB.md` (see `SECURITY.md`, "Trust boundary"). They **fail open**:
-no Python, a broken file or unreadable input never blocks your work (at most one note).
+no Python, a broken file or unreadable input never blocks your work (at most one note); a half-updated plugin folder
+(its `hooks/_hooklib.py` does not load) prints one line and exits 0. Their own reads take only regular files from the
+project, each up to 8 MB, and never wait on one: a tokens file that is a FIFO or a link to a device skips the checks that read
+it (session start says `tokens not checked`; the guard stays on).
 
 ### At session start
 
@@ -1187,8 +1190,18 @@ Three checks, in this order:
 
 1. **The guard (always on):** hand edits to generated files and to Plumb's own files are refused, including through the
    shell. Removing or moving away a guarded file (`rm`, `rmdir`, `del`, `Remove-Item`, `git rm`, `mv` / `Move-Item` /
-   `git mv` from it), or a folder holding one, is refused the same way. Running `build-tokens.py` or
-   `build-prototype.py` is allowed.
+   `git mv`, `ren` / `Rename-Item` from it), or a folder holding one, is refused the same way. Links:
+   - an existing hard link (the same file under another name) of any guarded file gets that file's refusal: the
+     skill's `[P]` files, the generated outputs, pages and web copies, Kiro's files and every file under the plugin;
+     a generated `*Theme.swift` / `*Theme.kt` anywhere in the project is known by build-tokens.py's header under any
+     name (removing such a link is refused too);
+   - a name the same command links to a guarded file or folder (`ln`, `ln -s`, `cp -l` / `--link` / `-s`, `mklink`,
+     `New-Item -ItemType HardLink` / `SymbolicLink` / `Junction`) is guarded for the rest of the command:
+     `ln -s <skill>/scripts/build-tokens.py y && echo x > y` is refused; making the link alone is allowed (a symbolic
+     link is followed by every later command). Past 2,000 links, or 2,000 writes through them, in one command, the
+     guard stops following them and refuses the command when it names a guarded path (`fix:` split it).
+
+   Running `build-tokens.py` or `build-prototype.py` is allowed.
 
    A shell command is refused when a guarded file is one of its **real write targets**:
    - a redirect (`>`, `>>`, `1>`, `2>`, `&>`, `>|`), `tee [-a]`, `sed -i` (and sed's `w FILE`), `perl -i`, `sort -o`,
@@ -1196,8 +1209,10 @@ Three checks, in this order:
    - the destination of `cp`, `mv`, `install`, `rsync` or `ln` (a folder destination counts as the file named like
      the source in it; a recursive copy or a move into a folder that holds a guarded file is refused like removing it),
      `truncate`, `dd of=`, `curl -o` / `--output-dir`, `wget -O`;
-   - PowerShell's `Set-Content`, `Add-Content`, `Out-File`, `New-Item`, `Copy-Item` / `Move-Item` onto it, and
-     `[IO.File]::WriteAllText(…)`;
+   - PowerShell's `Set-Content`, `Add-Content`, `Out-File`, `Clear-Content` / `clc`, `New-Item`, `Copy-Item` /
+     `Move-Item` onto it, `Rename-Item` / `rni` to its name, and `[IO.File]::WriteAllText(…)`;
+   - the Windows tools `xcopy` and `robocopy` (into a folder that holds a guarded file, or onto one), `cmd /c` (`/k`)
+     with `copy`, `move`, `del` or `erase`, and `ren` / `rename` to its name;
    - in inline code (`python -c`, `node -e`, a here-document or an `echo` piped to an interpreter): `open("<path>",
      "w" | "a" | "x")`, `Path("<path>").write_text` / `write_bytes`, `shutil.copy` / `copytree` / `move`,
      `os.replace` / `rename`, `fs.writeFileSync` and the like, with the target put together from the code's constants
@@ -1270,8 +1285,13 @@ Three checks, in this order:
 
    A command over 64 KB, one whose brackets nest deeper than 200, and one the reader fails on are not read: each is
    refused when any of its words names a guarded file, a guarded folder or a parent of one, and otherwise the earlier
-   reading decides. A reader failure or a command too long to read adds one line, with the real outcome, to the hooks'
-   log (`/plumb:feedback`).
+   reading decides. If the check itself fails, the command is refused when the earlier reading's targets or any of its
+   words name a guarded path, and allowed only when nothing guarded is named. The whole check of one command has a
+   4-second deadline (the hook's timeout is 10 seconds, and a timeout would let the command through). A step that
+   runs out of time refuses, as before; past the deadline the earlier reading decides, or the command is refused when
+   any of its words names a guarded path (looked up again, briefly) or its text names a guarded file or folder. A reader failure, a check that failed, a
+   deadline reached or a command too long to read adds one line, with the real outcome, to the hooks' log
+   (`/plumb:feedback`).
 
    Paths are compared without case where the file system ignores it: always on Windows and macOS, and on Linux when
    the file system the project is on does (the guard asks it: a folder that ignores case, a Windows drive mounted in
@@ -1284,7 +1304,8 @@ Three checks, in this order:
 
    The guard is a consistency net, not a sandbox. Not followed:
    - script files written before the command, `xargs`, `find -exec` and `find -delete` on the files found, `patch`,
-     `tar -x`, `unzip`, `prettier --write`, editors like `ed`, and commands run through other tools;
+     `tar -x`, `unzip`, `prettier --write`, `awk -i inplace`, `sponge`, editors like `ed`, and commands run through
+     other tools;
    - the project's own git hooks (`git commit` runs them);
    - a loop whose source the reader models only roughly: `find` with predicates other than `-name` / `-iname` /
      `-type` / `-maxdepth` / `-mindepth` (and `ls -R`, `git ls-files`, a file read line by line) count as unknown

@@ -117,6 +117,14 @@ def test_patch_and_create_on_a_proposal_page_are_denied(launcher, tmp_path, proj
     allowed(pre(launcher, tmp_path, proj, "apply_patch", PATCH=patch(update(mine, "<p>notes</p>", "<p>more</p>"))))
 
 
+def test_patch_with_indented_headers_is_still_guarded(launcher, tmp_path, proj):
+    inside = next(ln for ln in read(proj / "app/globals.css").splitlines() if "color-scheme: dark;" in ln)
+    body = patch(f"  *** Update File: {proj / 'app/globals.css'}\n@@\n-{inside}\n+b\n")
+    assert denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=body)).startswith("error: app/globals.css is generated")
+    body = patch(f"*** Update File: notes.css\n    *** Move to: {MAP}\n@@\n-a\n+b\n")
+    assert denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=body)).startswith(f"error: {MAP} is generated")
+
+
 def test_patch_moving_a_file_onto_a_generated_file_is_denied(launcher, tmp_path, proj):
     body = patch(f"*** Update File: notes.css\n*** Move to: {MAP}\n@@\n-a\n+b\n")
     assert denied(pre(launcher, tmp_path, proj, "apply_patch", PATCH=body)).startswith(f"error: {MAP} is generated")
@@ -306,6 +314,7 @@ def test_every_hook_has_a_windows_powershell_command():
             ps = h["powershell"]
             assert '$s = "$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd"' in ps
             assert f"& $s {script}; exit $LASTEXITCODE" in ps
+            assert "if (Test-Path -LiteralPath $s) {" in ps  # [ and ] in the plugin path are not wildcards
             assert ps.rstrip().endswith("exit 0")  # a missing launcher never blocks a tool call (Copilot fails closed)
             assert isinstance(h.get("timeout"), int) and h["timeout"] > 0
 

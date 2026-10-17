@@ -374,7 +374,10 @@ Try, in order, and report what happens. Use tmux (or a second terminal) if you w
 - [ ] Ask the agent to edit the generated CSS copy (e.g. `app/globals.css`) by hand, and then with
       `sed -i` → both **refused** (`… is generated from the design tokens; a hand edit is lost on the next build`).
       Then ask it to delete that file (`rm`, or `Remove-Item` on Windows) and to `mv` it away → both **refused** the
-      same way. The same through `bash -c "rm app/globals.css"` → **refused**.
+      same way. The same through `bash -c "rm app/globals.css"` → **refused**. On Windows, also
+      `Rename-Item app\globals.css old.css` and `cmd /c del app\globals.css` → **refused** the same way. Ask it to
+      `ln <skill>/assets/platforms/web/tokens.css x.css` (a hard link) and then to edit `x.css` → the edit is
+      **refused** with `tokens.css`'s message (delete `x.css` yourself afterwards).
 - [ ] Commands that only **mention** a guarded file are **allowed** (no refusal, no note): ask the agent to append a
       `tokens` target to the Makefile with a here-document (`cat >> Makefile <<'EOF'` … `python3 <skill>/scripts/build-tokens.py`
       … `EOF`), to count the screens with `python3 -c "import json; print(len(json.load(open('docs/design/prototype/screens.json'))['screens']))"`,
@@ -488,6 +491,14 @@ Restart Copilot, open the same kind of scratch project, and report:
       it reports what the check found and stops.
 - [ ] **Windows only:** the same refusals in PowerShell (the hooks run `hooks/run.cmd`); a machine without Python must
       not block any tool call.
+- [ ] **Windows only, a plugin path with brackets:** copy the clone's `plugins\plumb` folder to a folder whose name
+      has `[` and `]` (for example `C:\plumb-test [x]\plumb`), start Copilot with
+      `copilot --plugin-dir "C:\plumb-test [x]\plumb"` in the scratch project and ask "what does the Plumb session note
+      say?" (no tools) → it quotes the
+      `Plumb: <project>-design-system 1.0.0 · tokens up to date · N audit issues · read the skill before UI changes`
+      line (the hooks ran: `Test-Path -LiteralPath` and `& $s` found `run.cmd` there). Then the hand edit to
+      `app/globals.css` → **refused** with `error: app/globals.css is generated from the design tokens`. Report it as
+      failed if the note is missing or the edit goes through.
 
 ---
 

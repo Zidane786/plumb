@@ -192,8 +192,13 @@
   …)`, a copy into the folder of a guarded file, a recursive copy or move into a folder that holds one, shell
   variables (`OUT=…; echo > "$OUT"`), `$PWD`, `$'…'` escapes, globs and braces, write targets put together in code
   (`os.path.join(d, …)`, `Path(d) / …`, f-strings, `%`, `.format`, `${}`), code piped to an interpreter or on
-  `/dev/stdin`, and `os.remove` / `shutil.rmtree` in inline code. A command over 64 KB, one nested deeper than the
-  reader reads, and one the reader fails on are refused when they name a guarded file or folder (or a parent of one).
+  `/dev/stdin`, `os.remove` / `shutil.rmtree` in inline code, and the Windows tools `xcopy`, `robocopy`, `cmd /c copy`
+  / `move` / `del` / `erase`, `ren` / `Rename-Item` and `clc`. An existing hard link of any guarded file (the skill's
+  files, the generated outputs and pages, the web copies, Kiro's files, the plugin's own files; a generated theme
+  anywhere in the project, by its header) is guarded like the file, and so is a name the same command links to a
+  guarded file or folder (`ln`, `ln -s`, `cp -l` / `-s`, `mklink`, `New-Item -ItemType HardLink` / `SymbolicLink`). A command over 64 KB, one nested deeper than the reader reads, and one the reader fails on are refused
+  when they name a guarded file or folder (or a parent of one); if the check itself fails, a command that names a
+  guarded path is refused.
   Loop variables are followed: a target that uses a `for` / `select` / `while read` variable is refused when the
   variable could hold a guarded path, or a name the target turns into one, judged against the guarded paths only (`for
   f in docs/design/*.html; do sed -i … "$f"; done` and `ls docs/design | while read f; do rm "docs/design/$f"; done`
@@ -204,9 +209,11 @@
 - **The guard reads paths the way the file system does**: it compares them without case on Windows and macOS, and on
   Linux when the project's file system ignores case (asked of the file system itself: a folder that ignores case, a
   Windows drive in WSL); on Windows it reads Git for Windows' Bash drive paths (`/c/Users/…`,
-  `/cygdrive/c/…`) as well as `\` and `/`, drive letters in either case and quoted paths with spaces. Its time budget
-  runs on a fine-grained clock on every platform, and each folder's real path is worked out once per command, so a
-  long command stays well inside the hook's timeout, on a Windows runner too.
+  `/cygdrive/c/…`) as well as `\` and `/`, drive letters in either case and quoted paths with spaces. The whole check
+  of a command has one deadline, well inside the hook's timeout: a step that runs out of time refuses, and past the
+  deadline the stricter first reading decides, or a guarded path or name in the command refuses it, measured on a fine-grained clock on every platform; each folder's real path is
+  worked out once per command, without recursion, so a long command or a path thousands of parts deep stays well
+  inside the timeout, on a Windows runner too.
 - **`unknown-token-reference`** (audit, warn): the skill's `components.md` or `design.md` names a token the tokens file
   no longer has.
 - **Kiro (preview)**: `scripts/kiro.py install` (your home folder) or `install --project <folder>` (that workspace
@@ -256,6 +263,11 @@
   512 KB, and a problem with it never fails or blocks the hook. Each append holds a short exclusive lock (waiting at
   most half a second, else leaving its line out), so hooks failing at the same moment never lose or interleave lines,
   also on Windows, where appends from several processes are not atomic.
+- The hooks read only regular files from a project, each up to 8 MB, opened without waiting: a symlink to
+  `/dev/zero` or a FIFO in a cloned repository cannot stall a hook or fill memory (a tokens file like that skips the
+  checks that read it; the guard stays on). A half-updated plugin folder makes each hook exit 0 with one line, never a
+  block (Kiro blocks on any other exit). The Windows `powershell` hook command finds its launcher with `Test-Path
+  -LiteralPath`, so a plugin path with `[` or `]` still runs the hooks.
 - Nothing is installed or downloaded, and no network call is made at run time.
 - Every screen file is checked before it is inlined, as the shared files are: a hosted font `<link>`, a remote
   `<img>`, `<iframe>`, `<video>`, `<source>`, `<track>`, SVG `<image>` or image `<input>`, an `@import` or remote

@@ -39,7 +39,12 @@ from typing import List
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _hooklib as H  # noqa: E402
+try:
+    import _hooklib as H  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 - a half-updated plugin folder: fail open (Kiro blocks on any non-zero exit)
+    sys.stderr.write(f"plumb: stop_check.py skipped: the plugin's hooks/_hooklib.py does not load "
+                     f"({type(_exc).__name__}); reinstall the Plumb plugin\n")
+    sys.exit(0)
 
 MAX_ISSUES = 10
 
@@ -67,6 +72,10 @@ def main() -> int:
         return 0
     if H.setup_in_progress(proj.root_s):
         return 0  # a setup is running (<root>/.plumb-tmp/setup-in-progress): its half-done state is expected
+    unreadable = proj.tokens_unreadable()
+    if unreadable:  # the plugin's audit.py would wait on it (a FIFO, a link to a device): stay quiet
+        H.note(unreadable)
+        return 0
     path = H.snapshot_path(proj.root, p.session_id)
     if path is None:
         return 0  # no private temp folder (snapshot_dir said why): stay quiet

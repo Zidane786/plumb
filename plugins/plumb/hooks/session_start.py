@@ -51,7 +51,12 @@ from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import _hooklib as H  # noqa: E402
+try:
+    import _hooklib as H  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 - a half-updated plugin folder: fail open (Kiro blocks on any non-zero exit)
+    sys.stderr.write(f"plumb: session_start.py skipped: the plugin's hooks/_hooklib.py does not load "
+                     f"({type(_exc).__name__}); reinstall the Plumb plugin\n")
+    sys.exit(0)
 
 AUDIT_TIMEOUT = 2.0
 # The last stderr line of a Python crash (a SyntaxError prints no "Traceback" header); a script's own refusal is
@@ -119,15 +124,16 @@ def status(proj: H.Project) -> Tuple[str, Optional[str]]:
     timeout = _audit_timeout()
     mine, plugin = H.script_versions(proj)
     other = mine is not None and plugin is not None and mine != plugin  # another generator: its output may differ
-    tokens_proc = _start(proj, "build-tokens.py", "--check") if has_tokens and not other else None
-    audit_proc = _start(proj, "audit.py", "--json") if timeout > 0 else None
+    unreadable = proj.tokens_unreadable() is not None  # a FIFO or a link to a device: both scripts would wait on it
+    tokens_proc = _start(proj, "build-tokens.py", "--check") if has_tokens and not other and not unreadable else None
+    audit_proc = _start(proj, "audit.py", "--json") if timeout > 0 and not unreadable else None
     tokens = _finish(tokens_proc, TOKENS_TIMEOUT, "build-tokens.py --check")
     audit = _finish(audit_proc, timeout, "audit.py --json")
     if not has_tokens:
         tokens_text = "no tokens yet"
     elif other:
         tokens_text = f"tokens not checked (scripts v{mine} \u2260 v{plugin})"
-    elif tokens is None or tokens[0] not in (0, 1):
+    elif unreadable or tokens is None or tokens[0] not in (0, 1):
         tokens_text = "tokens not checked"
     else:
         tokens_text = "tokens up to date" if tokens[0] == 0 else "tokens stale"
@@ -228,7 +234,11 @@ def main() -> int:
         if scripts:
             lines.append(scripts)
         lines += setup_notes(proj)
-        snapshot(proj, p.session_id)
+        unreadable = proj.tokens_unreadable()
+        if unreadable:
+            lines.append(f"note: {unreadable}")  # no snapshot either: audit.py would wait on the tokens file
+        else:
+            snapshot(proj, p.session_id)
     lines.append(FEEDBACK_POINTER)
     H.feedback_dir(create=False)  # an existing ~/.plumb/feedback of the user's own is kept private (0700); none is made
     if H.kiro_run():
