@@ -2392,7 +2392,7 @@ def test_the_app_view_tour_page_plays_by_itself_in_play_mode(browser, apptour) -
         start = _history(page)
         _press_start(page)
         page.evaluate("window.plumbPlayer.setSpeed(2)")
-        page.wait_for_function("window.plumbPlayer.state().ended", timeout=30000)
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=TOUR_END_MS)
         steps = page.evaluate("[...new Set(window.__log.map(e => e.step).filter(n => n !== null))].length")
         assert steps == 6, "every step played"
         assert {e["mode"] for e in page.evaluate("window.__log")} == {"play"}
@@ -2834,6 +2834,8 @@ MIXED_VOICES = ('window.__voices = [{ name: "Google US English", lang: "en-US", 
 NO_SPEECH = """Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
 window.SpeechSynthesisUtterance = undefined;"""
 AUTO_END = "window.__speechAuto = 60;"
+# a whole tour played at speed 2 ends in about 9 s; a loaded machine or a slow CI runner can take four times that
+TOUR_END_MS = 60000
 REMEMBER_VOICE = "try { localStorage.setItem('plumb.player.voice', 'on'); } catch (e) {}"
 STORAGE_WRITES = """
 window.__writes = [];
@@ -3207,7 +3209,7 @@ def test_subtitles_are_exact_from_a_play_through(browser, voiced, voice: bool) -
     try:
         page.evaluate("(v) => window.plumbPlayer.setVoice(v)", voice)
         _start(page, "demo", "play", speed=2)
-        page.wait_for_function("window.plumbPlayer.state().ended", timeout=30000)
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=TOUR_END_MS)
         vtt = page.evaluate("window.plumbPlayer.subtitles()")
         cues = _cues(vtt)
         doc = voiced_tour()
@@ -3271,7 +3273,7 @@ def test_only_the_voice_choice_is_written_to_storage(browser, voiced) -> None:
         page.wait_for_function("window.plumbPlayer.state().waiting")
         page.click("[data-pl=start-voice]")
         page.evaluate("window.plumbPlayer.setSpeed(2)")
-        page.wait_for_function("window.plumbPlayer.state().ended", timeout=30000)
+        page.wait_for_function("window.plumbPlayer.state().ended", timeout=TOUR_END_MS)
         with page.expect_download():
             page.click(".pl-dock [data-pl=vtt]")
         writes = page.evaluate("window.__writes")
