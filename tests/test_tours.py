@@ -1809,7 +1809,19 @@ IN_WINDOW = """(sel) => { var r = document.querySelector(sel).getBoundingClientR
     return r.left >= f.left - 1 && r.left < f.right && r.top >= 0 && r.bottom <= window.innerHeight; }"""
 
 
+RING_ON = """(sel) => { var t = document.querySelector(sel).getBoundingClientRect();
+    var n = document.querySelectorAll('.pl-ring'); if (n.length !== 1) return false;
+    var r = n[0].getBoundingClientRect(), a = [r.left + 4, r.top + 4, r.width - 8, r.height - 8];
+    return [t.left, t.top, t.width, t.height].every(function (v, i) { return Math.abs(v - a[i]) <= 1; }); }"""
+
+
 def _ringed(page, sel: str) -> None:
+    # the step may still be scrolling its target into view (a slow runner): the ring must settle on it, not be there
+    # on the first frame
+    try:
+        page.wait_for_function(RING_ON, arg=sel, timeout=3000)
+    except Exception:  # Playwright's timeout (playwright is not imported at module level: 3.9 runs without it)
+        pass  # the assertion below names what was found
     rings, want = page.evaluate(RINGS), page.evaluate(RECT, sel)
     assert len(rings) == 1 and all(abs(a - b) <= 1 for a, b in zip(rings[0], want)), (sel, rings, want)
 
