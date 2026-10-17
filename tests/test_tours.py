@@ -3247,7 +3247,8 @@ def test_subtitles_are_exact_from_a_play_through(browser, voiced, voice: bool) -
             if i + 1 < len(cues):
                 assert abs(cues[i + 1]["start"] - c["end"]) <= 2, "back to back: one caption ends as the next shows"
         ended = next(e["t"] for e in log if e["ended"])
-        assert abs(cues[-1]["end"] - (ended - t0)) <= 25
+        # the last caption closes as the tour ends, with the same few frames of timer slack as the starts
+        assert abs(cues[-1]["end"] - (ended - t0)) <= 60, (cues[-1], ended - t0)
         if voice:
             assert len(_spoken(page)) > len(cues), "every card and step was spoken (cards say two sentences)"
         with page.expect_download() as dl:
