@@ -84,8 +84,9 @@ plugins/plumb/                        the installed plugin (only this folder shi
   CHANGELOG.md  README.md
 examples/caredesk/                    golden example of `create` (regression fixture; after validation, Task 19)
 tests/                                pytest suite; fixtures/ holds audit cases and sample projects;
-                                      conftest.py enforces the skip rules; requirements.txt pins the
-                                      Playwright the browser tests use (CI and local alike)
+                                      conftest.py enforces the skip rules and marks browser tests;
+                                      requirements.txt pins pytest-xdist and the Playwright the browser
+                                      tests use (CI and local alike)
 docs/                                 specs/, plans/, USAGE.md (the complete guide), what-you-get.html
 scripts/                              repo tooling: release_notes.py, check_version_bump.py
 .github/                              workflows/test.yml (CI: Windows/macOS/Linux × Python 3.9/3.13),
@@ -179,7 +180,8 @@ TEST.md                               hands-on test guide for any machine
 ## 4. Develop and test
 
 ```
-uv run --with pytest --with-requirements tests/requirements.txt pytest -q   # full suite, browser tests included
+uv run --with pytest --with-requirements tests/requirements.txt pytest -q -n auto -m "not speed"  # full suite, in parallel
+uv run --with pytest --with-requirements tests/requirements.txt pytest -q -m speed                # then the speed tests, alone
 uv run --python 3.9 --with pytest pytest -q     # oldest supported Python
 claude plugin validate --strict .
 claude plugin validate --strict plugins/plumb
@@ -205,9 +207,14 @@ claude plugin validate --strict plugins/plumb
   runs only when one of these changed: `plugins/**`, `tests/**`, `examples/**`,
   `scripts/**`, `.github/workflows/**`, `.claude-plugin/**`, `.gitattributes`. Docs-only changes
   (README, TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, `docs/**`) pass in seconds with "no code
-  changed". CI installs the Playwright pinned in `tests/requirements.txt` (the same one locally, so a
-  browser test behaves the same on CI and on your machine; Dependabot proposes each bump as its own PR) +
-  Chromium and runs the browser tests on every OS. A browser test waits for the thing it checks (a
+  changed". Every job runs the tests in parallel (`-n auto`, pytest-xdist), then the speed tests alone
+  (`@pytest.mark.speed`: a test that asserts a time limit must carry it, so other workers never eat its
+  budget). The browser tests (`browser` marker, set in `tests/conftest.py`) run on one job only, Linux
+  with Python 3.13: Chromium renders a page the same way everywhere, and what differs per OS (hooks,
+  launchers, paths, encodings) runs on all six. CI installs the Playwright pinned in
+  `tests/requirements.txt` (the same one locally, so a browser test behaves the same on CI and on your
+  machine; Dependabot proposes each bump as its own PR). Write a focused test for the change: the
+  behaviour it adds or the bug it fixes, not every combination. A browser test waits for the thing it checks (a
   state, an element, an event), not for a guessed time; a time limit is only for a timing promise and
   carries its measured margin in a comment. Every browser test must pass with the CPU slowed 10×, the
   way a busy runner behaves: `PLUMB_CPU_SLOW=10` (`tests/conftest.py`) before the full-suite command. Unexpected

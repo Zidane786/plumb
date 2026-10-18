@@ -300,6 +300,7 @@ def test_quick_ignores_moved_lines_and_counts_duplicates() -> None:
 # ---------------------------------------------------------------- speed and exclusions
 
 
+@pytest.mark.speed
 def test_two_megabyte_minified_css_is_fast() -> None:
     parts, size, i = [], 0, 0
     while size < 2_000_000:
@@ -320,6 +321,7 @@ def test_two_megabyte_minified_css_is_fast() -> None:
     assert found and all(f.line == 1 for f in found)
 
 
+@pytest.mark.speed
 def test_minified_one_line_js_is_fast() -> None:
     js = ";".join(f'var a{i}=e("div",{{className:"p-4 bg-primary text-sm",style:{{width:{i}}}}})' for i in range(30000))
     elapsed = float("inf")

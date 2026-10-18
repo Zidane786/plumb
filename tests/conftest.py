@@ -5,6 +5,14 @@ with one of ALLOWED_SKIP_REASONS (a platform or platform-tool reason, e.g. "requ
 "requires Windows: real PowerShell/cmd launcher") fails the session. Browser tests skip locally when Playwright is
 missing ("requires Playwright"); on CI that must never happen silently.
 
+Browser tests: every test that opens a real (headless) browser carries the `browser` marker: the ones using a
+`browser` fixture get it here, the few that start Playwright themselves say @pytest.mark.browser. CI runs them on one
+job and everything else on every job (`-m "not browser"`, with no browser installed there: a browser test missing the
+marker fails, or skips with "requires Playwright", which strict skips fail).
+
+Speed tests: a test that asserts a time limit (a budget, a stall limit) carries @pytest.mark.speed. CI runs them alone
+(`-m speed`, one at a time) after the parallel run (`-n auto -m "not speed"`), so other workers never eat their budget.
+
 Slow runners: with PLUMB_CPU_SLOW=N every browser test's page runs with Chromium's CPU slowed N times (DevTools
 Emulation.setCPUThrottlingRate), the way a busy CI runner behaves. Browser tests must pass at PLUMB_CPU_SLOW=10.
 """
@@ -114,6 +122,15 @@ def pytest_configure(config) -> None:
     _REAL_HOME[:] = [real, _real_plumb_state(real), fake]
     if os.environ.get("PLUMB_CPU_SLOW"):
         _slow_pages(float(os.environ["PLUMB_CPU_SLOW"]))
+    config.addinivalue_line("markers", "browser: opens a real (headless) browser; CI runs these on one job")
+    config.addinivalue_line("markers", "speed: asserts a time limit; CI runs these alone, after the parallel run")
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """A test that uses a `browser` fixture is a browser test."""
+    for item in items:
+        if "browser" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.browser)
 
 
 def _slow_pages(rate: float) -> None:

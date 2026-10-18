@@ -868,6 +868,7 @@ def test_angular_routes_nested_lazy_and_redirects(tmp_path: Path) -> None:
     ]
 
 
+@pytest.mark.speed
 def test_a_large_routes_file_is_read_in_linear_time(tmp_path: Path) -> None:
     """4x the routes takes about 4x the time (quadratic would be 16x): self-scaling, so slow machines do not fail it."""
     def timed(n: int) -> float:

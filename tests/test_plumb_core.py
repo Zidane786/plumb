@@ -285,6 +285,7 @@ def test_read_project_bytes_refuses_a_file_over_the_limit(tmp_path: Path) -> Non
 
 
 @pytest.mark.skipif(not _POSIX, reason="requires POSIX: FIFO")
+@pytest.mark.speed
 def test_read_project_bytes_refuses_a_fifo_without_waiting(tmp_path: Path) -> None:
     fifo = tmp_path / "hang.css"
     os.mkfifo(fifo)
@@ -295,6 +296,7 @@ def test_read_project_bytes_refuses_a_fifo_without_waiting(tmp_path: Path) -> No
 
 
 @pytest.mark.skipif(not _POSIX or not os.path.exists("/dev/zero"), reason="requires POSIX: /dev/zero")
+@pytest.mark.speed
 def test_a_tokens_file_linked_to_a_device_is_refused_quickly(tmp_path: Path) -> None:
     link = tmp_path / "demo.tokens.json"
     link.symlink_to("/dev/zero")

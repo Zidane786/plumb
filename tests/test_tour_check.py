@@ -433,6 +433,7 @@ def test_problems_are_one_line_per_step_with_widths_and_modes(stub, built: Path)
     assert not (built / ".plumb-tmp").exists()
 
 
+@pytest.mark.speed
 def test_a_browser_that_lingers_after_the_dump_is_stopped(stub, built: Path) -> None:
     start = time.monotonic()
     r = check(stub, str(built / PAGES_REL / "demo.html"), "--width", "1280", mode="linger", cwd=built)
@@ -450,6 +451,7 @@ def test_no_result_is_exit_1(stub, built: Path, mode: str, needle: str) -> None:
     assert not (built / ".plumb-tmp").exists()
 
 
+@pytest.mark.speed
 def test_a_hung_browser_is_stopped_at_the_timeout(stub, built: Path) -> None:
     start = time.monotonic()
     r = check(stub, str(built / PAGES_REL / "demo.html"), "--width", "1280", "--timeout", "2", mode="hang", cwd=built)
@@ -589,6 +591,7 @@ def _real_browser() -> str:
         return pw.chromium.executable_path
 
 
+@pytest.mark.browser
 def test_check_tour_for_real(tmp_path: Path) -> None:
     browser = _real_browser()
     broken = {"title": "Hidden things", "audience": "training", "steps": [
@@ -677,6 +680,7 @@ DOCK_AT = """() => { var d = document.getElementById('pl-dock'), r = d.getBoundi
           at ? at.getAttribute('data-state') : null]; }"""
 
 
+@pytest.mark.browser
 def test_check_tour_for_real_reports_the_panel_only_where_it_overlaps(tmp_path: Path) -> None:
     browser = _real_browser()
     from playwright.sync_api import sync_playwright

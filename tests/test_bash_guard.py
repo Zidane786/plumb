@@ -354,6 +354,7 @@ def test_what_the_reader_follows_leaves_it_sure(H, tmp_path, command):
     assert not H.shell_effects(command, str(tmp_path)).unsure, H.shell_effects(command, str(tmp_path)).unsure
 
 
+@pytest.mark.speed
 def test_parsing_is_fast_on_a_long_command(H, tmp_path):
     command = " && ".join(f"python3 -c \"import json; print(json.load(open('f{i}.json')))\" > /tmp/o{i}.txt"
                           for i in range(200))
@@ -603,6 +604,7 @@ def _fastest(decide, run, n: int = 3) -> float:
     return min(times)
 
 
+@pytest.mark.speed
 def test_a_command_too_long_to_read_is_refused_when_it_names_a_guarded_file(decide):
     filler = "; ".join(f"echo x > /tmp/f{i}" for i in range(6000))
     reason = decide.pe.shell_refusal(decide.project, filler + f"; cat {GEN}", str(decide.proj), str(decide.proj))
@@ -624,6 +626,7 @@ def test_the_reviews_reads_and_ours_are_allowed(decide):
     assert not refused_now, refused_now
 
 
+@pytest.mark.speed
 def test_a_long_for_loop_and_many_cp_arguments_are_fast(decide):
     for command in ("python3 -c \"for " + "a , " * 7500 + " open(a,'w')\"",
                     "cp " + " ".join(f"a{i}" for i in range(20000)) + " dest/",
@@ -696,6 +699,7 @@ def test_one_deadline_for_the_whole_command_fits_the_hook_timeout(decide):
     assert pe.H.SHELL_BUDGET < pe.SHELL_DEADLINE and pe.NAMES_BUDGET < pe.SHELL_DEADLINE
 
 
+@pytest.mark.speed
 def test_past_the_command_deadline_the_earlier_reader_decides_or_a_guarded_name_refuses(decide, monkeypatch):
     """With no time left, no stage gets a fresh budget of its own: the earlier reader's decision stands, and a command
     that names a guarded path is refused; one that names none is allowed. Each decision is quick."""
@@ -923,6 +927,7 @@ def test_past_the_link_cap_a_guarded_name_refuses(decide):
     assert not decide.new(f"{many}; echo x > notes/a.txt")
 
 
+@pytest.mark.speed
 def test_writes_through_many_links_stay_fast(decide):
     """The re-review's worst case: 2000 links, then one rm of 7000 paths under them (and a guarded write after it):
     looked up per path, not per link, and inside the deadline, on a Windows runner too."""
@@ -1416,6 +1421,7 @@ def test_a_voided_allow_is_refused_through_the_launchers(launcher, tmp_path, pro
     actionable(refused(claude(launcher, tmp_path, proj, command)))
 
 
+@pytest.mark.speed
 def test_a_long_loop_command_is_read_in_time_and_its_guarded_rm_refused(launcher, tmp_path, proj):
     """O1: thousands of loop targets with an unknown source, under 64 KB, then a guarded rm: refused well inside the
     hook's timeout (the command's words are lexed once, the time budget is checked in every loop)."""
@@ -1437,6 +1443,7 @@ def test_a_loop_target_under_home_expands_home(decide):
     assert decide.new(command), command
 
 
+@pytest.mark.speed
 def test_the_loop_check_runs_in_time_on_a_long_command(launcher, tmp_path, proj):
     """Nit 2: thousands of loop targets with an unknown source and a guarded path only read (cat), so the loop check
     itself decides: refused in well under a second."""
@@ -1450,6 +1457,7 @@ def test_the_loop_check_runs_in_time_on_a_long_command(launcher, tmp_path, proj)
     actionable(refused(claude(launcher, tmp_path, proj, command)))
 
 
+@pytest.mark.speed
 def test_past_its_limits_the_loop_check_leaves_it_to_the_command_wide_rule(decide):
     """P6: too many loop values to try (or no time left) is not a refusal by itself: the command is refused only when
     it names a guarded path, with a clean message; otherwise the earlier reader decides."""

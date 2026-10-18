@@ -60,15 +60,20 @@ version CI uses (pinned in `tests/requirements.txt`, so a browser test that pass
 
 ```
 uv run --with pytest --with-requirements tests/requirements.txt python -m playwright install chromium
-uv run --with pytest --with-requirements tests/requirements.txt pytest -q -rs
+uv run --with pytest --with-requirements tests/requirements.txt pytest -q -rs -n auto -m "not speed"
+uv run --with pytest --with-requirements tests/requirements.txt pytest -q -rs -m speed
 ```
 
-**CI** (`.github/workflows/test.yml`) runs the whole suite on Ubuntu, macOS and Windows × Python 3.9 and 3.13, installs
-the pinned Playwright and its Chromium on every runner, and sets `PLUMB_STRICT_SKIPS=1`: `tests/conftest.py` allows only skips whose
+The first run uses every core (pytest-xdist); the second runs the speed tests (each asserts a time limit) alone, so
+other tests never eat their budget.
+
+**CI** (`.github/workflows/test.yml`) runs on Ubuntu, macOS and Windows × Python 3.9 and 3.13, the same two steps:
+everything in parallel, then the speed tests alone. The browser tests run on the Ubuntu, Python 3.13 job only (it
+installs the pinned Playwright's Chromium); the other jobs run everything else. Every job sets `PLUMB_STRICT_SKIPS=1`: `tests/conftest.py` allows only skips whose
 reason starts with `requires macOS`, `requires Windows`, `requires POSIX` or `requires xcrun`; any other skip (such as
 `requires Playwright`) fails the run. A missing git, hook launcher or Python command is not an allowed skip: in strict
 mode it fails the run on purpose, because CI must have them.
-To reproduce that locally: `PLUMB_STRICT_SKIPS=1 uv run --with pytest --with-requirements tests/requirements.txt pytest -q -rs`.
+To reproduce that locally: `PLUMB_STRICT_SKIPS=1` before both commands above.
 
 **Windows notes:** run from Git Bash or PowerShell. If many JSON or golden-file tests fail, check
 `git config core.autocrlf` (should be `false` or `input`; `.gitattributes` pins LF for the files that need it).

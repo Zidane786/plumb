@@ -400,6 +400,7 @@ def test_never_writes(tmp_path: Path) -> None:
     assert snapshot(tmp_path) == before
 
 
+@pytest.mark.speed
 def test_fast_on_large_tree(tmp_path: Path) -> None:
     repo(tmp_path)
     pkg(tmp_path, "package.json", {"next": "14", "react": "18"})
@@ -655,6 +656,7 @@ def test_in_repo_flag(tmp_path: Path) -> None:
     assert r["in_repo"] is True and "not a git repo" not in " ".join(r["reasons"])
 
 
+@pytest.mark.speed
 def test_parent_listing_does_not_deep_scan(tmp_path: Path) -> None:
     for i in range(30):
         pkg(tmp_path, f"p{i}/package.json", {"react": "18"})

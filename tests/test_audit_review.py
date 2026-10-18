@@ -191,6 +191,7 @@ def test_add_review_refusals(project: Path) -> None:
 # ---------------------------------------------------------------- browser (headless; skipped without Playwright)
 
 
+@pytest.mark.browser
 @pytest.mark.parametrize("width", [1280, 390])
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_review_section_in_a_browser(project: Path, width: int, scheme: str) -> None:

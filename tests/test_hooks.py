@@ -933,6 +933,7 @@ def _best_hook(launcher, proj, tmp_path, script: str, stdin: str, check, limit: 
     return min(times)
 
 
+@pytest.mark.speed
 def test_non_ui_edit_is_fast(launcher, tmp_path, proj):
     # The budget catches real slow work on an edit that isn't UI (a git call, a tree walk, a big import: those cost
     # seconds), not a busy machine: Python 3.9 alone takes ~0.2 s to start a hook while other test processes run.
@@ -942,6 +943,7 @@ def test_non_ui_edit_is_fast(launcher, tmp_path, proj):
     assert took < limit, f"non-UI edit took {took * 1000:.0f} ms (limit {limit * 1000:.0f} ms)"
 
 
+@pytest.mark.speed
 def test_ui_edit_is_fast(launcher, tmp_path, proj):
     limit = 3.0 if CI or launcher == "powershell" else 1.0
     stdin = payload("claude", "edit", CWD=str(proj), FILE=str(proj / "app/page.tsx"), OLD=H1, NEW=H1_RAW)
@@ -1772,6 +1774,7 @@ def test_node_reads_are_allowed(launcher, tmp_path, proj):
 
 @needs_git
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX: FIFO")
+@pytest.mark.speed
 def test_git_that_hangs_on_config_is_cut_short(launcher, tmp_path, proj):
     git_init(proj)
     fifo = tmp_path / "config-fifo"
@@ -2100,6 +2103,7 @@ def test_two_hooks_writing_at_once_give_one_header(tmp_path, proj):
     assert not [p for p in log.parent.iterdir() if p.name != "hooks.md"], "no temporary or lock file left"
 
 
+@pytest.mark.speed
 def test_a_hook_never_waits_long_for_the_log_lock(H, log_home):
     H.log_failure("first", "y")
     fd = os.open(str(log_home), os.O_WRONLY | getattr(os, "O_BINARY", 0))
@@ -2278,6 +2282,7 @@ def _hook_stdin(proj: Path, script: str, **values) -> str:
 
 
 @pytest.mark.parametrize("kind", NOT_REGULAR)
+@pytest.mark.speed
 def test_a_tokens_file_that_is_not_a_regular_file_never_stalls_a_hook(tmp_path, proj, kind):
     """The tokens file a symlink to /dev/zero (committable) or a FIFO: every hook answers within seconds; the guards stay
     on, the checks that need the tokens are skipped (fail open), and session start says the tokens were not checked."""
@@ -2294,6 +2299,7 @@ def test_a_tokens_file_that_is_not_a_regular_file_never_stalls_a_hook(tmp_path, 
 
 
 @pytest.mark.parametrize("kind", NOT_REGULAR)
+@pytest.mark.speed
 def test_copied_scripts_that_are_not_regular_files_never_stall_a_hook(tmp_path, proj, kind):
     """The project's copied _plumb.py (read as text for its version) a symlink to /dev/zero or a FIFO."""
     _not_regular(proj / SKILL_REL / "scripts/_plumb.py", kind)
@@ -2304,6 +2310,7 @@ def test_copied_scripts_that_are_not_regular_files_never_stall_a_hook(tmp_path, 
 
 
 @pytest.mark.parametrize("kind", NOT_REGULAR)
+@pytest.mark.speed
 def test_a_web_copy_that_is_not_a_regular_file_stays_guarded_without_a_stall(tmp_path, proj, kind):
     """A web copy that cannot be read as a regular file is never read: a FIFO there is refused at once (fail closed: its
     block cannot be checked); a symlink to /dev/zero writes /dev/zero, not the copy (symlinks are followed)."""
@@ -2321,6 +2328,7 @@ def test_a_web_copy_that_is_not_a_regular_file_stays_guarded_without_a_stall(tmp
 
 
 @needs_fifo
+@pytest.mark.speed
 def test_a_fifo_ui_file_never_stalls_session_start_or_the_end_of_turn_check(tmp_path, proj):
     """A FIFO among the UI files: the session snapshot and the end-of-turn check (audit.py's, in-process) skip it."""
     _not_regular(proj / "app/hang.css", "fifo")

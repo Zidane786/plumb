@@ -230,6 +230,7 @@ def test_browser_failures_exit_1_and_keep_the_old_file(tmp_path: Path, stub) -> 
     assert "cannot open the page" in r.stderr  # the browser's own last line is shown
 
 
+@pytest.mark.speed
 def test_a_browser_that_lingers_after_a_complete_shot_is_stopped(tmp_path: Path, stub) -> None:
     out = tmp_path / "x.png"
     start = time.monotonic()

@@ -607,6 +607,7 @@ def _audit_time(project: Path, files: int) -> float:
     return elapsed
 
 
+@pytest.mark.speed
 def test_full_audit_scales_linearly_and_stays_fast(tmp_path: Path) -> None:
     """4x the files take no worse than linear time (ratio under RATIO_LIMIT: 4 is linear, n log n about 4.8, quadratic
     16) and the big run stays under a generous 30 s cap (CI runners are slower than a laptop).
