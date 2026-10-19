@@ -1,0 +1,4 @@
+/* expect: outline-none@3 */
+.field:focus {
+  outline: none;
+}

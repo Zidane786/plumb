@@ -1,0 +1,10 @@
+{
+  "sessionId": "{{SESSION}}",
+  "timestamp": 1760260632551,
+  "cwd": "{{CWD}}",
+  "toolName": "bash",
+  "toolArgs": {
+    "command": "{{COMMAND}}",
+    "description": "Run the command"
+  }
+}

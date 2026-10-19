@@ -1,0 +1,6 @@
+/* expect: none */
+#add,
+#bad {
+  color: var(--color-primary);
+}
+#fed { background: rgb(var(--color-primary) / 0.5); }

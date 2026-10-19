@@ -1,0 +1,32 @@
+# Web stack
+
+How {{NAME}}'s web UI is built. Styling mode: **{{STYLING_LABEL}}**. Replace the placeholders below with the project's real
+stack when `/plumb:init` or `/plumb:extract` has detected it.
+
+## Stack
+
+- Framework and version: _to fill_ (detected by init).
+- Styling: {{STYLING_LABEL}}; the generated token file is `assets/platforms/web/tokens.css`, copied to the app's own path
+  (see `$extensions.plumb.web.copies` in the tokens file).
+- Component primitives: the framework's accessible primitives (Radix or shadcn on React, native controls elsewhere).
+- Package manager: the one the project already uses. Do not switch it.
+
+## Folders
+
+- `components/ui/` (or the project's equivalent): primitives from [../components.md](../components.md). Variants live inside them.
+- `components/patterns/`: compositions of primitives (page header, empty state, app shell).
+- One formatter module per kind (dates, numbers, durations); one icon map (`assets/icons/icon-map.json`).
+
+## Rules
+
+- Style with the token utilities generated from the tokens; no arbitrary values (`text-[13px]`, `bg-[#fff]`) except layout geometry.
+- No new dependency without the owner's approval. Do not install or download anything; if a package, font or tool is missing,
+  ask the user and wait for their decision.
+- Fonts come from the project's own files or the system stack; nothing is loaded from the network.
+- A dev-only design page (for example `/dev/design`) may show the components; it is written in the project's framework and
+  must pass the audit like any other page.
+
+## Commands
+
+The tokens, check and audit commands are in `PLUMB.md` → Commands: tokens regenerates the CSS and copies; check fails
+when they drift; audit runs the design audit.

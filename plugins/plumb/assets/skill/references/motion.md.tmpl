@@ -1,0 +1,30 @@
+# Motion
+
+Motion explains a change; it never decorates. Quick, quiet, and always optional.
+
+## Tokens
+
+| Token | Value | Use |
+|---|---|---|
+| `motion.duration.fast` | {{DURATION_FAST}} | Hover, press, small state changes. |
+| `motion.duration.mid` | {{DURATION_MID}} | Menus, tooltips, toggles, tab changes. |
+| `motion.duration.slow` | {{DURATION_SLOW}} | Dialogs, sheets and page-level transitions. |
+| `motion.easing.out` | `cubic-bezier(0.2, 0.8, 0.2, 1)` | Everything that enters or responds. |
+
+Only these durations and this easing exist; the audit flags any other.
+
+## Rules
+
+- Animate opacity and transform; do not animate layout properties.
+- Entrances use `easing.out`; exits are as fast or faster than entrances.
+- Hover lift (web) or the pressed state (mobile) only on interactive items.
+- Continuous animation is allowed only for skeletons and the in-button spinner.
+- **Reduced motion:** when the user asks for less motion, nothing slides or scales; fades stay only when the tokens file's
+  `$extensions.plumb.motion.reduced` is `"keep-fades"`, otherwise durations become 0. The generated CSS
+  already contains this block; never override it. On iOS and Android read the system setting and swap movement for a fade or nothing.
+- Never use motion as the only signal; pair it with a word, icon or state change.
+
+## Platform mapping
+
+Web: the `duration-*` and `ease-*` utilities generated from the tokens. iOS and Android: the generated theme's motion values
+(see the platform files linked from [SKILL.md](../SKILL.md)).

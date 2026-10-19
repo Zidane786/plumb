@@ -1,0 +1,19 @@
+/* {{@header}} */
+/* Tailwind v3: tailwind.tokens.js (next to this file) maps these variables into theme.extend and says which
+   darkMode setting matches the dark scheme below. */
+:root {
+  {{@vars}}
+}
+
+{{@if-md}}
+/* Values that change from the md breakpoint (768px) up. */
+@media (min-width: 768px) {
+  :root {
+    {{@vars-md}}
+  }
+}
+{{@end}}
+
+{{@dark}}
+
+{{@reduced-motion}}

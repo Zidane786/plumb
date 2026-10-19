@@ -5,8 +5,85 @@ Please report security problems **privately** through GitHub:
 (private vulnerability reporting is enabled). Don't open a public issue for security bugs.
 
 Useful areas to look at: the hooks (`plugins/plumb/hooks/`), which read tool input and can block
-edits, and the scripts Plumb copies into projects (the token generator and the audit), which read
+edits (see "Trust boundary" below), and the scripts Plumb copies into projects (the token generator and the audit), which read
 and write files in the project.
+
+## Trust boundary
+
+- **Hooks run only the plugin's installed code.** The session start, pre-edit and end-of-turn hooks import and run
+  the scripts that ship with the plugin (`plugins/plumb/assets/skill/scripts/` in the installed plugin), never the
+  copies in a project's design-system skill (`.claude/skills/<project>-design-system/scripts/`). A project is only
+  read as data: `PLUMB.md`, the tokens JSON, `screens.json`, the screen files (with their `_shared/` CSS and
+  JS, hashed, never run) and the source files. The hooks' own reads of project files take only regular files (opened
+  without waiting, then checked on the open file, so a FIFO, a device or a symlink to one is never read), each up to
+  8 MB; a tokens file that is not one skips the checks that read it. The scripts read only regular files too, each up
+  to 8 MB (pages and screen files up to 256 MB): a FIFO, a device or a link to one (a committed symlink to
+  `/dev/zero`) is skipped or refused as unreadable, never read and never written into. When a project's
+  copies are a different version, the hooks say so ("run /plumb:upgrade") and still check with the plugin's own
+  scripts.
+- **Git, with fixed overrides.** To see what changed in a session the hooks run git in the project: `rev-parse`,
+  `status`, `diff --name-only`, `ls-tree`, `cat-file --batch` (the stored blob of a file's old text),
+  `config --get-regexp` (to list filter drivers) and `--version` (only when a filter name contains `=`, to see whether
+  git can empty it). Git is found as an absolute path by walking `PATH` (empty, `.` and
+  relative entries and anything inside the project are skipped; on Windows only `git.exe`), never in the project.
+  All the git calls of one hook run share a 3-second budget. Without git (not found, failing, or over the budget) the
+  snapshot falls back to modification times and the end-of-turn check still runs on them; a session whose snapshot
+  was taken with git finds no changes then, and stays quiet. Every call passes these overrides, as `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n` (and as
+  `-c` for older git): `core.fsmonitor=false`, `core.untrackedCache=false`, `core.hooksPath=<null device>`,
+  `diff.external=` (empty), `core.pager=cat`, `protocol.allow=never`, and an empty `clean`, `smudge` and `process` for
+  every `filter.<name>` the configuration lists (any name; on git older than 2.31 a name containing `=` cannot be
+  emptied, so git is not run there). Every call also has `--no-optional-locks`, `--no-pager`, `GIT_NO_LAZY_FETCH=1`
+  (no fetch from a promisor remote), `GIT_TERMINAL_PROMPT=0` and `GIT_PAGER=cat`, drops `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_EXTERNAL_DIFF`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_ALLOW_PROTOCOL`, `GIT_PROTOCOL_FROM_USER`,
+  `GIT_CONFIG_PARAMETERS` and the environment's own `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_n` / `GIT_CONFIG_VALUE_n`
+  (replaced by the overrides above), and `diff` adds `--no-ext-diff --no-textconv --ignore-submodules=all`. Commit ids from a snapshot reach git only after a hex check.
+- **What that guarantee is, and is not.** The hooks run only the plugin's own code, plus git with the overrides above.
+  Git still reads the repository's configuration (`.git/config` and what it includes) for every other key, as any
+  git command run there does. The overrides cover every configured command we know these read-only calls can reach;
+  they are not a sandbox. A repository whose `.git/config` you didn't create yourself (an archive, a shared folder, a
+  devcontainer) deserves the same care as its scripts.
+- **The session snapshots** live in a folder private to you in the OS temp folder: `plumb-<uid>`, created 0700 (on
+  Windows `plumb` in the per-user temp folder, `%LOCALAPPDATA%\Temp`, where permission bits mean nothing). If that
+  folder is a symlink (or on Windows any reparse point, such as a junction), someone else's, or writable by others
+  (POSIX), the hooks keep no snapshot and never read, write or delete there. Snapshot files are written 0600 without following
+  symlinks; cleanup only removes your own regular files in that folder. A snapshot's commit hash is checked before it
+  reaches git.
+- **The feedback log** (Plumb's own mistakes, for Plumb's developers) lives outside every project, in
+  `~/.plumb/feedback/` (`%USERPROFILE%\.plumb\feedback\` on Windows). Two writers:
+  - **The agent** writes one Markdown record per Plumb mistake it corrected (`/plumb:feedback`), with its normal
+    file-write tool, so your CLI's permission mode decides whether it asks. A record holds the command, what Plumb
+    gave and what was right, paths, `file:line`, match counts and the repo's shape; the skill forbids source code
+    and secrets, but it is the agent's text, so read a record before you share it.
+  - **The hooks** append one line to `hooks.md` when one fails open (a crash, a plugin script it cannot load, a
+    timeout), only in a project with a `PLUMB.md`: at most once a day for the same failure (a timeout once per
+    project and Plumb version), never more than 512 KB in all. The line holds the hook, the Plumb version, the CLI,
+    the OS, the project folder's name, the event, the tool name, the project-relative path of the edited file, the
+    exit code, the place in Plumb's code (`file:line`, base names only), and the failure's type and message, redacted
+    and cut to one short line: quoted literals longer than three characters become `'<redacted>'`, absolute paths
+    outside the project keep only their base name, and token-like strings (`sk-…`, `ghp_…`, `xox…-`, `AKIA…`, JWTs,
+    long hex or base64) and the values of `password=`, `token=`, `api_key:`, `Bearer …` become `<redacted>`. Never
+    the shell command or a file's contents. Redaction is pattern-based: it removes the usual shapes of data and
+    secrets, not every possible one.
+
+  `~/.plumb` and `feedback/` are created 0700 and `hooks.md` 0600, without following symlinks. When they are your own
+  real folders with wider permissions (the agent's write tool creates them with your umask, e.g. 0775 under umask 002),
+  session start and the hooks change them to 0700 (through a handle opened without following symlinks). If either
+  folder is a symlink (or on Windows any reparse point), someone else's, or still writable by others, or `hooks.md` is
+  a symlink, the hooks write nothing. A new `hooks.md` appears with its header already in it (a private temporary file
+  linked into place), so two hooks never write it twice, and each append holds a short exclusive lock (`flock`, on
+  Windows `msvcrt.locking`; at most half a second, then the line is left out), so hooks failing at once never lose or
+  interleave a line. A problem with the log never fails or blocks a hook. Nothing
+  in it leaves the machine: `/plumb:feedback` reads it and drafts issue text that you post yourself, if you want to
+  (projects named only by their shape).
+- **Windows launcher.** `hooks/run.cmd` sets `NoDefaultCurrentDirectoryInExePath`, so cmd.exe never runs a `py`,
+  `python` or `python3` found in the project folder instead of the one on `PATH`.
+- **A project's copied scripts run only when someone runs them on purpose:** a Plumb command such as `/plumb:audit`,
+  `make tokens` / `make design-audit`, or the project's CI. They are ordinary code in that repository. Some Plumb
+  commands (status, audit, prototype, tour, ux) can also be started by the agent itself when the work calls for them,
+  and they run those scripts; the CLI's own permission prompt for each command still applies.
+- **A cloned repository's scripts are that repository's code.** Before running a cloned repo's design-system scripts
+  (or a command that runs them), review them as you would any script in a repo you don't trust yet;
+  `/plumb:upgrade` replaces them with the plugin's own copies.
 
 You'll get an answer as soon as possible; fixes are released as a new plugin version with a
 CHANGELOG entry.

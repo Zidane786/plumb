@@ -1,0 +1,15 @@
+# Android conventions
+
+Jetpack Compose and Material 3, using the generated `{{THEME_NAME}}Theme.kt` ([../../../assets/platforms/mobile/android/](../../../assets/platforms/mobile/android/)).
+Shared mobile rules: [../README.md](../README.md).
+
+- **Navigation:** `NavigationBar` for top-level places, Navigation Compose for depth, bottom sheets for focused tasks;
+  predictive back works on every screen.
+- **Controls:** Material 3 components styled with the theme, never custom replacements for buttons, text fields, switches,
+  menus or dialogs.
+- **Colours, type, spacing, shapes, motion:** only the generated theme values; no `Color(0x...)` or fixed `sp` sizes in screens.
+- **Icons:** Material Symbols, by the names in `assets/icons/icon-map.json`.
+- **Font scale:** every text style scales; layouts reflow at 200%.
+- **TalkBack:** `contentDescription` on icon-only controls; semantics for roles and state; logical focus order.
+- **Dark mode:** follows the system setting; the theme switches by itself. Dynamic colour is off unless the owner decides otherwise.
+- **Edge to edge:** handle window insets; content respects system bars and the keyboard.

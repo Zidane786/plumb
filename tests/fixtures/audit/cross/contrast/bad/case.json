@@ -1,0 +1,20 @@
+{
+  "expect": [
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "on-primary"
+    ],
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "on-primary"
+    ],
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "text-muted"
+    ],
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "text-muted"
+    ]
+  ]
+}

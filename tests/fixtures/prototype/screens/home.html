@@ -1,0 +1,32 @@
+<style>
+[data-screen="home"] { font-family: var(--font-sans); color: var(--color-on-surface); background: var(--color-background); padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="home"] .home-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--spacing-3); }
+[data-screen="home"] h2 { margin: 0; font-size: var(--text-lg); line-height: var(--text-lg--line-height); }
+[data-screen="home"] .tables { list-style: none; margin: var(--spacing-4) 0 0; padding: 0; display: grid; gap: var(--spacing-2); }
+[data-screen="home"] .tables li { display: flex; justify-content: space-between; gap: var(--spacing-3); padding: var(--spacing-3) var(--spacing-4); background: var(--color-surface); border: var(--border-thin) solid var(--color-outline); border-radius: var(--radius-md); }
+[data-screen="home"] .muted { color: var(--color-text-muted); }
+[data-screen="home"] a { color: var(--color-link); }
+[data-screen="home"] .skeleton { height: var(--spacing-11); background: var(--color-sunk); border-radius: var(--radius-md); }
+</style>
+<section data-screen="home" data-title="Today's tables" data-order="1">
+  <header class="home-head">
+    <h2>Today's tables</h2>
+    <a href="#screen-booking" data-test="new-booking">New booking</a>
+  </header>
+  <div data-state="ready">
+    <ul class="tables">
+      <li><span>Table 4 · Zoë Brontë</span><span class="muted">19:30 · 4 guests</span></li>
+      <li><span>Table 7 · Łukasz Wójcik</span><span class="muted">20:00 · 2 guests</span></li>
+      <li><span>Window seat · 山田 花子</span><span class="muted">20:15 · 3 guests</span></li>
+    </ul>
+    <p class="muted">See tonight's <a href="#screen-menu">menü</a>.</p>
+  </div>
+  <div data-state="empty">
+    <p>No bookings yet today.</p>
+    <p class="muted">Bookings you take appear here, in time order.</p>
+  </div>
+  <div data-state="loading" aria-busy="true">
+    <div class="skeleton"></div>
+    <div class="skeleton"></div>
+  </div>
+</section>

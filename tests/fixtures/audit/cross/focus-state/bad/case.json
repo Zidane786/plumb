@@ -1,0 +1,8 @@
+{
+  "expect": [
+    [
+      "components/ui/button.tsx",
+      2
+    ]
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "tokens": "none",
+  "expect": [
+    [
+      "proto.html",
+      10
+    ]
+  ]
+}

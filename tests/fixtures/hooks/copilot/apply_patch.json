@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "{{SESSION}}",
+  "timestamp": "2026-10-12T09:15:41.902Z",
+  "cwd": "{{CWD}}",
+  "tool_name": "Edit",
+  "tool_input": "{{PATCH}}"
+}

@@ -6,3 +6,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
+  # the Playwright the browser tests pin (tests/requirements.txt): each new version is its own pull request, so CI runs
+  # the whole suite on every OS with it before anyone's machine moves to it
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: monthly

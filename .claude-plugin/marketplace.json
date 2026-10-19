@@ -1,0 +1,16 @@
+{
+  "name": "plumb",
+  "owner": {
+    "name": "Zidane786"
+  },
+  "metadata": {
+    "description": "Plumb: build and maintain a project's design system with Claude Code and GitHub Copilot CLI."
+  },
+  "plugins": [
+    {
+      "name": "plumb",
+      "source": "./plugins/plumb",
+      "description": "Create, extract, prototype, audit and maintain a project's design system, so every screen an agent builds stays consistent."
+    }
+  ]
+}

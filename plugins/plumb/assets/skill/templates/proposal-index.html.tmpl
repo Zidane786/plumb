@@ -1,0 +1,189 @@
+<!doctype html>
+{{header}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+/* Plumb's neutral page colours: used only where the project has no token for a role (the block after this one maps
+   the roles to the project's tokens). :where() keeps these at zero specificity so the mapping always wins. */
+:where(:root), :where(.pl-light) {
+  --pl-bg: #fbfbfa;
+  --pl-surface: #ffffff;
+  --pl-sunk: #f0f0ed;
+  --pl-text: #1d1f23;
+  --pl-muted: #5b616b;
+  --pl-border: #dcdcd6;
+  --pl-border-strong: #858a93;
+  --pl-accent: #2f5d8a;
+  --pl-on-accent: #ffffff;
+  --pl-focus: #2f5d8a;
+  --pl-bad: #b42318;
+  --pl-on-bad: #ffffff;
+  --pl-warn: #8a5a00;
+  --pl-good: #067647;
+  color-scheme: light;
+}
+:where(:root[data-theme="dark"]), :where(.pl-dark) {
+  --pl-bg: #121315;
+  --pl-surface: #1a1c1f;
+  --pl-sunk: #0c0d0f;
+  --pl-text: #e8e9eb;
+  --pl-muted: #a2a7af;
+  --pl-border: #2e3136;
+  --pl-border-strong: #6f747d;
+  --pl-accent: #8db8e3;
+  --pl-on-accent: #0d1117;
+  --pl-focus: #8db8e3;
+  --pl-bad: #f97066;
+  --pl-on-bad: #1a0b0a;
+  --pl-warn: #fdb022;
+  --pl-good: #47cd89;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root:not([data-theme="light"])) {
+    --pl-bg: #121315;
+    --pl-surface: #1a1c1f;
+    --pl-sunk: #0c0d0f;
+    --pl-text: #e8e9eb;
+    --pl-muted: #a2a7af;
+    --pl-border: #2e3136;
+    --pl-border-strong: #6f747d;
+    --pl-accent: #8db8e3;
+    --pl-on-accent: #0d1117;
+    --pl-focus: #8db8e3;
+    --pl-bad: #f97066;
+    --pl-on-bad: #1a0b0a;
+    --pl-warn: #fdb022;
+    --pl-good: #47cd89;
+    color-scheme: dark;
+  }
+}
+:where(:root) {
+  --pl-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pl-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --pl-radius: 8px;
+  --pl-radius-sm: 4px;
+  --pl-space-1: 4px;
+  --pl-space-2: 8px;
+  --pl-space-3: 12px;
+  --pl-space-4: 16px;
+  --pl-space-6: 24px;
+  --pl-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  --pl-shadow-lg: 0 8px 24px -4px rgb(0 0 0 / 0.18);
+  --pl-duration: 150ms;
+  --pl-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --pl-text-control: 15px;
+  --pl-text-small: 13px;
+  --pl-text-title: 22px;
+}
+</style>
+<style>
+{{theme_css}}
+</style>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--pl-bg); color: var(--pl-text); font-family: var(--pl-font); font-size: 16px; line-height: 1.5; }
+a { color: var(--pl-accent); text-underline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.wrap { max-width: 76rem; margin: 0 auto; padding: 0 16px; }
+.top { border-bottom: 1px solid var(--pl-border); background: var(--pl-surface); }
+.top-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 16px; padding-top: 28px; padding-bottom: 20px; }
+.top-row > div { min-width: 0; flex: 1 1 20rem; }
+.eyebrow { margin: 0 0 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+h1 { margin: 0; font-size: clamp(26px, 5vw, 36px); line-height: 1.15; overflow-wrap: anywhere; }
+h2 { margin: 0; font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
+.lede { margin: 8px 0 0; max-width: 65ch; color: var(--pl-muted); }
+.theme-toggle {
+  font: inherit; font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 14px; color: var(--pl-text); background: var(--pl-bg);
+  border: 1px solid var(--pl-border-strong); border-radius: 999px; cursor: pointer;
+}
+.theme-icon { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+main.wrap { padding-top: 32px; padding-bottom: 48px; }
+.variants { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); }
+.variant { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 20px; background: var(--pl-surface);
+  border: 1px solid var(--pl-border); border-radius: var(--pl-radius); }
+.letter { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+.idea { margin: 0; }
+.tradeoffs { margin: 0; padding-left: 1.2em; color: var(--pl-muted); }
+.screens { margin: 0; font-size: 14px; color: var(--pl-muted); }
+.views { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 8px; }
+.view { display: inline-flex; align-items: center; min-height: 40px; padding: 0 14px; font-weight: 600; font-size: 14px;
+  border: 1px solid var(--pl-border-strong); border-radius: 999px; text-decoration: none; color: var(--pl-text); }
+.view.primary { background: var(--pl-accent); border-color: transparent; color: var(--pl-on-accent); }
+.changes { margin-top: 32px; display: grid; gap: 8px; }
+.changes-lede { margin: 0; color: var(--pl-muted); font-size: 14px; max-width: 65ch; }
+.change-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.change { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; padding: 12px 14px;
+  background: var(--pl-surface); border: 1px solid var(--pl-border); border-radius: var(--pl-radius); }
+.chip { flex: none; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px;
+  color: var(--pl-text); background: var(--pl-bg); border: 1px solid var(--pl-border-strong); font-variant-numeric: tabular-nums; }
+.change-text { flex: 1 1 16rem; min-width: 0; overflow-wrap: anywhere; }
+.where { flex: 1 1 100%; font-size: 13px; color: var(--pl-muted); overflow-wrap: anywhere; }
+.footer { border-top: 1px solid var(--pl-border); padding: 20px 0 40px; color: var(--pl-muted); font-size: 14px; }
+.footer p { margin: 4px 0; max-width: 70ch; }
+.footer code { overflow-wrap: anywhere; color: var(--pl-text); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; } }
+</style>
+<script>
+/* Theme: follows the system until the toggle picks one; the .dark / .light class is what the token export switches on. */
+(function () {
+  var root = document.documentElement;
+  var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var chosen = null;
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    if (chosen) {
+      root.classList.toggle("dark", theme === "dark");
+      root.classList.toggle("light", theme === "light");
+    }
+    var button = document.getElementById("theme-toggle");
+    if (button) {
+      var next = theme === "dark" ? "light" : "dark";
+      button.setAttribute("aria-label", "Switch to the " + next + " theme");
+      var label = button.querySelector(".theme-label");
+      if (label) label.textContent = next === "dark" ? "Dark theme" : "Light theme";
+    }
+  }
+  apply(media && media.matches ? "dark" : "light");
+  if (media && media.addEventListener) {
+    media.addEventListener("change", function (e) { if (!chosen) apply(e.matches ? "dark" : "light"); });
+  }
+  window.plumbTheme = {
+    toggle: function () { chosen = root.getAttribute("data-theme") === "dark" ? "light" : "dark"; apply(chosen); },
+    refresh: function () { apply(root.getAttribute("data-theme") || "light"); }
+  };
+})();
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-row">
+    <div>
+      <p class="eyebrow">Proposal · {{name}}</p>
+      <h1>{{project}}: {{count}}</h1>
+      <p class="lede">The same design system, different UX. Review each variant in its prototype, demo it full window in
+        its app view, check its every-state view (light and dark), then pick one.</p>
+    </div>
+    <button type="button" id="theme-toggle" class="theme-toggle" onclick="window.plumbTheme.toggle()"><span class="theme-icon" aria-hidden="true"></span><span class="theme-label">Dark theme</span></button>
+  </div>
+</header>
+<main class="wrap">
+  <ul class="variants" role="list">
+{{variants}}
+  </ul>
+{{changes}}
+</main>
+<footer class="footer">
+  <div class="wrap">
+    <p>Built from <code>{{source}}</code> by Plumb {{plumb_version}}. This page is generated: edit a variant's screen files or <code>idea.md</code>, then run <code>{{rerun}}</code>.</p>
+  </div>
+</footer>
+<script>window.plumbTheme.refresh();</script>
+</body>
+</html>

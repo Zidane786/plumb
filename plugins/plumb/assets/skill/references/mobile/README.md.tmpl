@@ -1,0 +1,34 @@
+# Mobile (iOS and Android)
+
+Rules shared by both phones. Platform specifics: {{MOBILE_PLATFORM_LINKS}}.
+
+## Theme
+
+The tokens command (`PLUMB.md` → Commands) writes the theme files under `assets/platforms/mobile/` (`{{THEME_NAME}}Theme.swift`, `{{THEME_NAME}}Theme.kt`,
+for the platforms this project chose). Copy them into the app (or point the app at them); never edit them by hand, and
+never write raw colours, sizes or durations in screens. Dark mode follows the system appearance.
+
+## Touch and layout
+
+- Touch targets at least 44pt (iOS) and 48dp (Android), even when the drawing is smaller.
+- Respect safe areas, the keyboard and the home indicator; primary actions stay reachable with one thumb.
+- Design for the smallest supported phone first, then larger phones and tablets.
+
+## Navigation
+
+Tab bar or bottom navigation for top-level places (3 to 5); a stack for depth; sheets for focused tasks. Back is always
+available and predictable. The product's navigation model is in [../ux.md](../ux.md).
+
+## Type and text
+
+Use the generated text styles; they scale with the system font size (Dynamic Type on iOS, font scale on Android). Check the
+largest sizes.
+
+## Feedback
+
+Haptics only for confirmation or errors the user caused; pressed state on every tappable item; loading shows a skeleton or
+progress, never a frozen screen.
+
+## First screens
+
+Build in this order: app shell and navigation, the main list or home, the main detail, the main form, then settings.

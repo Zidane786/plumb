@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "PreToolUse",
+  "cwd": "{{CWD}}",
+  "session_id": "{{SESSION}}",
+  "tool_name": "fs_write",
+  "tool_input": {
+    "command": "insert",
+    "path": "{{FILE}}",
+    "insert_line": "{{LINE}}",
+    "new_str": "{{NEW}}",
+    "summary": "Insert lines"
+  }
+}

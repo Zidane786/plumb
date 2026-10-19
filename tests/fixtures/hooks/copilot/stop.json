@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "Stop",
+  "session_id": "{{SESSION}}",
+  "timestamp": "2026-10-12T09:18:55.770Z",
+  "cwd": "{{CWD}}"
+}

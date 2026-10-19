@@ -1,0 +1,9 @@
+{
+  "tokens": "none",
+  "expect": [
+    [
+      "app/page.tsx",
+      4
+    ]
+  ]
+}

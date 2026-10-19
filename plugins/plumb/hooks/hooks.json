@@ -1,0 +1,42 @@
+{
+  "description": "Plumb: one status line at session start; before an edit, refuse hand edits to generated files and to Plumb's own files, a new screen with no approved prototype, and an edit that adds design-system errors; at the end of a turn, check the UI files changed this session. Claude Code runs `command`; GitHub Copilot CLI runs `command` (macOS/Linux) or `powershell` (Windows).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session_start.py",
+            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path -LiteralPath $s) { & $s session_start.py; exit $LASTEXITCODE }; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" pre_edit.py",
+            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path -LiteralPath $s) { & $s pre_edit.py; exit $LASTEXITCODE }; exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop_check.py",
+            "powershell": "$s = \"$env:CLAUDE_PLUGIN_ROOT\\hooks\\run.cmd\"; if (Test-Path -LiteralPath $s) { & $s stop_check.py; exit $LASTEXITCODE }; exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,558 @@
+<!doctype html>
+{{header}}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{base}}
+<title>{{title}}</title>
+<style>
+{{chrome_roles}}
+</style>
+<style>
+{{theme_css}}
+</style>
+<style>
+/* Plumb's prototype shell. Every chrome rule is scoped to .pp-ui (or a pp- class) so nothing leaks into the screens;
+   the screens sit in #pp-frame with only their own styles and the project's tokens. */
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--pl-bg);
+  color: var(--pl-text);
+  font-family: var(--pl-font);
+  font-size: 15px;
+  line-height: 1.5;
+}
+:focus-visible { outline: 2px solid var(--pl-focus); outline-offset: 2px; }
+.pp-ui code { font-family: var(--pl-mono); font-size: 0.86em; }
+.pp-ui a { color: var(--pl-accent); text-underline-offset: 2px; }
+.pp-ui h1, .pp-ui h2, .pp-ui h3, .pp-ui p { margin: 0; }
+.pp-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--pl-muted); }
+.pp-skip { position: absolute; left: 8px; top: -60px; z-index: 30; padding: 8px 12px; background: var(--pl-surface); border-radius: var(--pl-radius-sm); }
+.pp-skip:focus { top: 8px; }
+
+/* Bar: the product, the two views of it, the theme. */
+.pp-bar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+  padding: 10px 16px; background: var(--pl-surface); border-bottom: 1px solid var(--pl-border);
+}
+.pp-brand { display: grid; min-width: 0; margin-right: auto; }
+.pp-brand-name { font-size: 16px; font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
+.pp-pages { display: flex; flex-wrap: wrap; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.pp-pages a {
+  display: inline-flex; align-items: center; min-height: 36px; padding: 0 12px; border-radius: 999px;
+  color: var(--pl-text); text-decoration: none; font-size: 14px; font-weight: 600;
+}
+.pp-pages a:hover { background: var(--pl-sunk); }
+.pp-pages a[aria-current="page"] { background: var(--pl-sunk); box-shadow: inset 0 0 0 1px var(--pl-border); }
+.pp-btn {
+  font: inherit; font-size: 14px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px;
+  color: var(--pl-text); background: var(--pl-bg); border: 1px solid var(--pl-border-strong); border-radius: 999px; cursor: pointer;
+}
+.pp-btn:hover { background: var(--pl-sunk); }
+.theme-icon { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; background: linear-gradient(90deg, currentColor 50%, transparent 50%); }
+
+/* Layout: screens on the left, the screen in the middle, why it looks like this on the right. */
+.pp-layout { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); align-items: start; }
+.pp-side {
+  position: sticky; top: 57px; max-height: calc(100vh - 57px); overflow: auto;
+  padding: 18px 12px 24px; border-right: 1px solid var(--pl-border); min-height: calc(100vh - 57px);
+}
+.pp-side .pp-eyebrow { padding: 0 10px 8px; }
+.pp-nav ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.pp-nav a { display: grid; gap: 3px; padding: 9px 10px; border-radius: var(--pl-radius); color: var(--pl-text); text-decoration: none; }
+.pp-nav a:hover { background: var(--pl-sunk); }
+.pp-nav a[aria-current="page"] { background: var(--pl-surface); box-shadow: inset 0 0 0 1px var(--pl-border), var(--pl-shadow); }
+.nav-title { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.nav-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; font-size: 12px; color: var(--pl-muted); }
+.badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--pl-text); }
+.badge .mark { width: 8px; height: 8px; flex: none; }
+.badge-approved .mark { border-radius: 50%; background: var(--pl-good); }
+.badge-stale .mark { background: var(--pl-warn); transform: rotate(45deg); }
+.badge-synced .mark { border-radius: 50%; border: 2px solid var(--pl-accent); }
+.badge-none .mark { border-radius: 50%; border: 1.5px dashed var(--pl-muted); }
+
+.pp-main { min-width: 0; padding: 20px 24px 32px; display: grid; gap: 16px; align-content: start; }
+.pp-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; }
+.pp-head { min-width: 0; flex: 1 1 16rem; }
+.pp-head h1 { font-size: clamp(20px, 2.6vw, 26px); line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.pp-head h1:focus { outline: none; }
+.pp-head h1:focus-visible { outline: 2px solid var(--pl-focus); }
+.pp-meta { margin-top: 6px !important; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13px; color: var(--pl-muted); }
+.sep { opacity: 0.7; }
+.pp-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; min-width: 0; max-width: 100%; }
+.pp-control { display: grid; gap: 4px; min-width: 0; max-width: 100%; }
+.segs {
+  display: flex; flex-wrap: wrap; gap: 2px; padding: 2px; max-width: 100%;
+  background: var(--pl-sunk); border: 1px solid var(--pl-border); border-radius: 10px;
+}
+.seg {
+  font: inherit; font-size: 13px; font-weight: 600; line-height: 1.2; min-height: 32px; padding: 0 12px;
+  color: var(--pl-text); background: transparent; border: 0; border-radius: 8px; cursor: pointer;
+}
+.seg:hover { background: color-mix(in srgb, var(--pl-surface) 60%, transparent); }
+.seg[aria-pressed="true"] { background: var(--pl-surface); box-shadow: var(--pl-shadow), inset 0 0 0 1px var(--pl-border); }
+
+.pp-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: 16px; align-items: start; }
+.pp-stage {
+  min-width: 0; padding: 28px; display: flex; justify-content: center; border-radius: 12px;
+  background-color: var(--pl-sunk);
+  background-image: radial-gradient(color-mix(in srgb, var(--pl-text) 14%, transparent) 1px, transparent 1.4px);
+  background-size: 18px 18px;
+}
+/* The frame is the screen's world:
+   - a size container, so its md breakpoint follows the frame (container-type alone makes no containing block);
+   - contain: layout makes it the containing block for anything the screen fixes in place (scrims, dialogs, toasts,
+     sheets): they sit inside the frame, as on a device of that width, never over the shell's toolbar or screens list,
+     and a zoom step's transform does not move them. A dialog that a state change opens is scrolled into view;
+   - isolation: a screen's own z-index stays inside the frame, under the walkthrough player. */
+.pp-frame {
+  container: plumb-frame / inline-size;
+  contain: layout;
+  isolation: isolate;
+  width: 100%; min-height: 34rem; overflow: hidden;
+  background: var(--pl-bg); color: var(--pl-text);
+  border: 1px solid var(--pl-border); border-radius: 12px; box-shadow: var(--pl-shadow-lg);
+}
+.pp-stage[data-frame="phone"] .pp-frame { width: 390px; max-width: 100%; min-height: 44rem; border-radius: 28px; }
+
+.pp-rail { min-width: 0; position: sticky; top: 73px; max-height: calc(100vh - 89px); overflow: auto; display: grid; gap: 16px; align-content: start; }
+.pp-why { min-width: 0; padding: 16px; background: var(--pl-surface); border: 1px solid var(--pl-border); border-radius: 12px; }
+.pp-why-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pp-why-top h2 { font-size: 15px; line-height: 1.3; }
+.pp-why .pp-btn { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.why-count { margin: 6px 0 4px !important; font-size: 13px; color: var(--pl-muted); }
+.why-list, .dc-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.why-list > li { padding: 12px 0; border-top: 1px solid var(--pl-border); }
+.why-list > li:first-child { border-top: 0; }
+.pp-guide { min-width: 0; }
+.empty, .note { color: var(--pl-muted); max-width: 62ch; }
+
+/* A decision: id, what was decided, when and by whom, the options and why. */
+.dc { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.dc:focus { outline: none; }
+.dc-id code { font-size: 12px; color: var(--pl-muted); }
+.dc-title { font-size: 15px; line-height: 1.35; }
+.dc-meta { font-size: 13px; color: var(--pl-muted); }
+.dc-fields { display: grid; gap: 8px; margin: 4px 0 0; }
+.dc-fields > div { display: grid; gap: 1px; }
+.dc-fields dt { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--pl-muted); }
+.dc-fields dd { margin: 0; font-size: 14px; }
+.dc-fields ul { margin: 4px 0 0; padding-left: 18px; }
+.dc-notes p, .dc-screens, .dc-more { font-size: 14px; }
+.dc-compact .dc-title { font-size: 14px; }
+.dc-compact .dc-fields dd { font-size: 13px; }
+
+.pp-decisions { max-width: 52rem; width: 100%; margin: 0 auto; padding: 8px 0 24px; display: grid; gap: 8px; }
+.pp-decisions h2 { font-size: clamp(22px, 3vw, 28px); line-height: 1.2; }
+.pp-decisions h2:focus { outline: none; }
+.dc-list > li { padding: 20px 0; border-top: 1px solid var(--pl-border); }
+.dc-list .dc-title { font-size: 18px; }
+@media (min-width: 48rem) {
+  .dc-list .dc-fields > div { grid-template-columns: 8rem minmax(0, 1fr); gap: 16px; align-items: baseline; }
+}
+
+.pp-foot { font-size: 13px; color: var(--pl-muted); }
+.pp-foot code { overflow-wrap: anywhere; }
+
+@media (max-width: 75rem) {
+  .pp-workspace { grid-template-columns: minmax(0, 1fr); }
+  .pp-rail { position: static; max-height: none; }
+}
+@media (max-width: 56rem) {
+  .pp-bar { position: static; }
+  .pp-layout { grid-template-columns: minmax(0, 1fr); }
+  .pp-side { position: static; max-height: none; min-height: 0; border-right: 0; border-bottom: 1px solid var(--pl-border); padding: 12px 16px; }
+  .pp-side .pp-eyebrow { padding: 0 0 6px; }
+  .pp-nav ol { grid-auto-flow: column; grid-auto-columns: 11rem; overflow-x: auto; padding: 2px; align-items: stretch; }
+  .pp-nav li { display: flex; }
+  .pp-nav a { flex: 1; align-content: start; grid-template-rows: auto 1fr; }
+  .nav-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; min-height: 2.6em; }
+  .nav-meta { align-self: end; }
+  .pp-main { padding: 16px; }
+  .pp-stage { padding: 12px; }
+}
+@media (max-width: 30rem) {
+  .theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .pp-bar .pp-btn { padding: 0 11px; }
+  .pp-pages a { padding: 0 10px; }
+}
+/* While a walkthrough runs (the player sets body.pl-touring), the screens list and the rail step aside, so the frame
+   keeps the width the screens' desktop layout needs (their 48rem container breakpoint); they come back when it ends. */
+body.pl-touring .pp-layout, body.pl-touring .pp-workspace { grid-template-columns: minmax(0, 1fr); }
+body.pl-touring .pp-side, body.pl-touring .pp-rail { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+</style>
+{{screen_styles}}
+{{player_css}}
+<script>
+/* Theme: follows the system until the toggle (or plumbPrototype.setTheme) picks one. data-theme always says which
+   theme is showing; the .dark / .light class (what the project's --css-vars export switches on) is set once chosen. */
+(function () {
+  var root = document.documentElement;
+  var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  var chosen = null;
+  function apply(theme) {
+    root.setAttribute("data-theme", theme);
+    if (chosen) {
+      root.classList.toggle("dark", theme === "dark");
+      root.classList.toggle("light", theme === "light");
+    }
+    var button = document.getElementById("theme-toggle");
+    if (button) {
+      var next = theme === "dark" ? "light" : "dark";
+      button.setAttribute("aria-label", "Switch to the " + next + " theme");
+      var label = button.querySelector(".theme-label");
+      if (label) label.textContent = next === "dark" ? "Dark theme" : "Light theme";
+    }
+  }
+  apply(media && media.matches ? "dark" : "light");
+  if (media && media.addEventListener) {
+    media.addEventListener("change", function (e) { if (!chosen) apply(e.matches ? "dark" : "light"); });
+  }
+  window.plumbTheme = {
+    set: function (theme) { chosen = theme === "dark" ? "dark" : "light"; apply(chosen); return chosen; },
+    toggle: function () { return window.plumbTheme.set(root.getAttribute("data-theme") === "dark" ? "light" : "dark"); },
+    refresh: function () { apply(root.getAttribute("data-theme") || "light"); }
+  };
+  /* Each screen's script registers here and runs once the shell is ready, as function (screen, plumb) { ... }. */
+  window.plumbScreens = { _defs: [], define: function (id, fn) { this._defs.push([id, fn]); } };
+})();
+</script>
+</head>
+<body>
+<a class="pp-skip pp-ui" href="#pp-title">Skip to the screen</a>
+<header class="pp-bar pp-ui">
+  <div class="pp-brand">
+    <span class="pp-eyebrow">Prototype</span>
+    <span class="pp-brand-name">{{project}}</span>
+  </div>
+  <nav aria-label="Views">
+    <ul class="pp-pages" role="list">
+      <li><a id="pp-screens-link" href="{{first_screen_href}}" aria-current="page">Screens</a></li>
+      <li><a id="pp-decisions-link" href="#decisions">Decisions</a></li>
+      <li><a href="screens.html">Catalogue</a></li>
+      <li><a id="pp-app-link" href="{{first_app_href}}" title="The same screen full window, for a demo">Open as app</a></li>
+    </ul>
+  </nav>
+  <button type="button" id="theme-toggle" class="pp-btn"><span class="theme-icon" aria-hidden="true"></span><span class="theme-label">Dark theme</span></button>
+</header>
+<div class="pp-layout">
+  <aside class="pp-side pp-ui">
+    <nav class="pp-nav" aria-label="Screens">
+      <p class="pp-eyebrow">Screens</p>
+      <ol role="list">
+{{nav}}
+      </ol>
+    </nav>
+  </aside>
+  <main class="pp-main" id="pp-main">
+    <div class="pp-toolbar pp-ui" id="pp-toolbar">
+      <div class="pp-head">
+        <h1 id="pp-title" tabindex="-1">{{screen_title}}</h1>
+        <p class="pp-meta" id="pp-meta">{{screen_meta}}</p>
+      </div>
+      <div class="pp-controls">
+        <div class="pp-control">
+          <span class="pp-eyebrow" aria-hidden="true">State</span>
+{{state_groups}}
+        </div>
+        <div class="pp-control">
+          <span class="pp-eyebrow" aria-hidden="true">Frame</span>
+          <div class="segs" role="group" aria-label="Frame size" id="pp-viewport">
+            <button type="button" class="seg" data-viewport="phone" aria-pressed="false">Phone</button>
+            <button type="button" class="seg" data-viewport="desktop" aria-pressed="true">Desktop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="pp-workspace" id="pp-workspace">
+      <div class="pp-stage" id="pp-stage" data-frame="desktop">
+        <div class="pp-frame" id="pp-frame">
+{{frame}}
+        </div>
+      </div>
+      <div class="pp-rail" id="pp-rail">
+      <aside class="pp-why pp-ui" id="pp-why" aria-labelledby="pp-why-h">
+        <div class="pp-why-top">
+          <h2 id="pp-why-h">Why it looks like this</h2>
+          <button type="button" class="pp-btn" id="pp-why-toggle" aria-expanded="true" aria-controls="pp-why-body">Hide</button>
+        </div>
+        <div id="pp-why-body">
+{{why}}
+        </div>
+      </aside>
+      <aside class="pp-guide pp-ui" id="plumb-guide" aria-label="Guide" hidden></aside>
+      </div>
+    </div>
+{{decisions}}
+    <p class="pp-foot pp-ui">Generated by Plumb {{plumb_version}} from <code>{{source}}</code>. Do not edit this page: edit a screen file, then run <code>build-prototype.py</code>.</p>
+  </main>
+</div>
+<div id="plumb-player"></div>
+<script type="application/json" id="plumb-data">{{data}}</script>
+{{screen_scripts}}
+<script>
+/* The shell: hash routing (#screen-ID, #screen-ID/STATE, #decisions, #decision-ID), the state switcher, the frame
+   size, the decisions panel, and window.plumbPrototype for the walkthrough player. */
+(function () {
+  "use strict";
+  var data = JSON.parse(document.getElementById("plumb-data").textContent);
+  var screens = data.screens;
+  var byId = {};
+  screens.forEach(function (s) { byId[s.id] = s; });
+  function $(id) { return document.getElementById(id); }
+  var frame = $("pp-frame"), stage = $("pp-stage"), workspace = $("pp-workspace"), toolbar = $("pp-toolbar");
+  var decisions = $("decisions"), title = $("pp-title"), meta = $("pp-meta");
+  var screensLink = $("pp-screens-link"), decisionsLink = $("pp-decisions-link"), appLink = $("pp-app-link");
+  var sections = {};
+  Array.prototype.forEach.call(frame.children, function (el) {
+    var id = el.getAttribute("data-screen");
+    if (id !== null) sections[id] = el;
+  });
+  var current = { page: null, screen: null, state: null };
+  var based = document.querySelector("base[href]") !== null;
+  var listeners = [];
+
+  function each(selector, fn) { Array.prototype.forEach.call(document.querySelectorAll(selector), fn); }
+  function outerStates(section) {
+    return Array.prototype.filter.call(section.querySelectorAll("[data-state]"), function (el) {
+      return el.parentElement && el.parentElement.closest("[data-state], [data-screen]") === section;
+    });
+  }
+  function decode(text) {
+    try { return decodeURIComponent(text); } catch (err) { return text; }
+  }
+  function writeHash(mode, hash) {
+    if (!mode || decode(location.hash) === hash) return;
+    /* while a walkthrough runs (body.pl-touring) its own clicks move between screens without adding history entries */
+    if (mode === "push" && document.body.classList.contains("pl-touring")) mode = "replace";
+    try {
+      /* the document's own URL plus the hash: a tour page has a <base> one folder up, so a bare "#..." would leave it */
+      history[mode === "push" ? "pushState" : "replaceState"](null, "", location.href.split("#")[0] + hash);
+    } catch (err) {
+      location.hash = hash;
+    }
+  }
+  function emit() {
+    var detail = { page: current.page, screen: current.screen, state: current.state };
+    listeners.slice().forEach(function (fn) {
+      try { fn(detail); } catch (err) { console.error("Plumb: a plumbPrototype listener failed:", err); }
+    });
+  }
+  function setPage(page) {
+    var onDecisions = page === "decisions";
+    workspace.hidden = onDecisions;
+    toolbar.hidden = onDecisions;
+    decisions.hidden = !onDecisions;
+    if (onDecisions) {
+      decisionsLink.setAttribute("aria-current", "page");
+      screensLink.removeAttribute("aria-current");
+      each("[data-nav]", function (a) { a.removeAttribute("aria-current"); });
+    }
+    else { screensLink.setAttribute("aria-current", "page"); decisionsLink.removeAttribute("aria-current"); }
+  }
+  /* Dialogs on show in a screen: dialog[open], role dialog / alertdialog, aria-modal. */
+  function openDialogs(section) {
+    return Array.prototype.filter.call(
+      section.querySelectorAll("dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]"),
+      function (el) {
+        var vis = getComputedStyle(el).visibility;
+        return el.getClientRects().length > 0 && vis !== "hidden" && vis !== "collapse";
+      });
+  }
+  /* A same-screen state change that opens a dialog scrolls it into view (the frame holds a fixed dialog, so on a tall
+     screen it can sit below the window); a dialog that was already on show never moves the page. */
+  function showOpened(section, before) {
+    var fresh = openDialogs(section).filter(function (el) { return before.indexOf(el) < 0; })[0];
+    if (!fresh) return;
+    var bar = document.querySelector(".pp-bar"), r = fresh.getBoundingClientRect();
+    var top = bar && /sticky|fixed/.test(getComputedStyle(bar).position) ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+    if (r.top >= top && r.bottom <= window.innerHeight) return;
+    var opts = { block: r.height <= window.innerHeight - top ? "center" : "start", inline: "nearest", behavior: "instant" };
+    try { fresh.scrollIntoView(opts); } catch (err) { delete opts.behavior; fresh.scrollIntoView(opts); }
+  }
+  function show(id, state, opts) {
+    opts = opts || {};
+    var s = byId[id];
+    if (!s) return false;
+    if (!state || s.states.indexOf(state) < 0) state = s.states[0];
+    var same = current.page === "screen" && current.screen === id && current.state === state;
+    var opened = !same && current.page === "screen" && current.screen === id ? openDialogs(sections[id]) : null;
+    if (!same) {
+      Object.keys(sections).forEach(function (key) { sections[key].hidden = key !== id; });
+      outerStates(sections[id]).forEach(function (el) { el.hidden = (el.getAttribute("data-state") || "").trim() !== state; });
+      if (opened) showOpened(sections[id], opened);
+      each("[data-states-for]", function (group) {
+        var mine = group.getAttribute("data-states-for") === id;
+        group.hidden = !mine;
+        if (mine) {
+          Array.prototype.forEach.call(group.querySelectorAll("[data-set-state]"), function (b) {
+            b.setAttribute("aria-pressed", String(b.getAttribute("data-set-state") === state));
+          });
+        }
+      });
+      each("[data-why-for]", function (panel) { panel.hidden = panel.getAttribute("data-why-for") !== id; });
+      each("[data-nav]", function (a) {
+        if (a.getAttribute("data-nav") === id) a.setAttribute("aria-current", "page");
+        else a.removeAttribute("aria-current");
+      });
+      title.textContent = s.title;
+      meta.innerHTML = s.meta;
+      document.title = s.title + " · " + data.project + " prototype";
+      screensLink.setAttribute("href", "#screen-" + id);
+    }
+    setPage("screen");
+    current = { page: "screen", screen: id, state: state };
+    /* "Open as app" opens app.html on this screen and state */
+    appLink.setAttribute("href", "app.html#/" + encodeURIComponent(id) +
+      (state !== s.states[0] ? "/" + encodeURIComponent(state) : ""));
+    writeHash(opts.history, "#screen-" + id + (state !== s.states[0] ? "/" + state : ""));
+    if (opts.focus) {
+      title.focus({ preventScroll: true });
+      if (toolbar.getBoundingClientRect().top < 0) toolbar.scrollIntoView({ block: "start" });
+    }
+    if (!same) emit();
+    return true;
+  }
+  function showDecisions(anchor, opts) {
+    opts = opts || {};
+    var was = current.page === "decisions";
+    setPage("decisions");
+    current = { page: "decisions", screen: current.screen, state: current.state };
+    writeHash(opts.history, "#" + (anchor || "decisions"));
+    document.title = "Decisions · " + data.project + " prototype";
+    var target = anchor ? $(anchor) : null;
+    if (target) {
+      target.scrollIntoView({ block: "start" });
+      if (opts.focus) target.focus({ preventScroll: true });
+    } else {
+      window.scrollTo(0, 0);
+      if (opts.focus) $("decisions-h").focus({ preventScroll: true });
+    }
+    if (!was) emit();
+  }
+  function parse(hash) {
+    var h = decode(String(hash || "").replace(/^#/, ""));
+    if (h === "decisions") return { page: "decisions" };
+    if (h.indexOf("decision-") === 0 && $(h)) return { page: "decisions", anchor: h };
+    if (h === "screen" || h === "screen-") {
+      var back = current.screen || screens[0].id;
+      return { page: "screen", screen: back, state: current.screen ? current.state : null };
+    }
+    if (h.indexOf("screen-") === 0) {
+      var rest = h.slice(7), cut = rest.lastIndexOf("/");
+      var id = cut < 0 ? rest : rest.slice(0, cut);
+      if (byId[id]) return { page: "screen", screen: id, state: cut < 0 ? null : rest.slice(cut + 1) };
+      if (byId[rest]) return { page: "screen", screen: rest, state: null };
+    }
+    return null;
+  }
+  function route() {
+    var r = parse(location.hash);
+    if (!r) {
+      if (current.page === null) show(screens[0].id, null, {});
+      return;
+    }
+    if (r.page === "decisions") showDecisions(r.anchor, {});
+    else show(r.screen, r.state, {});
+  }
+  function setViewport(size) {
+    size = size === "phone" ? "phone" : "desktop";
+    stage.setAttribute("data-frame", size);
+    each("[data-viewport]", function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-viewport") === size)); });
+    return size;
+  }
+
+  /* Links: any <a href="#screen-..."> or "#decisions" (nav, decisions, and the screens' own links) routes in place. */
+  document.addEventListener("click", function (event) {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var el = event.target;
+    var link = el && el.closest ? el.closest("a[href]") : null;
+    if (link) {
+      var href = link.getAttribute("href");
+      if (href && href.charAt(0) === "#") {
+        var r = parse(href);
+        if (r) {
+          event.preventDefault();
+          if (r.page === "decisions") showDecisions(r.anchor, { history: "push", focus: true });
+          else show(r.screen, r.state, { history: "push", focus: true });
+        } else if (based && href.length > 1 && $(decode(href.slice(1)))) {
+          /* with a <base>, an in-page link (the skip link) would open the docs folder: move to the element instead */
+          event.preventDefault();
+          var spot = $(decode(href.slice(1)));
+          spot.scrollIntoView({ block: "start" });
+          if (spot.tabIndex >= 0 || spot.hasAttribute("tabindex")) spot.focus({ preventScroll: true });
+        }
+      }
+      return;
+    }
+    var button = el && el.closest ? el.closest("[data-set-state], [data-viewport]") : null;
+    if (!button) return;
+    if (button.hasAttribute("data-set-state")) show(current.screen, button.getAttribute("data-set-state"), { history: "replace" });
+    else setViewport(button.getAttribute("data-viewport"));
+  });
+  window.addEventListener("popstate", route);
+  window.addEventListener("hashchange", route);
+  $("theme-toggle").addEventListener("click", function () { window.plumbTheme.toggle(); });
+  var whyToggle = $("pp-why-toggle"), whyBody = $("pp-why-body");
+  whyToggle.addEventListener("click", function () {
+    var open = whyToggle.getAttribute("aria-expanded") !== "true";
+    whyToggle.setAttribute("aria-expanded", String(open));
+    whyToggle.textContent = open ? "Hide" : "Show";
+    whyBody.hidden = !open;
+  });
+
+  window.plumbPrototype = {
+    project: data.project,
+    screens: screens.map(function (s) { return { id: s.id, title: s.title, states: s.states.slice(), route: s.route }; }),
+    go: function (id, state, opts) {
+      var mode = opts && Object.prototype.hasOwnProperty.call(opts, "history") ? opts.history : "push";
+      return show(id, state || null, { history: mode });
+    },
+    setState: function (state) { return current.screen ? show(current.screen, state, { history: "replace" }) : false; },
+    current: function () { return { page: current.page, screen: current.screen, state: current.state }; },
+    screen: function (id) { return sections[id] || null; },
+    setTheme: function (theme) { return window.plumbTheme.set(theme); },
+    setViewport: setViewport,
+    showDecisions: function (id) { showDecisions(id ? "decision-" + id : null, { history: "push" }); },
+    on: function (fn) {
+      listeners.push(fn);
+      return function () { listeners = listeners.filter(function (f) { return f !== fn; }); };
+    },
+    guide: $("plumb-guide"),
+    player: $("plumb-player")
+  };
+  window.plumbTheme.refresh();
+  route();
+
+  window.plumbScreens._defs.forEach(function (def) {
+    var id = def[0], section = sections[id];
+    if (!section) return;
+    var api = {
+      catalogue: false,
+      screen: id,
+      setState: function (state) { return current.page === "screen" && current.screen === id ? show(id, state, { history: "replace" }) : false; },
+      go: function (target, state) { return show(target, state || null, { history: "push", focus: true }); },
+      state: function () { return current.screen === id ? current.state : null; }
+    };
+    try { def[1].call(section, section, api); } catch (err) { console.error("Plumb: the script of screen " + id + " failed:", err); }
+  });
+})();
+</script>
+{{player}}
+</body>
+</html>

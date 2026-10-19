@@ -1,0 +1,61 @@
+{
+  "$description": "Demo tokens for the web-v4 fixture",
+  "$extensions": {
+    "plumb": {
+      "schema": 1,
+      "project": "demo",
+      "platforms": ["web"],
+      "web": { "styling": "tailwind-v4", "copies": ["app/globals.css"], "theme_switch": "both" },
+      "motion": { "reduced": "none" }
+    }
+  },
+  "color": {
+    "$type": "color",
+    "background": { "$value": "#ffffff", "$extensions": { "plumb": { "dark": "#0f1217" } } },
+    "on-surface": { "$value": "#1b2230", "$extensions": { "plumb": { "dark": "#e7eaef" } } },
+    "primary": { "$value": "#14857f", "$extensions": { "plumb": { "dark": "#4fb3c4" } } },
+    "on-primary": { "$value": "#ffffff" },
+    "link": { "$value": "{color.primary}" },
+    "scrim": { "$value": "#0f1217cc", "$extensions": { "plumb": { "dark": "#000000cc" } } }
+  },
+  "font": {
+    "$type": "fontFamily",
+    "sans": { "$value": ["Inter", "system-ui", "Segoe UI", "sans-serif"] }
+  },
+  "typography": {
+    "$type": "typography",
+    "xs": { "$value": { "fontSize": "12px", "lineHeight": "16px" } },
+    "sm": {
+      "$value": { "fontSize": "16px", "lineHeight": "24px", "fontWeight": 400 },
+      "$extensions": { "plumb": { "md": { "fontSize": "14px", "lineHeight": "20px" } } }
+    }
+  },
+  "radius": {
+    "$type": "dimension",
+    "md": { "$value": "6px" },
+    "lg": { "$value": { "value": 10, "unit": "px" } }
+  },
+  "spacing": {
+    "$type": "dimension",
+    "2": { "$value": "8px" },
+    "4": { "$value": "16px" }
+  },
+  "shadow": {
+    "$type": "shadow",
+    "card": {
+      "$value": [{ "offsetX": "0px", "offsetY": "1px", "blur": "3px", "spread": "0px", "color": "#0f121714" }],
+      "$extensions": { "plumb": { "dark": [{ "offsetX": "0px", "offsetY": "1px", "blur": "3px", "spread": "0px", "color": "#00000066" }] } }
+    }
+  },
+  "motion": {
+    "duration": {
+      "$type": "duration",
+      "fast": { "$value": "150ms" },
+      "mid": { "$value": { "value": 180, "unit": "ms" } }
+    },
+    "easing": {
+      "$type": "cubicBezier",
+      "out": { "$value": [0.2, 0.8, 0.2, 1] }
+    }
+  }
+}

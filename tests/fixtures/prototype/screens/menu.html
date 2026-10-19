@@ -1,0 +1,20 @@
+<style>
+[data-screen="menu"] { font-family: var(--font-sans); color: var(--color-on-surface); background: var(--color-background); padding: var(--spacing-6) var(--spacing-4); }
+[data-screen="menu"] h2 { margin: 0 0 var(--spacing-3); font-size: var(--text-lg); line-height: var(--text-lg--line-height); }
+[data-screen="menu"] dl { display: grid; grid-template-columns: 1fr auto; gap: var(--spacing-2) var(--spacing-4); margin: 0; }
+[data-screen="menu"] dd { margin: 0; font-variant-numeric: tabular-nums; }
+[data-screen="menu"] .muted { color: var(--color-text-muted); }
+</style>
+<section data-screen="menu" data-title="Menü du jour · Café Ünïcode ☕" data-order="3">
+  <h2>Menü du jour</h2>
+  <div data-state="ready">
+    <dl>
+      <dt>Crème brûlée</dt><dd>€7,50</dd>
+      <dt>Smørrebrød</dt><dd>€9,00</dd>
+      <dt>Matcha 抹茶 latte</dt><dd>€4,20</dd>
+    </dl>
+  </div>
+  <div data-state="empty">
+    <p class="muted">Today's menü is not out yet. It usually goes up by 11:00.</p>
+  </div>
+</section>

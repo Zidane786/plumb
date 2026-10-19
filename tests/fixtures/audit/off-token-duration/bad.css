@@ -1,0 +1,4 @@
+/* expect: off-token-duration@3 */
+.fade {
+  transition: opacity 200ms var(--ease-out);
+}

@@ -1,0 +1,9 @@
+{
+  "tokens": "none",
+  "expect": [
+    [
+      "app/styles.css",
+      2
+    ]
+  ]
+}

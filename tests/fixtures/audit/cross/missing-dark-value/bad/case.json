@@ -1,0 +1,8 @@
+{
+  "expect": [
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "on-primary"
+    ]
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "expect": [
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "surface"
+    ],
+    [
+      ".claude/skills/demo-design-system/assets/tokens/demo.tokens.json",
+      "md"
+    ]
+  ]
+}

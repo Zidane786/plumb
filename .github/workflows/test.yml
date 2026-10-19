@@ -9,12 +9,18 @@ name: test
 # Files that trigger the full suite (keep in sync with CLAUDE.md / AGENTS.md "Develop and test"):
 #   plugins/**            the shipped plugin (skills, hooks, templates, generator, audit, ...)
 #   tests/**              the tests themselves
+#   examples/**           the golden example the tests compare against
 #   scripts/**            release tooling
 #   .github/workflows/**  CI and release workflows
 #   .claude-plugin/**     the marketplace manifest
 #   .gitattributes        line endings the tests depend on
 # Everything else (README.md, TEST.md, CLAUDE.md, AGENTS.md, SECURITY.md, docs/**, ...) is docs.
 # A manual run (Actions → test → Run workflow) always runs the full suite.
+#
+# How the suite runs, so one push waits minutes, not half an hour: every job runs the tests in parallel
+# (pytest-xdist), then the speed tests (@pytest.mark.speed: each asserts a time limit) alone. The browser
+# tests (@pytest.mark.browser) run on Linux with Python 3.13 only: Chromium renders the same pages the same
+# way everywhere; what differs per OS (hooks, launchers, paths, encodings) runs on all six jobs.
 
 on:
   push:
@@ -63,7 +69,7 @@ jobs:
           fi
           CHANGED=$(git diff --name-only "$RANGE")
           echo "Changed files ($RANGE):"; echo "$CHANGED" | sed 's/^/  /'
-          if echo "$CHANGED" | grep -Eq '^(plugins/|tests/|scripts/|\.github/workflows/|\.claude-plugin/|\.gitattributes$)'; then
+          if echo "$CHANGED" | grep -Eq '^(plugins/|tests/|examples/|scripts/|\.github/workflows/|\.claude-plugin/|\.gitattributes$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "Only docs changed: skipping the test suite."
@@ -89,13 +95,29 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: python scripts/check_version_bump.py "origin/$BASE_REF"
 
-      - name: Install pytest
+      - name: Install pytest and the pinned test tools (pytest-xdist, Playwright)
         if: steps.changes.outputs.code == 'true'
-        run: python -m pip install --upgrade pip pytest
+        run: python -m pip install --upgrade pip pytest -r tests/requirements.txt
 
-      - name: Run tests
+      - name: Install Chromium (the browser tests run on this job only)
+        if: steps.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && matrix.python == '3.13'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run tests in parallel (browser tests on Linux, Python 3.13 only)
         if: steps.changes.outputs.code == 'true'
-        run: python -m pytest -q
+        env:
+          # an unexpected skip (e.g. "requires Playwright") fails the run; see tests/conftest.py
+          PLUMB_STRICT_SKIPS: "1"
+          BROWSER_JOB: ${{ matrix.os == 'ubuntu-latest' && matrix.python == '3.13' }}
+        run: |
+          if [ "$BROWSER_JOB" = "true" ]; then select="not speed"; else select="not browser and not speed"; fi
+          python -m pytest -q -rs -n auto -m "$select"
+
+      - name: Run the speed tests alone (each asserts a time limit)
+        if: steps.changes.outputs.code == 'true'
+        env:
+          PLUMB_STRICT_SKIPS: "1"
+        run: python -m pytest -q -rs -m speed
 
       - name: No code changed
         if: steps.changes.outputs.code != 'true'

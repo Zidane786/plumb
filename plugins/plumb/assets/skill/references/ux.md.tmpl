@@ -1,0 +1,70 @@
+# UX: how {{NAME}} behaves
+
+Read this before building any screen, together with the screen's file in `{{DOCS_DIR}}/prototype/screens/`. It is written
+from the product interview (create) or from the existing screens, confirmed with the owner (extract); `/plumb:ux` reviews
+built screens against it. Replace the prompts below with this product's real answers.
+
+{{DEFAULTS_NOTE}}
+
+## Users and context
+
+Who: {{AUDIENCE}}.
+What the product is: {{DESCRIPTION}}
+Where and how they use it (device, place, interruptions, how often): _to fill_.
+
+## Key tasks and flows
+
+List each task as: who, goal, start, steps, end, and the screens it crosses. Name the one task that must be fastest.
+
+## Navigation
+
+The navigation model (sidebar, top bar, bottom tabs, deep links), what is always reachable, how a user gets back, what
+changes between narrow and wide screens.
+
+## Page anatomy
+
+The templates the screens are built from (list, detail, form, dashboard, settings): header, primary action, content, secondary
+panel, footer. One primary action per view.
+
+## Forms
+
+Labels above fields; required fields marked in words; validate on blur and on submit, never on the first keystroke; errors say
+what is wrong and how to fix it, next to the field and in a summary; keep what the user typed; confirm before losing work.
+
+## States (every screen has all that apply)
+
+| State | What the user sees |
+|---|---|
+| Loading | Skeleton in the final layout; no spinner wall. |
+| Empty | What is missing, why, one action. |
+| Error | What happened in words, what to do, retry. |
+| Success | A clear confirmation; where the user goes next. |
+| Disabled | Still readable; says why when it is not obvious. |
+| Long text | Wraps or truncates with the full text available. |
+| Zero and one | Counts and plurals read correctly. |
+| Offline | What still works, what does not, when it syncs. |
+
+### States per screen
+
+Which of the states above each screen must show, one line per screen id (its file name in
+`{{DOCS_DIR}}/prototype/screens/`), for example `- booking: loading, empty, error`. A screen that needs none beyond its
+default says so with a reason, for example `- settings: none (a static form)`. `/plumb:audit` suggests adding any state
+listed here that the screen file lacks; a screen not listed is not checked.
+
+## Feedback and confirmation
+
+Immediate feedback for every action; toasts confirm what happened; undo beats "are you sure" for reversible actions.
+Destructive actions name the thing, say what is lost and use the `danger` variant, on a confirmation only.
+
+## Onboarding and first run
+
+What a new user sees first, how long until they have done something useful, what is skippable.
+
+## Voice and microcopy
+
+Voice: {{VOICE}}. Words for statuses, actions, durations and dates are fixed in [vocabulary.md](vocabulary.md). Sentence case,
+plain words, no exclamation marks, no blame in errors.
+
+## Per-platform guidelines
+
+See the platform files linked from [SKILL.md](../SKILL.md).
